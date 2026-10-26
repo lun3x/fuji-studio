@@ -278,8 +278,9 @@ private actor BaselineLibrary: PhotoLibraryReading {
         let flag = "--xt5-raw-baseline-probe"
         let flags = ["--xt5-read-only-probe","--xt5-direct-values-probe","--xt5-bank-import-probe","--camera-reconnect-probe"]
         let recovery = "--xt5-output-recovery-probe"
-        let mixed = [[flag,"--xt5-unchanged-baseline-probe"], [flag,recovery], ["--xt5-unchanged-baseline-probe",recovery]]
-        for args in [["FujiStudio"]] + mixed + flags.map({ [flag,$0] }) + flags.map({ ["--xt5-unchanged-baseline-probe",$0] }) + flags.map({ [recovery,$0] }) {
+        let modes = [flag,"--xt5-unchanged-baseline-probe",recovery,"--xt5-output-quarantine-probe"]
+        let mixed = modes.enumerated().flatMap { index, first in modes.dropFirst(index + 1).map { [first,$0] } }
+        for args in [["FujiStudio"]] + mixed + modes.flatMap({ mode in flags.map { [mode,$0] } }) {
             let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
             let driver = BaselineProbeDriver()
             let transport = ImageCaptureTransport(driver: driver)
@@ -330,6 +331,22 @@ private actor BaselineLibrary: PhotoLibraryReading {
         #expect(report["rawUploadSucceeded"] as? Bool == false)
         #expect(report["sessionClosure"] as? String == "confirmed")
         #expect(await driver.wire.commands.allSatisfy { [0x1001,0x1015].contains($0.opcode) })
+    }
+    @Test func quarantineLaunchIsExplicitReadOnlyAndUsesSeparateEvidence() async throws {
+        let fixture = try BaselineFixture(); defer { fixture.remove() }
+        let driver = BaselineProbeDriver()
+        let library = BaselineLibrary(ids: ["reference"])
+        let runner = XT5RawBaselineLaunchRunner(transport: ImageCaptureTransport(driver: driver),directory: fixture.directory,
+            preparer: RAWBaselineSourcePreparer(reader: library),retainedSource: { _,_ in fixture.raw })
+        await runner.runIfRequested(arguments: ["--xt5-output-quarantine-probe"])
+        let report = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: fixture.directory.appendingPathComponent("xt5-output-quarantine-evidence.json"))) as? [String:Any])
+        #expect(report["readOnlyRecovery"] as? Bool == true)
+        #expect(report["quarantineRequested"] as? Bool == true)
+        #expect(report["rawUploadSucceeded"] as? Bool == false)
+        #expect(report["sessionClosure"] as? String == "confirmed")
+        #expect(await library.materializedIDs.isEmpty)
+        #expect(await driver.wire.commands.allSatisfy { [0x1001,0x1015].contains($0.opcode) })
+        #expect(!FileManager.default.fileExists(atPath: fixture.directory.appendingPathComponent("xt5-output-recovery-evidence.json").path))
     }
     @Test func retainedSelectionRejectsMissingAndAmbiguousRunsWithoutGuessingLatest() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

@@ -459,6 +459,7 @@ struct XT5RawBaselineEvidence: Sendable, Encodable {
     var probeFinished = false
     var unchangedConversion: XT5UnchangedConversionObservation?
     var readOnlyRecovery = false
+    var quarantineRequested = false
 }
 
 struct XT5RawBaselineFailure: Error, Sendable { let evidence: XT5RawBaselineEvidence }
@@ -499,13 +500,13 @@ actor XT5RawBaselineProbe {
                  onUpdate: @escaping @Sendable (XT5RawBaselineEvidence) async -> Void = { _ in }) async throws -> XT5RawBaselineEvidence {
         try await gate.withExclusiveAccess { try await self.captureExclusively(raw: raw, directory: directory, onUpdate: onUpdate) }
     }
-    func recoverExistingOutput(raw: PreparedRAW, directory: URL,
+    func recoverExistingOutput(raw: PreparedRAW, directory: URL, quarantine: Bool = false,
                                onUpdate: @escaping @Sendable (XT5RawBaselineEvidence) async -> Void = { _ in }) async throws -> XT5RawBaselineEvidence {
-        try await gate.withExclusiveAccess { try await self.recoverExclusively(raw: raw, directory: directory, onUpdate: onUpdate) }
+        try await gate.withExclusiveAccess { try await self.recoverExclusively(raw: raw, directory: directory, quarantine: quarantine, onUpdate: onUpdate) }
     }
-    private func recoverExclusively(raw: PreparedRAW, directory: URL,
+    private func recoverExclusively(raw: PreparedRAW, directory: URL, quarantine: Bool,
                                     onUpdate: @escaping @Sendable (XT5RawBaselineEvidence) async -> Void) async throws -> XT5RawBaselineEvidence {
-        var evidence = XT5RawBaselineEvidence(); evidence.readOnlyRecovery = true
+        var evidence = XT5RawBaselineEvidence(); evidence.readOnlyRecovery = true; evidence.quarantineRequested = quarantine
         do {
             guard raw.metadata.cameraModel == "X-T5" else { throw XT5RawBaselineIssue.unsupportedContext }
             guard try ResourceChecksum.sha256(raw.fileURL) == raw.sha256 else { throw ResourceError.checksumMismatch }
@@ -525,18 +526,19 @@ actor XT5RawBaselineProbe {
                 guard [UInt16(0x1005),0x1007,0x1008,0x1009].contains(opcode), data == nil else { throw PTPError.invalidParameters }
                 return try await self.send(opcode, parameters: parameters)
             }, pollWait: pollWait)
-            let result = await observer.run(raw: raw, directory: directory, canReadStorage: info.operations.contains(0x1005), recovery: true) { partial in
+            let result = await observer.run(raw: raw, directory: directory, canReadStorage: info.operations.contains(0x1005), recovery: true, quarantine: quarantine) { partial in
                 var report = beforeRecovery; report.unchangedConversion = partial; report.preexistingObjectCount = partial.existingHandleCount
                 await onUpdate(report)
             }
             evidence.unchangedConversion = result; evidence.preexistingObjectCount = result.existingHandleCount
-            guard result.jpegRetained && result.failure == nil else { throw XT5UnchangedConversionFailure(observation: result) }
+            guard (result.jpegRetained || (quarantine && result.quarantineCaptured)) && result.failure == nil else { throw XT5UnchangedConversionFailure(observation: result) }
         } catch { evidence.failure = Self.safeFailure(error) }
         await onUpdate(evidence)
         let close = Task.detached { try await self.closeSession() }
         do { try await close.value; evidence.sessionClosure = "confirmed" }
         catch { evidence.sessionClosure = "unconfirmed"; evidence.sessionClosureFailure = Self.safeFailure(error) }
-        evidence.probeFinished = evidence.failure == nil && evidence.unchangedConversion?.jpegRetained == true && evidence.sessionClosure == "confirmed"
+        let captured = evidence.unchangedConversion?.jpegRetained == true || (quarantine && evidence.unchangedConversion?.quarantineCaptured == true)
+        evidence.probeFinished = evidence.failure == nil && captured && evidence.sessionClosure == "confirmed"
         await onUpdate(evidence)
         guard evidence.probeFinished else { throw XT5RawBaselineFailure(evidence: evidence) }
         return evidence
@@ -701,10 +703,16 @@ struct XT5UnchangedConversionObservation: Sendable, Encodable {
     var objectBytes: UInt32?
     var objectWidth: UInt32?
     var objectHeight: UInt32?
+    var objectAssociationType: UInt16?
+    var objectMetadataValidated = false
+    var downloadedBytes: Int?
     var storageType: UInt16?
     var storageObservation = "not attempted"
     var jpeg: XT5JPEGObservation?
     var jpegRetained = false
+    var quarantineRequested = false
+    var quarantineCaptured = false
+    var captureOutcome = "notCaptured"
     var failure: String?
     let outputCleanup = "unconfirmed"
     let fineQualityValidated = false
@@ -722,6 +730,7 @@ private actor XT5UnchangedConversionProbe {
     private struct Manifest: Encodable {
         let sourceSHA256: String
         var readOnlyRecovery = false
+        var privateQuarantine = false
         var handleViews: [[UInt32]] = []
         var candidateHandle: UInt32?
         var object: XT5ObjectInfo?
@@ -729,16 +738,20 @@ private actor XT5UnchangedConversionProbe {
         var outputSHA256: String?
     }
     init(send: @escaping Send, pollWait: @escaping @Sendable () async throws -> Void) { self.send = send; self.pollWait = pollWait }
-    func run(raw: PreparedRAW, directory: URL, canReadStorage: Bool, recovery: Bool = false,
+    func run(raw: PreparedRAW, directory: URL, canReadStorage: Bool, recovery: Bool = false, quarantine: Bool = false,
              onUpdate: @escaping @Sendable (XT5UnchangedConversionObservation) async -> Void) async -> XT5UnchangedConversionObservation {
         self.onUpdate = onUpdate
         if recovery {
             observation.readOnlyRecovery = true; observation.triggerValue = nil
             observation.label = "existing candidate recovery; interrupted-operation provenance unconfirmed"
         }
+        if quarantine {
+            observation.quarantineRequested = true
+            observation.label = "unvalidated private quarantine; interrupted-operation provenance unconfirmed"
+        }
         do {
             try await withThrowingTaskGroup(of: Void.self) { group in
-                group.addTask { try await self.capture(raw: raw, directory: directory, canReadStorage: canReadStorage, recovery: recovery) }
+                group.addTask { try await self.capture(raw: raw, directory: directory, canReadStorage: canReadStorage, recovery: recovery, quarantine: quarantine) }
                 group.addTask { try await Task.sleep(for: .seconds(45)); throw XT5ConversionProbeIssue.outputTimeout }
                 defer { group.cancelAll() }
                 try await group.next()
@@ -746,8 +759,9 @@ private actor XT5UnchangedConversionProbe {
         } catch { observation.failure = XT5RawBaselineProbe.safeFailure(error) }
         return observation
     }
-    private func capture(raw: PreparedRAW, directory: URL, canReadStorage: Bool, recovery: Bool) async throws {
-        var manifest = Manifest(sourceSHA256: raw.sha256, readOnlyRecovery: recovery)
+    private func capture(raw: PreparedRAW, directory: URL, canReadStorage: Bool, recovery: Bool, quarantine: Bool) async throws {
+        guard !quarantine || recovery else { throw PTPError.invalidParameters }
+        var manifest = Manifest(sourceSHA256: raw.sha256, readOnlyRecovery: recovery, privateQuarantine: quarantine)
         defer { try? persist(manifest, directory: directory) }
         let before = try await handles()
         manifest.handleViews.append(before); try persist(manifest, directory: directory)
@@ -785,6 +799,7 @@ private actor XT5UnchangedConversionProbe {
         let info = try XT5ConversionCodec.objectInfo(bytes)
         manifest.object = info
         observation.objectBytes = info.byteCount; observation.objectWidth = info.width; observation.objectHeight = info.height
+        observation.objectAssociationType = info.associationType
         try persist(manifest, directory: directory)
         if canReadStorage {
             do {
@@ -796,26 +811,40 @@ private actor XT5UnchangedConversionProbe {
         } else { observation.storageObservation = "not advertised; ownership unconfirmed" }
         try persist(manifest, directory: directory)
         await onUpdate(observation)
-        guard info.format == 0x3801, info.associationType == 0, info.byteCount > 0,
-              info.byteCount <= PTPCodec.maximumDataBytes,
-              info.width == raw.metadata.recordedGeometry.width, info.height == raw.metadata.recordedGeometry.height else {
+        let exactGeometry = info.width == raw.metadata.recordedGeometry.width && info.height == raw.metadata.recordedGeometry.height
+        observation.objectMetadataValidated = info.format == 0x3801 && info.associationType == 0 && exactGeometry && info.byteCount > 0 && info.byteCount <= PTPCodec.maximumDataBytes
+        let noKnownGeometryMismatch = (info.width == 0 || info.width == raw.metadata.recordedGeometry.width) && (info.height == 0 || info.height == raw.metadata.recordedGeometry.height)
+        guard info.format == 0x3801, info.byteCount > 0, info.byteCount <= PTPCodec.maximumDataBytes,
+              quarantine ? noKnownGeometryMismatch : observation.objectMetadataValidated else {
             throw XT5ConversionProbeIssue.unexpectedObjectMetadata
         }
         // Revalidate the unique candidate immediately before and after download. Metadata identity
         // and size must stay stable; only then can this local diagnostic file be retained.
         guard try await handles() == [selected] else { throw XT5ConversionProbeIssue.ambiguousOutput }
         let jpeg = try await send(0x1009, [selected], nil).data
+        observation.downloadedBytes = jpeg.count
         guard jpeg.count == info.byteCount else { throw XT5ConversionProbeIssue.unexpectedObjectMetadata }
-        let decoded = try XT5ConversionCodec.jpegObservation(jpeg, expected: raw.metadata)
-        observation.jpeg = decoded
-        guard decoded.modelMatches, decoded.recordedGeometryMatches, decoded.orientationMatches else { throw XT5ConversionProbeIssue.unexpectedJPEGContext }
-        guard try await handles() == [selected],
-              try XT5ConversionCodec.objectInfo(await send(0x1008, [selected], nil).data) == info else { throw XT5ConversionProbeIssue.ambiguousOutput }
+        guard try await handles() == [selected] else { throw XT5ConversionProbeIssue.ambiguousOutput }
+        let afterInfo = try await send(0x1008, [selected], nil).data
+        try write(afterInfo, name: "output-object-info-after.bin", directory: directory, maximum: 4096)
+        // Preserve and compare the entire opaque ObjectInfo, not only interpreted fields.
+        guard afterInfo == bytes else { throw XT5ConversionProbeIssue.ambiguousOutput }
         try Task.checkCancellation()
         manifest.outputSHA256 = SHA256.hash(data: jpeg).map { String(format: "%02x", $0) }.joined()
         try persist(manifest, directory: directory)
+        if quarantine {
+            try write(jpeg, name: "quarantined-candidate.bin", directory: directory, maximum: PTPCodec.maximumDataBytes)
+            observation.quarantineCaptured = true; observation.captureOutcome = "privateQuarantine"
+            await onUpdate(observation)
+        }
+        let decoded = try XT5ConversionCodec.jpegObservation(jpeg, expected: raw.metadata)
+        observation.jpeg = decoded
+        guard decoded.modelMatches, decoded.recordedGeometryMatches, decoded.orientationMatches else { throw XT5ConversionProbeIssue.unexpectedJPEGContext }
+        try Task.checkCancellation()
+        if quarantine { return } // Never promote quarantined bytes, even when header checks match.
         try write(jpeg, name: recovery ? "recovered-candidate.JPG" : "unchanged-baseline.JPG", directory: directory, maximum: PTPCodec.maximumDataBytes)
         observation.jpegRetained = true
+        observation.captureOutcome = "validatedDiagnosticCandidate"
     }
     private func handles() async throws -> [UInt32] { try XT5ConversionCodec.objectHandles(await send(0x1007, [UInt32.max,0,0], nil).data) }
     private func persist(_ manifest: Manifest, directory: URL) throws {

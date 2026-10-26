@@ -93,10 +93,13 @@ final class XT5RawBaselineLaunchRunner {
         let baseline = arguments.contains("--xt5-raw-baseline-probe")
         let unchanged = arguments.contains("--xt5-unchanged-baseline-probe")
         let recovery = arguments.contains("--xt5-output-recovery-probe")
-        guard [baseline,unchanged,recovery].filter({ $0 }).count == 1, !otherFlags.contains(where: arguments.contains), !didRun else { return }
+        let quarantine = arguments.contains("--xt5-output-quarantine-probe")
+        let readOnly = recovery || quarantine
+        guard [baseline,unchanged,recovery,quarantine].filter({ $0 }).count == 1, !otherFlags.contains(where: arguments.contains), !didRun else { return }
         didRun = true
         if unchanged { prefix = "xt5-unchanged-baseline" }
         if recovery { prefix = "xt5-output-recovery" }
+        if quarantine { prefix = "xt5-output-quarantine" }
         var probeOwnsClose = false
         do {
             let output = try requestedDirectory ?? FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
@@ -105,11 +108,11 @@ final class XT5RawBaselineLaunchRunner {
             directory = output
             try Data("{\"state\":\"preparing original\"}".utf8).write(to: output.appendingPathComponent(prefix + "-evidence.json"), options: .atomic)
             saveLifecycle()
-            try writeStatus(recovery ? "Verifying retained original for read-only existing-output recovery" : unchanged ? "Verifying the retained original for unchanged-baseline trigger 0" : "Preparing one original using existing Photos access")
+            try writeStatus(readOnly ? "Verifying retained original for read-only existing-output observation" : unchanged ? "Verifying the retained original for unchanged-baseline trigger 0" : "Preparing one original using existing Photos access")
             let raw: PreparedRAW
             if !baseline { raw = try await retainedSource(output, privateRun) }
             else { raw = try await preparer.prepareOne(in: privateRun).raw }
-            try writeStatus(recovery ? "Connecting for read-only output recovery; no upload or trigger" : "Original retained privately; connecting for bounded RAW upload")
+            try writeStatus(readOnly ? "Connecting for read-only output observation; no upload or trigger" : "Original retained privately; connecting for bounded RAW upload")
             try await transport.connect()
             let native = transport
             let generation = try native.currentSession().generation
@@ -121,12 +124,12 @@ final class XT5RawBaselineLaunchRunner {
                 try await Self.close(native, expectedGeneration: generation)
             }, experiment: unchanged ? .unchangedTrigger0 : .baselineOnly)
             probeOwnsClose = true
-            if recovery {
-                _ = try await probe.recoverExistingOutput(raw: raw, directory: privateRun) { [weak self] report in await self?.save(report) }
+            if readOnly {
+                _ = try await probe.recoverExistingOutput(raw: raw, directory: privateRun, quarantine: quarantine) { [weak self] report in await self?.save(report) }
             } else {
                 _ = try await probe.capture(raw: raw, directory: privateRun) { [weak self] report in await self?.save(report) }
             }
-            let success = recovery ? "Existing candidate retained; native session closed; provenance and cleanup unconfirmed; no upload or trigger performed" : unchanged ? "Unchanged-baseline JPEG retained; native session closed; input/output cleanup unconfirmed; FINE and imported recipes unvalidated" : "Baseline probe complete; native session closed; upload buffer cleanup remains unconfirmed; conversion unvalidated"
+            let success = quarantine ? "Private quarantine captured; never promoted to validated output; native session closed; provenance and cleanup unconfirmed" : recovery ? "Existing candidate retained; native session closed; provenance and cleanup unconfirmed; no upload or trigger performed" : unchanged ? "Unchanged-baseline JPEG retained; native session closed; input/output cleanup unconfirmed; FINE and imported recipes unvalidated" : "Baseline probe complete; native session closed; upload buffer cleanup remains unconfirmed; conversion unvalidated"
             try writeStatus(artifactWriteFailed ? "Probe operation finished, but public evidence writing failed" : success)
         } catch let failure as XT5RawBaselineFailure {
             try? writeStatus("Baseline probe incomplete: \(failure.evidence.failure ?? failure.evidence.sessionClosureFailure ?? "unknown outcome"); native closure \(failure.evidence.sessionClosure); buffer cleanup unconfirmed")
@@ -153,7 +156,11 @@ final class XT5RawBaselineLaunchRunner {
         do {
             let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]; encoder.dateEncodingStrategy = .iso8601
             try encoder.encode(report).write(to: directory.appendingPathComponent(prefix + "-evidence.json"), options: .atomic)
-            try writeStatus("RAW upload accepted: \(report.rawUploadSucceeded); baseline bytes: \(report.baselineBytes ?? 0); native closure: \(report.sessionClosure); buffer cleanup unconfirmed")
+            if report.readOnlyRecovery {
+                try writeStatus("Read-only observation: \(report.unchangedConversion?.captureOutcome ?? "notCaptured"); native closure: \(report.sessionClosure); provenance and cleanup unconfirmed")
+            } else {
+                try writeStatus("RAW upload accepted: \(report.rawUploadSucceeded); baseline bytes: \(report.baselineBytes ?? 0); native closure: \(report.sessionClosure); buffer cleanup unconfirmed")
+            }
         } catch { artifactWriteFailed = true; status = "Evidence file write failed; native closure must still finish" }
         saveLifecycle()
     }

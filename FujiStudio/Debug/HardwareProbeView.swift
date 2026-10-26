@@ -302,7 +302,7 @@ final class XT5ProbeLaunchRunner {
         let descriptorRequested = arguments.contains("--xt5-read-only-probe")
         let directRequested = arguments.contains("--xt5-direct-values-probe")
         guard descriptorRequested != directRequested, !arguments.contains("--camera-reconnect-probe"),
-              !arguments.contains("--xt5-bank-import-probe"), !arguments.contains("--xt5-raw-baseline-probe"), !arguments.contains("--xt5-unchanged-baseline-probe"), !arguments.contains("--xt5-output-recovery-probe"), !didRun else { return }
+              !arguments.contains("--xt5-bank-import-probe"), !arguments.contains("--xt5-raw-baseline-probe"), !arguments.contains("--xt5-unchanged-baseline-probe"), !arguments.contains("--xt5-output-recovery-probe"), !arguments.contains("--xt5-output-quarantine-probe"), !didRun else { return }
         didRun = true
         if directRequested {
             evidenceFilename = "xt5-direct-values.json"
@@ -373,7 +373,7 @@ final class CameraReconnectLaunchRunner {
     }
     func runIfRequested(arguments: [String]) async {
         guard arguments.contains("--camera-reconnect-probe"), !arguments.contains("--xt5-read-only-probe"),
-              !arguments.contains("--xt5-direct-values-probe"), !arguments.contains("--xt5-bank-import-probe"), !arguments.contains("--xt5-raw-baseline-probe"), !arguments.contains("--xt5-unchanged-baseline-probe"), !arguments.contains("--xt5-output-recovery-probe"), !didRun else { return }
+              !arguments.contains("--xt5-direct-values-probe"), !arguments.contains("--xt5-bank-import-probe"), !arguments.contains("--xt5-raw-baseline-probe"), !arguments.contains("--xt5-unchanged-baseline-probe"), !arguments.contains("--xt5-output-recovery-probe"), !arguments.contains("--xt5-output-quarantine-probe"), !didRun else { return }
         didRun = true
         do {
             let output = try requestedDirectory ?? FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
@@ -437,7 +437,7 @@ final class XT5BankImportLaunchRunner {
         self.transport = transport; requestedDirectory = directory
     }
     func runIfRequested(arguments: [String]) async {
-        let otherFlags = ["--xt5-read-only-probe", "--xt5-direct-values-probe", "--camera-reconnect-probe", "--xt5-raw-baseline-probe", "--xt5-unchanged-baseline-probe", "--xt5-output-recovery-probe"]
+        let otherFlags = ["--xt5-read-only-probe", "--xt5-direct-values-probe", "--camera-reconnect-probe", "--xt5-raw-baseline-probe", "--xt5-unchanged-baseline-probe", "--xt5-output-recovery-probe", "--xt5-output-quarantine-probe"]
         guard arguments.contains("--xt5-bank-import-probe"), !otherFlags.contains(where: arguments.contains), !didRun else { return }
         didRun = true
         do {
