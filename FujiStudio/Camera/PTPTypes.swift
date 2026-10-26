@@ -1,0 +1,35 @@
+import Foundation
+
+struct PTPCommand: Sendable, Equatable {
+    let opcode: UInt16
+    let parameters: [UInt32]
+    let transactionID: UInt32
+}
+
+/// Payload is the data phase supplied by ImageCaptureCore, without a USB data-container header.
+struct PTPReply: Sendable, Equatable {
+    let opcode: UInt16
+    let parameters: [UInt32]
+    let transactionID: UInt32
+    let responseCode: UInt16
+    let data: Data
+}
+
+enum PTPError: Error, Sendable, Equatable {
+    case truncatedContainer
+    case oversizedContainer
+    case invalidContainerLength
+    case unexpectedContainerType(UInt16)
+    case invalidParameters
+    case invalidOpcode(UInt16)
+    case wrongTransaction(expected: UInt32, actual: UInt32)
+    case responseCode(UInt16)
+    case payloadTooLarge
+    case timeout
+    case notConnected
+    case busy
+    case sessionClosing
+    case authorizationDenied
+    case wrongMode(String)
+    case sessionFailure(String)
+}

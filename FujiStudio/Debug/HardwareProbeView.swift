@@ -8,6 +8,8 @@ import UIKit
 struct HardwareProbeView: View {
     @State private var model = HardwareProbeModel()
     @State private var assetID = ""
+    @State private var showingResults = false
+    @State private var cameraProbe = CameraProbeModel()
 
     var body: some View {
         List {
@@ -46,6 +48,21 @@ struct HardwareProbeView: View {
             Section("Observed results · local session only") {
                 Text(model.output).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
             }
+            Section("Gate 2 · USB PTP session prerequisite") {
+                Text("Set USB RAW CONV./BACKUP RESTORE on the X-T5 before connecting. Record the camera firmware from its screen.")
+                    .font(.footnote)
+                TextField("Observed camera firmware", text: $cameraProbe.firmware)
+                    .textInputAutocapitalization(.never)
+                Text(cameraProbe.status).font(.caption)
+                Button("Discover and open public USB PTP session") { cameraProbe.connect() }
+                    .disabled(cameraProbe.connecting || cameraProbe.sessionOpen)
+                Button("Read standard PTP device info (no setting writes)") { cameraProbe.readDeviceInfo() }
+                    .disabled(!cameraProbe.sessionOpen || cameraProbe.commandBusy)
+                Button("Close camera session") { cameraProbe.disconnect() }
+                Text("Session open is not conversion ready. If no camera is visible, check cable, power and USB mode; the public API cannot distinguish those causes.")
+                    .font(.footnote)
+                Text(cameraProbe.trace).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+            }
             Section("Eligible sources · \(model.sources.count)") {
                 ForEach(model.sources) { source in
                     Button(source.originalResources.raf.originalFilename) { model.describe(source.id) }
@@ -54,7 +71,28 @@ struct HardwareProbeView: View {
             }
         }
         .navigationTitle("Hardware probe")
-        .onDisappear { model.cancel() }
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button("Inspect") { model.inspect() }
+                    .disabled(model.busy || model.resources.isEmpty)
+                Button("Results") { showingResults = true }
+            }
+        }
+        .sheet(isPresented: $showingResults) {
+            NavigationStack {
+                ScrollView {
+                    Text(model.output)
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding()
+                }
+                .navigationTitle("Probe results")
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showingResults = false } } }
+            }
+        }
+        .onDisappear { model.cancel(); cameraProbe.disconnect() }
+
     }
 }
 
@@ -128,6 +166,72 @@ private final class HardwareProbeModel {
     }
 
     func cancel() { task?.cancel() }
+}
+
+@MainActor @Observable
+private final class CameraProbeModel {
+    var firmware = ""
+    var status = "Disconnected · physical Gate 2 pending"
+    var trace = "No physical camera trace recorded.\n"
+    var connecting = false
+    var sessionOpen = false
+    var commandBusy = false
+    private let transport = ImageCaptureTransport()
+    private var observation: Task<Void, Never>?
+    private var connection: Task<Void, Never>?
+    private var command: Task<Void, Never>?
+    private var nextTransaction: UInt32 = 1
+
+    func connect() {
+        if observation == nil {
+            observation = Task {
+                for await state in await transport.states() {
+                    sessionOpen = false
+                    switch state {
+                    case .disconnected: status = "Disconnected / no visible session"
+                    case .discovering: status = "Discovering (absence does not prove unplugged)"
+                    case .authorizationRequired: status = "ImageCaptureCore content/control authorization required"
+                    case .authorizationDenied: status = "ImageCaptureCore content/control authorization denied or restricted"
+                    case .opening: status = "Opening public PTP session"
+                    case .sessionOpen(let session):
+                        sessionOpen = true
+                        status = "Session open; conversion mode unverified · generation \(session.generation) · USB \(session.connection.usbVendorID):\(session.connection.usbProductID)"
+                    case .ready: status = "Higher service verified ready (not produced by this probe)"
+                    case .busy: status = "PTP command in flight"
+                    case .wrongMode(let reason): status = reason
+                    case .recoverableError(let error): status = "Session failed: \(error). Close/reconnect; if close is uncertain, unplug camera."
+                    }
+                    trace += "\(Date().formatted(.iso8601)) · \(status)\n"
+                }
+            }
+        }
+        connecting = true
+        trace += "iOS \(UIDevice.current.systemVersion); user-observed firmware: \(firmware.isEmpty ? "not recorded" : firmware)\n"
+        connection = Task {
+            defer { connecting = false }
+            do { try await transport.connect() }
+            catch { trace += "Connect outcome: \(error)\n" }
+        }
+    }
+    func readDeviceInfo() {
+        guard !commandBusy else { return }
+        let transaction = nextTransaction; nextTransaction += 1
+        commandBusy = true
+        command = Task {
+            defer { commandBusy = false }
+            do {
+                let reply = try await transport.execute(PTPCommand(opcode: 0x1001, parameters: [], transactionID: transaction), data: nil)
+                trace += "GetDeviceInfo: response \(String(reply.responseCode, radix: 16)), transaction \(reply.transactionID), payload \(reply.data.count) bytes. Firmware/model parsing and RAW mode verification are Task 3 prerequisites.\n"
+            } catch { trace += "Read-only PTP outcome: \(error)\n" }
+        }
+    }
+    func disconnect() {
+        connection?.cancel(); command?.cancel()
+        Task { await transport.disconnect() }
+        observation?.cancel(); observation = nil
+        sessionOpen = false; connecting = false
+        status = "Session invalidated; waiting for public close completion before reconnect"
+    }
 }
 
 private struct LimitedAccessButton: UIViewControllerRepresentable {
