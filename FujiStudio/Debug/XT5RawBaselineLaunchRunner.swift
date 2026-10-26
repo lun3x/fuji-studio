@@ -6,7 +6,7 @@ enum RAWBaselinePreparationIssue: Error, Sendable { case noCompatibleRAW }
 
 /// Diagnostic selection only. Existing Photos access is required; no grant request or library write.
 struct RAWBaselineSourcePreparer: Sendable {
-    struct Selection: Sendable { let source: PhotoSource; let raw: PreparedRAW }
+    struct Selection: Sendable { let source: PhotoSource; let raw: PreparedRAW; var candidatesExamined = 0 }
     private let reader: any PhotoLibraryReading
     private let maximumCandidates: Int
     private let prepare: @Sendable (LocalResource) throws -> PreparedRAW
@@ -30,32 +30,92 @@ struct RAWBaselineSourcePreparer: Sendable {
         if let fallback, let selected = try await candidate(fallback, directory: directory, requireReference: false).selected { return selected }
         throw RAWBaselinePreparationIssue.noCompatibleRAW
     }
-    private func candidate(_ source: PhotoSource, directory: URL, requireReference: Bool) async throws -> (selected: Selection?, compatible: Bool) {
+    /// Phase-M evidence: pairs only, no reference-aspect preference or standalone fallback.
+    func preparePaired(in directory: URL) async throws -> Selection {
+        var attempted = 0
+        for try await batch in await reader.sources() {
+            try Task.checkCancellation()
+            for source in batch where source.originalResources.jpeg != nil {
+                try Task.checkCancellation()
+                guard attempted < min(8, maximumCandidates) else { throw RAWBaselinePreparationIssue.noCompatibleRAW }
+                try Self.validatePair(source)
+                attempted += 1
+                if var selected = try await candidate(source, directory: directory, requireReference: false, requirePair: true).selected {
+                    selected.candidatesExamined = attempted
+                    return selected
+                }
+            }
+        }
+        try Task.checkCancellation()
+        throw RAWBaselinePreparationIssue.noCompatibleRAW
+    }
+    private static func validatePair(_ source: PhotoSource) throws {
+        guard let jpeg = source.originalResources.jpeg,
+              source.originalResources.raf.assetID == source.id, jpeg.assetID == source.id,
+              source.originalResources.raf.sourceRevision == source.resourceRevision,
+              jpeg.sourceRevision == source.resourceRevision,
+              try RawResourceSelector.select([jpeg, source.originalResources.raf]) == source.originalResources else {
+            throw ResourceError.resourceChanged
+        }
+    }
+    private func candidate(_ source: PhotoSource, directory: URL, requireReference: Bool, requirePair: Bool = false) async throws -> (selected: Selection?, compatible: Bool) {
         try Task.checkCancellation()
         let local = try await reader.materialize(source.originalResources.raf, progress: { _ in })
         defer { try? FileManager.default.removeItem(at: local.fileURL) }
+        try Task.checkCancellation()
+        if requirePair && local.token != source.originalResources.raf { throw ResourceError.resourceChanged }
         let parse = Task.detached { try prepare(local) }
         let raw: PreparedRAW
         do {
             raw = try await withTaskCancellationHandler { try await parse.value } onCancel: { parse.cancel() }
-        } catch ResourceError.incompatibleCamera { return (nil, false) }
-          catch ResourceError.invalidRAF { return (nil, false) }
+        } catch ResourceError.incompatibleCamera { try Task.checkCancellation(); return (nil, false) }
+          catch ResourceError.invalidRAF { try Task.checkCancellation(); return (nil, false) }
         try Task.checkCancellation()
+        if requirePair {
+            guard raw.fileURL == local.fileURL, raw.sourceID == source.id,
+                  raw.sourceRevision == source.resourceRevision, raw.sha256 == local.checksum else { throw ResourceError.resourceChanged }
+            let current = try await reader.source(id: source.id)
+            try Self.validatePair(current)
+            guard current.id == source.id, current.resourceRevision == source.resourceRevision,
+                  current.originalResources == source.originalResources else { throw ResourceError.resourceChanged }
+            try Task.checkCancellation()
+        }
         guard raw.metadata.cameraModel == "X-T5" else { return (nil, false) }
+
         if requireReference && raw.metadata.recordedGeometry != PixelSize(width: 7728, height: 5152) { return (nil, true) }
         let destination = directory.appendingPathComponent("source.RAF")
+        let manifestURL = directory.appendingPathComponent("source-manifest.json")
+        // Never replace prior retained evidence. Roll back only files this attempt creates.
+        guard !FileManager.default.fileExists(atPath: destination.path),
+              !FileManager.default.fileExists(atPath: manifestURL.path) else { throw ResourceError.resourceChanged }
+        var moved = false, complete = false
+        defer {
+            if moved && !complete {
+                try? FileManager.default.removeItem(at: destination)
+                try? FileManager.default.removeItem(at: manifestURL)
+            }
+        }
         try FileManager.default.moveItem(at: local.fileURL, to: destination)
+        moved = true
+
         try FileManager.default.setAttributes([.protectionKey: FileProtectionType.complete], ofItemAtPath: destination.path)
         let selected = PreparedRAW(fileURL: destination, sha256: raw.sha256, sourceID: raw.sourceID, sourceRevision: raw.sourceRevision, metadata: raw.metadata)
         let manifest = SourceManifest(source: source, raw: selected)
         let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]; encoder.dateEncodingStrategy = .iso8601
         try encoder.encode(manifest).write(to: directory.appendingPathComponent("source-manifest.json"), options: [.atomic, .completeFileProtection])
-        return (Selection(source: source, raw: selected), true)
+        try Task.checkCancellation()
+        complete = true
+        var confirmedSource = source
+        if requirePair { confirmedSource.compatibility = .xt5 }
+        return (Selection(source: confirmedSource, raw: selected), true)
     }
     private struct SourceManifest: Encodable {
         let sourceID: String, sourceRevision: String, originalFilename: String, resourceRole: String, sha256: String
         let captureDate: Date?
         let pairedJPEGAvailable: Bool
+        let jpegSourceID: String?, jpegSourceRevision: String?, jpegResourceRole: String?, jpegOriginalFilename: String?, jpegDiscriminator: String?
+        let rafDiscriminator: String
+        let compatibility = "xt5"
         let cameraModel: String
         let containerWidth: Int, containerHeight: Int, recordedWidth: Int, recordedHeight: Int
         let aspectWidth: Int, aspectHeight: Int, cropTop: Int, cropLeft: Int, orientation: Int
@@ -63,6 +123,10 @@ struct RAWBaselineSourcePreparer: Sendable {
             sourceID = raw.sourceID; sourceRevision = raw.sourceRevision; originalFilename = source.originalResources.raf.originalFilename
             resourceRole = source.originalResources.raf.role.rawValue; sha256 = raw.sha256; captureDate = source.captureDate
             pairedJPEGAvailable = source.originalResources.jpeg != nil
+            let jpeg = source.originalResources.jpeg
+            jpegSourceID = jpeg?.assetID; jpegSourceRevision = jpeg?.sourceRevision; jpegResourceRole = jpeg?.role.rawValue
+            jpegOriginalFilename = jpeg?.originalFilename; jpegDiscriminator = jpeg?.discriminator
+            rafDiscriminator = source.originalResources.raf.discriminator
             let m = raw.metadata; cameraModel = m.cameraModel; containerWidth = m.containerGeometry.width; containerHeight = m.containerGeometry.height
             recordedWidth = m.recordedGeometry.width; recordedHeight = m.recordedGeometry.height; aspectWidth = m.recordedAspect.width; aspectHeight = m.recordedAspect.height
             cropTop = m.cropTop; cropLeft = m.cropLeft; orientation = m.orientation
@@ -91,6 +155,7 @@ final class XT5RawBaselineLaunchRunner {
     func runIfRequested(arguments: [String]) async {
         let otherFlags = ["--xt5-read-only-probe", "--xt5-direct-values-probe", "--camera-reconnect-probe", "--xt5-bank-import-probe"]
         let baseline = arguments.contains("--xt5-raw-baseline-probe")
+        let paired = arguments.contains("--xt5-paired-baseline-probe")
         let unchanged = arguments.contains("--xt5-unchanged-baseline-probe")
         let recovery = arguments.contains("--xt5-output-recovery-probe")
         let quarantine = arguments.contains("--xt5-output-quarantine-probe")
@@ -98,8 +163,9 @@ final class XT5RawBaselineLaunchRunner {
         let film = arguments.contains("--xt5-film-only-probe")
         let batch = arguments.contains("--xt5-recipe-batch-probe")
         let readOnly = recovery || quarantine
-        guard [baseline,unchanged,recovery,quarantine,triggerOne,film,batch].filter({ $0 }).count == 1, !otherFlags.contains(where: arguments.contains), !didRun else { return }
+        guard [baseline,paired,unchanged,recovery,quarantine,triggerOne,film,batch].filter({ $0 }).count == 1, !otherFlags.contains(where: arguments.contains), !didRun else { return }
         didRun = true
+        if paired { prefix = "xt5-paired-baseline" }
         if unchanged { prefix = "xt5-unchanged-baseline" }
         if recovery { prefix = "xt5-output-recovery" }
         if quarantine { prefix = "xt5-output-quarantine" }
@@ -114,9 +180,19 @@ final class XT5RawBaselineLaunchRunner {
             directory = output
             try Data("{\"state\":\"preparing original\"}".utf8).write(to: output.appendingPathComponent(prefix + "-evidence.json"), options: .atomic)
             saveLifecycle()
-            try writeStatus(readOnly ? "Verifying retained original for read-only existing-output observation" : !baseline ? "Verifying retained original and required private diagnostic proof" : "Preparing one original using existing Photos access")
+            try writeStatus(readOnly ? "Verifying retained original for read-only existing-output observation" : !baseline && !paired ? "Verifying retained original and required private diagnostic proof" : "Preparing one original using existing Photos access")
             let raw: PreparedRAW
-            if !baseline { raw = try await retainedSource(output, privateRun) }
+            if paired {
+                let selection = try await preparer.preparePaired(in: privateRun)
+                raw = selection.raw
+                let sourceEvidence: [String: Any] = ["pairedOriginals": true,
+                    "pairedCandidatesExamined": selection.candidatesExamined, "maximumPairedCandidates": 8,
+                    "width": raw.metadata.recordedGeometry.width, "height": raw.metadata.recordedGeometry.height,
+                    "orientation": raw.metadata.orientation, "compatibility": "X-T5", "originalJPEGDownloaded": false]
+                try JSONSerialization.data(withJSONObject: sourceEvidence, options: [.prettyPrinted,.sortedKeys])
+                    .write(to: output.appendingPathComponent(prefix + "-source-evidence.json"), options: .atomic)
+            } else if !baseline { raw = try await retainedSource(output, privateRun) }
+
             else { raw = try await preparer.prepareOne(in: privateRun).raw }
             let cleanupTarget = triggerOne ? try await RetainedExactCleanupProof.prepare(documents: output, raw: raw, destination: privateRun) : nil
             let filmReference = (film || batch) ? try await RetainedFilmProbeReference.prepare(raw: raw, destination: privateRun) : nil
@@ -154,7 +230,13 @@ final class XT5RawBaselineLaunchRunner {
         } catch let failure as XT5RawBaselineFailure {
             try? writeStatus("Baseline probe incomplete: \(failure.evidence.failure ?? failure.evidence.sessionClosureFailure ?? "unknown outcome"); native closure \(failure.evidence.sessionClosure); buffer cleanup unconfirmed")
         } catch {
-            let message = error is RAWBaselinePreparationIssue ? "no compatible RAW found within diagnostic search limit" : XT5RawBaselineProbe.safeFailure(error)
+            let message: String
+            if error is RAWBaselinePreparationIssue {
+                message = paired ? "no compatible paired RAW found within diagnostic search limit" : "no compatible RAW found within diagnostic search limit"
+            } else if let resource = error as? ResourceError, resource == .resourceChanged {
+                message = "source asset, revision or original resource changed"
+            } else { message = XT5RawBaselineProbe.safeFailure(error) }
+
             status = "Baseline probe failed: \(message)"; try? writeStatus(status)
         }
         if !probeOwnsClose {

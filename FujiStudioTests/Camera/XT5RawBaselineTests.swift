@@ -278,7 +278,7 @@ private actor BaselineLibrary: PhotoLibraryReading {
         let flag = "--xt5-raw-baseline-probe"
         let flags = ["--xt5-read-only-probe","--xt5-direct-values-probe","--xt5-bank-import-probe","--camera-reconnect-probe"]
         let recovery = "--xt5-output-recovery-probe"
-        let modes = [flag,"--xt5-unchanged-baseline-probe",recovery,"--xt5-output-quarantine-probe","--xt5-trigger-one-probe","--xt5-film-only-probe","--xt5-recipe-batch-probe"]
+        let modes = [flag,"--xt5-unchanged-baseline-probe",recovery,"--xt5-output-quarantine-probe","--xt5-trigger-one-probe","--xt5-film-only-probe","--xt5-recipe-batch-probe","--xt5-paired-baseline-probe"]
         let mixed = modes.enumerated().flatMap { index, first in modes.dropFirst(index + 1).map { [first,$0] } }
         for args in [["FujiStudio"]] + mixed + modes.flatMap({ mode in flags.map { [mode,$0] } }) {
             let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -459,5 +459,172 @@ private actor BaselineLibrary: PhotoLibraryReading {
             } catch let error as PTPError { completion(.failure(error)) }
               catch { completion(.failure(.sessionFailure("synthetic failure"))) }
         }
+    }
+}
+
+struct XT5PairedBaselinePreparationTests {
+    @Test func pairedOnlySkipsStandaloneAndUsesEitherOriginalRoleAtAnyGeometry() async throws {
+        for reversed in [false,true] {
+            let fixture=try BaselineFixture(); defer { fixture.remove() }
+            try FileManager.default.removeItem(at:fixture.raw.fileURL)
+            let library=PairedBaselineLibrary(ids:["standalone","old","square","reference"], reversed:reversed)
+            let selected=try await RAWBaselineSourcePreparer(reader:library,prepare:Self.parse).preparePaired(in:fixture.directory)
+            #expect(selected.source.id == "square")
+            #expect(selected.source.compatibility == .xt5)
+            #expect(selected.raw.metadata.recordedGeometry == PixelSize(width:5000,height:5000))
+            #expect(selected.raw.metadata.orientation == 6)
+            #expect(await library.materialized == ["old","square"])
+            #expect(await library.maximumFiles == 1)
+            #expect(await library.authorizationRequests == 0)
+            let manifest=try #require(JSONSerialization.jsonObject(with:Data(contentsOf:fixture.directory.appendingPathComponent("source-manifest.json"))) as? [String:Any])
+            #expect(manifest["pairedJPEGAvailable"] as? Bool == true)
+            #expect(manifest["jpegResourceRole"] as? String == (reversed ? "alternateOriginal" : "primaryOriginal"))
+            #expect(manifest["resourceRole"] as? String == (reversed ? "primaryOriginal" : "alternateOriginal"))
+            #expect(manifest["jpegSourceID"] as? String == "square")
+            #expect(manifest["jpegSourceRevision"] as? String == "revision")
+        }
+    }
+    @Test func noPairAndEightPairBudgetNeverFallBackOrPrefetch() async throws {
+        for ids in [["standalone"],Array(repeating:"old",count:9)+["square"]] {
+            let fixture=try BaselineFixture(); defer { fixture.remove() }
+            try FileManager.default.removeItem(at:fixture.raw.fileURL)
+            let library=PairedBaselineLibrary(ids:ids)
+            await #expect(throws: RAWBaselinePreparationIssue.noCompatibleRAW) {
+                try await RAWBaselineSourcePreparer(reader:library,prepare:Self.parse).preparePaired(in:fixture.directory)
+            }
+            #expect(await library.materialized.count == (ids.count == 1 ? 0 : 8))
+            #expect(await library.remainingFiles == 0)
+            #expect(await library.authorizationRequests == 0)
+        }
+    }
+    @Test func materializedIdentityAndRevisionChangesFailAndRemoveOriginal() async throws {
+        for change in ["asset","revision","role","postRevision","parsedIdentity"] {
+            let fixture=try BaselineFixture(); defer { fixture.remove() }
+            try FileManager.default.removeItem(at:fixture.raw.fileURL)
+            let library=PairedBaselineLibrary(ids:["square"],change:change)
+            let preparer=RAWBaselineSourcePreparer(reader:library,prepare:{ local in
+                let parsed=try Self.parse(local)
+                return change == "parsedIdentity" ? PreparedRAW(fileURL:parsed.fileURL,sha256:parsed.sha256,sourceID:"different",sourceRevision:parsed.sourceRevision,metadata:parsed.metadata) : parsed
+            })
+            await #expect(throws: ResourceError.resourceChanged) { try await preparer.preparePaired(in:fixture.directory) }
+            #expect(await library.remainingFiles == 0)
+            #expect(try FileManager.default.contentsOfDirectory(atPath:fixture.directory.path).isEmpty)
+        }
+    }
+    @Test func cancellationAfterMaterializationRemovesPartialAndDoesNotContinue() async throws {
+        let fixture=try BaselineFixture(); defer { fixture.remove() }
+        try FileManager.default.removeItem(at:fixture.raw.fileURL)
+        let library=PairedBaselineLibrary(ids:["square","reference"],hold:true)
+        let task=Task { try await RAWBaselineSourcePreparer(reader:library,prepare:Self.parse).preparePaired(in:fixture.directory) }
+        for _ in 0..<1000 { if await library.waiting { break };try await Task.sleep(for:.milliseconds(1)) }
+        #expect(await library.waiting)
+        task.cancel();await library.finish()
+        await #expect(throws: CancellationError.self) { try await task.value }
+        #expect(await library.materialized == ["square"])
+        #expect(await library.remainingFiles == 0)
+        #expect(try FileManager.default.contentsOfDirectory(atPath:fixture.directory.path).isEmpty)
+    }
+    static func parse(_ local: LocalResource) throws -> PreparedRAW {
+        if local.token.assetID == "old" { throw ResourceError.incompatibleCamera("X-E3") }
+        let metadata=RAWMetadata(cameraModel:"X-T5",containerGeometry:.init(width:7872,height:5196),recordedGeometry:.init(width:5000,height:5000),recordedAspect:.init(width:1,height:1),cropTop:20,cropLeft:30,orientation:6)
+        return PreparedRAW(fileURL:local.fileURL,sha256:local.checksum,sourceID:local.token.assetID,sourceRevision:local.token.sourceRevision,metadata:metadata)
+    }
+}
+
+private actor PairedBaselineLibrary: PhotoLibraryReading {
+    let ids:[String],reversed:Bool,change:String,hold:Bool
+    var materialized:[String]=[],urls:[URL]=[]
+    var authorizationRequests=0,maximumFiles=0
+    var continuation:CheckedContinuation<Void,Never>?
+    var waiting:Bool { continuation != nil }
+    var remainingFiles:Int { urls.filter { FileManager.default.fileExists(atPath:$0.path) }.count }
+    init(ids:[String],reversed:Bool=false,change:String="",hold:Bool=false) { self.ids=ids;self.reversed=reversed;self.change=change;self.hold=hold }
+    func requestAccess()->LibraryAccess { authorizationRequests += 1;return .denied }
+    func sources()->AsyncThrowingStream<[PhotoSource],Error> { let values=ids.map { make($0) };return AsyncThrowingStream { $0.yield(values);$0.finish() } }
+    func source(id:SourceID) throws -> PhotoSource { make(id,revision:change == "postRevision" ? "new" : "revision") }
+    func resources(assetID:String)->[ResourceToken] { let pair=make(assetID).originalResources;return [pair.raf]+(pair.jpeg.map { [$0] } ?? []) }
+    func changes()->AsyncStream<LibraryChange> { AsyncStream { $0.finish() } }
+    func materialize(_ resource:ResourceToken,progress:@escaping @Sendable(Double)->Void) async throws -> LocalResource {
+        materialized.append(resource.assetID)
+        let url=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try Data([1,2,3]).write(to:url);urls.append(url);maximumFiles=max(maximumFiles,remainingFiles)
+        let checksum=try ResourceChecksum.sha256(url)
+        if hold { await withCheckedContinuation { continuation=$0 } }
+        let token=ResourceToken(assetID:change == "asset" ? "other" : resource.assetID,role:change == "role" ? .adjusted : resource.role,contentTypeIdentifier:resource.contentTypeIdentifier,format:resource.format,originalFilename:resource.originalFilename,discriminator:resource.discriminator,sourceRevision:change == "revision" ? "other" : resource.sourceRevision)
+        return LocalResource(token:token,fileURL:url,checksum:checksum)
+    }
+    func finish() { continuation?.resume();continuation=nil }
+    private func make(_ id:String,revision:String="revision")->PhotoSource {
+        let raf=PhotoResourceDescriptor(assetID:id,resourceType:reversed ? 1 : 4,contentTypeIdentifier:"com.fuji.raw-image",filename:"PRIVATE.RAF",revision:revision).token
+        let jpeg=PhotoResourceDescriptor(assetID:id,resourceType:reversed ? 4 : 1,contentTypeIdentifier:"public.jpeg",filename:"PRIVATE.JPG",revision:revision).token
+        let pair=try! RawResourceSelector.select(id == "standalone" ? [raf] : [jpeg,raf])
+        return PhotoSource(id:id,originalResources:pair,captureDate:nil,location:nil,resourceRevision:revision)
+    }
+}
+
+@MainActor struct XT5PairedBaselineLaunchTests {
+    @Test func pairCaptureUsesIndependentPrefixOpaqueProfileAndConfirmedClose() async throws {
+        let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at:directory) }
+        let old=directory.appendingPathComponent("xt5-raw-baseline-private")
+        try FileManager.default.createDirectory(at:old,withIntermediateDirectories:true)
+        try Data([42]).write(to:old.appendingPathComponent("preserved-proof"))
+        let driver=BaselineProbeDriver();driver.holdClose=true
+        let library=PairedBaselineLibrary(ids:["standalone","square"])
+        let runner=XT5RawBaselineLaunchRunner(transport:ImageCaptureTransport(driver:driver),directory:directory,
+            preparer:RAWBaselineSourcePreparer(reader:library,prepare:XT5PairedBaselinePreparationTests.parse))
+        let task=Task { await runner.runIfRequested(arguments:["--xt5-paired-baseline-probe"]) }
+        for _ in 0..<1000 { if driver.closeCompletion != nil { break };try await Task.sleep(for:.milliseconds(1)) }
+        #expect(driver.startCount == 1)
+        #expect(driver.closeCompletion != nil)
+        let partialData=try Data(contentsOf:directory.appendingPathComponent("xt5-paired-baseline-evidence.json"))
+        let partial=try #require(JSONSerialization.jsonObject(with:partialData) as? [String:Any])
+        #expect(partial["probeFinished"] as? Bool == false)
+        driver.finishClose();await task.value
+
+        let data=try Data(contentsOf:directory.appendingPathComponent("xt5-paired-baseline-evidence.json"))
+        let evidence=try #require(JSONSerialization.jsonObject(with:data) as? [String:Any])
+        #expect(evidence["probeFinished"] as? Bool == true)
+        #expect(evidence["sessionClosure"] as? String == "confirmed")
+        #expect(evidence["baselineBytes"] as? Int == 601)
+        #expect(evidence["width"] as? Int == 5000 && evidence["orientation"] as? Int == 6)
+        #expect(!String(decoding:data,as:UTF8.self).contains("PRIVATE"))
+        let sourceData=try Data(contentsOf:directory.appendingPathComponent("xt5-paired-baseline-source-evidence.json"))
+        let source=try #require(JSONSerialization.jsonObject(with:sourceData) as? [String:Any])
+        #expect(source["pairedCandidatesExamined"] as? Int == 1)
+        #expect(source["pairedOriginals"] as? Bool == true)
+        let runs=try FileManager.default.contentsOfDirectory(at:directory.appendingPathComponent("xt5-paired-baseline-private"),includingPropertiesForKeys:nil)
+        #expect(runs.count == 1)
+        for name in ["source.RAF","source-manifest.json","protocol-manifest.json","baseline.bin"] { #expect(FileManager.default.fileExists(atPath:runs[0].appendingPathComponent(name).path)) }
+        #expect(try FileManager.default.contentsOfDirectory(atPath:old.path) == ["preserved-proof"])
+        #expect(try Data(contentsOf:old.appendingPathComponent("preserved-proof")) == Data([42]))
+        #expect(await library.materialized == ["square"])
+        let commands=await driver.wire.commands
+        #expect(commands.filter { [0x900C,0x900D].contains($0.opcode) }.map(\.opcode) == [0x900C,0x900D])
+        #expect(commands.allSatisfy { ![0x100B,0x1016].contains($0.opcode) })
+    }
+    @Test func changedPairStopsBeforeCameraAndReportsSanitizedFailure() async throws {
+        let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at:directory) }
+        let driver=BaselineProbeDriver(),library=PairedBaselineLibrary(ids:["square"],change:"postRevision")
+        let runner=XT5RawBaselineLaunchRunner(transport:ImageCaptureTransport(driver:driver),directory:directory,
+            preparer:RAWBaselineSourcePreparer(reader:library,prepare:XT5PairedBaselinePreparationTests.parse))
+        await runner.runIfRequested(arguments:["--xt5-paired-baseline-probe"])
+        #expect(driver.startCount == 0)
+        #expect(await library.remainingFiles == 0)
+        #expect(runner.status.contains("source asset, revision or original resource changed"))
+        #expect(!runner.status.contains("PRIVATE"))
+    }
+    @Test func unavailablePairStopsBeforeConnectWithoutStandaloneFallback() async throws {
+        let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at:directory) }
+        let driver=BaselineProbeDriver(),library=PairedBaselineLibrary(ids:["standalone"])
+        let runner=XT5RawBaselineLaunchRunner(transport:ImageCaptureTransport(driver:driver),directory:directory,
+            preparer:RAWBaselineSourcePreparer(reader:library,prepare:XT5PairedBaselinePreparationTests.parse))
+        await runner.runIfRequested(arguments:["--xt5-paired-baseline-probe"])
+        #expect(driver.startCount == 0)
+        #expect(await library.materialized.isEmpty)
+        #expect(await library.authorizationRequests == 0)
+        #expect(runner.status.contains("no compatible paired RAW"))
     }
 }
