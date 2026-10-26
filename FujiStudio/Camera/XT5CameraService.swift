@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 /// Diagnostic value, not a conversion-ready CameraServing implementation.
 /// No private serial, bank names, opaque profile bytes or arbitrary error text are serialized.
@@ -426,5 +427,196 @@ actor XT5BankImporter {
             }
         }
         return XT5ProtocolProbe.safeError(error)
+    }
+}
+
+// MARK: - Authorized transient RAW upload / opaque baseline observation only
+
+enum XT5RawBaselineIssue: Error, Sendable { case unsupportedContext, nonemptyObjectView, missingCapability, invalidBaselineLength, artifactWriteFailed }
+
+struct XT5RawBaselineEvidence: Sendable, Encodable {
+    let schemaVersion = 1
+    let observedAt = Date()
+    var model: String?
+    var firmware: String?
+    var capability: String?
+    var rawBytes: Int?
+    var width: Int?
+    var height: Int?
+    var orientation: Int?
+    var preexistingObjectCount: Int?
+    var newObjectCount: Int?
+    var uploadInfoSucceeded = false
+    var rawUploadSucceeded = false
+    var baselineBytes: Int?
+    var objectMetadataCount = 0
+    var failure: String?
+    var observationFailure: String?
+    var sessionClosure = "not attempted"
+    var sessionClosureFailure: String?
+    let bufferCleanup = "unconfirmed"
+    let conversionValidated = false
+    var probeFinished = false
+}
+
+struct XT5RawBaselineFailure: Error, Sendable { let evidence: XT5RawBaselineEvidence }
+
+/// One original payload. Follows the pinned transient upload path only after a truly empty
+/// object view. Returned/new handles are observations, NEVER proof of ownership. No deletion API.
+actor XT5RawBaselineProbe {
+    private struct Manifest: Encodable {
+        struct ObjectCapture: Encodable {
+            let handle: UInt32
+            let phase: String
+            let byteCount: Int?
+            let file: String?
+            let failure: String?
+        }
+        let sourceSHA256: String
+        var beforeHandles: [UInt32]?
+        var afterHandles: [UInt32]?
+        var uploadInfoResponseParameters: [UInt32]?
+        var uploadResponseParameters: [UInt32]?
+        var objects: [ObjectCapture] = []
+    }
+    private let transport: any PTPTransport
+    private let validateSession: @Sendable () async throws -> Void
+    private let closeSession: @Sendable () async throws -> Void
+    private let gate: SerialCameraGate
+    private var transaction: UInt32 = 1
+    init(transport: any PTPTransport, validateSession: @escaping @Sendable () async throws -> Void,
+         closeSession: @escaping @Sendable () async throws -> Void, gate: SerialCameraGate = SerialCameraGate()) {
+        self.transport = transport; self.validateSession = validateSession; self.closeSession = closeSession; self.gate = gate
+    }
+    func capture(raw: PreparedRAW, directory: URL,
+                 onUpdate: @escaping @Sendable (XT5RawBaselineEvidence) async -> Void = { _ in }) async throws -> XT5RawBaselineEvidence {
+        try await gate.withExclusiveAccess { try await self.captureExclusively(raw: raw, directory: directory, onUpdate: onUpdate) }
+    }
+    private func captureExclusively(raw: PreparedRAW, directory: URL,
+                                    onUpdate: @Sendable (XT5RawBaselineEvidence) async -> Void) async throws -> XT5RawBaselineEvidence {
+        var evidence = XT5RawBaselineEvidence()
+        var manifest = Manifest(sourceSHA256: raw.sha256)
+        var uploadAttempted = false
+        var afterObserved = false
+        var canReadObjectInfo = false
+        do {
+            guard raw.metadata.cameraModel == "X-T5" else { throw XT5RawBaselineIssue.unsupportedContext }
+            let info = try XT5RecipeCodec.deviceInfo(await send(0x1001).data)
+            guard info.manufacturer == "FUJIFILM", info.model == "X-T5", info.firmware == "4.31" else { throw XT5RawBaselineIssue.unsupportedContext }
+            guard [UInt16(0x1015),0x1007,0x900C,0x900D].allSatisfy(info.operations.contains),
+                  [UInt16(0xD16E),0xD185,0xD186,0xD187].allSatisfy(info.properties.contains) else { throw XT5RawBaselineIssue.missingCapability }
+            canReadObjectInfo = info.operations.contains(0x1008)
+            guard try await send(0x1015, parameters: [0xD16E]).data == Data([6,0]) else { throw XT5RawBaselineIssue.unsupportedContext }
+            for code: UInt32 in [0xD186,0xD187] {
+                guard try XT5RecipeCodec.value(await send(0x1015, parameters: [code]).data, type: 0xffff).string == "X-T5_0200" else { throw XT5RawBaselineIssue.unsupportedContext }
+            }
+            evidence.model = "X-T5"; evidence.firmware = "4.31"; evidence.capability = "X-T5_0200"
+            evidence.width = raw.metadata.recordedGeometry.width; evidence.height = raw.metadata.recordedGeometry.height; evidence.orientation = raw.metadata.orientation
+            let before = try await enumerate(directory: directory, phase: "before")
+            manifest.beforeHandles = before; evidence.preexistingObjectCount = before.count
+            try persist(manifest, directory: directory)
+            if !before.isEmpty {
+                try await observeObjects(before, phase: "before", allowed: canReadObjectInfo, directory: directory, manifest: &manifest, evidence: &evidence)
+                throw XT5RawBaselineIssue.nonemptyObjectView
+            }
+            await onUpdate(evidence)
+            // Keep the only full original payload scoped to upload. No original/converted image
+            // download and no second upload payload can coexist with this data phase.
+            do {
+                let size = try raw.fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+                _ = try XT5ConversionCodec.uploadInfo(byteCount: size)
+                let payload = try Data(contentsOf: raw.fileURL, options: .mappedIfSafe)
+                guard payload.count == size else { throw ResourceError.checksumMismatch }
+                let hash = SHA256.hash(data: payload).map { String(format: "%02x", $0) }.joined()
+                guard hash == raw.sha256 else { throw ResourceError.checksumMismatch }
+                evidence.rawBytes = payload.count
+                let objectInfo = try XT5ConversionCodec.uploadInfo(byteCount: payload.count)
+                uploadAttempted = true
+                let infoReply = try await send(0x900C, parameters: [0,0,0], data: objectInfo)
+                manifest.uploadInfoResponseParameters = infoReply.parameters; evidence.uploadInfoSucceeded = true
+                try persist(manifest, directory: directory)
+                let uploadReply = try await send(0x900D, data: payload)
+                manifest.uploadResponseParameters = uploadReply.parameters; evidence.rawUploadSucceeded = true
+                try persist(manifest, directory: directory)
+            }
+            // Only a successful actual 900D permits the per-RAF working profile read.
+            let baseline = try await send(0x1015, parameters: [0xD185]).data
+            guard !baseline.isEmpty, baseline.count <= 65_536 else { throw XT5RawBaselineIssue.invalidBaselineLength }
+            try privateWrite(baseline, to: directory.appendingPathComponent("baseline.bin"))
+            evidence.baselineBytes = baseline.count
+            await onUpdate(evidence)
+            afterObserved = true
+            let after = try await enumerate(directory: directory, phase: "after")
+            manifest.afterHandles = after; evidence.newObjectCount = after.count // Before was proven empty.
+            try await observeObjects(after, phase: "after", allowed: canReadObjectInfo, directory: directory, manifest: &manifest, evidence: &evidence)
+        } catch { evidence.failure = Self.safeFailure(error) }
+
+        if uploadAttempted && !afterObserved {
+            // Read-only observation after a complete camera rejection; never retry upload or guess
+            // that a rejected/partially completed data phase created nothing.
+            do {
+                let after = try await enumerate(directory: directory, phase: "after")
+                manifest.afterHandles = after; evidence.newObjectCount = after.count
+                try await observeObjects(after, phase: "after", allowed: canReadObjectInfo, directory: directory, manifest: &manifest, evidence: &evidence)
+            } catch { evidence.observationFailure = Self.safeFailure(error) }
+        }
+        do { try persist(manifest, directory: directory) }
+        catch { evidence.failure = evidence.failure ?? Self.safeFailure(error) }
+        await onUpdate(evidence)
+        // Owner's closure checks against a replacement generation and awaits the native close or
+        // terminal removal, retaining quarantine on uncertainty. Parent cancellation cannot skip it.
+        let close = Task.detached { try await self.closeSession() }
+        do { try await close.value; evidence.sessionClosure = "confirmed" }
+        catch { evidence.sessionClosure = "unconfirmed"; evidence.sessionClosureFailure = Self.safeFailure(error) }
+        evidence.probeFinished = evidence.failure == nil && evidence.baselineBytes != nil && evidence.sessionClosure == "confirmed"
+        await onUpdate(evidence)
+        guard evidence.probeFinished else { throw XT5RawBaselineFailure(evidence: evidence) }
+        return evidence
+    }
+    private func enumerate(directory: URL, phase: String) async throws -> [UInt32] {
+        let bytes = try await send(0x1007, parameters: [UInt32.max,0,0]).data
+        if bytes.count <= 65_536 { try privateWrite(bytes, to: directory.appendingPathComponent("handles-\(phase).bin")) }
+        return try XT5ConversionCodec.objectHandles(bytes)
+    }
+    private func observeObjects(_ handles: [UInt32], phase: String, allowed: Bool, directory: URL,
+                                manifest: inout Manifest, evidence: inout XT5RawBaselineEvidence) async throws {
+        guard allowed else { return }
+        for (index, handle) in handles.prefix(8).enumerated() {
+            do {
+                let bytes = try await send(0x1008, parameters: [handle]).data
+                guard bytes.count <= 4096 else { throw XT5ProtocolError.oversized }
+                let file = "object-\(phase)-\(index).bin"
+                try privateWrite(bytes, to: directory.appendingPathComponent(file))
+                manifest.objects.append(.init(handle: handle, phase: phase, byteCount: bytes.count, file: file, failure: nil))
+                evidence.objectMetadataCount += 1
+            } catch PTPError.responseCode(let code) {
+                manifest.objects.append(.init(handle: handle, phase: phase, byteCount: nil, file: nil, failure: String(format: "PTP response 0x%04X", code)))
+            }
+        }
+        try persist(manifest, directory: directory)
+    }
+    private func send(_ opcode: UInt16, parameters: [UInt32] = [], data: Data? = nil) async throws -> PTPReply {
+        try Task.checkCancellation(); try await validateSession(); try Task.checkCancellation()
+        guard transaction < UInt32.max else { throw PTPError.invalidParameters }
+        let id = transaction; transaction += 1
+        let reply = try await transport.execute(PTPCommand(opcode: opcode, parameters: parameters, transactionID: id), data: data)
+        try await validateSession()
+        return reply
+    }
+    private func persist(_ manifest: Manifest, directory: URL) throws {
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted,.sortedKeys]
+        try privateWrite(encoder.encode(manifest), to: directory.appendingPathComponent("protocol-manifest.json"))
+    }
+    private func privateWrite(_ data: Data, to url: URL) throws {
+        do { try data.write(to: url, options: [.atomic,.completeFileProtection]) }
+        catch { throw XT5RawBaselineIssue.artifactWriteFailed }
+    }
+    static func safeFailure(_ error: any Error) -> String {
+        if let error = error as? XT5RawBaselineIssue { return String(describing: error) }
+        if let error = error as? ResourceError {
+            if error == .checksumMismatch { return "source checksum mismatch" }
+            return "source preparation failed"
+        }
+        return XT5BankImporter.safeFailure(error)
     }
 }
