@@ -292,26 +292,38 @@ final class XT5ProbeLaunchRunner {
     private let requestedDirectory: URL?
     private var didRun = false
     private var directory: URL?
+    private var evidenceFilename = "xt5-protocol-evidence.json"
+    private var statusFilename = "xt5-protocol-status.txt"
 
     init(transport: ImageCaptureTransport = ImageCaptureTransport(), directory: URL? = nil) {
         self.transport = transport; self.requestedDirectory = directory
     }
     func runIfRequested(arguments: [String]) async {
-        guard arguments.contains("--xt5-read-only-probe"), !arguments.contains("--camera-reconnect-probe"), !didRun else { return }
+        let descriptorRequested = arguments.contains("--xt5-read-only-probe")
+        let directRequested = arguments.contains("--xt5-direct-values-probe")
+        guard descriptorRequested != directRequested, !arguments.contains("--camera-reconnect-probe"), !didRun else { return }
         didRun = true
+        if directRequested {
+            evidenceFilename = "xt5-direct-values.json"
+            statusFilename = "xt5-direct-values-status.txt"
+        }
         do {
             let output = try requestedDirectory ?? FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
             try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
             directory = output
             // Replace previous evidence before connecting so a failed attempt cannot look successful.
-            try Data("{\"state\":\"awaiting device info\"}".utf8).write(to: output.appendingPathComponent("xt5-protocol-evidence.json"), options: .atomic)
+            try Data("{\"state\":\"awaiting device info\"}".utf8).write(to: output.appendingPathComponent(evidenceFilename), options: .atomic)
             try writeStatus("Connecting using normal public authorization")
             try await transport.connect()
             let probe = XT5ProtocolProbe(transport: transport)
-            let report = try await probe.readEvidence { [weak self] partial in
-                await self?.savePartial(partial)
+            let update: @Sendable (XT5ProtocolEvidence) async -> Void = { [weak self] partial in await self?.savePartial(partial) }
+            let report: XT5ProtocolEvidence
+            if directRequested {
+                report = try await probe.readDirectValues(onUpdate: update)
+            } else {
+                report = try await probe.readEvidence(onUpdate: update)
             }
-            try report.json().write(to: output.appendingPathComponent("xt5-protocol-evidence.json"), options: .atomic)
+            try report.json().write(to: output.appendingPathComponent(evidenceFilename), options: .atomic)
             try writeStatus("Read-only probe complete; conversion remains unvalidated")
         } catch {
             let outcome = XT5ProtocolProbe.safeError(error)
@@ -325,8 +337,8 @@ final class XT5ProbeLaunchRunner {
     private func savePartial(_ report: XT5ProtocolEvidence) {
         guard let directory else { return }
         do {
-            try report.json().write(to: directory.appendingPathComponent("xt5-protocol-evidence.json"), options: .atomic)
-            try writeStatus("Read-only probe in progress; \(report.properties.count) descriptors observed")
+            try report.json().write(to: directory.appendingPathComponent(evidenceFilename), options: .atomic)
+            try writeStatus("Read-only probe in progress; \(report.properties.count) property observations")
         } catch { status = "Unable to save partial evidence" }
         saveLifecycle()
     }
@@ -334,7 +346,7 @@ final class XT5ProbeLaunchRunner {
         status = message
         guard let directory else { return }
         let text = "\(Date().formatted(.iso8601))\niOS \(UIDevice.current.systemVersion)\n\(message)\nNo conversion or seven-bank support claimed.\n"
-        try text.write(to: directory.appendingPathComponent("xt5-protocol-status.txt"), atomically: true, encoding: .utf8)
+        try text.write(to: directory.appendingPathComponent(statusFilename), atomically: true, encoding: .utf8)
     }
     private func saveLifecycle() {
         guard let directory else { return }
@@ -359,7 +371,8 @@ final class CameraReconnectLaunchRunner {
         self.transport = transport; requestedDirectory = directory
     }
     func runIfRequested(arguments: [String]) async {
-        guard arguments.contains("--camera-reconnect-probe"), !arguments.contains("--xt5-read-only-probe"), !didRun else { return }
+        guard arguments.contains("--camera-reconnect-probe"), !arguments.contains("--xt5-read-only-probe"),
+              !arguments.contains("--xt5-direct-values-probe"), !didRun else { return }
         didRun = true
         do {
             let output = try requestedDirectory ?? FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)

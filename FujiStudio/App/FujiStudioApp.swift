@@ -13,7 +13,7 @@ struct FujiStudioApp: App {
                     Text("Fuji Studio").accessibilityIdentifier("fujiStudioTitle")
                     #if DEBUG
                     NavigationLink("Hardware probe") { HardwareProbeView() }
-                    if ProcessInfo.processInfo.arguments.contains("--xt5-read-only-probe") {
+                    if ProcessInfo.processInfo.arguments.contains("--xt5-read-only-probe") || ProcessInfo.processInfo.arguments.contains("--xt5-direct-values-probe") {
                         Text(protocolProbe.status).font(.caption)
                     }
                     if ProcessInfo.processInfo.arguments.contains("--camera-reconnect-probe") {

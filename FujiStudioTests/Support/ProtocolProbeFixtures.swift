@@ -12,9 +12,9 @@ enum ProtocolProbeFixtures {
         var result = Data([UInt8(values.count), 0, 0, 0])
         values.forEach { result.append(word($0)) }; return result
     }
-    static func deviceInfo(model: String = "X-T5", properties: [UInt16] = [0xD16E, 0xD185, 0xD18C, 0xD18D]) -> Data {
+    static func deviceInfo(model: String = "X-T5", properties: [UInt16] = [0xD16E, 0xD185, 0xD18C, 0xD18D], operations: [UInt16] = [0x1001, 0x1014, 0x1015]) -> Data {
         var result = Data([100, 0, 14, 0, 0, 0, 100, 0, 0, 0, 0])
-        result.append(array([0x1001, 0x1014, 0x1015]))
+        result.append(array(operations))
         result.append(array([])); result.append(array(properties))
         result.append(array([])); result.append(array([0x3801]))
         ["FUJIFILM", model, "4.20", "PRIVATE-SERIAL"].forEach { result.append(string($0)) }
