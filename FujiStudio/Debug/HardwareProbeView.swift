@@ -301,7 +301,8 @@ final class XT5ProbeLaunchRunner {
     func runIfRequested(arguments: [String]) async {
         let descriptorRequested = arguments.contains("--xt5-read-only-probe")
         let directRequested = arguments.contains("--xt5-direct-values-probe")
-        guard descriptorRequested != directRequested, !arguments.contains("--camera-reconnect-probe"), !didRun else { return }
+        guard descriptorRequested != directRequested, !arguments.contains("--camera-reconnect-probe"),
+              !arguments.contains("--xt5-bank-import-probe"), !didRun else { return }
         didRun = true
         if directRequested {
             evidenceFilename = "xt5-direct-values.json"
@@ -372,7 +373,7 @@ final class CameraReconnectLaunchRunner {
     }
     func runIfRequested(arguments: [String]) async {
         guard arguments.contains("--camera-reconnect-probe"), !arguments.contains("--xt5-read-only-probe"),
-              !arguments.contains("--xt5-direct-values-probe"), !didRun else { return }
+              !arguments.contains("--xt5-direct-values-probe"), !arguments.contains("--xt5-bank-import-probe"), !didRun else { return }
         didRun = true
         do {
             let output = try requestedDirectory ?? FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
@@ -407,6 +408,86 @@ final class CameraReconnectLaunchRunner {
         if steps.count > 16 { steps.removeFirst(steps.count - 16) }
         guard let directory else { return }
         try steps.joined(separator: "\n").write(to: directory.appendingPathComponent("camera-reconnect-status.txt"), atomically: true, encoding: .utf8)
+    }
+    private func saveLifecycle() {
+        guard let directory else { return }
+        let text = "Public lifecycle:\n" + transport.lifecycleDiagnosticMessages().joined(separator: "\n")
+            + "\nGetDeviceInfo headers (payload omitted):\n" + transport.ptpDiagnosticMessages().joined(separator: "\n")
+        try? text.write(to: directory.appendingPathComponent("camera-diagnostics.txt"), atomically: true, encoding: .utf8)
+    }
+}
+
+/// Explicit diagnostic import. This runner exclusively owns its transport/lifecycle: connect once,
+/// await the entire import and restoration, then disconnect. No independently reconnecting path.
+@MainActor @Observable
+final class XT5BankImportLaunchRunner {
+    var status = "Bank import probe has not run"
+    private let transport: ImageCaptureTransport
+    private let requestedDirectory: URL?
+    private var directory: URL?
+    private var didRun = false
+    private var artifactWriteFailed = false
+
+    private struct PrivateCapture: Encodable {
+        let complete: Bool
+        let snapshots: [RecipeSnapshot]
+        let verificationSnapshots: [RecipeSnapshot]
+    }
+    init(transport: ImageCaptureTransport = ImageCaptureTransport(), directory: URL? = nil) {
+        self.transport = transport; requestedDirectory = directory
+    }
+    func runIfRequested(arguments: [String]) async {
+        let otherFlags = ["--xt5-read-only-probe", "--xt5-direct-values-probe", "--camera-reconnect-probe"]
+        guard arguments.contains("--xt5-bank-import-probe"), !otherFlags.contains(where: arguments.contains), !didRun else { return }
+        didRun = true
+        do {
+            let output = try requestedDirectory ?? FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+            try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+            directory = output
+            let empty = Data("{\"state\":\"awaiting camera session\"}".utf8)
+            try empty.write(to: output.appendingPathComponent("xt5-bank-import-evidence.json"), options: .atomic)
+            try empty.write(to: output.appendingPathComponent("xt5-bank-import-private.json"), options: [.atomic, .completeFileProtection])
+            try writeStatus("Connecting for selector-only seven-bank import")
+            try await transport.connect()
+            let native = transport
+            let generation = try native.currentSession().generation
+            let importer = XT5BankImporter(transport: native, sessionGeneration: generation, validateSession: {
+                let current = try await native.currentSession()
+                guard current.generation == generation else { throw XT5BankImportIssue.sessionChanged }
+            })
+            _ = try await importer.importRecipesVerified { [weak self] update in await self?.capture(update) }
+            if artifactWriteFailed {
+                try writeStatus("Import and restoration finished, but evidence file writing failed")
+            } else {
+                try writeStatus("Seven banks read twice; contents matched; original selector restored and verified. Rendering remains unavailable.")
+            }
+        } catch let failure as XT5BankImportFailure {
+            let primary = failure.evidence.failure ?? "import not completed"
+            let restore = failure.evidence.restorationFailure.map { "; \($0)" } ?? ""
+            try? writeStatus("Bank import failed: \(primary). Selector restoration: \(failure.evidence.restoration.rawValue)\(restore)")
+        } catch {
+            status = "Bank probe failed: \(XT5BankImporter.safeFailure(error))"
+            try? writeStatus(status)
+        }
+        await transport.disconnect()
+        saveLifecycle()
+    }
+    private func capture(_ update: XT5BankImportUpdate) {
+        guard let directory else { return }
+        do {
+            let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]; encoder.dateEncodingStrategy = .iso8601
+            try encoder.encode(update.evidence).write(to: directory.appendingPathComponent("xt5-bank-import-evidence.json"), options: .atomic)
+            try encoder.encode(PrivateCapture(complete: update.evidence.complete, snapshots: update.snapshots, verificationSnapshots: update.verificationSnapshots))
+                .write(to: directory.appendingPathComponent("xt5-bank-import-private.json"), options: [.atomic, .completeFileProtection])
+            try writeStatus("Import in progress: first scan \(update.evidence.beforeSlots.count)/7, repeat scan \(update.evidence.afterSlots.count)/7; restoration \(update.evidence.restoration.rawValue)")
+        } catch { artifactWriteFailed = true; status = "Evidence file writing failed; restoration must still finish" }
+        saveLifecycle()
+    }
+    private func writeStatus(_ message: String) throws {
+        status = message
+        guard let directory else { return }
+        let text = "\(Date().formatted(.iso8601))\niOS \(UIDevice.current.systemVersion)\n\(message)\nPrivate names/settings exist only in xt5-bank-import-private.json; do not commit that file.\n"
+        try text.write(to: directory.appendingPathComponent("xt5-bank-import-status.txt"), atomically: true, encoding: .utf8)
     }
     private func saveLifecycle() {
         guard let directory else { return }

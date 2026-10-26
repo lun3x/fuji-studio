@@ -66,3 +66,41 @@ struct XT5RecipeCodecTests {
         #expect(throws: XT5ProtocolError.oversized) { try XT5RecipeCodec.value(Data([255,255,255,255]), type: 0x4004) }
     }
 }
+
+struct XT5ImportedRecipeTests {
+    private let context = RecipeCameraContext(model: "X-T5", firmware: "4.31", capability: "X-T5_0200", sessionIdentity: UUID(), sessionGeneration: 7)
+    @Test func snapshotPreservesAllUnknownBytesAndRejectsUnvalidatedRendering() throws {
+        let snapshot = try XT5RecipeCodec.recipe(slot: 3, nameData: ProtocolProbeFixtures.string("Café"), properties: BankImportFixtures.properties, context: context, importedAt: Date())
+        #expect(snapshot.slot == 3)
+        #expect(snapshot.name == "Café")
+        #expect(snapshot.importedSettings.count == 23)
+        #expect(snapshot.importedSettings.first { $0.code == 0xD18E }?.raw == Data([7,0]))
+        #expect(snapshot.renderingIssues.contains(.unmappedProperty(0xD18E)))
+        #expect(snapshot.renderingIssues.contains(.unsupportedValue(0xD195))) // Actual observed 7 is outside pinned table.
+        #expect(snapshot.renderingIssues.contains(.conversionProfileUnvalidated))
+        #expect(throws: (any Error).self) { try snapshot.requireRenderable() }
+    }
+    @Test func settingsDigestExcludesNamesSlotsDatesIDsAndIncludesUnknownFields() throws {
+        let one = try XT5RecipeCodec.recipe(slot: 1, nameData: ProtocolProbeFixtures.string("One"), properties: BankImportFixtures.properties, context: context, importedAt: Date(timeIntervalSince1970: 1))
+        let two = try XT5RecipeCodec.recipe(slot: 7, nameData: ProtocolProbeFixtures.string("Two"), properties: BankImportFixtures.properties, context: context, importedAt: Date(timeIntervalSince1970: 2))
+        #expect(one.id != two.id)
+        #expect(one.settingsDigest == two.settingsDigest)
+        var changed = BankImportFixtures.properties; changed[0xD1A4] = Data([2,0])
+        let three = try XT5RecipeCodec.recipe(slot: 1, nameData: ProtocolProbeFixtures.string("One"), properties: changed, context: context, importedAt: Date())
+        #expect(one.settingsDigest != three.settingsDigest)
+    }
+    @Test func unknownFilmSimulationIsPreservedAndUnsupportedInsteadOfApproximated() throws {
+        var values = BankImportFixtures.properties; values[0xD192] = Data([255,127])
+        let snapshot = try XT5RecipeCodec.recipe(slot: 1, nameData: ProtocolProbeFixtures.string("Synthetic"), properties: values, context: context, importedAt: Date())
+        #expect(snapshot.renderingIssues.contains(.unsupportedValue(0xD192)))
+        #expect(snapshot.importedSettings.first { $0.code == 0xD192 }?.raw == Data([255,127]))
+    }
+    @Test func incompleteMalformedOrExtraFieldsNeverBecomeImportedRecipes() {
+        var missing = BankImportFixtures.properties; missing[0xD1A4] = nil
+        var malformed = BankImportFixtures.properties; malformed[0xD19A] = Data([0])
+        var extra = BankImportFixtures.properties; extra[0xD1A5] = Data([0,0])
+        for values in [missing, malformed, extra] {
+            #expect(throws: (any Error).self) { try XT5RecipeCodec.recipe(slot: 1, nameData: Data([0]), properties: values, context: context, importedAt: Date()) }
+        }
+    }
+}

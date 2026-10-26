@@ -43,6 +43,13 @@ import ImageCaptureCore
         return stream
     }
 
+    /// Read-only integration boundary. Lifecycle owners must still serialize reconnect with whole
+    /// camera operations; this snapshot is not an atomic expected-generation execution primitive.
+    func currentSession() throws -> CameraSession {
+        guard let session, !closing else { throw PTPError.notConnected }
+        return session
+    }
+
     func connect() async throws {
         try Task.checkCancellation()
         guard !closing else { throw PTPError.sessionClosing }

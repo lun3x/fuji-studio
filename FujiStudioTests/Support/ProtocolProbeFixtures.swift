@@ -12,12 +12,12 @@ enum ProtocolProbeFixtures {
         var result = Data([UInt8(values.count), 0, 0, 0])
         values.forEach { result.append(word($0)) }; return result
     }
-    static func deviceInfo(model: String = "X-T5", properties: [UInt16] = [0xD16E, 0xD185, 0xD18C, 0xD18D], operations: [UInt16] = [0x1001, 0x1014, 0x1015]) -> Data {
+    static func deviceInfo(model: String = "X-T5", properties: [UInt16] = [0xD16E, 0xD185, 0xD18C, 0xD18D], operations: [UInt16] = [0x1001, 0x1014, 0x1015], firmware: String = "4.20") -> Data {
         var result = Data([100, 0, 14, 0, 0, 0, 100, 0, 0, 0, 0])
         result.append(array(operations))
         result.append(array([])); result.append(array(properties))
         result.append(array([])); result.append(array([0x3801]))
-        ["FUJIFILM", model, "4.20", "PRIVATE-SERIAL"].forEach { result.append(string($0)) }
+        ["FUJIFILM", model, firmware, "PRIVATE-SERIAL"].forEach { result.append(string($0)) }
         return result
     }
     static let modeDescriptor = Data([0x6e, 0xd1, 4, 0, 0, 5, 0, 6, 0, 2, 3, 0, 5, 0, 6, 0, 8, 0])

@@ -224,3 +224,207 @@ actor XT5ProtocolProbe {
         return "failure (details redacted)"
     }
 }
+
+// MARK: - Controlled seven-bank import; conversion remains unsupported
+
+enum XT5BankImportIssue: Error, Sendable, Equatable {
+    case sessionChanged, unsupportedContext, missingProperties, invalidSelector
+    case selectorMismatch, bankChanged(Int), originalBankChanged, restorationTimeout
+}
+
+enum XT5SelectorRestoration: String, Sendable, Codable { case notNeeded, pending, verified, unconfirmed }
+
+struct XT5BankImportEvidence: Sendable, Encodable {
+    struct Comparison: Sendable, Encodable {
+        let slot: Int
+        let namesMatch: Bool
+        let settingsMatch: Bool
+    }
+    let schemaVersion = 1
+    let observedAt = Date()
+    var model: String?
+    var firmware: String?
+    var capability: String?
+    var originalSelector: Int?
+    var restoredSelector: Int?
+    var beforeSlots: [Int] = []
+    var afterSlots: [Int] = []
+    var comparisons: [Comparison] = []
+    var restoration: XT5SelectorRestoration = .notNeeded
+    var failure: String?
+    var restorationFailure: String?
+    var complete = false
+    let conversionValidated = false
+    let settingsPerBank = 23
+    // No names, identifiers, hashes, or raw property values in public evidence.
+}
+
+struct XT5BankImportUpdate: Sendable {
+    let evidence: XT5BankImportEvidence
+    let snapshots: [RecipeSnapshot]
+    let verificationSnapshots: [RecipeSnapshot]
+}
+
+struct XT5BankImportResult: Sendable {
+    let evidence: XT5BankImportEvidence
+    let recipes: [RecipeSnapshot]
+}
+
+struct XT5BankImportFailure: Error, Sendable {
+    let evidence: XT5BankImportEvidence
+}
+
+/// Restricted to the actually observed X-T5 4.31 / _0200 protocol context. This importer owns no
+/// connection/retry policy. The required validator binds every command to the original live session.
+actor XT5BankImporter {
+    private let transport: any PTPTransport
+    private let sessionGeneration: UInt64
+    private let sessionIdentity = UUID()
+    private let validateSession: @Sendable () async throws -> Void
+    private let settle: @Sendable (Duration) async throws -> Void
+    private let cleanupTimeout: Duration
+    private let gate: SerialCameraGate
+    private var transaction: UInt32 = 1
+
+    init(transport: any PTPTransport, sessionGeneration: UInt64,
+         validateSession: @escaping @Sendable () async throws -> Void,
+         settle: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
+         cleanupTimeout: Duration = .seconds(10),
+         gate: SerialCameraGate = SerialCameraGate()) {
+        self.transport = transport; self.sessionGeneration = sessionGeneration
+        self.validateSession = validateSession; self.settle = settle; self.gate = gate
+        self.cleanupTimeout = cleanupTimeout
+    }
+
+    func importRecipesVerified(onUpdate: @escaping @Sendable (XT5BankImportUpdate) async -> Void = { _ in }) async throws -> XT5BankImportResult {
+        try await gate.withExclusiveAccess { try await self.importExclusively(onUpdate: onUpdate) }
+    }
+
+    private func importExclusively(onUpdate: @Sendable (XT5BankImportUpdate) async -> Void) async throws -> XT5BankImportResult {
+        var evidence = XT5BankImportEvidence()
+        var snapshots: [RecipeSnapshot] = []
+        var verificationSnapshots: [RecipeSnapshot] = []
+        var initial: RecipeSnapshot?
+        var context: RecipeCameraContext?
+        var selectorAttempted = false
+        await onUpdate(XT5BankImportUpdate(evidence: evidence, snapshots: snapshots, verificationSnapshots: verificationSnapshots))
+        do {
+            let info = try XT5RecipeCodec.deviceInfo(await send(0x1001))
+            guard info.manufacturer == "FUJIFILM", info.model == "X-T5", info.firmware == "4.31" else { throw XT5BankImportIssue.unsupportedContext }
+            let properties: [UInt16] = [0xD16E,0xD186,0xD187,0xD18C,0xD18D] + Array(0xD18E...0xD1A4)
+            guard [UInt16(0x1015),0x1016].allSatisfy(info.operations.contains), properties.allSatisfy(info.properties.contains) else { throw XT5BankImportIssue.missingProperties }
+            guard try await send(0x1015, property: 0xD16E) == Data([6,0]) else { throw XT5BankImportIssue.unsupportedContext }
+            for code: UInt16 in [0xD186,0xD187] {
+                let key = try XT5RecipeCodec.value(await send(0x1015, property: code), type: 0xffff).string
+                guard key == "X-T5_0200" else { throw XT5BankImportIssue.unsupportedContext }
+            }
+            let current = try await selectedSlot()
+            let camera = RecipeCameraContext(model: "X-T5", firmware: "4.31", capability: "X-T5_0200", sessionIdentity: sessionIdentity, sessionGeneration: sessionGeneration)
+            context = camera
+            evidence.model = camera.model; evidence.firmware = camera.firmware; evidence.capability = camera.capability
+            evidence.originalSelector = current
+            initial = try await readBank(current, context: camera)
+            for pass in 1...2 {
+                for slot in 1...7 {
+                    try Task.checkCancellation()
+                    selectorAttempted = true // A failed reply cannot prove that a write had no effect.
+                    evidence.restoration = .pending
+                    try await select(slot)
+                    let bank = try await readBank(slot, context: camera)
+                    if pass == 1 {
+                        snapshots.append(bank); evidence.beforeSlots.append(slot)
+                        if slot == current, let initial, !sameContents(initial, bank) { throw XT5BankImportIssue.bankChanged(slot) }
+                    } else {
+                        verificationSnapshots.append(bank)
+                        let before = snapshots[slot - 1]
+                        let comparison = XT5BankImportEvidence.Comparison(slot: slot, namesMatch: before.importedName == bank.importedName,
+                                                                          settingsMatch: before.importedSettings == bank.importedSettings)
+                        evidence.afterSlots.append(slot); evidence.comparisons.append(comparison)
+                        guard comparison.namesMatch && comparison.settingsMatch else { throw XT5BankImportIssue.bankChanged(slot) }
+                    }
+                    await onUpdate(XT5BankImportUpdate(evidence: evidence, snapshots: snapshots, verificationSnapshots: verificationSnapshots))
+                }
+            }
+            try Task.checkCancellation()
+        } catch { evidence.failure = Self.safeFailure(error) }
+
+        if selectorAttempted, let initial, let context {
+            // A cancelled parent cannot cancel this one bounded cleanup attempt. The operation gate
+            // is held until cleanup returns. No reconnect; validator rejects a different/closed run.
+            let cleanup = Task.detached { try await self.restoreBounded(initial, context: context) }
+            do {
+                try await cleanup.value
+                evidence.restoration = .verified; evidence.restoredSelector = initial.slot
+            } catch {
+                evidence.restoration = .unconfirmed; evidence.restorationFailure = Self.safeFailure(error)
+            }
+        }
+        if evidence.failure == nil && Task.isCancelled { evidence.failure = "cancelled" }
+        evidence.complete = evidence.failure == nil && evidence.restoration == .verified && evidence.comparisons.count == 7
+        await onUpdate(XT5BankImportUpdate(evidence: evidence, snapshots: snapshots, verificationSnapshots: verificationSnapshots))
+        guard evidence.complete else { throw XT5BankImportFailure(evidence: evidence) }
+        return XT5BankImportResult(evidence: evidence, recipes: snapshots)
+    }
+
+    private func restoreBounded(_ initial: RecipeSnapshot, context: RecipeCameraContext) async throws {
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask {
+                try await self.select(initial.slot)
+                let restored = try await self.readBank(initial.slot, context: context)
+                guard self.sameContents(initial, restored) else { throw XT5BankImportIssue.originalBankChanged }
+            }
+            group.addTask {
+                try await Task.sleep(for: self.cleanupTimeout)
+                throw XT5BankImportIssue.restorationTimeout
+            }
+            defer { group.cancelAll() }
+            try await group.next()
+        }
+    }
+    private func select(_ slot: Int) async throws {
+        guard (1...7).contains(slot) else { throw XT5BankImportIssue.invalidSelector }
+        _ = try await send(0x1016, property: 0xD18C, data: Data([UInt8(slot),0]))
+        try await settle(.milliseconds(100))
+        guard try await selectedSlot() == slot else { throw XT5BankImportIssue.selectorMismatch }
+    }
+    private func selectedSlot() async throws -> Int {
+        let bytes = try await send(0x1015, property: 0xD18C)
+        guard bytes.count == 2, bytes[bytes.startIndex + 1] == 0, (1...7).contains(bytes[bytes.startIndex]) else { throw XT5BankImportIssue.invalidSelector }
+        return Int(bytes[bytes.startIndex])
+    }
+    private func readBank(_ slot: Int, context: RecipeCameraContext) async throws -> RecipeSnapshot {
+        let name = try await send(0x1015, property: 0xD18D)
+        guard name.count <= 511 else { throw XT5ProtocolError.oversized }
+        var properties: [UInt16:Data] = [:]
+        for code in UInt16(0xD18E)...0xD1A4 {
+            let bytes = try await send(0x1015, property: code)
+            guard bytes.count == 2 else { throw RecipeImportError.malformedProperty(code) }
+            properties[code] = bytes
+        }
+        guard try await selectedSlot() == slot else { throw XT5BankImportIssue.selectorMismatch }
+        return try XT5RecipeCodec.recipe(slot: slot, nameData: name, properties: properties, context: context, importedAt: Date())
+    }
+    private nonisolated func sameContents(_ a: RecipeSnapshot, _ b: RecipeSnapshot) -> Bool {
+        a.importedName == b.importedName && a.importedSettings == b.importedSettings
+    }
+    private func send(_ opcode: UInt16, property: UInt16? = nil, data: Data? = nil) async throws -> Data {
+        try Task.checkCancellation(); try await validateSession(); try Task.checkCancellation()
+        guard transaction < UInt32.max else { throw PTPError.invalidParameters }
+        let id = transaction; transaction += 1
+        let reply = try await transport.execute(PTPCommand(opcode: opcode, parameters: property.map { [UInt32($0)] } ?? [], transactionID: id), data: data)
+        try await validateSession()
+        return reply.data
+    }
+    static func safeFailure(_ error: any Error) -> String {
+        if let issue = error as? XT5BankImportIssue { return String(describing: issue) }
+        if let issue = error as? RecipeImportError {
+            switch issue {
+            case .invalidSlot: return "invalid slot"
+            case .incompletePropertyBlock: return "incomplete property block"
+            case .malformedProperty(let code): return String(format: "malformed property 0x%04X", code)
+            case .unsupportedRendering: return "unsupported rendering"
+            }
+        }
+        return XT5ProtocolProbe.safeError(error)
+    }
+}

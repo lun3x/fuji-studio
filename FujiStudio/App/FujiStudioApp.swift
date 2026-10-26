@@ -5,6 +5,7 @@ struct FujiStudioApp: App {
     #if DEBUG
     @State private var protocolProbe = XT5ProbeLaunchRunner()
     @State private var reconnectProbe = CameraReconnectLaunchRunner()
+    @State private var bankProbe = XT5BankImportLaunchRunner()
     #endif
     var body: some Scene {
         WindowGroup {
@@ -13,11 +14,15 @@ struct FujiStudioApp: App {
                     Text("Fuji Studio").accessibilityIdentifier("fujiStudioTitle")
                     #if DEBUG
                     NavigationLink("Hardware probe") { HardwareProbeView() }
+                        .disabled(ProcessInfo.processInfo.arguments.contains { ["--xt5-read-only-probe", "--xt5-direct-values-probe", "--camera-reconnect-probe", "--xt5-bank-import-probe"].contains($0) })
                     if ProcessInfo.processInfo.arguments.contains("--xt5-read-only-probe") || ProcessInfo.processInfo.arguments.contains("--xt5-direct-values-probe") {
                         Text(protocolProbe.status).font(.caption)
                     }
                     if ProcessInfo.processInfo.arguments.contains("--camera-reconnect-probe") {
                         Text(reconnectProbe.status).font(.caption)
+                    }
+                    if ProcessInfo.processInfo.arguments.contains("--xt5-bank-import-probe") {
+                        Text(bankProbe.status).font(.caption)
                     }
                     #endif
                 }
@@ -26,6 +31,7 @@ struct FujiStudioApp: App {
             .task {
                 await protocolProbe.runIfRequested(arguments: ProcessInfo.processInfo.arguments)
                 await reconnectProbe.runIfRequested(arguments: ProcessInfo.processInfo.arguments)
+                await bankProbe.runIfRequested(arguments: ProcessInfo.processInfo.arguments)
             }
             #endif
         }
