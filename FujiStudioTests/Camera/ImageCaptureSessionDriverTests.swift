@@ -4,6 +4,59 @@ import Testing
 @testable import FujiStudio
 
 @MainActor struct ImageCaptureSessionDriverTests {
+    @Test func lifecycleDiagnosticsObserveCachedDeviceAndCloseOrderingWithoutLoggingDeviceIdentity() {
+        let browser = SessionTestBrowser(); let callbacks = DriverCallbackQueue(); let camera = SessionTestCamera()
+        browser.cachedDevices = [camera]
+        let driver = ImageCaptureSessionDriver(makeBrowser: { browser }, deliverCompletion: { callbacks.enqueue($0) })
+        driver.start { _ in }; callbacks.drain()
+        driver.deviceBrowser(browser, didAdd: camera, moreComing: false)
+        camera.completeOpen(error: nil); callbacks.drain()
+        driver.close {}
+        // Completion delivery is deliberately suspended: browser.stop has happened but close
+        // acknowledgement has not reached the real driver. The cache still owns the device.
+        let waiting = driver.lifecycleDiagnosticMessages().joined(separator: "\n")
+        #expect(waiting.contains("browser.stop.after"))
+        #expect(waiting.contains("cached=1"))
+        #expect(waiting.contains("browsing=false"))
+        #expect(waiting.contains("closing=true"))
+        #expect(!waiting.contains("close.completion"))
+        callbacks.drain()
+        let completed = driver.lifecycleDiagnosticMessages().joined(separator: "\n")
+        #expect(completed.contains("close.completion current=true errorCode=none"))
+        #expect(completed.contains("close.finished"))
+        #expect(completed.contains("browser=none"))
+        #expect(!completed.contains("PRIVATE_DEVICE_NAME"))
+    }
+
+    @Test func lifecycleSnapshotShowsReplacementBrowserCacheEvenWithoutAddedCallback() {
+        let first = SessionTestBrowser(); let second = SessionTestBrowser(); var browsers = [first, second]
+        let callbacks = DriverCallbackQueue()
+        let driver = ImageCaptureSessionDriver(makeBrowser: { browsers.removeFirst() }, deliverCompletion: { callbacks.enqueue($0) })
+        driver.start { _ in }; callbacks.drain()
+        driver.close {}; callbacks.drain()
+        driver.start { _ in }; callbacks.drain()
+        // Public devices can now be observed separately from delegate delivery. Do not invent
+        // a didAdd event: the diagnostic must reveal the difference during the native stall.
+        second.cachedDevices = [SessionTestCamera()]
+        second.suspensionFlag = true
+        let snapshot = driver.lifecycleDiagnosticMessages().last ?? ""
+        #expect(snapshot.contains("browser=2"))
+        #expect(snapshot.contains("cached=1"))
+        #expect(snapshot.contains("usbPTP=1"))
+        #expect(snapshot.contains("suspended=true"))
+        #expect(snapshot.contains("camera=false"))
+        driver.close {}; callbacks.drain()
+    }
+
+    @Test func lifecycleDiagnosticsRemainBoundedAcrossRepeatedSnapshots() {
+        let fixture = openNativeDriver()
+        for _ in 0..<100 { _ = fixture.driver.lifecycleDiagnosticMessages() }
+        let messages = fixture.driver.lifecycleDiagnosticMessages()
+        #expect(messages.count == 64)
+        #expect(messages.allSatisfy { $0.count <= 512 })
+        fixture.driver.close {}; fixture.callbacks.drain()
+    }
+
     @Test func discoveryConfiguresLocalCamerasAtPublicBrowserBoundary() {
         let browser = SessionTestBrowser(); let callbacks = DriverCallbackQueue()
         let driver = ImageCaptureSessionDriver(makeBrowser: { browser }, deliverCompletion: { callbacks.enqueue($0) })
@@ -473,6 +526,12 @@ import Testing
 /// Public framework boundary doubles: no OS authorization request, browser discovery or physical session.
 private final class SessionTestBrowser: ICDeviceBrowser {
     private(set) var didStart = false
+    private var browsingNow = false
+    var suspensionFlag = false
+    var cachedDevices: [ICDevice] = []
+    override var isBrowsing: Bool { browsingNow }
+    override var isSuspended: Bool { suspensionFlag }
+    override var devices: [ICDevice]? { cachedDevices }
     private var controlStatus: ICAuthorizationStatus
     private var contentsStatus: ICAuthorizationStatus
     private(set) var controlRequestCount = 0
@@ -507,8 +566,8 @@ private final class SessionTestBrowser: ICDeviceBrowser {
         if automaticallyAuthorize { completeContents(.authorized) }
     }
 
-    override func start() { didStart = true; browsingEvents.continuation.yield(()) }
-    override func stop() {}
+    override func start() { didStart = true; browsingNow = true; browsingEvents.continuation.yield(()) }
+    override func stop() { browsingNow = false }
     func completeControl(_ status: ICAuthorizationStatus) { controlStatus = status; controlReply?(status) }
     func completeContents(_ status: ICAuthorizationStatus) { contentsStatus = status; contentsReply?(status) }
     @MainActor func waitForControlRequest() async {
@@ -568,7 +627,7 @@ private final class SessionTestCamera: ICCameraDevice {
     override var usbProductID: Int32 { 1 }
     override var transportType: String? { ICDeviceTransport.transportTypeUSB.rawValue }
     override var capabilities: [String] { [ICDeviceCapability.cameraDeviceCanAcceptPTPCommands.rawValue] }
-    override var name: String? { "X-T5 fixture" }
+    override var name: String? { "PRIVATE_DEVICE_NAME" }
     override var hasOpenSession: Bool { sessionIsOpen }
     override func requestOpenSession(options: [ICSessionOptions: Any]?, completion: @escaping @Sendable ((any Error)?) -> Void) {
         pendingOpenCount += 1; openCompletion = completion

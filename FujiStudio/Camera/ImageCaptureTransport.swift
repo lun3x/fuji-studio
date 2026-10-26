@@ -67,6 +67,7 @@ import ImageCaptureCore
 
     #if DEBUG
     func ptpDiagnosticMessages() -> [String] { (driver as? ImageCaptureSessionDriver)?.ptpDiagnostics ?? [] }
+    func lifecycleDiagnosticMessages() -> [String] { (driver as? ImageCaptureSessionDriver)?.lifecycleDiagnosticMessages() ?? [] }
     #endif
 
     func disconnect() async { invalidate(PTPError.notConnected, state: .disconnected) }
@@ -200,6 +201,12 @@ import ImageCaptureCore
     private var nextNativeContext: UInt = 1
     #if DEBUG
     private(set) var ptpDiagnostics: [String] = []
+    private var lifecycleDiagnostics: [String] = []
+    private var browserSequence = 0
+    func lifecycleDiagnosticMessages() -> [String] {
+        recordLifecycle("snapshot")
+        return lifecycleDiagnostics
+    }
     #endif
     private var browser: ICDeviceBrowser?
     private var camera: ICCameraDevice?
@@ -220,8 +227,12 @@ import ImageCaptureCore
         self.events = events; run = UUID(); let current = run
         let browser = makeBrowser()
         self.browser = browser
+        #if DEBUG
+        browserSequence += 1
+        #endif
         browser.delegate = self
         browser.browsedDeviceTypeMask = ICDeviceTypeMask(rawValue: ICDeviceTypeMask.camera.rawValue | ICDeviceLocationTypeMask.local.rawValue)!
+        recordLifecycle("browser.created")
         let statuses = [browser.controlAuthorizationStatus, browser.contentsAuthorizationStatus]
         guard statuses.allSatisfy({ $0 == .authorized || $0 == .notDetermined }) else {
             events(.failed(.authorizationDenied))
@@ -266,12 +277,16 @@ import ImageCaptureCore
         events?(.discoveryStarted)
         // The event can synchronously invalidate this run; never start an already closed browser.
         guard run == current, !closing, self.browser === browser else { return }
+        recordLifecycle("browser.start.before")
         browser.start()
+        recordLifecycle("browser.start.after")
     }
     func close(completion: @escaping @MainActor @Sendable () -> Void) {
         nativeRequest = nil
         closing = true; closeCompletion = completion; events = nil
+        recordLifecycle("browser.stop.before")
         browser?.stop()
+        recordLifecycle("browser.stop.after")
         // Opening has no public cancellation API. Wait for its terminal callback, then close it.
         if opening { return }
         closeCamera()
@@ -280,8 +295,10 @@ import ImageCaptureCore
         guard let camera else { finishClose(); return }
         let current = run
         let deliver = deliverCompletion
+        recordLifecycle("close.request")
         camera.requestCloseSession(options: nil) { [weak self] error in
             deliver {
+                self?.recordLifecycle("close.completion current=\(self?.run == current) errorCode=\(error.map { String(($0 as NSError).code) } ?? "none")")
                 guard let self, self.run == current, self.closing else { return }
                 // A failed close is uncertain. Keep quarantined until didRemoveDevice observes detachment.
                 guard error == nil else { return }
@@ -290,10 +307,12 @@ import ImageCaptureCore
         }
     }
     private func finishClose() {
+        recordLifecycle("close.retiring")
         camera?.delegate = nil; camera = nil
         browser?.delegate = nil; browser = nil
         nativeRequest = nil
         opening = false; closing = false; run = UUID()
+        recordLifecycle("close.finished")
         let completion = closeCompletion; closeCompletion = nil; completion?()
     }
     func send(command: Data, data: Data?, completion: @escaping @MainActor @Sendable (Result<PTPWireReply, PTPError>) -> Void) {
@@ -367,7 +386,27 @@ import ImageCaptureCore
         return "bytes=\(buffer.count) length=\(u32(0)) type=\(kind) code=0x\(String(code, radix: 16)) tx=\(u32(8)) prefix=\(prefix)"
     }
     #endif
+    /// Only reads public state on MainActor; never retains a retired browser/device or starts
+    /// discovery. Fixed event labels and aggregate counts deliberately omit device identities.
+    private func recordLifecycle(_ event: String) {
+        #if DEBUG
+        let browserState: String
+        if let browser {
+            let devices = browser.devices ?? []
+            let usbPTP = devices.filter {
+                $0 is ICCameraDevice && $0.usbVendorID == 0x04cb &&
+                $0.transportType == ICDeviceTransport.transportTypeUSB.rawValue &&
+                $0.capabilities.contains(ICDeviceCapability.cameraDeviceCanAcceptPTPCommands.rawValue)
+            }.count
+            browserState = "browser=\(browserSequence) browsing=\(browser.isBrowsing) suspended=\(browser.isSuspended) cached=\(devices.count) usbPTP=\(usbPTP) controlAuthorized=\(browser.controlAuthorizationStatus == .authorized) contentsAuthorized=\(browser.contentsAuthorizationStatus == .authorized)"
+        } else { browserState = "browser=none" }
+        let message = "\(Date().formatted(.iso8601)) \(event) \(browserState) camera=\(camera != nil) open=\(camera?.hasOpenSession ?? false) opening=\(opening) closing=\(closing)"
+        lifecycleDiagnostics.append(String(message.prefix(512)))
+        if lifecycleDiagnostics.count > 64 { lifecycleDiagnostics.removeFirst(lifecycleDiagnostics.count - 64) }
+        #endif
+    }
     func deviceBrowser(_ browser: ICDeviceBrowser, didAdd device: ICDevice, moreComing: Bool) {
+        recordLifecycle("browser.didAdd current=\(browser === self.browser) more=\(moreComing)")
         guard browser === self.browser, !closing, camera == nil,
               let camera = device as? ICCameraDevice, camera.usbVendorID == 0x04cb else { return }
         guard camera.transportType == ICDeviceTransport.transportTypeUSB.rawValue,
@@ -379,11 +418,13 @@ import ImageCaptureCore
         events?(.opening)
         let current = run
         let deliver = deliverCompletion
+        recordLifecycle("open.request")
         camera.requestOpenSession(options: nil) { [weak self] error in
             deliver { self?.openFinished(error, run: current) }
         }
     }
     private func openFinished(_ error: (any Error)?, run current: UUID) {
+        recordLifecycle("open.completion current=\(run == current) errorCode=\(error.map { String(($0 as NSError).code) } ?? "none")")
         guard run == current else { return }
         opening = false
         if closing { closeCamera(); return }
@@ -391,8 +432,12 @@ import ImageCaptureCore
         guard let camera, camera.hasOpenSession else { events?(.failed(.notConnected)); return }
         events?(.opened(CameraConnection(name: camera.name ?? "Fujifilm camera", usbVendorID: Int(camera.usbVendorID), usbProductID: Int(camera.usbProductID))))
     }
-    func deviceBrowser(_ browser: ICDeviceBrowser, didRemove device: ICDevice, moreGoing: Bool) { didRemove(device) }
+    func deviceBrowser(_ browser: ICDeviceBrowser, didRemove device: ICDevice, moreGoing: Bool) {
+        recordLifecycle("browser.didRemove current=\(browser === self.browser) selected=\(device === camera) more=\(moreGoing)")
+        didRemove(device)
+    }
     func didRemove(_ device: ICDevice) {
+        recordLifecycle("device.didRemove selected=\(device === camera)")
         guard device === camera else { return }
         nativeRequest = nil
         // Observed detachment is terminal even if requestOpenSession never completes. Retire
@@ -425,15 +470,31 @@ import ImageCaptureCore
     }
     func cameraDevice(_ camera: ICCameraDevice, shouldGetThumbnailOf item: ICCameraItem) -> Bool { false }
     func cameraDevice(_ camera: ICCameraDevice, shouldGetMetadataOf item: ICCameraItem) -> Bool { false }
-    func device(_ device: ICDevice, didOpenSessionWithError error: (any Error)?) {}
+    func device(_ device: ICDevice, didOpenSessionWithError error: (any Error)?) {
+        recordLifecycle("open.delegate selected=\(device === camera) errorCode=\(error.map { String(($0 as NSError).code) } ?? "none")")
+    }
     func device(_ device: ICDevice, didCloseSessionWithError error: (any Error)?) {
+        recordLifecycle("close.delegate selected=\(device === camera) errorCode=\(error.map { String(($0 as NSError).code) } ?? "none")")
         guard device === camera else { return }
         if closing {
             if error == nil { finishClose() }
         } else { events?(.failed(.notConnected)) }
     }
     func device(_ device: ICDevice, didEncounterError error: (any Error)?) {
+        recordLifecycle("device.error selected=\(device === camera) errorCode=\(error.map { String(($0 as NSError).code) } ?? "none")")
         guard device === camera, !closing else { return }
         events?(.failed(.sessionFailure(error.map { "\(($0 as NSError).domain):\(($0 as NSError).code)" } ?? "Unknown device error")))
+    }
+    func deviceBrowserWillSuspendOperations(_ browser: ICDeviceBrowser) {
+        recordLifecycle("browser.willSuspend current=\(browser === self.browser)")
+    }
+    func deviceBrowserDidSuspendOperations(_ browser: ICDeviceBrowser) {
+        recordLifecycle("browser.didSuspend current=\(browser === self.browser)")
+    }
+    func deviceBrowserDidCancelSuspendOperations(_ browser: ICDeviceBrowser) {
+        recordLifecycle("browser.cancelSuspend current=\(browser === self.browser)")
+    }
+    func deviceBrowserDidResumeOperations(_ browser: ICDeviceBrowser) {
+        recordLifecycle("browser.didResume current=\(browser === self.browser)")
     }
 }

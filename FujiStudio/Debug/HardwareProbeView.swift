@@ -104,8 +104,10 @@ struct HardwareProbeView: View {
                             .disabled(!cameraProbe.sessionOpen || cameraProbe.commandBusy)
                         Button("Close") { cameraProbe.disconnect() }
                     }
+                    Button("Refresh lifecycle snapshot") { cameraProbe.refreshLifecycle() }
+                    Text(cameraProbe.diagnosticFileStatus).font(.caption2)
                     ScrollView {
-                        Text(cameraProbe.trace + "\nBounded GetDeviceInfo headers (payload omitted):\n" + cameraProbe.ptpDiagnostics)
+                        Text(cameraProbe.trace + "\nBounded public lifecycle (no device identities):\n" + cameraProbe.lifecycleDiagnostics + "\nBounded GetDeviceInfo headers (payload omitted):\n" + cameraProbe.ptpDiagnostics)
                             .font(.system(.caption, design: .monospaced))
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -200,6 +202,8 @@ private final class CameraProbeModel {
     var status = "Disconnected · physical Gate 2 pending"
     var trace = "No physical camera trace recorded.\n"
     var ptpDiagnostics = "No GetDeviceInfo callback captured."
+    var lifecycleDiagnostics = "No lifecycle snapshot captured."
+    var diagnosticFileStatus = "Refresh saves bounded diagnostics to Documents/camera-diagnostics.txt"
     var connecting = false
     var sessionOpen = false
     var commandBusy = false
@@ -229,13 +233,14 @@ private final class CameraProbeModel {
                     case .recoverableError(let error): status = "Session failed: \(error). Close/reconnect; if close is uncertain, unplug camera."
                     }
                     trace += "\(Date().formatted(.iso8601)) · \(status)\n"
+                    refreshLifecycle()
                 }
             }
         }
         connecting = true
         trace += "iOS \(UIDevice.current.systemVersion); user-observed firmware: \(firmware.isEmpty ? "not recorded" : firmware)\n"
         connection = Task {
-            defer { connecting = false }
+            defer { connecting = false; refreshLifecycle() }
             do { try await transport.connect() }
             catch { trace += "Connect outcome: \(error)\n" }
         }
@@ -248,6 +253,7 @@ private final class CameraProbeModel {
             defer {
                 commandBusy = false
                 ptpDiagnostics = transport.ptpDiagnosticMessages().joined(separator: "\n")
+                refreshLifecycle()
             }
 
             do {
@@ -258,10 +264,23 @@ private final class CameraProbeModel {
     }
     func disconnect() {
         connection?.cancel(); command?.cancel()
-        Task { await transport.disconnect() }
+        Task { await transport.disconnect(); refreshLifecycle() }
         observation?.cancel(); observation = nil
         sessionOpen = false; connecting = false
         status = "Session invalidated; waiting for public close completion before reconnect"
+    }
+    func refreshLifecycle() {
+        lifecycleDiagnostics = transport.lifecycleDiagnosticMessages().joined(separator: "\n")
+        // Export only the bounded, sanitized driver buffers. The general probe trace can
+        // contain user-entered firmware text and is intentionally excluded from this file.
+        let sanitized = "Public lifecycle:\n" + lifecycleDiagnostics + "\nGetDeviceInfo headers (payload omitted):\n" + transport.ptpDiagnosticMessages().joined(separator: "\n")
+        do {
+            let directory = try FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+            try sanitized.write(to: directory.appendingPathComponent("camera-diagnostics.txt"), atomically: true, encoding: .utf8)
+            diagnosticFileStatus = "Snapshot saved: Documents/camera-diagnostics.txt"
+        } catch {
+            diagnosticFileStatus = "Snapshot file could not be saved; diagnostics remain available here."
+        }
     }
 }
 
