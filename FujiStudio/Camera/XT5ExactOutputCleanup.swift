@@ -1,8 +1,8 @@
 import Foundation
 import CryptoKit
 
-/// Supplied only by the explicit engineering loader for the preserved, controller-authorized
-/// phase-G capture. This is not generic ownership inference from a new/first object handle.
+/// Explicit engineering ownership proof: a controller-authorized preserved result, or an
+/// output created/captured by the bounded batch. Never generic new/first-handle inference.
 struct XT5ExactCleanupTarget: Sendable {
     let handle: UInt32
     let sourceSHA256: String

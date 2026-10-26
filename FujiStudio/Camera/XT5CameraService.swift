@@ -457,6 +457,10 @@ struct XT5RawBaselineEvidence: Sendable, Encodable {
     let bufferCleanup = "unconfirmed"
     let conversionValidated = false
     var probeFinished = false
+    var batchTrialCaptured = false
+    var batchProfileWriteAttempted = false
+    var batchProfileWriteAccepted = false
+    var batchProfileReadbackMatches = false
     var unchangedConversion: XT5UnchangedConversionObservation?
     var readOnlyRecovery = false
     var quarantineRequested = false
@@ -510,6 +514,14 @@ actor XT5RawBaselineProbe {
             try await self.captureExclusively(raw: raw, directory: directory, initialEvidence: evidence,
                 conversionTrigger: 1, quarantineOutput: true, filmReference: reference, onUpdate: onUpdate)
         }
+    }
+    /// Internal trial entry used only by the private batch owner holding its outer gate. It
+    /// explicitly leaves the session open; it must never fabricate a native close per trial.
+    func captureBatchTrial(raw: PreparedRAW, patch: XT5FiniteRecipePatch, directory: URL,
+                           onUpdate: @escaping @Sendable (XT5RawBaselineEvidence) async -> Void) async throws -> XT5RawBaselineEvidence {
+        var initial = XT5RawBaselineEvidence(); initial.quarantineRequested = true
+        return try await captureExclusively(raw: raw, directory: directory, initialEvidence: initial,
+            conversionTrigger: 1, quarantineOutput: true, batchPatch: patch, closeAfterCapture: false, onUpdate: onUpdate)
     }
     /// Only the controller-authorized preserved phase-G output can pass this cleanup path.
     /// The permit remains held through exact cleanup, upload, trigger, observation and native close.
@@ -600,7 +612,7 @@ actor XT5RawBaselineProbe {
         return evidence
     }
     private func captureExclusively(raw: PreparedRAW, directory: URL, initialEvidence: XT5RawBaselineEvidence = XT5RawBaselineEvidence(),
-                                    conversionTrigger: UInt16?, quarantineOutput: Bool = false, filmReference: XT5FilmProbeReference? = nil,
+                                    conversionTrigger: UInt16?, quarantineOutput: Bool = false, filmReference: XT5FilmProbeReference? = nil, batchPatch: XT5FiniteRecipePatch? = nil, closeAfterCapture: Bool = true,
                                     onUpdate: @escaping @Sendable (XT5RawBaselineEvidence) async -> Void) async throws -> XT5RawBaselineEvidence {
         var evidence = initialEvidence
         var manifest = Manifest(sourceSHA256: raw.sha256)
@@ -610,6 +622,7 @@ actor XT5RawBaselineProbe {
         var expectedOutputHandle: UInt32?
         do {
             try filmReference?.validate(raw: raw)
+            if let batchPatch, batchPatch.sourceSHA256 != raw.sha256 { throw XT5RecipeBatchIssue.invalidReference }
             guard raw.metadata.cameraModel == "X-T5" else { throw XT5RawBaselineIssue.unsupportedContext }
             let info = try XT5RecipeCodec.deviceInfo(await send(0x1001).data)
             guard info.manufacturer == "FUJIFILM", info.model == "X-T5", info.firmware == "4.31" else { throw XT5RawBaselineIssue.unsupportedContext }
@@ -658,6 +671,18 @@ actor XT5RawBaselineProbe {
             try privateWrite(baseline, to: directory.appendingPathComponent("baseline.bin"))
             evidence.baselineBytes = baseline.count
             await onUpdate(evidence)
+            if let batchPatch {
+                guard baseline == batchPatch.baseline else { throw XT5RecipeBatchIssue.baselineMismatch }
+                try privateWrite(batchPatch.bytes, to: directory.appendingPathComponent("recipe-candidate.bin"))
+                evidence.batchProfileWriteAttempted = true; await onUpdate(evidence)
+                _ = try await send(0x1016, parameters: [0xD185], data: batchPatch.bytes)
+                evidence.batchProfileWriteAccepted = true; await onUpdate(evidence)
+                let readback = try await send(0x1015, parameters: [0xD185]).data
+                guard readback.count <= 65_536 else { throw XT5ProtocolError.oversized }
+                try privateWrite(readback, to: directory.appendingPathComponent("recipe-readback.bin"))
+                guard readback == batchPatch.bytes else { throw XT5RecipeBatchIssue.readbackMismatch }
+                evidence.batchProfileReadbackMatches = true; await onUpdate(evidence)
+            }
             if let filmReference {
                 let beforeFilm = evidence
                 let profile = XT5FilmWorkingProfileProbe(send: { opcode, parameters, data in
@@ -679,7 +704,7 @@ actor XT5RawBaselineProbe {
                     try await self.send(opcode, parameters: parameters, data: data)
                 }, pollWait: pollWait)
                 let beforeConversion = evidence
-                let result = await conversion.run(raw: raw, directory: directory, canReadStorage: info.operations.contains(0x1005), quarantine: quarantineOutput, triggerValue: conversionTrigger ?? 0, diagnosticLabel: filmReference == nil ? nil : "experimental film-only working profile; no imported bank applied") { partial in
+                let result = await conversion.run(raw: raw, directory: directory, canReadStorage: info.operations.contains(0x1005), quarantine: quarantineOutput, triggerValue: conversionTrigger ?? 0, diagnosticLabel: batchPatch != nil ? "experimental imported-bank candidate; dormant grain size not applied; fidelity unvalidated" : (filmReference == nil ? nil : "experimental film-only working profile; no imported bank applied")) { partial in
                     var report = beforeConversion; report.unchangedConversion = partial
                     await onUpdate(report)
                 }
@@ -711,6 +736,13 @@ actor XT5RawBaselineProbe {
         do { try persist(manifest, directory: directory) }
         catch { evidence.failure = evidence.failure ?? Self.safeFailure(error) }
         await onUpdate(evidence)
+        if !closeAfterCapture {
+            evidence.sessionClosure = "heldByBatchOwner"
+            evidence.batchTrialCaptured = evidence.failure == nil && evidence.baselineBytes != nil
+            await onUpdate(evidence)
+            guard evidence.batchTrialCaptured else { throw XT5RawBaselineFailure(evidence: evidence) }
+            return evidence
+        }
         // Owner's closure checks against a replacement generation and awaits the native close or
         // terminal removal, retaining quarantine on uncertainty. Parent cancellation cannot skip it.
         let close = Task.detached { try await self.closeSession() }
@@ -760,6 +792,7 @@ actor XT5RawBaselineProbe {
         catch { throw XT5RawBaselineIssue.artifactWriteFailed }
     }
     static func safeFailure(_ error: any Error) -> String {
+        if let error = error as? XT5RecipeBatchIssue { return String(describing: error) }
         if let error = error as? XT5FilmProbeIssue { return String(describing: error) }
         if let error = error as? XT5ExactCleanupIssue { return String(describing: error) }
         if let error = error as? XT5UnchangedConversionFailure { return error.observation.failure ?? "unchanged conversion incomplete" }

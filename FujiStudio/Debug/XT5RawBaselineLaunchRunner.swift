@@ -96,14 +96,16 @@ final class XT5RawBaselineLaunchRunner {
         let quarantine = arguments.contains("--xt5-output-quarantine-probe")
         let triggerOne = arguments.contains("--xt5-trigger-one-probe")
         let film = arguments.contains("--xt5-film-only-probe")
+        let batch = arguments.contains("--xt5-recipe-batch-probe")
         let readOnly = recovery || quarantine
-        guard [baseline,unchanged,recovery,quarantine,triggerOne,film].filter({ $0 }).count == 1, !otherFlags.contains(where: arguments.contains), !didRun else { return }
+        guard [baseline,unchanged,recovery,quarantine,triggerOne,film,batch].filter({ $0 }).count == 1, !otherFlags.contains(where: arguments.contains), !didRun else { return }
         didRun = true
         if unchanged { prefix = "xt5-unchanged-baseline" }
         if recovery { prefix = "xt5-output-recovery" }
         if quarantine { prefix = "xt5-output-quarantine" }
         if triggerOne { prefix = "xt5-trigger-one" }
         if film { prefix = "xt5-film-only" }
+        if batch { prefix = "xt5-recipe-batch" }
         var probeOwnsClose = false
         do {
             let output = try requestedDirectory ?? FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
@@ -117,7 +119,8 @@ final class XT5RawBaselineLaunchRunner {
             if !baseline { raw = try await retainedSource(output, privateRun) }
             else { raw = try await preparer.prepareOne(in: privateRun).raw }
             let cleanupTarget = triggerOne ? try await RetainedExactCleanupProof.prepare(documents: output, raw: raw, destination: privateRun) : nil
-            let filmReference = film ? try await RetainedFilmProbeReference.prepare(raw: raw, destination: privateRun) : nil
+            let filmReference = (film || batch) ? try await RetainedFilmProbeReference.prepare(raw: raw, destination: privateRun) : nil
+            let batchInputs = batch ? try await RetainedRecipeBatchInputs.prepare(documents: output, raw: raw, reference: filmReference!, destination: privateRun) : nil
             try writeStatus(readOnly ? "Connecting for read-only output observation; no upload or trigger" : "Original retained privately; connecting for bounded RAW upload")
             try await transport.connect()
             let native = transport
@@ -130,7 +133,12 @@ final class XT5RawBaselineLaunchRunner {
                 try await Self.close(native, expectedGeneration: generation)
             }, experiment: unchanged ? .unchangedTrigger0 : .baselineOnly)
             probeOwnsClose = true
-            if let filmReference {
+            if let batchInputs, let filmReference {
+                let batchProbe = XT5RecipeBatchProbe(transport: native, sessionGeneration: generation, validateSession: {
+                    guard try await native.currentSession().generation == generation else { throw XT5BankImportIssue.sessionChanged }
+                }, closeSession: { try await Self.close(native, expectedGeneration: generation) })
+                _ = try await batchProbe.run(raw: raw, reference: filmReference, referenceBanks: batchInputs.banks, initialTarget: batchInputs.target, directory: privateRun) { [weak self] report in await self?.saveBatch(report) }
+            } else if let filmReference {
                 _ = try await probe.captureFilmOnly(raw: raw, reference: filmReference, directory: privateRun) { [weak self] report in await self?.save(report) }
             } else if let cleanupTarget {
                 _ = try await probe.captureTriggerOne(after: cleanupTarget, raw: raw, directory: privateRun) { [weak self] report in await self?.save(report) }
@@ -139,8 +147,10 @@ final class XT5RawBaselineLaunchRunner {
             } else {
                 _ = try await probe.capture(raw: raw, directory: privateRun) { [weak self] report in await self?.save(report) }
             }
-            let success = film ? "Echo and film-only readbacks matched; trigger 1 diagnostic captured; native close confirmed; recipe fidelity, FINE and cleanup remain unvalidated" : triggerOne ? "Exact old output deletion verified; trigger 1 private diagnostic captured; native close confirmed; new output/input cleanup unconfirmed; FINE and recipes unvalidated" : quarantine ? "Private quarantine captured; never promoted to validated output; native session closed; provenance and cleanup unconfirmed" : recovery ? "Existing candidate retained; native session closed; provenance and cleanup unconfirmed; no upload or trigger performed" : unchanged ? "Unchanged-baseline JPEG retained; native session closed; input/output cleanup unconfirmed; FINE and imported recipes unvalidated" : "Baseline probe complete; native session closed; upload buffer cleanup remains unconfirmed; conversion unvalidated"
+            let success = batch ? "Seven experimental candidates captured and owned outputs cleaned; banks unchanged and selector restored; native close confirmed; fidelity/FINE/dormant grain size remain offline gates" : film ? "Echo and film-only readbacks matched; trigger 1 diagnostic captured; native close confirmed; recipe fidelity, FINE and cleanup remain unvalidated" : triggerOne ? "Exact old output deletion verified; trigger 1 private diagnostic captured; native close confirmed; new output/input cleanup unconfirmed; FINE and recipes unvalidated" : quarantine ? "Private quarantine captured; never promoted to validated output; native session closed; provenance and cleanup unconfirmed" : recovery ? "Existing candidate retained; native session closed; provenance and cleanup unconfirmed; no upload or trigger performed" : unchanged ? "Unchanged-baseline JPEG retained; native session closed; input/output cleanup unconfirmed; FINE and imported recipes unvalidated" : "Baseline probe complete; native session closed; upload buffer cleanup remains unconfirmed; conversion unvalidated"
             try writeStatus(artifactWriteFailed ? "Probe operation finished, but public evidence writing failed" : success)
+        } catch let failure as XT5RecipeBatchFailure {
+            try? writeStatus("Recipe batch stopped: \(failure.evidence.failure ?? "incomplete"); native closure \(failure.evidence.sessionClosure); input buffer cleanup unconfirmed")
         } catch let failure as XT5RawBaselineFailure {
             try? writeStatus("Baseline probe incomplete: \(failure.evidence.failure ?? failure.evidence.sessionClosureFailure ?? "unknown outcome"); native closure \(failure.evidence.sessionClosure); buffer cleanup unconfirmed")
         } catch {
@@ -160,6 +170,16 @@ final class XT5RawBaselineLaunchRunner {
     private static func close(_ native: ImageCaptureTransport, expectedGeneration: UInt64) async throws {
         if let current = try? native.currentSession(), current.generation != expectedGeneration { throw XT5BankImportIssue.sessionChanged }
         try await native.disconnectAndWaitForConfirmation()
+    }
+    private func saveBatch(_ report: XT5RecipeBatchEvidence) {
+        guard let directory else { return }
+        do {
+            let encoder=JSONEncoder(); encoder.outputFormatting=[.prettyPrinted,.sortedKeys]
+            try encoder.encode(report).write(to:directory.appendingPathComponent(prefix + "-evidence.json"),options:.atomic)
+            let last=report.slots.last
+            try writeStatus("Experimental slots started: \(report.slots.count)/7; current C\(last?.slot ?? 0); profile readback \(last?.capture?.batchProfileReadbackMatches ?? false); capture \(last?.capture?.batchTrialCaptured ?? false); cleanup empty \(last?.cleanup?.emptyViewVerified ?? false); banks before/after \(report.beforeBanksMatch)/\(report.afterBanksMatch); native closure \(report.sessionClosure); fidelity unvalidated")
+        } catch { artifactWriteFailed=true;status="Recipe batch public evidence write failed" }
+        saveLifecycle()
     }
     private func save(_ report: XT5RawBaselineEvidence) {
         guard let directory else { return }

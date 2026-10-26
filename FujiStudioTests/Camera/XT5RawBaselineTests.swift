@@ -278,7 +278,7 @@ private actor BaselineLibrary: PhotoLibraryReading {
         let flag = "--xt5-raw-baseline-probe"
         let flags = ["--xt5-read-only-probe","--xt5-direct-values-probe","--xt5-bank-import-probe","--camera-reconnect-probe"]
         let recovery = "--xt5-output-recovery-probe"
-        let modes = [flag,"--xt5-unchanged-baseline-probe",recovery,"--xt5-output-quarantine-probe","--xt5-trigger-one-probe","--xt5-film-only-probe"]
+        let modes = [flag,"--xt5-unchanged-baseline-probe",recovery,"--xt5-output-quarantine-probe","--xt5-trigger-one-probe","--xt5-film-only-probe","--xt5-recipe-batch-probe"]
         let mixed = modes.enumerated().flatMap { index, first in modes.dropFirst(index + 1).map { [first,$0] } }
         for args in [["FujiStudio"]] + mixed + modes.flatMap({ mode in flags.map { [mode,$0] } }) {
             let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -293,6 +293,19 @@ private actor BaselineLibrary: PhotoLibraryReading {
             #expect(await library.materializedIDs.isEmpty)
             #expect(!FileManager.default.fileExists(atPath: directory.path))
         }
+    }
+    @Test func recipeBatchRequiresRetainedSourceBeforeCameraAndNeverUsesPhotos() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let library = BaselineLibrary(ids: ["reference"])
+        let driver = BaselineProbeDriver()
+        let runner = XT5RawBaselineLaunchRunner(transport: ImageCaptureTransport(driver: driver),directory: directory,
+            preparer: RAWBaselineSourcePreparer(reader: library),retainedSource: { _,_ in throw XT5ConversionProbeIssue.retainedSourceUnavailable })
+        await runner.runIfRequested(arguments: ["--xt5-recipe-batch-probe"])
+        #expect(driver.startCount == 0)
+        #expect(await library.materializedIDs.isEmpty)
+        #expect(runner.status.contains("retainedSourceUnavailable"))
+        #expect(FileManager.default.fileExists(atPath: directory.appendingPathComponent("xt5-recipe-batch-status.txt").path))
     }
     @Test func unchangedProbeRequiresRetainedOriginalAndNeverFallsBackToPhotos() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
