@@ -597,6 +597,7 @@ actor XT5RawBaselineProbe {
         var uploadAttempted = false
         var afterObserved = false
         var canReadObjectInfo = false
+        var expectedOutputHandle: UInt32?
         do {
             guard raw.metadata.cameraModel == "X-T5" else { throw XT5RawBaselineIssue.unsupportedContext }
             let info = try XT5RecipeCodec.deviceInfo(await send(0x1001).data)
@@ -656,12 +657,18 @@ actor XT5RawBaselineProbe {
                     await onUpdate(report)
                 }
                 evidence.unchangedConversion = result
+                expectedOutputHandle = await conversion.selectedHandle
                 await onUpdate(evidence)
                 guard (result.jpegRetained || (quarantineOutput && result.quarantineCaptured)) && result.failure == nil else { throw XT5UnchangedConversionFailure(observation: result) }
             }
             afterObserved = true
             let after = try await enumerate(directory: directory, phase: "after")
             manifest.afterHandles = after; evidence.newObjectCount = after.count // Before was proven empty.
+            if conversionTrigger != nil {
+                // A later view cannot contradict the captured candidate and still report success.
+                // Keep the diagnostic file, but fail before observing unrelated/replacement objects.
+                guard let expectedOutputHandle, after == [expectedOutputHandle] else { throw XT5ConversionProbeIssue.ambiguousOutput }
+            }
             try await observeObjects(after, phase: "after", allowed: canReadObjectInfo, directory: directory, manifest: &manifest, evidence: &evidence)
         } catch { evidence.failure = Self.safeFailure(error) }
 
@@ -774,6 +781,7 @@ private actor XT5UnchangedConversionProbe {
     private let send: Send
     private let pollWait: @Sendable () async throws -> Void
     private var observation = XT5UnchangedConversionObservation()
+    private(set) var selectedHandle: UInt32? // Internal identity only; never encoded in public evidence.
     private var onUpdate: @Sendable (XT5UnchangedConversionObservation) async -> Void = { _ in }
     private struct Manifest: Encodable {
         let sourceSHA256: String
@@ -842,6 +850,7 @@ private actor XT5UnchangedConversionProbe {
             guard let candidate else { throw XT5ConversionProbeIssue.outputTimeout }
             selected = candidate
         }
+        selectedHandle = selected
         manifest.candidateHandle = selected
         let bytes = try await send(0x1008, [selected], nil).data
         try write(bytes, name: "output-object-info.bin", directory: directory, maximum: 4096)

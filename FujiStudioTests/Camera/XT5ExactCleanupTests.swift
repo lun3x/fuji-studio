@@ -28,6 +28,30 @@ struct XT5ExactCleanupTests {
         #expect(try ResourceChecksum.sha256(f.target.quarantineURL) == f.target.outputSHA256)
         #expect(try Data(contentsOf: f.directory.appendingPathComponent("quarantined-candidate.bin")) == f.jpeg)
     }
+    @Test func contradictoryFinalViewFailsAfterQuarantineWithoutRetryOrNewOutputDeletion() async throws {
+        for mode in [CleanupWire.Mode.finalZero, .finalMultiple, .finalReplacement] {
+            let f = try CleanupFixture(); defer { f.remove() }
+            let wire = CleanupWire(jpeg: f.jpeg, mode: mode)
+            do {
+                _ = try await probe(wire).captureTriggerOne(after: f.target, raw: f.raw, directory: f.directory)
+                Issue.record("Final view \(mode) must not report success")
+            } catch let failure as XT5RawBaselineFailure {
+                #expect(failure.evidence.failure == "ambiguousOutput")
+                #expect(!failure.evidence.probeFinished)
+                #expect(failure.evidence.sessionClosure == "confirmed")
+                #expect(failure.evidence.unchangedConversion?.quarantineCaptured == true)
+                #expect(failure.evidence.unchangedConversion?.jpegRetained == false)
+            }
+            #expect(try Data(contentsOf: f.directory.appendingPathComponent("quarantined-candidate.bin")) == f.jpeg)
+            #expect(await wire.closed)
+            #expect(await wire.triggeredViews == 4) // First poll, before/after download, final service view only.
+            let commands = await wire.commands
+            #expect(commands.filter { $0.opcode == 0x100B }.map(\.parameters) == [[77,0]])
+            #expect(commands.filter { $0.opcode == 0x900D }.count == 1)
+            #expect(commands.filter { $0.opcode == 0x1009 && $0.parameters == [88] }.count == 1)
+            #expect(await wire.triggerPayloads == [Data([1,0])])
+        }
+    }
     @Test func identityAmbiguityOrChangedProofNeverDeletesOrUploads() async throws {
         for mode in [CleanupWire.Mode.multiple,.wrongHandle,.changedObject,.changedStorage,.changedPayload,.lateObjectChange] {
             let f = try CleanupFixture(); defer { f.remove() }
@@ -117,11 +141,13 @@ private struct CleanupFixture {
 }
 
 private actor CleanupWire: PTPTransport {
-    enum Mode { case normal, multiple, wrongHandle, changedObject, changedStorage, changedPayload, lateObjectChange, deleteRejected, notEmptyAfterDelete }
+    enum Mode { case normal, multiple, wrongHandle, changedObject, changedStorage, changedPayload, lateObjectChange, deleteRejected, notEmptyAfterDelete, finalZero, finalMultiple, finalReplacement }
     let mode: Mode, jpeg: Data
     var commands: [PTPCommand] = []
     var triggerPayloads: [Data] = []
-    private var deleted = false, triggered = false, closed = false
+    private var deleted = false, triggered = false
+    var closed = false
+    var triggeredViews = 0
     private var oldInfoReads = 0
     init(jpeg: Data,mode: Mode = .normal) { self.jpeg = jpeg; self.mode = mode }
     func validate() throws { guard !closed else { throw PTPError.notConnected } }
@@ -134,11 +160,16 @@ private actor CleanupWire: PTPTransport {
         case (0x1015,[0xD16E]): bytes = Data([6,0])
         case (0x1015,[0xD186]),(0x1015,[0xD187]): bytes = ProtocolProbeFixtures.string("X-T5_0200")
         case (0x1007,[UInt32.max,0,0]):
-            if triggered { bytes = Data([1,0,0,0,88,0,0,0]) }
+            if triggered {
+                triggeredViews += 1
+                if triggeredViews >= 4 && mode == .finalZero { bytes = Data([0,0,0,0]) }
+                else if triggeredViews >= 4 && mode == .finalMultiple { bytes = Data([2,0,0,0,88,0,0,0,89,0,0,0]) }
+                else { bytes = Data([1,0,0,0,triggeredViews >= 4 && mode == .finalReplacement ? 89 : 88,0,0,0]) }
+            }
             else if deleted && mode != .notEmptyAfterDelete { bytes = Data([0,0,0,0]) }
             else if mode == .multiple { bytes = Data([2,0,0,0,77,0,0,0,78,0,0,0]) }
             else { bytes = Data([1,0,0,0,mode == .wrongHandle ? 78 : 77,0,0,0]) }
-        case (0x1008,[77]),(0x1008,[88]):
+        case (0x1008,[77]),(0x1008,[88]),(0x1008,[89]):
             var value = CleanupFixture.objectInfo(size: jpeg.count)
             if c.parameters == [77] { oldInfoReads += 1 }
             if mode == .changedObject || (mode == .lateObjectChange && oldInfoReads > 1) { value[46] = 1 }
