@@ -4,6 +4,94 @@ import Testing
 @testable import FujiStudio
 
 @MainActor struct ImageCaptureSessionDriverTests {
+    @Test func stopGeneratedRemovalCannotSkipCloseOrRetireReentrantReplacement() {
+        let first = SessionTestBrowser(); let second = SessionTestBrowser(); var browsers = [first, second]
+        let callbacks = DriverCallbackQueue()
+        let driver = ImageCaptureSessionDriver(makeBrowser: { browsers.removeFirst() }, deliverCompletion: { callbacks.enqueue($0) })
+        let oldCamera = SessionTestCamera(); let freshCamera = SessionTestCamera()
+        oldCamera.automaticallyClose = false
+        first.onStop = { driver.didRemove(oldCamera) } // Exact observed synchronous native stop callback.
+        driver.start { _ in }; callbacks.drain()
+        driver.deviceBrowser(first, didAdd: oldCamera, moreComing: false)
+        oldCamera.completeOpen(error: nil); callbacks.drain()
+        var closeCompletions = 0
+        var freshOpened = 0
+        driver.close {
+            closeCompletions += 1
+            // A close consumer can start the replacement immediately, on this same stack.
+            driver.start { if case .opened = $0 { freshOpened += 1 } }
+            driver.deviceBrowser(second, didAdd: freshCamera, moreComing: false)
+            freshCamera.completeOpen(error: nil)
+        }
+        #expect(oldCamera.closeRequestCount == 1)
+        #expect(first.stopCount == 0)
+        #expect(closeCompletions == 0)
+        oldCamera.completeClose(error: nil); callbacks.drain()
+        #expect(first.stopCount == 1)
+        #expect(!oldCamera.hasOpenSession)
+        #expect(closeCompletions == 1)
+        #expect(freshOpened == 1)
+        #expect(freshCamera.hasOpenSession)
+        #expect(freshCamera.closeRequestCount == 0)
+        // Both completion and delegate delivery may arrive again after the replacement.
+        oldCamera.completeClose(error: nil)
+        driver.didRemove(oldCamera)
+        driver.device(oldCamera, didCloseSessionWithError: nil)
+        callbacks.drain()
+        #expect(closeCompletions == 1)
+        #expect(freshCamera.hasOpenSession)
+        #expect(second.stopCount == 0)
+        driver.close {}; callbacks.drain()
+    }
+
+    @Test func closeWhileOpeningWaitsForNativeCloseBeforeStoppingBrowser() {
+        let browser = SessionTestBrowser(); let callbacks = DriverCallbackQueue(); let camera = SessionTestCamera()
+        let driver = ImageCaptureSessionDriver(makeBrowser: { browser }, deliverCompletion: { callbacks.enqueue($0) })
+        camera.automaticallyClose = false
+        browser.onStop = { driver.didRemove(camera) }
+        driver.start { _ in }; callbacks.drain()
+        driver.deviceBrowser(browser, didAdd: camera, moreComing: false)
+        var closed = 0
+        driver.close { closed += 1 }
+        #expect(browser.stopCount == 0)
+        #expect(camera.closeRequestCount == 0)
+        #expect(closed == 0)
+        camera.completeOpen(error: nil); callbacks.drain()
+        #expect(camera.closeRequestCount == 1)
+        #expect(browser.stopCount == 0)
+        #expect(closed == 0)
+        camera.completeClose(error: nil); callbacks.drain()
+        #expect(browser.stopCount == 1)
+        #expect(closed == 1)
+        #expect(!camera.hasOpenSession)
+    }
+
+    @Test func failedNativeCloseKeepsDiscoveryAndQuarantineUntilPhysicalRemoval() {
+        let browser = SessionTestBrowser(); let callbacks = DriverCallbackQueue(); let camera = SessionTestCamera()
+        let driver = ImageCaptureSessionDriver(makeBrowser: { browser }, deliverCompletion: { callbacks.enqueue($0) })
+        camera.automaticallyClose = false
+        browser.onStop = { driver.didRemove(camera) }
+        driver.start { _ in }; callbacks.drain()
+        driver.deviceBrowser(browser, didAdd: camera, moreComing: false)
+        camera.completeOpen(error: nil); callbacks.drain()
+        var closed = 0
+        driver.close { closed += 1 }
+        camera.completeClose(error: NSError(domain: "fixture.close", code: 1)); callbacks.drain()
+        #expect(camera.closeRequestCount == 1)
+        #expect(browser.stopCount == 0)
+        #expect(browser.isBrowsing)
+        #expect(closed == 0)
+        var sendFailure: PTPError?
+        driver.send(command: nativeCommand(1), data: nil) { if case .failure(let error) = $0 { sendFailure = error } }
+        #expect(sendFailure == .notConnected)
+        // Discovery was never stopped; this is a separately delivered physical-removal event.
+        driver.didRemove(camera)
+        #expect(browser.stopCount == 1)
+        #expect(closed == 1)
+        camera.completeClose(error: nil); callbacks.drain()
+        #expect(closed == 1)
+    }
+
     @Test func lifecycleDiagnosticsObserveCachedDeviceAndCloseOrderingWithoutLoggingDeviceIdentity() {
         let browser = SessionTestBrowser(); let callbacks = DriverCallbackQueue(); let camera = SessionTestCamera()
         browser.cachedDevices = [camera]
@@ -12,17 +100,18 @@ import Testing
         driver.deviceBrowser(browser, didAdd: camera, moreComing: false)
         camera.completeOpen(error: nil); callbacks.drain()
         driver.close {}
-        // Completion delivery is deliberately suspended: browser.stop has happened but close
-        // acknowledgement has not reached the real driver. The cache still owns the device.
+        // Completion delivery is deliberately suspended. Discovery must stay alive until
+        // close acknowledgement reaches the real driver; the cache still owns the device.
         let waiting = driver.lifecycleDiagnosticMessages().joined(separator: "\n")
-        #expect(waiting.contains("browser.stop.after"))
+        #expect(!waiting.contains("browser.stop.after"))
         #expect(waiting.contains("cached=1"))
-        #expect(waiting.contains("browsing=false"))
+        #expect(waiting.contains("browsing=true"))
         #expect(waiting.contains("closing=true"))
         #expect(!waiting.contains("close.completion"))
         callbacks.drain()
         let completed = driver.lifecycleDiagnosticMessages().joined(separator: "\n")
         #expect(completed.contains("close.completion current=true errorCode=none"))
+        #expect(completed.contains("browser.stop.after"))
         #expect(completed.contains("close.finished"))
         #expect(completed.contains("browser=none"))
         #expect(!completed.contains("PRIVATE_DEVICE_NAME"))
@@ -527,6 +616,8 @@ import Testing
 private final class SessionTestBrowser: ICDeviceBrowser {
     private(set) var didStart = false
     private var browsingNow = false
+    private(set) var stopCount = 0
+    var onStop: (() -> Void)?
     var suspensionFlag = false
     var cachedDevices: [ICDevice] = []
     override var isBrowsing: Bool { browsingNow }
@@ -567,7 +658,7 @@ private final class SessionTestBrowser: ICDeviceBrowser {
     }
 
     override func start() { didStart = true; browsingNow = true; browsingEvents.continuation.yield(()) }
-    override func stop() { browsingNow = false }
+    override func stop() { stopCount += 1; browsingNow = false; onStop?() }
     func completeControl(_ status: ICAuthorizationStatus) { controlStatus = status; controlReply?(status) }
     func completeContents(_ status: ICAuthorizationStatus) { contentsStatus = status; contentsReply?(status) }
     @MainActor func waitForControlRequest() async {
@@ -620,6 +711,8 @@ private final class SessionTestCamera: ICCameraDevice {
         } else { ptpBlock?(data, response, nil) }
     }
     private var openCompletion: (@Sendable ((any Error)?) -> Void)?
+    private var closeCompletion: (@Sendable ((any Error)?) -> Void)?
+    var automaticallyClose = true
     private var sessionIsOpen = false
     private(set) var pendingOpenCount = 0
     private(set) var closeRequestCount = 0
@@ -633,9 +726,11 @@ private final class SessionTestCamera: ICCameraDevice {
         pendingOpenCount += 1; openCompletion = completion
     }
     override func requestCloseSession(options: [ICSessionOptions: Any]?, completion: @escaping @Sendable ((any Error)?) -> Void) {
-        closeRequestCount += 1; sessionIsOpen = false; completion(nil)
+        closeRequestCount += 1; closeCompletion = completion
+        if automaticallyClose { completeClose(error: nil) }
     }
     func completeOpen(error: (any Error)?) { sessionIsOpen = error == nil; openCompletion?(error) }
+    func completeClose(error: (any Error)?) { if error == nil { sessionIsOpen = false }; closeCompletion?(error) }
 }
 
 /// Executes the real driver's framework-completion bodies in a caller-selected order, without Task scheduling or sleeps.

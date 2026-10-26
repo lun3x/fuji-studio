@@ -284,9 +284,8 @@ import ImageCaptureCore
     func close(completion: @escaping @MainActor @Sendable () -> Void) {
         nativeRequest = nil
         closing = true; closeCompletion = completion; events = nil
-        recordLifecycle("browser.stop.before")
-        browser?.stop()
-        recordLifecycle("browser.stop.after")
+        // stop() can synchronously emit didRemove for a still-open camera. Keep discovery
+        // alive until native close is confirmed, or independently observed removal retires it.
         // Opening has no public cancellation API. Wait for its terminal callback, then close it.
         if opening { return }
         closeCamera()
@@ -307,13 +306,21 @@ import ImageCaptureCore
         }
     }
     private func finishClose() {
+        guard closing else { return }
         recordLifecycle("close.retiring")
         camera?.delegate = nil; camera = nil
-        browser?.delegate = nil; browser = nil
         nativeRequest = nil
-        opening = false; closing = false; run = UUID()
+        opening = false; run = UUID()
+        let completion = closeCompletion; closeCompletion = nil
+        // Retire identity/delegates before stop's reentrant callbacks; publish completion only
+        // after stop returns so a synchronously opened replacement cannot be cleared here.
+        browser?.delegate = nil
+        recordLifecycle("browser.stop.before")
+        browser?.stop()
+        recordLifecycle("browser.stop.after")
+        browser = nil; closing = false
         recordLifecycle("close.finished")
-        let completion = closeCompletion; closeCompletion = nil; completion?()
+        completion?()
     }
     func send(command: Data, data: Data?, completion: @escaping @MainActor @Sendable (Result<PTPWireReply, PTPError>) -> Void) {
         guard let camera, !closing, camera.hasOpenSession else { completion(.failure(.notConnected)); return }
