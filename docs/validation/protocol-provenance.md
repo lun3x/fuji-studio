@@ -246,3 +246,59 @@ A fresh exact X-T5/4.31/mode6/_0200 session must advertise DeleteObject and the 
 The same operation gate then covers the pinned 900C/900D upload of the exact retained RAF, a fresh opaque post-upload D185 read, **one D183 UInt16LE1**, bounded polling, unique new output, private capture, context inspection and confirmed native close. D185 is never patched. The new output is never deleted. Zero ObjectInfo dimensions/association quirks can reach private quarantine, while known nonzero geometry mismatch still fails. Actual JPEG dimensions/orientation/model checks remain explicit, `jpegRetained=false`, `fineQualityValidated=false`; MakerNote quality must be inspected from the private JPEG. No schema, FINE, imported-recipe or opaque input-buffer cleanup claim follows from this experiment.
 
 Sanitized files: `Documents/xt5-trigger-one-evidence.json`, `xt5-trigger-one-status.txt`, `camera-diagnostics.txt`. Private: `Documents/xt5-trigger-one-private/<UUID>/` (source/cleanup references, baseline, protocol/conversion manifests, raw object/storage records, quarantined candidate). The one-shot marker lives beside the original phase-G quarantine as `exact-cleanup-attempt.json`; it must not be cleared automatically. All nine engineering flags are mutually exclusive and ordinary launch remains inert. This phase reuses the pinned protocol references above, with no new external implementation copied. Trigger1 behavior and native deletion are still pending controller observation.
+
+## Phase H observed — full-size FINE baseline, not recipe fidelity
+
+Actual `2916c7c3` completed at 19:39:38–40Z on X-T5/4.31/_0200. Exact old-output identity, one deletion acknowledgement and the subsequent empty view were verified. The retained 35,811,472-byte RAW uploaded successfully; its new D185 was byte-identical to the earlier 625-byte baseline. Trigger1 produced one 25,113,630-byte JPEG after two polls; the final view still contained that same singleton. JPEG geometry was **7728×5152, orientation8, X-T5**, matching the RAW's recorded geometry. ExifTool independently read **FINE** (padded string). Raw ObjectInfo before/after matched completely; its dimensions remained zero and association2055. Native close completed successfully. The old marker and both local outputs were preserved; the new output and invisible input-buffer cleanup remain unconfirmed.
+
+This proves a full-size FINE unchanged-baseline result through the public iPhone transport. It does not promote diagnostic quarantine into `CameraJPEG`, establish quality validation inside the app, or prove imported recipes. Mac ImageIO returned an empty Fuji MakerNote dictionary for this actual JPEG; its Fuji dictionary key does not imply a readable FINE property. Production needs bounded, independently tested quality evidence, in addition to authoritative JPEG geometry/context and ownership-safe cleanup.
+
+## Offline phase I — all seven vendor references and schema evidence
+
+The user expanded acceptance to **all C1–C7**, on the exact same RAF. The controller collected AsShot and all seven JPEGs using X RAW Studio1.27.0 and the camera's native CUSTOM list, plus local FP1 profiles and post-conversion FP2/FP3 sidecars. All eight JPEGs independently report X-T5/FINE/7728×5152/orientation8. The source remains byte-identical and is observed as lossless-compressed14-bit. Saved camera banks were not changed. Each slot selection displayed a source-adjustment warning; these warnings were recorded, not treated as fidelity approval. Current vendor XML uses the folder/group label X-T5_0100 despite the actual camera property keys being _0200. This observed label does not authorize a compatibility path or establish wire grammar.
+
+### Baseline JPEG differences are real decoded variation
+
+Independent offline decoding removed APP/COM metadata and used `djpeg -dct int -rgb`. Phone, vendor AsShot and vendor C2 have identical DHT, DQT, DRI, SOF and SOS payloads, but different entropy scans. Their decoded RGB samples differ; the difference cannot be explained solely by metadata or CoreGraphics color management. Numeric measurements use unrotated7728×5152 RGB samples, equal orientation8, and channel differences on a0–255 scale:
+
+| Pair | RGB MAE | RGB RMSE | Maximum | 32×32 tile-mean RMSE |
+| --- | ---: | ---: | ---: | ---: |
+| Phone / vendor AsShot | 6.598643 | 8.229097 | 31 | 0.159120 |
+| Phone / vendor C2 | 6.599005 | 8.229163 | 31 | 0.160287 |
+| Vendor C2 / repeat | 6.598719 | 8.228818 | 31 | 0.160681 |
+| Vendor C7 / repeat | 19.981046 | 25.136123 | 74 | 0.610100 |
+
+C2 and C7 repeat profiles have identical hierarchical effective and rejected fields. Signed channel means are near zero (phone/C2 approximately−0.0000077; C2 repeat+0.0000475). Thus the phone baseline difference has the measured high-frequency variation scale of the unchanged C2 vendor self-repeat. C7, whose metadata reports nonzero grain, varies much more. This is evidence of render-to-render variability; it is not exact pixel equality, a proved noise mechanism, an arbitrary tolerance, or an all-recipe fidelity pass. C2 does not byte-match the phone output, and dormant/ignored profile fields prevent claiming semantic profile identity solely from this comparison.
+
+### Bank-to-XML projections observed across all seven
+
+Hierarchical XML parsing is essential: every C-slot FP2/post-render FP3 has effective `PropertyGroup/LensModulationOpt=OFF` and separately `PropertyGroup/RejectedValue/LensModulationOpt=ON`. FP1 requests ON. Flattening by leaf name incorrectly replaces effective OFF with rejected ON. LMO is the only changed noncarrier field between each saved FP1 and its post-render effective profile; JPEG metadata independently reports LMO off. This is a source-specific adjustment for the manual-lens RAW, not permission to change the saved recipe. `PortraitEnhancer` appears additionally in FP2, not as an established bank field.
+
+The following projections match every observed bank against its corresponding FP1 (126 scalar checks plus grain observations). Coverage is limited to the values actually present; unseen enum values remain unsupported. These are semantic import observations, **not validated D185 write mappings**:
+
+| Bank properties | Observed XML projection |
+| --- | --- |
+| D190 / D191 | DynamicRange is a decimal value; WideDRange uses its separate enum. Effective DR equals saved DR for all seven, and JPEG DevelopmentDynamicRange agrees; no DR adjustment is observed in this data. |
+| D192 | FilmSimulation: all five observed enum values match the vendor labels. No fallback to an older simulation is allowed. |
+| D193 / D194 | Signed monochrome WC/MG dials divided by10. Only the observed domain is supported by these references. |
+| D195 | Four banks with raw7 project to OFF/LARGE; two raw6 banks project to OFF/SMALL; the remaining observed raw3 projects to STRONG/SMALL. This resolves the observed import meaning of7, not its D185 encoding. |
+| D196 / D197 / D198 | Chrome, FX Blue and Smooth Skin match documented1-based semantic enums for the observed values. Smooth Skin is only observed OFF. |
+| D199–D19C | WB mode enum, direct signed red/blue shifts and Kelvin. All selected C-slot profiles explicitly disable WBShootCond; AsShot keeps a distinct as-shot WB control. Inactive temperature values must be preserved, not assumed applied. |
+| D19D–D1A0 / D1A2 | Signed highlight/shadow/color/sharpness/clarity divided by10. |
+| D1A1 | Nonlinear NR lookup matches all seven. |
+
+D18E, D18F, D1A3 and D1A4 remain preserved and unmapped. Constant values or resemblance to file-size/LMO/colorspace settings do not establish their meanings. Output JPEG/size/FINE policy must remain distinct from recipe looks. Seven imported snapshots remain immutable; effective per-RAW settings and explicit rejected/adjusted values need separate records.
+
+### Why the pinned parser is not a validated _0200 writer
+
+Actual D/H625-byte blobs contain28 complete words after candidate offset513, with declared count29. Upstream initial601/count23 contains22 words; upstream629/count29 contains29; upstream601/count29 contains22. The “count includes one string” hypothesis fits only some cases. The pinned `FujiBinaryProfile` commentary itself describes camera-read/vendor-write length asymmetry. No universal count rule, truncation padding, missing29th value or reconstructed header is established.
+
+Pinned libfuji's D185 grammar also disagrees with current observations: its WB shift table uses×10, but the actual nonzero candidate read words match the vendor AsShot shifts directly; its candidate FX Blue slot does not map to the expected current XML value under its0-based enum. The baseline WB mode is0 while WBShootCond indicates as-shot behavior, so mode0 must not be reinterpreted as a normal selectable WB mode. The parser lacks a named Smooth Skin wire field, includes unknown trailing fields, and the lookup source approximates Nostalgic Negative with Classic Chrome. None of those approximations or unsupported mappings is adopted. Candidate file-format/size/quality values correlate with JPEG/L3:2/FINE, but unchanged output does not prove the effect of writing them.
+
+### Next bounded experiment proposal — not yet authorized or implemented
+
+First obtain one vendor differential reference: reset to the captured AsShot settings, change only film simulation to one already observed distinct C-slot film, then save local FP1, render once and retain the post-render FP3/JPEG. Compare hierarchical fields to identify any additional automatic control changes. This gives a controlled reference rather than comparing a single-field phone change with a whole-bank recipe.
+
+The proposed phone experiment then requires a fresh exact context, the same retained RAF, and a **successful empty object view**. Existing phase-H output ownership does not authorize deleting whatever object remains after Mac reference work. If nonempty, stop for separate read-only identity evidence and a specific cleanup ruling. After upload, require the exact observed625-byte per-RAF baseline; echo those exact bytes to working D185 and read back. Abort on rejection or any unexplained difference; never pad to629. Only after that roundtrip succeeds may a separately ruled candidate film word at513+7×4 be changed, with all other bytes preserved, exact readback checked, and one established trigger1 used. Its output remains private diagnostic, subject to unique/stable object identity, complete JPEG/context/FINE validation and confirmed close, with no automatic deletion or retry. This proposal tests a specific scalar write, not a general schema or seven-recipe renderer. Remaining grain/control/FX Blue/Smooth Skin mappings need their own differential evidence before all-seven application.
+
+The controller subsequently captured a C2→CLASSIC CHROME calibration. Hierarchical effective FP3 changes only FilmSimulation; the COLOR value revealed by the color simulation is retained from C2. RejectedValue additionally records BlackImageTone, alongside LMO. This is a useful single-film differential from C2, but C2's dormant Color/WB controls differ from the unchanged AsShot baseline. A literal baseline film-word-only experiment therefore still needs the matching AsShot→CLASSIC CHROME reference, or must first establish all effective C2 inputs. Do not compare it to this C2 calibration as though the remaining controls were identical.
