@@ -1,7 +1,10 @@
 .DS_Store
 .venv/
 .superpowers/
+FujiStudio.xcodeproj/
 .build/
 DerivedData/
 xcuserdata/
 *.xcuserstate
+Config/Signing.local.xcconfig
+Tests/Fixtures/Private/
