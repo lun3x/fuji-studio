@@ -3,6 +3,30 @@ import Testing
 @testable import FujiStudio
 
 struct XT5UnchangedConversionTests {
+    @Test func recoveryReadsSingleExistingCandidateWithoutUploadTriggerProfileOrDelete() async throws {
+        let f = try ConversionFixture(); defer { f.remove() }
+        let wire = try ConversionWire(mode: .recoverySingle)
+        let report = try await probe(wire).recoverExistingOutput(raw: f.raw,directory: f.directory)
+        let observation = try #require(report.unchangedConversion)
+        #expect(observation.readOnlyRecovery && observation.triggerValue == nil)
+        #expect(!observation.triggerAttempted && observation.jpegRetained)
+        #expect(observation.label.contains("unconfirmed"))
+        #expect(report.sessionClosure == "confirmed")
+        #expect(report.baselineBytes == nil && !report.rawUploadSucceeded)
+        #expect(await wire.commands.allSatisfy { [0x1001,0x1005,0x1007,0x1008,0x1009,0x1015].contains($0.opcode) && $0.parameters != [0xD185] })
+        #expect(FileManager.default.fileExists(atPath: f.directory.appendingPathComponent("recovered-candidate.JPG").path))
+        #expect(!FileManager.default.fileExists(atPath: f.directory.appendingPathComponent("baseline.bin").path))
+    }
+    @Test func recoveryRequiresExactlyOneCandidateAndDoesNotFallbackToTrigger() async throws {
+        for mode in [ConversionWire.Mode.normal,.recoveryMultiple] {
+            let f = try ConversionFixture(); defer { f.remove() }
+            let wire = try ConversionWire(mode: mode)
+            do { _ = try await probe(wire).recoverExistingOutput(raw: f.raw,directory: f.directory); Issue.record("Expected recovery refusal") }
+            catch let failure as XT5RawBaselineFailure { #expect(failure.evidence.sessionClosure == "confirmed") }
+            #expect(await wire.commands.allSatisfy { [0x1001,0x1007,0x1015].contains($0.opcode) })
+            #expect(!FileManager.default.fileExists(atPath: f.directory.appendingPathComponent("recovered-candidate.JPG").path))
+        }
+    }
     @Test func uploadsThenTriggersUnmodifiedBaselineOnceAndRetainsValidatedJPEGWithoutDeletion() async throws {
         let f = try ConversionFixture(); defer { f.remove() }
         let wire = try ConversionWire()
@@ -77,7 +101,7 @@ private struct ConversionFixture {
 }
 
 private actor ConversionWire: PTPTransport {
-    enum Mode { case normal, nonemptyBeforeTrigger, multipleOutputs, wrongMetadata, wrongJPEG, noOutput, staleAfterTrigger }
+    enum Mode { case normal, nonemptyBeforeTrigger, multipleOutputs, wrongMetadata, wrongJPEG, noOutput, staleAfterTrigger, recoverySingle, recoveryMultiple }
     let mode: Mode
     nonisolated let jpeg: Data
     var commands: [PTPCommand] = []
@@ -102,7 +126,9 @@ private actor ConversionWire: PTPTransport {
             triggered = true; triggerPayload = data; bytes = Data()
             if mode == .staleAfterTrigger { current = false }
         case (0x1007,[UInt32.max,0,0]):
-            if triggered && mode != .noOutput { bytes = mode == .multipleOutputs ? Data([2,0,0,0,77,0,0,0,78,0,0,0]) : Data([1,0,0,0,77,0,0,0]) }
+            if mode == .recoveryMultiple { bytes = Data([2,0,0,0,77,0,0,0,78,0,0,0]) }
+            else if mode == .recoverySingle { bytes = Data([1,0,0,0,77,0,0,0]) }
+            else if triggered && mode != .noOutput { bytes = mode == .multipleOutputs ? Data([2,0,0,0,77,0,0,0,78,0,0,0]) : Data([1,0,0,0,77,0,0,0]) }
             else if uploaded && mode == .nonemptyBeforeTrigger { bytes = Data([1,0,0,0,77,0,0,0]) }
             else { bytes = Data([0,0,0,0]) }
         case (0x1008,[77]),(0x1008,[78]):

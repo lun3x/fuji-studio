@@ -589,7 +589,9 @@ import ImageCaptureCore
         func cameraDevice(_ camera: ICCameraDevice, didRenameItems items: [ICCameraItem]) {}
         func cameraDevice(_ camera: ICCameraDevice, didReceiveThumbnail thumbnail: CGImage?, for item: ICCameraItem, error: (any Error)?) {}
         func cameraDevice(_ camera: ICCameraDevice, didReceiveMetadata metadata: [AnyHashable: Any]?, for item: ICCameraItem, error: (any Error)?) {}
-        func cameraDevice(_ camera: ICCameraDevice, didReceivePTPEvent eventData: Data) {}
+        // ImageCaptureCore delivers this event on ICDeviceOperationQueue. It is intentionally
+        // ignored: no framework/owner state is read and no callback can cross a session run.
+        nonisolated func cameraDevice(_ camera: ICCameraDevice, didReceivePTPEvent eventData: Data) {}
         func deviceDidBecomeReady(withCompleteContentCatalog device: ICCameraDevice) {}
         func cameraDeviceDidRemoveAccessRestriction(_ device: ICDevice) {}
         func cameraDevice(_ camera: ICCameraDevice, shouldGetThumbnailOf item: ICCameraItem) -> Bool { false }

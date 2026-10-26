@@ -92,9 +92,11 @@ final class XT5RawBaselineLaunchRunner {
         let otherFlags = ["--xt5-read-only-probe", "--xt5-direct-values-probe", "--camera-reconnect-probe", "--xt5-bank-import-probe"]
         let baseline = arguments.contains("--xt5-raw-baseline-probe")
         let unchanged = arguments.contains("--xt5-unchanged-baseline-probe")
-        guard baseline != unchanged, !otherFlags.contains(where: arguments.contains), !didRun else { return }
+        let recovery = arguments.contains("--xt5-output-recovery-probe")
+        guard [baseline,unchanged,recovery].filter({ $0 }).count == 1, !otherFlags.contains(where: arguments.contains), !didRun else { return }
         didRun = true
         if unchanged { prefix = "xt5-unchanged-baseline" }
+        if recovery { prefix = "xt5-output-recovery" }
         var probeOwnsClose = false
         do {
             let output = try requestedDirectory ?? FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
@@ -103,11 +105,11 @@ final class XT5RawBaselineLaunchRunner {
             directory = output
             try Data("{\"state\":\"preparing original\"}".utf8).write(to: output.appendingPathComponent(prefix + "-evidence.json"), options: .atomic)
             saveLifecycle()
-            try writeStatus(unchanged ? "Verifying the retained original for unchanged-baseline trigger 0" : "Preparing one original using existing Photos access")
+            try writeStatus(recovery ? "Verifying retained original for read-only existing-output recovery" : unchanged ? "Verifying the retained original for unchanged-baseline trigger 0" : "Preparing one original using existing Photos access")
             let raw: PreparedRAW
-            if unchanged { raw = try await retainedSource(output, privateRun) }
+            if !baseline { raw = try await retainedSource(output, privateRun) }
             else { raw = try await preparer.prepareOne(in: privateRun).raw }
-            try writeStatus("Original retained privately; connecting for bounded RAW upload")
+            try writeStatus(recovery ? "Connecting for read-only output recovery; no upload or trigger" : "Original retained privately; connecting for bounded RAW upload")
             try await transport.connect()
             let native = transport
             let generation = try native.currentSession().generation
@@ -119,8 +121,12 @@ final class XT5RawBaselineLaunchRunner {
                 try await Self.close(native, expectedGeneration: generation)
             }, experiment: unchanged ? .unchangedTrigger0 : .baselineOnly)
             probeOwnsClose = true
-            _ = try await probe.capture(raw: raw, directory: privateRun) { [weak self] report in await self?.save(report) }
-            let success = unchanged ? "Unchanged-baseline JPEG retained; native session closed; input/output cleanup unconfirmed; FINE and imported recipes unvalidated" : "Baseline probe complete; native session closed; upload buffer cleanup remains unconfirmed; conversion unvalidated"
+            if recovery {
+                _ = try await probe.recoverExistingOutput(raw: raw, directory: privateRun) { [weak self] report in await self?.save(report) }
+            } else {
+                _ = try await probe.capture(raw: raw, directory: privateRun) { [weak self] report in await self?.save(report) }
+            }
+            let success = recovery ? "Existing candidate retained; native session closed; provenance and cleanup unconfirmed; no upload or trigger performed" : unchanged ? "Unchanged-baseline JPEG retained; native session closed; input/output cleanup unconfirmed; FINE and imported recipes unvalidated" : "Baseline probe complete; native session closed; upload buffer cleanup remains unconfirmed; conversion unvalidated"
             try writeStatus(artifactWriteFailed ? "Probe operation finished, but public evidence writing failed" : success)
         } catch let failure as XT5RawBaselineFailure {
             try? writeStatus("Baseline probe incomplete: \(failure.evidence.failure ?? failure.evidence.sessionClosureFailure ?? "unknown outcome"); native closure \(failure.evidence.sessionClosure); buffer cleanup unconfirmed")

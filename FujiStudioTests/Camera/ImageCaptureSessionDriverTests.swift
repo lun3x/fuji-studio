@@ -4,6 +4,31 @@ import Testing
 @testable import FujiStudio
 
 @MainActor struct ImageCaptureSessionDriverTests {
+    @Test func ptpEventFromNativeOperationQueueIsIgnoredAcrossSessions() async throws {
+        let browser = SessionTestBrowser(); let callbacks = DriverCallbackQueue(); let camera = SessionTestCamera()
+        browser.cachedDevices = [camera]
+        let driver = ImageCaptureSessionDriver(makeBrowser: { browser }, deliverCompletion: { callbacks.enqueue($0) })
+        var events: [CameraDriverEvent] = []
+        driver.start { events.append($0) }
+        camera.completeOpen(error: nil); callbacks.drain()
+        let old = try NativePTPEventInvocation(target: #require(camera.delegate as? NSObject), camera: camera)
+        await old.deliverOffMain()
+        #expect(openedCount(events) == 1 && failedCount(events) == 0)
+        driver.close {}; callbacks.drain()
+        driver.start { events.append($0) }
+        camera.completeOpen(error: nil); callbacks.drain()
+        let current = try NativePTPEventInvocation(target: #require(camera.delegate as? NSObject), camera: camera)
+        var reply: Result<PTPWireReply, PTPError>?
+        driver.send(command: nativeCommand(1), data: nil) { reply = $0 }
+        await old.deliverOffMain(); await current.deliverOffMain()
+        callbacks.drain()
+        #expect(reply == nil)
+        #expect(openedCount(events) == 2 && failedCount(events) == 0)
+        #expect(camera.hasOpenSession)
+        camera.completePTP(command: nativeCommand(1), response: nativeResponse(9)); callbacks.drain()
+        _ = try #require(reply).get()
+        driver.close {}; callbacks.drain()
+    }
     @Test func removalBeforeBrowserCacheUpdateCannotReopenDetachedCamera() throws {
         let browser = SessionTestBrowser(); let callbacks = DriverCallbackQueue(); let camera = SessionTestCamera()
         browser.cachedDevices = [camera]
@@ -933,3 +958,27 @@ private final class DriverCallbackQueue: @unchecked Sendable {
 }
 
 private enum NativeContext { case current, missing, value(UInt) }
+
+/// Test-only native Objective-C dispatch. References and IMP are captured on MainActor; the SDK's
+/// arbitrary callback queue is simulated without reading framework state on that queue.
+private final class NativePTPEventInvocation: @unchecked Sendable {
+    typealias Callback = @convention(c) (AnyObject, Selector, AnyObject, NSData) -> Void
+    private let target: NSObject
+    private let camera: ICCameraDevice
+    private let selector: Selector
+    private let callback: Callback
+    @MainActor init(target: NSObject, camera: ICCameraDevice) {
+        self.target = target; self.camera = camera
+        selector = NSSelectorFromString("cameraDevice:didReceivePTPEvent:")
+        callback = unsafeBitCast(target.method(for: selector), to: Callback.self)
+    }
+    func deliverOffMain() async {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                dispatchPrecondition(condition: .notOnQueue(.main))
+                self.callback(self.target, self.selector, self.camera, Data([12,0,0,0,4,0,2,64,0,0,0,0]) as NSData)
+                continuation.resume()
+            }
+        }
+    }
+}

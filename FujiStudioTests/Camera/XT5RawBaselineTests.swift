@@ -277,7 +277,9 @@ private actor BaselineLibrary: PhotoLibraryReading {
     @Test func ordinaryAndConflictingFlagsAreInertForEveryRunner() async {
         let flag = "--xt5-raw-baseline-probe"
         let flags = ["--xt5-read-only-probe","--xt5-direct-values-probe","--xt5-bank-import-probe","--camera-reconnect-probe"]
-        for args in [["FujiStudio"], [flag,"--xt5-unchanged-baseline-probe"]] + flags.map({ [flag,$0] }) + flags.map({ ["--xt5-unchanged-baseline-probe",$0] }) {
+        let recovery = "--xt5-output-recovery-probe"
+        let mixed = [[flag,"--xt5-unchanged-baseline-probe"], [flag,recovery], ["--xt5-unchanged-baseline-probe",recovery]]
+        for args in [["FujiStudio"]] + mixed + flags.map({ [flag,$0] }) + flags.map({ ["--xt5-unchanged-baseline-probe",$0] }) + flags.map({ [recovery,$0] }) {
             let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
             let driver = BaselineProbeDriver()
             let transport = ImageCaptureTransport(driver: driver)
@@ -303,6 +305,31 @@ private actor BaselineLibrary: PhotoLibraryReading {
         #expect(await library.materializedIDs.isEmpty)
         #expect(runner.status.contains("retainedSourceUnavailable"))
         #expect(FileManager.default.fileExists(atPath: directory.appendingPathComponent("xt5-unchanged-baseline-status.txt").path))
+    }
+    @Test func recoveryLaunchRequiresRetainedSourceBeforeOpeningCamera() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let library = BaselineLibrary(ids: ["reference"])
+        let driver = BaselineProbeDriver()
+        let runner = XT5RawBaselineLaunchRunner(transport: ImageCaptureTransport(driver: driver),directory: directory,
+            preparer: RAWBaselineSourcePreparer(reader: library),retainedSource: { _,_ in throw XT5ConversionProbeIssue.retainedSourceUnavailable })
+        await runner.runIfRequested(arguments: ["--xt5-output-recovery-probe"])
+        #expect(driver.startCount == 0)
+        #expect(await library.materializedIDs.isEmpty)
+        #expect(runner.status.contains("retainedSourceUnavailable"))
+        #expect(FileManager.default.fileExists(atPath: directory.appendingPathComponent("xt5-output-recovery-status.txt").path))
+    }
+    @Test func recoveryLaunchCannotFallBackToUploadWhenReadCapabilitiesAreMissing() async throws {
+        let fixture = try BaselineFixture(); defer { fixture.remove() }
+        let driver = BaselineProbeDriver() // Advertises upload support, but no GetObject download.
+        let runner = XT5RawBaselineLaunchRunner(transport: ImageCaptureTransport(driver: driver),directory: fixture.directory,
+                                               retainedSource: { _,_ in fixture.raw })
+        await runner.runIfRequested(arguments: ["--xt5-output-recovery-probe"])
+        let report = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: fixture.directory.appendingPathComponent("xt5-output-recovery-evidence.json"))) as? [String:Any])
+        #expect(report["readOnlyRecovery"] as? Bool == true)
+        #expect(report["rawUploadSucceeded"] as? Bool == false)
+        #expect(report["sessionClosure"] as? String == "confirmed")
+        #expect(await driver.wire.commands.allSatisfy { [0x1001,0x1015].contains($0.opcode) })
     }
     @Test func retainedSelectionRejectsMissingAndAmbiguousRunsWithoutGuessingLatest() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
