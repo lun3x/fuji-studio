@@ -118,3 +118,36 @@ extension XT5ConversionCodec {
                                   orientationMatches: orientation == expected.orientation)
     }
 }
+
+/// Quality and source context validated at runtime. Does not encode ownership or publish a file.
+/// Later CameraJPEG construction additionally requires operation provenance and safe cleanup.
+struct XT5ValidatedJPEGMetadata: Sendable, Equatable {
+  let width: Int, height: Int, orientation: Int
+  let make: String, model: String
+  let quality: FujiJPEGQuality
+}
+
+extension XT5ConversionCodec {
+  static func validateFullSizeFineJPEG(_ data: Data, expected: RAWMetadata) throws
+    -> XT5ValidatedJPEGMetadata
+  {
+    let metadata = try FujiJPEGMetadataReader.read(data)
+    try metadata.requireFine(
+      width: expected.recordedGeometry.width, height: expected.recordedGeometry.height,
+      orientation: expected.orientation, model: expected.cameraModel)
+    let observed: XT5JPEGObservation
+    do { observed = try jpegObservation(data, expected: expected) } catch {
+      throw FujiJPEGValidationError.invalidJPEG
+    }
+    guard observed.modelMatches else { throw FujiJPEGValidationError.cameraMismatch }
+    guard observed.recordedGeometryMatches, observed.width == metadata.width,
+      observed.height == metadata.height
+    else { throw FujiJPEGValidationError.geometryMismatch }
+    guard observed.orientationMatches, observed.orientation == metadata.orientation else {
+      throw FujiJPEGValidationError.orientationMismatch
+    }
+    return XT5ValidatedJPEGMetadata(
+      width: metadata.width, height: metadata.height, orientation: metadata.orientation,
+      make: metadata.make, model: metadata.model, quality: metadata.quality)
+  }
+}
