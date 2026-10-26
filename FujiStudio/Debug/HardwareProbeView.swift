@@ -284,6 +284,66 @@ private final class CameraProbeModel {
     }
 }
 
+/// Explicit engineering launch mode only; ordinary launch cannot request camera authorization.
+@MainActor @Observable
+final class XT5ProbeLaunchRunner {
+    var status = "Read-only protocol probe has not run"
+    private let transport: ImageCaptureTransport
+    private let requestedDirectory: URL?
+    private var didRun = false
+    private var directory: URL?
+
+    init(transport: ImageCaptureTransport = ImageCaptureTransport(), directory: URL? = nil) {
+        self.transport = transport; self.requestedDirectory = directory
+    }
+    func runIfRequested(arguments: [String]) async {
+        guard arguments.contains("--xt5-read-only-probe"), !didRun else { return }
+        didRun = true
+        do {
+            let output = try requestedDirectory ?? FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+            try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+            directory = output
+            // Replace previous evidence before connecting so a failed attempt cannot look successful.
+            try Data("{\"state\":\"awaiting device info\"}".utf8).write(to: output.appendingPathComponent("xt5-protocol-evidence.json"), options: .atomic)
+            try writeStatus("Connecting using normal public authorization")
+            try await transport.connect()
+            let probe = XT5ProtocolProbe(transport: transport)
+            let report = try await probe.readEvidence { [weak self] partial in
+                await self?.savePartial(partial)
+            }
+            try report.json().write(to: output.appendingPathComponent("xt5-protocol-evidence.json"), options: .atomic)
+            try writeStatus("Read-only probe complete; conversion remains unvalidated")
+        } catch {
+            let outcome = XT5ProtocolProbe.safeError(error)
+            status = outcome
+            try? writeStatus(outcome)
+        }
+        await transport.disconnect()
+        // No reconnect/retry and no assertion that asynchronous native close has completed.
+        saveLifecycle()
+    }
+    private func savePartial(_ report: XT5ProtocolEvidence) {
+        guard let directory else { return }
+        do {
+            try report.json().write(to: directory.appendingPathComponent("xt5-protocol-evidence.json"), options: .atomic)
+            try writeStatus("Read-only probe in progress; \(report.properties.count) descriptors observed")
+        } catch { status = "Unable to save partial evidence" }
+        saveLifecycle()
+    }
+    private func writeStatus(_ message: String) throws {
+        status = message
+        guard let directory else { return }
+        let text = "\(Date().formatted(.iso8601))\niOS \(UIDevice.current.systemVersion)\n\(message)\nNo conversion or seven-bank support claimed.\n"
+        try text.write(to: directory.appendingPathComponent("xt5-protocol-status.txt"), atomically: true, encoding: .utf8)
+    }
+    private func saveLifecycle() {
+        guard let directory else { return }
+        let text = "Public lifecycle:\n" + transport.lifecycleDiagnosticMessages().joined(separator: "\n")
+            + "\nGetDeviceInfo headers (payload omitted):\n" + transport.ptpDiagnosticMessages().joined(separator: "\n")
+        try? text.write(to: directory.appendingPathComponent("camera-diagnostics.txt"), atomically: true, encoding: .utf8)
+    }
+}
+
 private struct LimitedAccessButton: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> LimitedAccessController { LimitedAccessController() }
     func updateUIViewController(_ controller: LimitedAccessController, context: Context) {}

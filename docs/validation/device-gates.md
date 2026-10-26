@@ -66,3 +66,13 @@ On installed diagnostic `feb1c473`, the controller again opened successfully and
 The next browser at16:03:02Z was browsing, not suspended, with both grants authorized but cache0 and no added callback. It remained so until timeout at16:03:34Z. Camera/cable were unchanged. Evidence files are ignored local `.build/task2-fix4-{after-close,during-discovery,after-timeout}.txt`; no private data is required to reproduce the reasoning.
 
 The software correction keeps discovery running while native close is pending, including when waiting for a pending open's terminal callback. Confirmed close or independently observed removal retires camera identity/run/delegates before stopping discovery; close completion is published only after stop returns. Thus shutdown callbacks cannot skip native close or retire a reentrant replacement. A failed/unconfirmed native close retains quarantine and active discovery for real removal. No retries, persistent-browser workaround, deadline relaxation or mode change were introduced. The same diagnostic file remains available for controller verification: require `close.request` and successful native completion before `browser.stop.before`, then one same-process reconnect and read-only GetDeviceInfo. **Physical verification of this corrected sequence remains pending.**
+
+## Task 3 phase A — identity/property probe available, Gates 3–4 pending
+
+A DEBUG-only fresh-process launch with `--xt5-read-only-probe` now performs one bounded read-only protocol attempt and saves sanitized evidence in the app container:
+
+- `Documents/xt5-protocol-evidence.json`: DeviceInfo model/firmware/capabilities and candidate property descriptor observations, updated incrementally.
+- `Documents/xt5-protocol-status.txt`: current outcome/time/phone OS; no arbitrary camera strings.
+- `Documents/camera-diagnostics.txt`: existing bounded native lifecycle and GetDeviceInfo header buffers, including close initiation only if native close has not completed yet.
+
+The worker has run simulator parser, protocol safety, and launch opt-in tests only. No actual camera firmware, mode property value, seven-bank import, post-upload profile schema, or conversion output is claimed. The controller should capture these files from a fresh process without using in-process reconnect as a prerequisite; Task 2 recovery remains open. No saved-bank mutations, selector writes, object operations, conversion triggers, or Photos saves occur in this phase. `sessionOpen` is still not `ready`.
