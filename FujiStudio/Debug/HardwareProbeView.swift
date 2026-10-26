@@ -27,12 +27,6 @@ struct HardwareProbeView: View {
                 Button("List resource descriptors") { model.describe(assetID) }
                     .disabled(model.busy || assetID.isEmpty)
             }
-            Section("Eligible sources · \(model.sources.count)") {
-                ForEach(model.sources) { source in
-                    Button(source.originalResources.raf.originalFilename) { model.describe(source.id) }
-                        .disabled(model.busy)
-                }
-            }
             Section("Selected resource descriptors") {
                 ForEach(model.resources, id: \.discriminator) { resource in
                     VStack(alignment: .leading) {
@@ -51,6 +45,12 @@ struct HardwareProbeView: View {
             }
             Section("Observed results · local session only") {
                 Text(model.output).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+            }
+            Section("Eligible sources · \(model.sources.count)") {
+                ForEach(model.sources) { source in
+                    Button(source.originalResources.raf.originalFilename) { model.describe(source.id) }
+                        .disabled(model.busy)
+                }
             }
         }
         .navigationTitle("Hardware probe")

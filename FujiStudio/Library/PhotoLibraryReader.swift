@@ -13,6 +13,16 @@ protocol PhotoLibraryReading: Sendable {
     func materialize(_ resource: ResourceToken, progress: @escaping @Sendable (Double) -> Void) async throws -> LocalResource
 }
 
+extension PhotoLibraryReading {
+    func allEligibleSources() async throws -> [PhotoSource] {
+        try Task.checkCancellation()
+        var result: [PhotoSource] = []
+        for try await batch in await sources() { result.append(contentsOf: batch) }
+        try Task.checkCancellation()
+        return result
+    }
+}
+
 /// Value boundary for PhotoKit. Role and content type jointly identify originals.
 struct PhotoResourceDescriptor: Sendable {
     let assetID: String
@@ -172,26 +182,19 @@ actor PhotoLibraryReader: PhotoLibraryReading {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    let assets = try authorizedAssets()
-                    var batch: [PhotoSource] = []
-                    for asset in assets {
-                        try Task.checkCancellation()
-                        do { batch.append(try makeSource(asset)) }
-                        catch ResourceError.noOriginalRAF { continue }
-                        if batch.count == 64 { continuation.yield(batch); batch = []; await Task.yield() }
+                    let fetched = try authorizedAssets()
+                    var discovery = PhotoSourceDiscovery(count: fetched.count, assetAt: { fetched.object(at: $0) },
+                                                          captureDate: { $0.creationDate }, identifier: { $0.localIdentifier },
+                                                          source: { try self.makeSource($0) })
+                    while let batch = try discovery.nextBatch() {
+                        continuation.yield(batch)
+                        await Task.yield()
                     }
-                    if !batch.isEmpty { continuation.yield(batch) }
                     continuation.finish()
                 } catch { continuation.finish(throwing: error) }
             }
             continuation.onTermination = { _ in task.cancel() }
         }
-    }
-
-    func allEligibleSources() async throws -> [PhotoSource] {
-        var result: [PhotoSource] = []
-        for try await batch in await sources() { result.append(contentsOf: batch) }
-        return result
     }
 
     func source(id: SourceID) async throws -> PhotoSource { try makeSource(asset(id)) }
@@ -241,15 +244,11 @@ actor PhotoLibraryReader: PhotoLibraryReading {
         return result
     }
 
-    private func authorizedAssets() throws -> [PHAsset] {
+    private func authorizedAssets() throws -> PHFetchResult<PHAsset> {
         try checkAccess()
-        let fetched = PHAsset.fetchAssets(with: .image, options: nil)
-        var assets: [PHAsset] = []
-        fetched.enumerateObjects { asset, _, _ in assets.append(asset) }
-        return assets.sorted {
-            let lhs = $0.creationDate ?? .distantPast, rhs = $1.creationDate ?? .distantPast
-            return lhs == rhs ? $0.localIdentifier < $1.localIdentifier : lhs > rhs
-        }
+        let options = PHFetchOptions()
+        options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+        return PHAsset.fetchAssets(with: .image, options: options)
     }
 
     private func checkAccess() throws {
