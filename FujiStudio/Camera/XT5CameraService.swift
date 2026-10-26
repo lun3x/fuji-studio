@@ -236,6 +236,12 @@ enum XT5BankImportIssue: Error, Sendable, Equatable {
 enum XT5SelectorRestoration: String, Sendable, Codable { case notNeeded, pending, verified, unconfirmed }
 
 struct XT5BankImportEvidence: Sendable, Encodable {
+    struct CommandFailure: Sendable, Encodable {
+        let stage: String
+        let opcode: String
+        let property: String?
+        let responseCode: String?
+    }
     struct Comparison: Sendable, Encodable {
         let slot: Int
         let namesMatch: Bool
@@ -254,6 +260,7 @@ struct XT5BankImportEvidence: Sendable, Encodable {
     var restoration: XT5SelectorRestoration = .notNeeded
     var failure: String?
     var restorationFailure: String?
+    var firstFailedCommand: CommandFailure?
     var complete = false
     let conversionValidated = false
     let settingsPerBank = 23
@@ -286,6 +293,8 @@ actor XT5BankImporter {
     private let cleanupTimeout: Duration
     private let gate: SerialCameraGate
     private var transaction: UInt32 = 1
+    private var commandStage = "preflight"
+    private var firstFailedCommand: XT5BankImportEvidence.CommandFailure?
 
     init(transport: any PTPTransport, sessionGeneration: UInt64,
          validateSession: @escaping @Sendable () async throws -> Void,
@@ -302,6 +311,7 @@ actor XT5BankImporter {
     }
 
     private func importExclusively(onUpdate: @Sendable (XT5BankImportUpdate) async -> Void) async throws -> XT5BankImportResult {
+        commandStage = "preflight"; firstFailedCommand = nil
         var evidence = XT5BankImportEvidence()
         var snapshots: [RecipeSnapshot] = []
         var verificationSnapshots: [RecipeSnapshot] = []
@@ -319,17 +329,20 @@ actor XT5BankImporter {
                 let key = try XT5RecipeCodec.value(await send(0x1015, property: code), type: 0xffff).string
                 guard key == "X-T5_0200" else { throw XT5BankImportIssue.unsupportedContext }
             }
+            commandStage = "initial selector"
             let current = try await selectedSlot()
             let camera = RecipeCameraContext(model: "X-T5", firmware: "4.31", capability: "X-T5_0200", sessionIdentity: sessionIdentity, sessionGeneration: sessionGeneration)
             context = camera
             evidence.model = camera.model; evidence.firmware = camera.firmware; evidence.capability = camera.capability
             evidence.originalSelector = current
+            commandStage = "initial bank"
             initial = try await readBank(current, context: camera)
             for pass in 1...2 {
                 for slot in 1...7 {
                     try Task.checkCancellation()
                     selectorAttempted = true // A failed reply cannot prove that a write had no effect.
                     evidence.restoration = .pending
+                    commandStage = "scan \(pass) C\(slot)"
                     try await select(slot)
                     let bank = try await readBank(slot, context: camera)
                     if pass == 1 {
@@ -361,6 +374,7 @@ actor XT5BankImporter {
             }
         }
         if evidence.failure == nil && Task.isCancelled { evidence.failure = "cancelled" }
+        evidence.firstFailedCommand = firstFailedCommand
         evidence.complete = evidence.failure == nil && evidence.restoration == .verified && evidence.comparisons.count == 7
         await onUpdate(XT5BankImportUpdate(evidence: evidence, snapshots: snapshots, verificationSnapshots: verificationSnapshots))
         guard evidence.complete else { throw XT5BankImportFailure(evidence: evidence) }
@@ -368,6 +382,7 @@ actor XT5BankImporter {
     }
 
     private func restoreBounded(_ initial: RecipeSnapshot, context: RecipeCameraContext) async throws {
+        commandStage = "restoration"
         try await withThrowingTaskGroup(of: Void.self) { group in
             group.addTask {
                 try await self.select(initial.slot)
@@ -384,12 +399,12 @@ actor XT5BankImporter {
     }
     private func select(_ slot: Int) async throws {
         guard (1...7).contains(slot) else { throw XT5BankImportIssue.invalidSelector }
-        _ = try await send(0x1016, property: 0xD18C, data: Data([UInt8(slot),0]))
+        _ = try await send(0x1016, property: 0xD18C, data: Data([UInt8(slot),0]), stage: "\(commandStage) selector write")
         try await settle(.milliseconds(100))
-        guard try await selectedSlot() == slot else { throw XT5BankImportIssue.selectorMismatch }
+        guard try await selectedSlot(stage: "\(commandStage) selector readback") == slot else { throw XT5BankImportIssue.selectorMismatch }
     }
-    private func selectedSlot() async throws -> Int {
-        let bytes = try await send(0x1015, property: 0xD18C)
+    private func selectedSlot(stage: String? = nil) async throws -> Int {
+        let bytes = try await send(0x1015, property: 0xD18C, stage: stage)
         guard bytes.count == 2, bytes[bytes.startIndex + 1] == 0, (1...7).contains(bytes[bytes.startIndex]) else { throw XT5BankImportIssue.invalidSelector }
         return Int(bytes[bytes.startIndex])
     }
@@ -402,17 +417,31 @@ actor XT5BankImporter {
             guard bytes.count == 2 else { throw RecipeImportError.malformedProperty(code) }
             properties[code] = bytes
         }
-        guard try await selectedSlot() == slot else { throw XT5BankImportIssue.selectorMismatch }
+        guard try await selectedSlot(stage: "\(commandStage) bank selector guard") == slot else { throw XT5BankImportIssue.selectorMismatch }
         return try XT5RecipeCodec.recipe(slot: slot, nameData: name, properties: properties, context: context, importedAt: Date())
     }
     private nonisolated func sameContents(_ a: RecipeSnapshot, _ b: RecipeSnapshot) -> Bool {
         a.importedName == b.importedName && a.importedSettings == b.importedSettings
     }
-    private func send(_ opcode: UInt16, property: UInt16? = nil, data: Data? = nil) async throws -> Data {
+    private func send(_ opcode: UInt16, property: UInt16? = nil, data: Data? = nil, stage: String? = nil) async throws -> Data {
         try Task.checkCancellation(); try await validateSession(); try Task.checkCancellation()
         guard transaction < UInt32.max else { throw PTPError.invalidParameters }
         let id = transaction; transaction += 1
-        let reply = try await transport.execute(PTPCommand(opcode: opcode, parameters: property.map { [UInt32($0)] } ?? [], transactionID: id), data: data)
+        let reply: PTPReply
+        do {
+            reply = try await transport.execute(PTPCommand(opcode: opcode, parameters: property.map { [UInt32($0)] } ?? [], transactionID: id), data: data)
+        } catch {
+            // Capture once: restoration may fail differently but must not overwrite the command
+            // that first failed. No payload, bank name, object handle or private value is retained.
+            if firstFailedCommand == nil {
+                var responseCode: String?
+                if let ptp = error as? PTPError, case .responseCode(let code) = ptp { responseCode = String(format: "0x%04X", code) }
+                firstFailedCommand = .init(stage: stage ?? commandStage, opcode: String(format: "0x%04X", opcode),
+                    property: property.map { String(format: "0x%04X", $0) }, responseCode: responseCode)
+            }
+            throw error
+        }
+
         try await validateSession()
         return reply.data
     }

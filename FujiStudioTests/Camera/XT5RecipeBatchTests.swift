@@ -72,7 +72,7 @@ extension XT5RecipeBatchTests {
             do { _ = try await batch(wire).run(raw:f.raw,reference:f.reference,referenceBanks:f.codec.banks,initialTarget:f.target,directory:f.directory); Issue.record("Expected batch refusal") }
             catch let failure as XT5RecipeBatchFailure {
                 #expect(!failure.evidence.complete && failure.evidence.sessionClosure == "confirmed")
-                if mode == .bankMismatch { #expect(await wire.deletes.isEmpty); #expect(await wire.writes.isEmpty) }
+                if mode == .bankMismatch { #expect(await wire.deletes == [88]); #expect(await wire.writes.isEmpty); #expect(await wire.triggers == 0) }
                 if mode == .readbackMismatch || mode == .lostContext { #expect(await wire.triggers == 0); #expect(await wire.deletes == [88]) }
                 if mode == .cleanupChanged { #expect(await wire.triggers == 1); #expect(await wire.deletes == [88]) }
                 if mode == .afterBankMismatch { #expect(await wire.triggers == 7 && !failure.evidence.afterBanksMatch) }
@@ -123,6 +123,47 @@ extension XT5RecipeBatchTests {
         #expect(await wire.deletes.isEmpty)
         #expect(await wire.writes.isEmpty)
     }
+    @Test func knownOutputMaintenancePrecedesBusySelectorButBankEqualityStillPrecedesUpload() async throws {
+        let f=try BatchRunFixture();defer { f.remove() }
+        let wire=BatchWire(fixture:f,mode:.busyWithOutput)
+        let result=try await batch(wire).run(raw:f.raw,reference:f.reference,referenceBanks:f.codec.banks,initialTarget:f.target,directory:f.directory)
+        #expect(result.complete && result.initialCleanup?.emptyViewVerified == true && result.beforeBanksMatch)
+        #expect(await wire.selectorWritesWhileObjectPresent == 0)
+        #expect(await wire.triggers == 7)
+        #expect(await wire.closes == 1)
+    }
+    @Test func freshContextAndInitialObjectViewRefusalsNeverDeleteOrSelect() async throws {
+        for mode in [BatchWire.Mode.wrongFirmware,.wrongMode,.wrongKey,.handleReadFails] {
+            let f=try BatchRunFixture();defer { f.remove() }
+            let wire=BatchWire(fixture:f,mode:mode)
+            do { _ = try await batch(wire).run(raw:f.raw,reference:f.reference,referenceBanks:f.codec.banks,initialTarget:f.target,directory:f.directory); Issue.record("Expected fresh context/view refusal") }
+            catch let failure as XT5RecipeBatchFailure { #expect(failure.evidence.sessionClosure == "confirmed" && !failure.evidence.complete) }
+            #expect(await wire.deletes.isEmpty)
+            #expect(await wire.selectorWrites == 0)
+            #expect(await wire.writes.isEmpty)
+            #expect(await wire.triggers == 0)
+        }
+    }
+    @Test func firstFailedSelectorCommandSurvivesDifferentRestorationFailure() async throws {
+        for mode in [BatchWire.Mode.selectorBusy,.selectorReadbackBusy] {
+            let f=try BatchRunFixture();defer { f.remove() }
+            let wire=BatchWire(fixture:f,mode:mode)
+            do { _ = try await batch(wire).run(raw:f.raw,reference:f.reference,referenceBanks:f.codec.banks,initialTarget:f.target,directory:f.directory); Issue.record("Expected selector failure") }
+            catch let failure as XT5RecipeBatchFailure {
+                let first=try #require(failure.evidence.beforeScan?.firstFailedCommand)
+                #expect(first.opcode == (mode == .selectorBusy ? "0x1016" : "0x1015"))
+                #expect(first.property == "0xD18C" && first.responseCode == "0x2019")
+                #expect(first.stage == (mode == .selectorBusy ? "scan 1 C1 selector write" : "scan 1 C1 selector readback"))
+                #expect(failure.evidence.beforeScan?.restorationFailure == "PTP response 0x2002")
+                #expect(failure.evidence.beforeScan?.restoration == .unconfirmed)
+                #expect(failure.evidence.sessionClosure == "confirmed")
+            }
+            #expect(await wire.selectorWrites == 2)
+            #expect(await wire.deletes == [88])
+            #expect(await wire.writes.isEmpty)
+            #expect(await wire.triggers == 0)
+        }
+    }
     private func batch(_ wire: BatchWire) -> XT5RecipeBatchProbe {
         .init(transport:wire,sessionGeneration:1,validateSession:{ try await wire.validate() },closeSession:{ await wire.close() },settle:{ _ in },pollWait:{})
     }
@@ -145,9 +186,10 @@ private struct BatchRunFixture {
     func remove() { try? FileManager.default.removeItem(at:directory) }
 }
 private actor BatchWire: PTPTransport {
-    enum Mode { case normal, bankMismatch, readbackMismatch, cleanupChanged, afterBankMismatch, lostContext, initiallyEmpty }
+    enum Mode { case normal, bankMismatch, readbackMismatch, cleanupChanged, afterBankMismatch, lostContext, initiallyEmpty, busyWithOutput, wrongFirmware, wrongMode, wrongKey, handleReadFails, selectorBusy, selectorReadbackBusy }
     let f: BatchRunFixture, mode: Mode
     var selected = 1, closes = 0, triggers = 0, deletes: [UInt32] = [], writes: [Data] = []
+    var selectorWrites = 0, selectorWritesWhileObjectPresent = 0
     var operationsInOrder = true
     private var handle: UInt32?, profile: Data?, current = true, reads = 0, uploaded = false
     init(fixture:BatchRunFixture,mode:Mode = .normal) { f=fixture;self.mode=mode;handle=mode == .initiallyEmpty ? nil : 88 }
@@ -156,16 +198,23 @@ private actor BatchWire: PTPTransport {
     func execute(_ c: PTPCommand,data:Data?) throws -> PTPReply {
         let bytes: Data
         switch(c.opcode,c.parameters) {
-        case (0x1001,[]): bytes=ProtocolProbeFixtures.deviceInfo(properties:[0xD16E,0xD183,0xD185,0xD186,0xD187,0xD18C,0xD18D]+Array(0xD18E...0xD1A4),operations:[0x1001,0x1005,0x1007,0x1008,0x1009,0x100B,0x1015,0x1016,0x900C,0x900D],firmware:"4.31")
-        case (0x1015,[0xD16E]): bytes=Data([6,0])
-        case (0x1015,[0xD186]),(0x1015,[0xD187]): bytes=ProtocolProbeFixtures.string("X-T5_0200")
-        case (0x1015,[0xD18C]): bytes=ProtocolProbeFixtures.word(UInt16(selected))
-        case (0x1016,[0xD18C]): selected=Int(data![0]); bytes=Data()
+        case (0x1001,[]): bytes=ProtocolProbeFixtures.deviceInfo(properties:[0xD16E,0xD183,0xD185,0xD186,0xD187,0xD18C,0xD18D]+Array(0xD18E...0xD1A4),operations:[0x1001,0x1005,0x1007,0x1008,0x1009,0x100B,0x1015,0x1016,0x900C,0x900D],firmware:mode == .wrongFirmware ? "different" : "4.31")
+        case (0x1015,[0xD16E]): bytes=Data([mode == .wrongMode ? 1 : 6,0])
+        case (0x1015,[0xD186]),(0x1015,[0xD187]): bytes=ProtocolProbeFixtures.string(mode == .wrongKey ? "X-T5_0100" : "X-T5_0200")
+        case (0x1015,[0xD18C]): if mode == .selectorReadbackBusy && selectorWrites == 1 { throw PTPError.responseCode(0x2019) };bytes=ProtocolProbeFixtures.word(UInt16(selected))
+                case (0x1016,[0xD18C]):
+            selectorWrites += 1
+            if handle != nil { selectorWritesWhileObjectPresent += 1 }
+            if mode == .busyWithOutput && handle != nil { throw PTPError.responseCode(0x2019) }
+            if mode == .selectorBusy { throw PTPError.responseCode(selectorWrites == 1 ? 0x2019 : 0x2002) }
+            if mode == .selectorReadbackBusy && selectorWrites > 1 { throw PTPError.responseCode(0x2002) }
+            selected=Int(data![0]);bytes=Data()
+
         case (0x1015,[0xD18D]):
             let changed = mode == .bankMismatch || (mode == .afterBankMismatch && triggers == 7)
             bytes=ProtocolProbeFixtures.string(changed ? "Changed" : "Synthetic \(selected)")
         case (0x1015,let params) where params.count == 1 && (0xD18E...0xD1A4).contains(params[0]): let code=params[0]; bytes=f.codec.banks[selected-1].importedSettings.first { $0.code == code }!.raw
-        case (0x1007,[UInt32.max,0,0]): bytes=handle.map { h in Data([1,0,0,0])+Data((0..<4).map { i in UInt8(truncatingIfNeeded:h >> (i*8)) }) } ?? Data([0,0,0,0])
+        case (0x1007,[UInt32.max,0,0]): if mode == .handleReadFails { throw PTPError.responseCode(0x2019) }; bytes=handle.map { h in Data([1,0,0,0])+Data((0..<4).map { i in UInt8(truncatingIfNeeded:h >> (i*8)) }) } ?? Data([0,0,0,0])
         case (0x1008,let params) where params.count == 1: let h=params[0]
             guard h == handle else { throw PTPError.invalidParameters }; reads += 1
             var info=f.target.objectInfo; if mode == .cleanupChanged && triggers == 1 && reads > 6 { info[40] ^= 1 };bytes=info

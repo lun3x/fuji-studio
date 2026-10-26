@@ -8,6 +8,7 @@ struct XT5RecipeBatchEvidence: Sendable, Encodable {
         var cleanup: XT5ExactCleanupObservation?
     }
     let label = "finite imported-bank experiment; visible fidelity and dormant grain-size encoding unvalidated"
+    var freshContextValidated = false
     var beforeBanksMatch = false
     var afterBanksMatch = false
     var beforeScan: XT5BankImportEvidence?
@@ -71,13 +72,17 @@ actor XT5RecipeBatchProbe {
             for bank in referenceBanks { _ = try XT5FiniteRecipePatch.make(bank:bank,referenceBanks:referenceBanks,reference:reference) }
             guard referenceBanks.count == 7 else { throw XT5RecipeBatchIssue.invalidReference }
             let info=try XT5RecipeCodec.deviceInfo(await send(0x1001,[],nil).data)
+            guard info.manufacturer == "FUJIFILM",info.model == "X-T5",info.firmware == "4.31" else { throw XT5RawBaselineIssue.unsupportedContext }
             guard [UInt16(0x1005),0x1007,0x1008,0x1009,0x100B,0x1015,0x1016,0x900C,0x900D].allSatisfy(info.operations.contains),
-                  [UInt16(0xD183),0xD185].allSatisfy(info.properties.contains) else { throw XT5RawBaselineIssue.missingCapability }
-            let before=try await scan(adapter:adapter,directory:directory,phase:"before",raw:raw)
-            evidence.beforeScan=before.evidence
-            guard XT5FiniteRecipePatch.sameBanks(before.recipes,referenceBanks) else { throw XT5RecipeBatchIssue.bankMismatch }
-            evidence.beforeBanksMatch=true
+                  ([UInt16(0xD16E),0xD183,0xD185,0xD186,0xD187,0xD18C,0xD18D] + Array(0xD18E...0xD1A4)).allSatisfy(info.properties.contains) else { throw XT5RawBaselineIssue.missingCapability }
+            guard try await send(0x1015,[0xD16E],nil).data == Data([6,0]) else { throw XT5RawBaselineIssue.unsupportedContext }
+            for property:UInt32 in [0xD186,0xD187] {
+                guard try XT5RecipeCodec.value(await send(0x1015,[property],nil).data,type:0xffff).string == "X-T5_0200" else { throw XT5RawBaselineIssue.unsupportedContext }
+            }
+            evidence.freshContextValidated=true
             await onUpdate(evidence)
+            // Controlled ordering experiment: only known-J maintenance may precede bank equality.
+            // This does not infer that deleting the visible output releases the opaque RAW buffer.
             let handles=try XT5ConversionCodec.objectHandles(await send(0x1007,[UInt32.max,0,0],nil).data)
             if handles.isEmpty { evidence.initialOutputAbsent=true }
             else {
@@ -86,6 +91,11 @@ actor XT5RecipeBatchProbe {
                 evidence.initialCleanup=result
                 guard result.failure == nil && result.emptyViewVerified else { throw XT5RecipeBatchIssue.cleanupFailed }
             }
+            await onUpdate(evidence)
+            let before=try await scan(adapter:adapter,directory:directory,phase:"before",raw:raw)
+            evidence.beforeScan=before.evidence
+            guard XT5FiniteRecipePatch.sameBanks(before.recipes,referenceBanks) else { throw XT5RecipeBatchIssue.bankMismatch }
+            evidence.beforeBanksMatch=true
             await onUpdate(evidence)
             for slot in [7,1,2,3,4,5,6] {
                 try Task.checkCancellation()
