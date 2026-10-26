@@ -1,9 +1,9 @@
 # Fuji Studio: initial product and technical specification
 
 Date: 26 October 2026  
-Status: Draft for review. The interface and interaction model were approved in
-conversation. Technical choices and operational defaults identified below are
-author recommendations, not additional requirements attributed to the user.
+Status: Approved in conversation on 26 October 2026. The interface, interaction
+model, and recommended initial implementation defaults below form the approved
+baseline. Hardware capabilities remain subject to the feasibility gates.
 
 Repository: [lun3x/fuji-studio](https://github.com/lun3x/fuji-studio), private.
 
@@ -381,7 +381,7 @@ never label an old or unmodified image as the newly requested recipe result.
 ## 11. Recommended architecture and considered approaches
 
 The user selected the product workflow and approved the interaction prototype.
-The following implementation approach is recommended by the author for review.
+The following implementation approach is the approved initial baseline.
 
 | Approach | Tradeoff and disposition |
 | --- | --- |
@@ -391,8 +391,8 @@ The following implementation approach is recommended by the author for review.
 
 Recommended baseline: Swift with a SwiftUI application shell; UIKit collection/
 scroll-view integration where it improves grid gestures and zoom. Target iOS 27+
-with the installed Xcode 27 SDK family. This OS baseline is an author default to
-review, not a statement about the phone's currently installed OS. Record the
+with the installed Xcode 27 SDK family. This OS baseline is an approved default,
+not a statement about the phone's currently installed OS. Record the
 actual phone OS before implementation; do not add older-OS compatibility paths.
 
 Use native system materials, menus, and controls for Liquid Glass. Implement the
@@ -502,9 +502,9 @@ phone filter or dropping paired assets.
 | A23 | Portrait, landscape, larger text, VoiceOver, reduced motion/transparency, and increased contrast preserve usable controls without overlaps. |
 | A24 | Large selections do not load the entire batch into memory, block UI scrolling, or create previews as Photos assets. |
 
-## 15. Defaults to review and builder discretion
+## 15. Approved defaults and builder discretion
 
-Author-recommended defaults requiring no additional product features are:
+Approved initial defaults requiring no additional product features are:
 
 - Native Swift app, initially iOS 27+, and X-T5-only camera support.
 - Full-size FINE JPEG export preserving the source's recorded geometry.
@@ -517,7 +517,9 @@ Author-recommended defaults requiring no additional product features are:
 The builder can choose persistence technology, native drawer/view wrappers,
 thumbnail sizing within accessible targets, cache limits, and internal module/file
 organization. These choices must preserve the contracts and pass the acceptance
-checks. This document does not authorize starting implementation before review.
+checks. See the [implementation plan](../plans/2026-10-26-fuji-studio-implementation.md)
+for delivery order, test coverage, and hardware gates. Implementation follows
+review of that plan and selection of an execution approach.
 
 ## 16. Primary references
 

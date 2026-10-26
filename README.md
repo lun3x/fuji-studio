@@ -15,6 +15,9 @@ The [self-contained interaction prototype](docs/superpowers/specs/assets/fuji-st
 can be opened locally in a browser. Camera operations, recipe effects, and exports
 in the prototype are simulated.
 
+The [implementation plan](docs/superpowers/plans/2026-10-26-fuji-studio-implementation.md)
+sets out the hardware feasibility gates, native app tasks, and acceptance checks.
+
 ## Initial scope
 
 - Import existing conversion profiles from the connected camera.
@@ -38,9 +41,9 @@ in the prototype are simulated.
 
 ## Status
 
-The design specification is a draft for review. The interaction prototype has
-been reviewed with the user. The native app has not yet been implemented or
-tested on hardware.
+The design specification and interaction prototype are approved. The
+implementation plan is ready for review. The native app has not yet been
+implemented or tested on hardware.
 
 ## Development
 
