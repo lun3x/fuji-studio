@@ -5,6 +5,16 @@ conversion engine and saved profiles.
 
 The initial target is a Fujifilm X-T5 connected over USB-C to an iPhone 15 Pro.
 
+## Design specification
+
+Read the [initial product and technical specification](docs/superpowers/specs/2026-10-26-fuji-studio-design.md)
+for the approved interaction model, source/version handling, export behavior,
+recommended architecture, and device acceptance criteria.
+
+The [self-contained interaction prototype](docs/superpowers/specs/assets/fuji-studio-prototype.html)
+can be opened locally in a browser. Camera operations, recipe effects, and exports
+in the prototype are simulated.
+
 ## Initial scope
 
 - Import existing conversion profiles from the connected camera.
@@ -16,6 +26,10 @@ The initial target is a Fujifilm X-T5 connected over USB-C to an iPhone 15 Pro.
 - Select multiple photos, including a mix of standalone RAW and paired RAW+JPEG
   items, and apply the same camera profile to the entire selection in one batch.
 - Apply an imported profile through the connected camera's conversion engine.
+- Preview recipes, compare original and saved versions, and export the viewed
+  photo or a batch as new Photos assets with the original capture dates.
+- Browse through a vertically scrolling, expandable photo drawer and choose
+  recipes from a floating menu using Apple's Liquid Glass design language.
 
 ## Outside the initial scope
 
@@ -24,8 +38,9 @@ The initial target is a Fujifilm X-T5 connected over USB-C to an iPhone 15 Pro.
 
 ## Status
 
-Repository initialized with the agreed initial requirements. The app has not yet
-been implemented or tested on hardware.
+The design specification is a draft for review. The interaction prototype has
+been reviewed with the user. The native app has not yet been implemented or
+tested on hardware.
 
 ## Development
 
