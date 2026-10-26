@@ -7,7 +7,7 @@ import ImageCaptureCore
     private struct Opening {
         let id: UUID
         let continuation: CheckedContinuation<Void, Error>
-        let timeout: UUID
+        var timeout: UUID?
     }
     private struct Transaction {
         let id: UUID
@@ -52,12 +52,9 @@ import ImageCaptureCore
         let current = generation; let id = UUID()
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
-                let deadline = timeouts.schedule(after: timeout) { [weak self] in
-                    guard let self, self.opening?.id == id else { return }
-                    self.invalidate(PTPError.timeout, state: .recoverableError(.timeout))
-                }
-                opening = Opening(id: id, continuation: continuation, timeout: deadline)
-                publish(.discovering)
+                // Human authorization has no USB deadline. The driver explicitly reports when
+                // permission is resolved and actual discovery begins.
+                opening = Opening(id: id, continuation: continuation, timeout: nil)
                 driver.start { [weak self] event in self?.receive(event, generation: current) }
             }
         } onCancel: {
@@ -101,10 +98,20 @@ import ImageCaptureCore
         guard current == generation, !closing else { return }
         switch event {
         case .authorizationRequired: publish(.authorizationRequired)
+        case .discoveryStarted:
+            guard let pending = opening, pending.timeout == nil else { return }
+            let id = pending.id
+            let deadline = timeouts.schedule(after: timeout) { [weak self] in
+                guard let self, self.opening?.id == id else { return }
+                self.invalidate(PTPError.timeout, state: .recoverableError(.timeout))
+            }
+            guard opening?.id == id else { timeouts.cancel(deadline); return }
+            opening?.timeout = deadline
+            publish(.discovering)
         case .opening: publish(.opening)
         case .opened(let connection):
             guard let pending = opening else { return }
-            opening = nil; timeouts.cancel(pending.timeout)
+            opening = nil; if let deadline = pending.timeout { timeouts.cancel(deadline) }
             let opened = CameraSession(generation: current, connection: connection)
             session = opened; publish(.sessionOpen(opened)); pending.continuation.resume()
         case .removed: invalidate(PTPError.notConnected, state: .disconnected)
@@ -142,7 +149,7 @@ import ImageCaptureCore
         // A resumed operation may release the external gate, but execute remains unavailable.
         generation += 1
         session = nil
-        if let pending = opening { opening = nil; timeouts.cancel(pending.timeout); pending.continuation.resume(throwing: error) }
+        if let pending = opening { opening = nil; if let deadline = pending.timeout { timeouts.cancel(deadline) }; pending.continuation.resume(throwing: error) }
         if let pending = transaction { transaction = nil; timeouts.cancel(pending.timeout); pending.continuation.resume(throwing: error) }
         publish(newState)
         guard !closing else { return }
@@ -191,9 +198,16 @@ import ImageCaptureCore
         self.browser = browser
         browser.delegate = self
         browser.browsedDeviceTypeMask = ICDeviceTypeMask(rawValue: ICDeviceTypeMask.camera.rawValue | ICDeviceLocationTypeMask.local.rawValue)!
-        if browser.controlAuthorizationStatus != .authorized || browser.contentsAuthorizationStatus != .authorized {
-            events(.authorizationRequired)
+        let statuses = [browser.controlAuthorizationStatus, browser.contentsAuthorizationStatus]
+        guard statuses.allSatisfy({ $0 == .authorized || $0 == .notDetermined }) else {
+            events(.failed(.authorizationDenied))
+            return
         }
+        if browser.controlAuthorizationStatus == .authorized {
+            authorizeContents(current)
+            return
+        }
+        events(.authorizationRequired)
         let deliver = deliverCompletion
         browser.requestControlAuthorization { [weak self] status in
             deliver {
@@ -204,14 +218,31 @@ import ImageCaptureCore
         }
     }
     private func authorizeContents(_ current: UUID) {
+        guard run == current, !closing, let browser else { return }
+        if browser.contentsAuthorizationStatus == .authorized {
+            beginDiscovery(current)
+            return
+        }
+        guard browser.contentsAuthorizationStatus == .notDetermined else {
+            events?(.failed(.authorizationDenied))
+            return
+        }
+        events?(.authorizationRequired)
         let deliver = deliverCompletion
-        browser?.requestContentsAuthorization { [weak self] status in
+        browser.requestContentsAuthorization { [weak self] status in
             deliver {
                 guard let self, self.run == current, !self.closing else { return }
                 guard status == .authorized else { self.events?(.failed(.authorizationDenied)); return }
-                self.browser?.start()
+                self.beginDiscovery(current)
             }
         }
+    }
+    private func beginDiscovery(_ current: UUID) {
+        guard run == current, !closing, let browser else { return }
+        events?(.discoveryStarted)
+        // The event can synchronously invalidate this run; never start an already closed browser.
+        guard run == current, !closing, self.browser === browser else { return }
+        browser.start()
     }
     func close(completion: @escaping @MainActor @Sendable () -> Void) {
         closing = true; closeCompletion = completion; events = nil

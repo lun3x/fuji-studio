@@ -169,6 +169,8 @@ struct PTPCodecTests {
         let transport = ImageCaptureTransport(driver: driver, timeouts: clock)
         let pending = Task { try await transport.connect() }
         await driver.waitForStartCount(1)
+        driver.emit(.discoveryStarted) // Repeated progress cannot extend/reset the current USB deadline.
+        #expect(clock.scheduledCount == 1)
         clock.fireAll()
         await #expect(throws: PTPError.timeout) { try await pending.value }
         driver.emit(.opened(CameraConnection(name: "late", usbVendorID: 0x04cb, usbProductID: 1)))

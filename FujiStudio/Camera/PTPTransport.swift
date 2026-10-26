@@ -21,6 +21,9 @@ struct PTPWireReply: Sendable {
 
 enum CameraDriverEvent: Sendable {
     case authorizationRequired
+    /// Both grants are authorized; emitted immediately before public browser discovery starts.
+    /// The transport arms its USB connection deadline on the first event for the current attempt.
+    case discoveryStarted
     case opening
     case opened(CameraConnection)
     case removed

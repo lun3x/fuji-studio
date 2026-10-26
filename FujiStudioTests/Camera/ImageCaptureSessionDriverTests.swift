@@ -86,6 +86,194 @@ import Testing
         #expect(camera.closeRequestCount == 0)
     }
 
+    @Test func alreadyAuthorizedGrantsNeverRepeatNativeRequests() {
+        let browser = SessionTestBrowser(); let callbacks = DriverCallbackQueue()
+        let driver = ImageCaptureSessionDriver(makeBrowser: { browser }, deliverCompletion: { callbacks.enqueue($0) })
+        driver.start { _ in }
+        callbacks.drain()
+        #expect(browser.controlRequestCount == 0)
+        #expect(browser.contentsRequestCount == 0)
+        #expect(browser.didStart)
+        driver.close {}
+    }
+
+    @Test func requestsOnlyMissingAuthorizationGrants() {
+        let cases: [(ICAuthorizationStatus, ICAuthorizationStatus, Int, Int)] = [
+            (.notDetermined, .authorized, 1, 0),
+            (.authorized, .notDetermined, 0, 1),
+            (.notDetermined, .notDetermined, 1, 1)
+        ]
+        for (control, contents, expectedControl, expectedContents) in cases {
+            let browser = SessionTestBrowser(control: control, contents: contents); let callbacks = DriverCallbackQueue()
+            let driver = ImageCaptureSessionDriver(makeBrowser: { browser }, deliverCompletion: { callbacks.enqueue($0) })
+            driver.start { _ in }
+            callbacks.drain()
+            #expect(browser.controlRequestCount == expectedControl)
+            #expect(browser.contentsRequestCount == expectedContents)
+            #expect(browser.didStart)
+            driver.close {}
+        }
+    }
+
+    @Test func deniedOrRestrictedAuthorizationFailsWithoutRequestingOrBrowsing() {
+        let cases: [(ICAuthorizationStatus, ICAuthorizationStatus)] = [
+            (.denied, .authorized), (.restricted, .authorized),
+            (.authorized, .denied), (.authorized, .restricted)
+        ]
+        for (control, contents) in cases {
+            let browser = SessionTestBrowser(control: control, contents: contents); let callbacks = DriverCallbackQueue()
+            let driver = ImageCaptureSessionDriver(makeBrowser: { browser }, deliverCompletion: { callbacks.enqueue($0) })
+            var denied = 0
+            driver.start { if case .failed(.authorizationDenied) = $0 { denied += 1 } }
+            callbacks.drain()
+            #expect(denied == 1)
+            #expect(browser.controlRequestCount == 0)
+            #expect(browser.contentsRequestCount == 0)
+            #expect(!browser.didStart)
+            driver.close {}
+        }
+    }
+
+    @Test func permissionWaitDoesNotSpendUSBDeadlineAndSuccessStartsDiscovery() async throws {
+        let browser = SessionTestBrowser(control: .notDetermined, contents: .notDetermined, automaticallyAuthorize: false)
+        let callbacks = DriverCallbackQueue(); let clock = ControlledCameraTimeouts()
+        let driver = ImageCaptureSessionDriver(makeBrowser: { browser }, deliverCompletion: { callbacks.enqueue($0) })
+        let transport = ImageCaptureTransport(driver: driver, timeouts: clock)
+        let pending = Task { try await transport.connect() }
+        await browser.waitForControlRequest()
+        #expect(clock.scheduledCount == 0)
+        for _ in 0..<100 { clock.fireAll() } // Arbitrary virtual time passes while a person reads the notice.
+        #expect(!browser.didStart)
+        browser.completeControl(.authorized); callbacks.drain()
+        #expect(browser.contentsRequestCount == 1)
+        #expect(clock.scheduledCount == 0)
+        for _ in 0..<100 { clock.fireAll() }
+        browser.completeContents(.authorized); callbacks.drain()
+        #expect(browser.didStart)
+        #expect(clock.scheduledCount == 1)
+        let camera = SessionTestCamera()
+        driver.deviceBrowser(browser, didAdd: camera, moreComing: false)
+        camera.completeOpen(error: nil); callbacks.drain()
+        try await pending.value
+        #expect(clock.pendingCount == 0)
+        await transport.disconnect(); callbacks.drain()
+    }
+
+    @Test func delayedDenialIsAuthorizationFailureWithoutUSBTimeout() async {
+        for controlPending in [true, false] {
+            for status: ICAuthorizationStatus in [.denied, .restricted] {
+                let browser = SessionTestBrowser(control: controlPending ? .notDetermined : .authorized,
+                                                 contents: controlPending ? .authorized : .notDetermined,
+                                                 automaticallyAuthorize: false)
+                let callbacks = DriverCallbackQueue(); let clock = ControlledCameraTimeouts()
+                let driver = ImageCaptureSessionDriver(makeBrowser: { browser }, deliverCompletion: { callbacks.enqueue($0) })
+                let transport = ImageCaptureTransport(driver: driver, timeouts: clock)
+                let pending = Task { try await transport.connect() }
+                if controlPending { await browser.waitForControlRequest() }
+                else { await browser.waitForContentsRequest() }
+                #expect(clock.pendingCount == 0)
+                clock.fireAll()
+                if controlPending { browser.completeControl(status) }
+                else { browser.completeContents(status) }
+                callbacks.drain()
+                await #expect(throws: PTPError.authorizationDenied) { try await pending.value }
+                #expect(!browser.didStart)
+                #expect(clock.pendingCount == 0)
+            }
+        }
+    }
+
+    @Test func cancelledContentsPermissionCannotLaterStartDiscovery() async {
+        let browser = SessionTestBrowser(contents: .notDetermined, automaticallyAuthorize: false)
+        let callbacks = DriverCallbackQueue(); let clock = ControlledCameraTimeouts()
+        let driver = ImageCaptureSessionDriver(makeBrowser: { browser }, deliverCompletion: { callbacks.enqueue($0) })
+        let transport = ImageCaptureTransport(driver: driver, timeouts: clock)
+        let pending = Task { try await transport.connect() }
+        await browser.waitForContentsRequest()
+        #expect(browser.controlRequestCount == 0)
+        #expect(clock.scheduledCount == 0)
+        for _ in 0..<100 { clock.fireAll() }
+        pending.cancel()
+        await #expect(throws: CancellationError.self) { try await pending.value }
+        browser.completeContents(.authorized); callbacks.drain()
+        #expect(!browser.didStart)
+        #expect(clock.pendingCount == 0)
+    }
+
+    @Test func cancelledPermissionWaitRejectsOldAuthorizationAndAllowsFreshConnect() async throws {
+        let old = SessionTestBrowser(control: .notDetermined, automaticallyAuthorize: false)
+        let fresh = SessionTestBrowser(); var browsers = [old, fresh]
+        let callbacks = DriverCallbackQueue(); let clock = ControlledCameraTimeouts()
+        let driver = ImageCaptureSessionDriver(makeBrowser: { browsers.removeFirst() }, deliverCompletion: { callbacks.enqueue($0) })
+        let transport = ImageCaptureTransport(driver: driver, timeouts: clock)
+        let cancelled = Task { try await transport.connect() }
+        await old.waitForControlRequest()
+        #expect(clock.scheduledCount == 0)
+        cancelled.cancel()
+        await #expect(throws: CancellationError.self) { try await cancelled.value }
+        let replacement = Task { try await transport.connect() }
+        await fresh.waitUntilBrowsing()
+        old.completeControl(.authorized); callbacks.drain()
+        #expect(!old.didStart)
+        #expect(old.contentsRequestCount == 0)
+        #expect(fresh.controlRequestCount == 0)
+        #expect(fresh.contentsRequestCount == 0)
+        let camera = SessionTestCamera()
+        driver.deviceBrowser(fresh, didAdd: camera, moreComing: false)
+        camera.completeOpen(error: nil); callbacks.drain()
+        try await replacement.value
+        #expect(clock.pendingCount == 0)
+        await transport.disconnect(); callbacks.drain()
+    }
+
+    @Test func discoveryTimeoutBeginsAfterGrantsAndStaleTimerCannotPoisonFreshSession() async throws {
+        let old = SessionTestBrowser(control: .notDetermined, automaticallyAuthorize: false)
+        let fresh = SessionTestBrowser(); var browsers = [old, fresh]
+        let callbacks = DriverCallbackQueue(); let clock = ControlledCameraTimeouts()
+        let driver = ImageCaptureSessionDriver(makeBrowser: { browsers.removeFirst() }, deliverCompletion: { callbacks.enqueue($0) })
+        let transport = ImageCaptureTransport(driver: driver, timeouts: clock)
+        let expired = Task { try await transport.connect() }
+        await old.waitForControlRequest()
+        #expect(clock.scheduledCount == 0)
+        old.completeControl(.authorized); callbacks.drain()
+        #expect(old.didStart)
+        #expect(clock.pendingCount == 1)
+        clock.fireAll()
+        await #expect(throws: PTPError.timeout) { try await expired.value }
+        let replacement = Task { try await transport.connect() }
+        await fresh.waitUntilBrowsing()
+        #expect(clock.pendingCount == 1)
+        old.completeControl(.authorized); callbacks.drain()
+        clock.replayScheduled(at: 0) // Even a cancelled/late scheduler callback carries the old attempt ID.
+        let camera = SessionTestCamera()
+        driver.deviceBrowser(fresh, didAdd: camera, moreComing: false)
+        camera.completeOpen(error: nil); callbacks.drain()
+        try await replacement.value
+        #expect(clock.pendingCount == 0)
+        clock.replayScheduled(at: 0)
+        await transport.disconnect(); callbacks.drain()
+    }
+
+    @Test func openingTimeoutAfterAuthorizationStaysQuarantinedUntilRemoval() async {
+        let browser = SessionTestBrowser(); let callbacks = DriverCallbackQueue(); let clock = ControlledCameraTimeouts()
+        let driver = ImageCaptureSessionDriver(makeBrowser: { browser }, deliverCompletion: { callbacks.enqueue($0) })
+        let transport = ImageCaptureTransport(driver: driver, timeouts: clock)
+        let pending = Task { try await transport.connect() }
+        await browser.waitUntilBrowsing()
+        let camera = SessionTestCamera()
+        driver.deviceBrowser(browser, didAdd: camera, moreComing: false)
+        #expect(camera.pendingOpenCount == 1)
+        clock.fireAll()
+        await #expect(throws: PTPError.timeout) { try await pending.value }
+        await #expect(throws: PTPError.sessionClosing) { try await transport.connect() }
+        driver.didRemove(camera)
+        camera.completeOpen(error: nil); callbacks.drain()
+        await #expect(throws: PTPError.notConnected) {
+            try await transport.execute(PTPCommand(opcode: 0x1001, parameters: [], transactionID: 1), data: nil)
+        }
+        await transport.disconnect(); callbacks.drain()
+    }
+
     private func openedCount(_ events: [CameraDriverEvent]) -> Int {
         events.filter { if case .opened = $0 { true } else { false } }.count
     }
@@ -97,17 +285,56 @@ import Testing
 /// Public framework boundary doubles: no OS authorization request, browser discovery or physical session.
 private final class SessionTestBrowser: ICDeviceBrowser {
     private(set) var didStart = false
+    private var controlStatus: ICAuthorizationStatus
+    private var contentsStatus: ICAuthorizationStatus
+    private(set) var controlRequestCount = 0
+    private(set) var contentsRequestCount = 0
+    private let automaticallyAuthorize: Bool
+    private var controlReply: (@Sendable (ICAuthorizationStatus) -> Void)?
+    private var contentsReply: (@Sendable (ICAuthorizationStatus) -> Void)?
+    private let controlRequested = AsyncStream<Void>.makeStream()
+    private let contentsRequested = AsyncStream<Void>.makeStream()
+    private let browsingEvents = AsyncStream<Void>.makeStream()
+
+    init(control: ICAuthorizationStatus = .authorized, contents: ICAuthorizationStatus = .authorized, automaticallyAuthorize: Bool = true) {
+        self.automaticallyAuthorize = automaticallyAuthorize
+        controlStatus = control; contentsStatus = contents
+        super.init()
+    }
+
     var configuredMask: ICDeviceTypeMask?
     override var browsedDeviceTypeMask: ICDeviceTypeMask {
         get { configuredMask ?? .camera }
         set { configuredMask = newValue }
     }
-    override var controlAuthorizationStatus: ICAuthorizationStatus { .authorized }
-    override var contentsAuthorizationStatus: ICAuthorizationStatus { .authorized }
-    override func requestControlAuthorization(completion: @escaping @Sendable (ICAuthorizationStatus) -> Void) { completion(.authorized) }
-    override func requestContentsAuthorization(completion: @escaping @Sendable (ICAuthorizationStatus) -> Void) { completion(.authorized) }
-    override func start() { didStart = true }
+    override var controlAuthorizationStatus: ICAuthorizationStatus { controlStatus }
+    override var contentsAuthorizationStatus: ICAuthorizationStatus { contentsStatus }
+    override func requestControlAuthorization(completion: @escaping @Sendable (ICAuthorizationStatus) -> Void) {
+        controlRequestCount += 1; controlReply = completion; controlRequested.continuation.yield(())
+        if automaticallyAuthorize { completeControl(.authorized) }
+    }
+
+    override func requestContentsAuthorization(completion: @escaping @Sendable (ICAuthorizationStatus) -> Void) {
+        contentsRequestCount += 1; contentsReply = completion; contentsRequested.continuation.yield(())
+        if automaticallyAuthorize { completeContents(.authorized) }
+    }
+
+    override func start() { didStart = true; browsingEvents.continuation.yield(()) }
     override func stop() {}
+    func completeControl(_ status: ICAuthorizationStatus) { controlStatus = status; controlReply?(status) }
+    func completeContents(_ status: ICAuthorizationStatus) { contentsStatus = status; contentsReply?(status) }
+    @MainActor func waitForControlRequest() async {
+        if controlRequestCount > 0 { return }
+        for await _ in controlRequested.stream { return }
+    }
+    @MainActor func waitForContentsRequest() async {
+        if contentsRequestCount > 0 { return }
+        for await _ in contentsRequested.stream { return }
+    }
+    @MainActor func waitUntilBrowsing() async {
+        if didStart { return }
+        for await _ in browsingEvents.stream { return }
+    }
 }
 
 private final class SessionTestCamera: ICCameraDevice {
