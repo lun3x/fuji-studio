@@ -19,6 +19,31 @@ enum PTPCodec {
         return result
     }
 
+    /// The selector callback supplies an independent command buffer. Until native header evidence
+    /// establishes a wire-ID mapping, every submitted field (including ID) must match exactly.
+    static func validateCallbackCommand(_ buffer: Data, for submitted: PTPCommand) throws -> PTPCommand {
+        let callback = try decodeCommand(buffer)
+        guard callback.opcode == submitted.opcode, callback.parameters == submitted.parameters else {
+            throw PTPError.callbackCommandMismatch
+        }
+        guard callback.transactionID == submitted.transactionID else {
+            throw PTPError.wrongTransaction(expected: submitted.transactionID, actual: callback.transactionID)
+        }
+        return callback
+    }
+
+    static func decodeCommand(_ buffer: Data) throws -> PTPCommand {
+        guard buffer.count <= 32 else { throw PTPError.oversizedContainer }
+        guard buffer.count >= 12 else { throw PTPError.truncatedContainer }
+        let bytes = [UInt8](buffer)
+        guard uint32(bytes, 0) == buffer.count, (buffer.count - 12) % 4 == 0 else { throw PTPError.invalidContainerLength }
+        let kind = uint16(bytes, 4)
+        guard kind == 1 else { throw PTPError.unexpectedContainerType(kind) }
+        let command = PTPCommand(opcode: uint16(bytes, 6), parameters: stride(from: 12, to: bytes.count, by: 4).map { uint32(bytes, $0) }, transactionID: uint32(bytes, 8))
+        _ = try encode(command) // Same opcode/parameter restrictions as submitted commands.
+        return command
+    }
+
     static func decode(response: Data, data: Data, for command: PTPCommand,
                        maximumDataBytes: Int = maximumDataBytes) throws -> PTPReply {
         guard data.count <= maximumDataBytes else { throw PTPError.payloadTooLarge }

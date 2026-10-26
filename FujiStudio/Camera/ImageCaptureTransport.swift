@@ -65,6 +65,10 @@ import ImageCaptureCore
         }
     }
 
+    #if DEBUG
+    func ptpDiagnosticMessages() -> [String] { (driver as? ImageCaptureSessionDriver)?.ptpDiagnostics ?? [] }
+    #endif
+
     func disconnect() async { invalidate(PTPError.notConnected, state: .disconnected) }
 
     func execute(_ command: PTPCommand, data: Data?) async throws -> PTPReply {
@@ -174,9 +178,21 @@ import ImageCaptureCore
 @MainActor final class ImageCaptureSessionDriver: NSObject, CameraSessionDriver, @preconcurrency ICDeviceBrowserDelegate, @preconcurrency ICCameraDeviceDelegate {
     /// Framework completions may arrive on arbitrary queues. The default always hops to MainActor.
     typealias CompletionDelivery = @Sendable (@escaping @MainActor @Sendable () -> Void) -> Void
-    private let deliverCompletion: CompletionDelivery
+    private nonisolated let deliverCompletion: CompletionDelivery
     private let makeBrowser: @MainActor () -> ICDeviceBrowser
 
+    private struct NativeRequest {
+        let id: UUID
+        let run: UUID
+        let context: UInt
+        let submitted: PTPCommand
+        let completion: @MainActor @Sendable (Result<PTPWireReply, PTPError>) -> Void
+    }
+    private var nativeRequest: NativeRequest?
+    private var nextNativeContext: UInt = 1
+    #if DEBUG
+    private(set) var ptpDiagnostics: [String] = []
+    #endif
     private var browser: ICDeviceBrowser?
     private var camera: ICCameraDevice?
     private var events: (@MainActor @Sendable (CameraDriverEvent) -> Void)?
@@ -245,6 +261,7 @@ import ImageCaptureCore
         browser.start()
     }
     func close(completion: @escaping @MainActor @Sendable () -> Void) {
+        nativeRequest = nil
         closing = true; closeCompletion = completion; events = nil
         browser?.stop()
         // Opening has no public cancellation API. Wait for its terminal callback, then close it.
@@ -267,21 +284,80 @@ import ImageCaptureCore
     private func finishClose() {
         camera?.delegate = nil; camera = nil
         browser?.delegate = nil; browser = nil
+        nativeRequest = nil
         opening = false; closing = false; run = UUID()
         let completion = closeCompletion; closeCompletion = nil; completion?()
     }
     func send(command: Data, data: Data?, completion: @escaping @MainActor @Sendable (Result<PTPWireReply, PTPError>) -> Void) {
         guard let camera, !closing, camera.hasOpenSession else { completion(.failure(.notConnected)); return }
-        let deliver = deliverCompletion
-        camera.requestSendPTPCommand(command, outData: data) { payload, response, error in
-            // SDK argument names: responseData (data phase), ptpResponseData (PTP response container).
-            // Strict decoding prevents an ambiguous/malformed callback from becoming image success.
-            let result: Result<PTPWireReply, PTPError>
-            if let error { result = .failure(.sessionFailure("\((error as NSError).domain):\((error as NSError).code)")) }
-            else { result = .success(PTPWireReply(response: response, data: payload)) }
-            deliver { completion(result) }
+        guard nativeRequest == nil else { completion(.failure(.busy)); return }
+        do {
+            let submitted = try PTPCodec.decodeCommand(command)
+            guard nextNativeContext < UInt.max else { throw PTPError.sessionFailure("Native request context exhausted") }
+            let context = nextNativeContext; nextNativeContext += 1
+            let pending = NativeRequest(id: UUID(), run: run, context: context, submitted: submitted, completion: completion)
+            nativeRequest = pending
+            #if DEBUG
+            if submitted.opcode == 0x1001, submitted.parameters.isEmpty, data == nil {
+                recordPTPDiagnostic("submit request=\(pending.id) run=\(run) context=\(context) \(Self.headerSummary(command)) outBytes=0")
+            }
+            #endif
+            // contextInfo is an opaque, never-dereferenced monotonic token. It is never reused
+            // across sessions, so a late callback cannot alias a newly allocated context object.
+            camera.requestSendPTPCommand(command, outData: data, sendCommandDelegate: self,
+                didSendCommand: #selector(didSendPTPCommand(_:inData:response:error:contextInfo:)),
+                contextInfo: UnsafeMutableRawPointer(bitPattern: context))
+        } catch let error as PTPError { completion(.failure(error)) }
+        catch { completion(.failure(.sessionFailure("Invalid native command"))) }
+    }
+
+    @objc nonisolated func didSendPTPCommand(_ command: Data, inData: Data, response: Data, error: NSError?, contextInfo: UnsafeMutableRawPointer?) {
+        let context = contextInfo.map { UInt(bitPattern: $0) }
+        deliverCompletion { [weak self] in
+            self?.receivedPTPCallback(command: command, data: inData, response: response, error: error, context: context)
         }
     }
+
+    private func receivedPTPCallback(command: Data, data: Data, response: Data, error: NSError?, context: UInt?) {
+        guard let pending = nativeRequest, pending.run == run, !closing else { return }
+        #if DEBUG
+        if pending.submitted.opcode == 0x1001, pending.submitted.parameters.isEmpty {
+            recordPTPDiagnostic("callback request=\(pending.id) context=\(context.map(String.init) ?? "nil") expectedContext=\(pending.context) command[\(Self.headerSummary(command))] response[\(Self.headerSummary(response))] inBytes=\(data.count); payload bytes omitted; error=\(error.map { String($0.domain.prefix(80)) + ":" + String($0.code) } ?? "none")")
+        }
+        #endif
+        guard context == pending.context else { return }
+        nativeRequest = nil
+        if let error {
+            pending.completion(.failure(.sessionFailure("\(error.domain):\(error.code)")))
+            return
+        }
+        do {
+            let callback = try PTPCodec.validateCallbackCommand(command, for: pending.submitted)
+            _ = try PTPCodec.decode(response: response, data: data, for: callback)
+            pending.completion(.success(PTPWireReply(response: response, data: data)))
+        } catch let failure as PTPError {
+            #if DEBUG
+            if pending.submitted.opcode == 0x1001 { recordPTPDiagnostic("rejected request=\(pending.id): \(failure)") }
+            #endif
+            pending.completion(.failure(failure))
+        } catch { pending.completion(.failure(.sessionFailure("Invalid native callback"))) }
+    }
+
+    #if DEBUG
+    private func recordPTPDiagnostic(_ message: String) {
+        ptpDiagnostics.append(String(message.prefix(1100)))
+        if ptpDiagnostics.count > 16 { ptpDiagnostics.removeFirst(ptpDiagnostics.count - 16) }
+    }
+    private static func headerSummary(_ buffer: Data) -> String {
+        let prefix = buffer.prefix(32).map { String(format: "%02x", $0) }.joined()
+        let bytes = [UInt8](buffer.prefix(12))
+        guard bytes.count == 12 else { return "bytes=\(buffer.count) prefix=\(prefix) truncated" }
+        func u32(_ i: Int) -> UInt32 { UInt32(bytes[i]) | UInt32(bytes[i+1]) << 8 | UInt32(bytes[i+2]) << 16 | UInt32(bytes[i+3]) << 24 }
+        let kind = UInt16(bytes[4]) | UInt16(bytes[5]) << 8
+        let code = UInt16(bytes[6]) | UInt16(bytes[7]) << 8
+        return "bytes=\(buffer.count) length=\(u32(0)) type=\(kind) code=0x\(String(code, radix: 16)) tx=\(u32(8)) prefix=\(prefix)"
+    }
+    #endif
     func deviceBrowser(_ browser: ICDeviceBrowser, didAdd device: ICDevice, moreComing: Bool) {
         guard browser === self.browser, !closing, camera == nil,
               let camera = device as? ICCameraDevice, camera.usbVendorID == 0x04cb else { return }
@@ -309,6 +385,7 @@ import ImageCaptureCore
     func deviceBrowser(_ browser: ICDeviceBrowser, didRemove device: ICDevice, moreGoing: Bool) { didRemove(device) }
     func didRemove(_ device: ICDevice) {
         guard device === camera else { return }
+        nativeRequest = nil
         // Observed detachment is terminal even if requestOpenSession never completes. Retire
         // its identity and opening state BEFORE .removed synchronously asks us to close.
         camera?.delegate = nil

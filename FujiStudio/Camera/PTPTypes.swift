@@ -20,6 +20,7 @@ enum PTPError: Error, Sendable, Equatable {
     case oversizedContainer
     case invalidContainerLength
     case unexpectedContainerType(UInt16)
+    case callbackCommandMismatch
     case invalidParameters
     case invalidOpcode(UInt16)
     case wrongTransaction(expected: UInt32, actual: UInt32)

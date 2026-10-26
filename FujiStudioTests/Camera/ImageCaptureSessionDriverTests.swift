@@ -274,6 +274,115 @@ import Testing
         await transport.disconnect(); callbacks.drain()
     }
 
+    @Test func nativeSelectorPreservesStrictRejectionOfUnverifiedFrameworkTransaction() throws {
+        let fixture = openNativeDriver()
+        var result: Result<PTPWireReply, PTPError>?
+        fixture.driver.send(command: nativeCommand(1), data: nil) { result = $0 }
+        #expect(fixture.camera.lastPTPUsedSelector)
+        fixture.camera.completePTP(command: nativeCommand(7), response: nativeResponse(7))
+        fixture.callbacks.drain()
+        let completed = try #require(result)
+        #expect(throws: PTPError.wrongTransaction(expected: 1, actual: 7)) { try completed.get() }
+        fixture.driver.close {}; fixture.callbacks.drain()
+    }
+
+    @Test func nativeCallbackOpcodeAndCommandIDMismatchCannotBecomeSuccess() throws {
+        for callback in [nativeCommand(1, opcode: 0x04), nativeCommand(7)] {
+            let fixture = openNativeDriver()
+            var result: Result<PTPWireReply, PTPError>?
+            fixture.driver.send(command: nativeCommand(1), data: nil) { result = $0 }
+            fixture.camera.completePTP(command: callback, response: nativeResponse(1))
+            fixture.callbacks.drain()
+            let completed = try #require(result)
+            #expect(throws: PTPError.self) { try completed.get() }
+            fixture.driver.close {}; fixture.callbacks.drain()
+        }
+    }
+
+    @Test func nativeResponseIDMismatchRemainsTypedFailure() throws {
+        let fixture = openNativeDriver()
+        var result: Result<PTPWireReply, PTPError>?
+        fixture.driver.send(command: nativeCommand(1), data: nil) { result = $0 }
+        fixture.camera.completePTP(command: nativeCommand(1), response: nativeResponse(7))
+        fixture.callbacks.drain()
+        let completed = try #require(result)
+        #expect(throws: PTPError.wrongTransaction(expected: 1, actual: 7)) { try completed.get() }
+        fixture.driver.close {}; fixture.callbacks.drain()
+    }
+
+    @Test func staleNativeContextCannotCompleteReplacementRequest() throws {
+        let first = SessionTestBrowser(); let second = SessionTestBrowser(); var browsers = [first, second]
+        let callbacks = DriverCallbackQueue()
+        let driver = ImageCaptureSessionDriver(makeBrowser: { browsers.removeFirst() }, deliverCompletion: { callbacks.enqueue($0) })
+        let oldCamera = SessionTestCamera()
+        driver.start { _ in }; callbacks.drain()
+        driver.deviceBrowser(first, didAdd: oldCamera, moreComing: false)
+        oldCamera.completeOpen(error: nil); callbacks.drain()
+        var oldReplies = 0
+        driver.send(command: nativeCommand(1), data: nil) { _ in oldReplies += 1 }
+        driver.close {}; callbacks.drain()
+        let freshCamera = SessionTestCamera()
+        driver.start { _ in }; callbacks.drain()
+        driver.deviceBrowser(second, didAdd: freshCamera, moreComing: false)
+        freshCamera.completeOpen(error: nil); callbacks.drain()
+        var freshReplies = 0
+        driver.send(command: nativeCommand(1), data: nil) { _ in freshReplies += 1 }
+        oldCamera.completePTP(command: nativeCommand(1), response: nativeResponse(1)); callbacks.drain()
+        #expect(oldReplies == 0)
+        #expect(freshReplies == 0)
+        freshCamera.completePTP(command: nativeCommand(1), response: nativeResponse(1)); callbacks.drain()
+        #expect(freshReplies == 1)
+        driver.close {}; callbacks.drain()
+    }
+
+    @Test func getDeviceInfoDiagnosticsKeepIndependentHeadersOnRejection() throws {
+        let fixture = openNativeDriver()
+        fixture.driver.send(command: nativeCommand(1), data: nil) { _ in }
+        fixture.camera.completePTP(command: nativeCommand(7), response: nativeResponse(7), data: Data("PRIVATE_SERIAL_NEVER_LOG".utf8))
+        fixture.callbacks.drain()
+        let text = fixture.driver.ptpDiagnostics.joined(separator: "\n")
+        #expect(text.contains("type=1 code=0x1001 tx=1"))
+        #expect(text.contains("type=1 code=0x1001 tx=7"))
+        #expect(text.contains("type=3 code=0x2001 tx=7"))
+        #expect(text.contains("wrongTransaction"))
+        #expect(!text.contains("PRIVATE_SERIAL_NEVER_LOG"))
+        fixture.driver.close {}; fixture.callbacks.drain()
+    }
+
+    @Test func nativeDiagnosticsAreBoundedAndExcludeOtherOperationsAndPayloads() {
+        let fixture = openNativeDriver()
+        let secret = Data("PRIVATE_SERIAL_IMAGE_PAYLOAD_NEVER_LOG".utf8)
+        for _ in 0..<20 {
+            fixture.driver.send(command: nativeCommand(1), data: nil) { _ in }
+            fixture.camera.completePTP(command: nativeCommand(1), response: nativeResponse(1), data: secret)
+            fixture.callbacks.drain()
+        }
+        #expect(fixture.driver.ptpDiagnostics.count == 16)
+        #expect(fixture.driver.ptpDiagnostics.allSatisfy { $0.count <= 1100 })
+        let before = fixture.driver.ptpDiagnostics
+        fixture.driver.send(command: nativeCommand(1, opcode: 0x09), data: nil) { _ in }
+        fixture.camera.completePTP(command: nativeCommand(1, opcode: 0x09), response: nativeResponse(1), data: secret)
+        fixture.callbacks.drain()
+        #expect(fixture.driver.ptpDiagnostics == before)
+        #expect(!before.joined().contains("PRIVATE_SERIAL_IMAGE_PAYLOAD_NEVER_LOG"))
+        fixture.driver.close {}; fixture.callbacks.drain()
+    }
+
+    private func openNativeDriver() -> (driver: ImageCaptureSessionDriver, camera: SessionTestCamera, callbacks: DriverCallbackQueue) {
+        let browser = SessionTestBrowser(); let callbacks = DriverCallbackQueue(); let camera = SessionTestCamera()
+        let driver = ImageCaptureSessionDriver(makeBrowser: { browser }, deliverCompletion: { callbacks.enqueue($0) })
+        driver.start { _ in }; callbacks.drain()
+        driver.deviceBrowser(browser, didAdd: camera, moreComing: false)
+        camera.completeOpen(error: nil); callbacks.drain()
+        return (driver, camera, callbacks)
+    }
+    private func nativeCommand(_ transaction: UInt8, opcode: UInt8 = 0x01) -> Data {
+        Data([12,0,0,0,1,0,opcode,0x10,transaction,0,0,0])
+    }
+    private func nativeResponse(_ transaction: UInt8) -> Data {
+        Data([12,0,0,0,3,0,1,0x20,transaction,0,0,0])
+    }
+
     private func openedCount(_ events: [CameraDriverEvent]) -> Int {
         events.filter { if case .opened = $0 { true } else { false } }.count
     }
@@ -338,6 +447,24 @@ private final class SessionTestBrowser: ICDeviceBrowser {
 }
 
 private final class SessionTestCamera: ICCameraDevice {
+    private var ptpBlock: (@Sendable (Data, Data, (any Error)?) -> Void)?
+    private var ptpTarget: NSObject?
+    private var ptpSelector: Selector?
+    private var ptpContext: UnsafeMutableRawPointer?
+    private(set) var lastPTPUsedSelector = false
+    override func requestSendPTPCommand(_ command: Data, outData: Data?, completion: @escaping @Sendable (Data, Data, (any Error)?) -> Void) {
+        lastPTPUsedSelector = false; ptpBlock = completion
+    }
+    override func requestSendPTPCommand(_ command: Data, outData: Data?, sendCommandDelegate: Any, didSendCommand selector: Selector, contextInfo: UnsafeMutableRawPointer?) {
+        lastPTPUsedSelector = true; ptpTarget = sendCommandDelegate as? NSObject; ptpSelector = selector; ptpContext = contextInfo
+    }
+    func completePTP(command: Data, response: Data, data: Data = Data()) {
+        if let target = ptpTarget, let selector = ptpSelector {
+            typealias Callback = @convention(c) (AnyObject, Selector, NSData, NSData, NSData, NSError?, UnsafeMutableRawPointer?) -> Void
+            let invoke = unsafeBitCast(target.method(for: selector), to: Callback.self)
+            invoke(target, selector, command as NSData, data as NSData, response as NSData, nil, ptpContext)
+        } else { ptpBlock?(data, response, nil) }
+    }
     private var openCompletion: (@Sendable ((any Error)?) -> Void)?
     private var sessionIsOpen = false
     private(set) var pendingOpenCount = 0

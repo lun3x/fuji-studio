@@ -9,6 +9,7 @@ struct HardwareProbeView: View {
     @State private var model = HardwareProbeModel()
     @State private var assetID = ""
     @State private var showingResults = false
+    @State private var showingCameraResults = false
     @State private var cameraProbe = CameraProbeModel()
 
     var body: some View {
@@ -76,6 +77,7 @@ struct HardwareProbeView: View {
                 Button("Inspect") { model.inspect() }
                     .disabled(model.busy || model.resources.isEmpty)
                 Button("Results") { showingResults = true }
+                Button("Camera") { showingCameraResults = true }
             }
         }
         .sheet(isPresented: $showingResults) {
@@ -91,7 +93,31 @@ struct HardwareProbeView: View {
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showingResults = false } } }
             }
         }
+        .sheet(isPresented: $showingCameraResults) {
+            NavigationStack {
+                VStack(alignment: .leading) {
+                    Text(cameraProbe.status).font(.caption)
+                    HStack {
+                        Button("Connect") { cameraProbe.connect() }
+                            .disabled(cameraProbe.connecting || cameraProbe.sessionOpen)
+                        Button("Read info") { cameraProbe.readDeviceInfo() }
+                            .disabled(!cameraProbe.sessionOpen || cameraProbe.commandBusy)
+                        Button("Close") { cameraProbe.disconnect() }
+                    }
+                    ScrollView {
+                        Text(cameraProbe.trace + "\nBounded GetDeviceInfo headers (payload omitted):\n" + cameraProbe.ptpDiagnostics)
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .padding()
+                .navigationTitle("Camera diagnostics")
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showingCameraResults = false } } }
+            }
+        }
         .onDisappear { model.cancel(); cameraProbe.disconnect() }
+
 
     }
 }
@@ -173,6 +199,7 @@ private final class CameraProbeModel {
     var firmware = ""
     var status = "Disconnected · physical Gate 2 pending"
     var trace = "No physical camera trace recorded.\n"
+    var ptpDiagnostics = "No GetDeviceInfo callback captured."
     var connecting = false
     var sessionOpen = false
     var commandBusy = false
@@ -218,7 +245,11 @@ private final class CameraProbeModel {
         let transaction = nextTransaction; nextTransaction += 1
         commandBusy = true
         command = Task {
-            defer { commandBusy = false }
+            defer {
+                commandBusy = false
+                ptpDiagnostics = transport.ptpDiagnosticMessages().joined(separator: "\n")
+            }
+
             do {
                 let reply = try await transport.execute(PTPCommand(opcode: 0x1001, parameters: [], transactionID: transaction), data: nil)
                 trace += "GetDeviceInfo: response \(String(reply.responseCode, radix: 16)), transaction \(reply.transactionID), payload \(reply.data.count) bytes. Firmware/model parsing and RAW mode verification are Task 3 prerequisites.\n"
