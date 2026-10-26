@@ -94,12 +94,14 @@ final class XT5RawBaselineLaunchRunner {
         let unchanged = arguments.contains("--xt5-unchanged-baseline-probe")
         let recovery = arguments.contains("--xt5-output-recovery-probe")
         let quarantine = arguments.contains("--xt5-output-quarantine-probe")
+        let triggerOne = arguments.contains("--xt5-trigger-one-probe")
         let readOnly = recovery || quarantine
-        guard [baseline,unchanged,recovery,quarantine].filter({ $0 }).count == 1, !otherFlags.contains(where: arguments.contains), !didRun else { return }
+        guard [baseline,unchanged,recovery,quarantine,triggerOne].filter({ $0 }).count == 1, !otherFlags.contains(where: arguments.contains), !didRun else { return }
         didRun = true
         if unchanged { prefix = "xt5-unchanged-baseline" }
         if recovery { prefix = "xt5-output-recovery" }
         if quarantine { prefix = "xt5-output-quarantine" }
+        if triggerOne { prefix = "xt5-trigger-one" }
         var probeOwnsClose = false
         do {
             let output = try requestedDirectory ?? FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
@@ -112,6 +114,7 @@ final class XT5RawBaselineLaunchRunner {
             let raw: PreparedRAW
             if !baseline { raw = try await retainedSource(output, privateRun) }
             else { raw = try await preparer.prepareOne(in: privateRun).raw }
+            let cleanupTarget = triggerOne ? try await RetainedExactCleanupProof.prepare(documents: output, raw: raw, destination: privateRun) : nil
             try writeStatus(readOnly ? "Connecting for read-only output observation; no upload or trigger" : "Original retained privately; connecting for bounded RAW upload")
             try await transport.connect()
             let native = transport
@@ -124,12 +127,14 @@ final class XT5RawBaselineLaunchRunner {
                 try await Self.close(native, expectedGeneration: generation)
             }, experiment: unchanged ? .unchangedTrigger0 : .baselineOnly)
             probeOwnsClose = true
-            if readOnly {
+            if let cleanupTarget {
+                _ = try await probe.captureTriggerOne(after: cleanupTarget, raw: raw, directory: privateRun) { [weak self] report in await self?.save(report) }
+            } else if readOnly {
                 _ = try await probe.recoverExistingOutput(raw: raw, directory: privateRun, quarantine: quarantine) { [weak self] report in await self?.save(report) }
             } else {
                 _ = try await probe.capture(raw: raw, directory: privateRun) { [weak self] report in await self?.save(report) }
             }
-            let success = quarantine ? "Private quarantine captured; never promoted to validated output; native session closed; provenance and cleanup unconfirmed" : recovery ? "Existing candidate retained; native session closed; provenance and cleanup unconfirmed; no upload or trigger performed" : unchanged ? "Unchanged-baseline JPEG retained; native session closed; input/output cleanup unconfirmed; FINE and imported recipes unvalidated" : "Baseline probe complete; native session closed; upload buffer cleanup remains unconfirmed; conversion unvalidated"
+            let success = triggerOne ? "Exact old output deletion verified; trigger 1 private diagnostic captured; native close confirmed; new output/input cleanup unconfirmed; FINE and recipes unvalidated" : quarantine ? "Private quarantine captured; never promoted to validated output; native session closed; provenance and cleanup unconfirmed" : recovery ? "Existing candidate retained; native session closed; provenance and cleanup unconfirmed; no upload or trigger performed" : unchanged ? "Unchanged-baseline JPEG retained; native session closed; input/output cleanup unconfirmed; FINE and imported recipes unvalidated" : "Baseline probe complete; native session closed; upload buffer cleanup remains unconfirmed; conversion unvalidated"
             try writeStatus(artifactWriteFailed ? "Probe operation finished, but public evidence writing failed" : success)
         } catch let failure as XT5RawBaselineFailure {
             try? writeStatus("Baseline probe incomplete: \(failure.evidence.failure ?? failure.evidence.sessionClosureFailure ?? "unknown outcome"); native closure \(failure.evidence.sessionClosure); buffer cleanup unconfirmed")
@@ -156,7 +161,9 @@ final class XT5RawBaselineLaunchRunner {
         do {
             let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]; encoder.dateEncodingStrategy = .iso8601
             try encoder.encode(report).write(to: directory.appendingPathComponent(prefix + "-evidence.json"), options: .atomic)
-            if report.readOnlyRecovery {
+            if let cleanup = report.exactCleanup {
+                try writeStatus("Exact old output delete acknowledged: \(cleanup.deleteAcknowledged); empty view verified: \(cleanup.emptyViewVerified); trigger 1 accepted: \(report.unchangedConversion?.triggerAccepted ?? false); capture: \(report.unchangedConversion?.captureOutcome ?? "notCaptured"); native closure: \(report.sessionClosure); new output/input cleanup unconfirmed")
+            } else if report.readOnlyRecovery {
                 try writeStatus("Read-only observation: \(report.unchangedConversion?.captureOutcome ?? "notCaptured"); native closure: \(report.sessionClosure); provenance and cleanup unconfirmed")
             } else {
                 try writeStatus("RAW upload accepted: \(report.rawUploadSucceeded); baseline bytes: \(report.baselineBytes ?? 0); native closure: \(report.sessionClosure); buffer cleanup unconfirmed")
@@ -212,6 +219,49 @@ enum RetainedRAWProbeSource {
         let reference = ["retainedRun": run.lastPathComponent,"filename": "source.RAF","sha256": raw.sha256]
         try JSONEncoder().encode(reference).write(to: destination.appendingPathComponent("source-reference.json"),options: [.atomic,.completeFileProtection])
         return raw
+    }
+}
+#endif
+
+#if DEBUG
+/// Loads exactly the existing phase-G quarantine proof; no latest-run or Photos fallback.
+enum RetainedExactCleanupProof {
+    private struct Manifest: Decodable {
+        let sourceSHA256: String, outputSHA256: String
+        let candidateHandle: UInt32
+        let readOnlyRecovery: Bool, privateQuarantine: Bool
+    }
+    private struct Reference: Decodable { let retainedRun: String, filename: String, sha256: String }
+    static func prepare(documents: URL, raw: PreparedRAW, destination: URL) async throws -> XT5ExactCleanupTarget {
+        let task = Task.detached { try load(documents: documents, raw: raw, destination: destination) }
+        return try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+    }
+    private static func load(documents: URL, raw: PreparedRAW, destination: URL) throws -> XT5ExactCleanupTarget {
+        let root = documents.appendingPathComponent("xt5-output-quarantine-private", isDirectory: true)
+        guard let entries = try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: [.isDirectoryKey]) else { throw XT5ExactCleanupIssue.invalidPreservedProof }
+        let candidates = entries.filter {
+            UUID(uuidString: $0.lastPathComponent) != nil && FileManager.default.fileExists(atPath: $0.appendingPathComponent("quarantined-candidate.bin").path)
+        }
+        guard candidates.count == 1, let run = candidates.first else { throw XT5ExactCleanupIssue.invalidPreservedProof }
+        func bounded(_ name: String, maximum: Int) throws -> Data {
+            let url = run.appendingPathComponent(name)
+            guard let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > 0, size <= maximum else { throw XT5ExactCleanupIssue.invalidPreservedProof }
+            return try Data(contentsOf: url)
+        }
+        let manifest = try JSONDecoder().decode(Manifest.self, from: bounded("conversion-manifest.json", maximum: 65_536))
+        let reference = try JSONDecoder().decode(Reference.self, from: bounded("source-reference.json", maximum: 65_536))
+        guard manifest.readOnlyRecovery, manifest.privateQuarantine, manifest.sourceSHA256 == raw.sha256,
+              reference.sha256 == raw.sha256, reference.filename == "source.RAF",
+              reference.retainedRun == raw.fileURL.deletingLastPathComponent().lastPathComponent else { throw XT5ExactCleanupIssue.invalidPreservedProof }
+        let object = try bounded("output-object-info.bin", maximum: 4096)
+        guard try bounded("output-object-info-after.bin", maximum: 4096) == object else { throw XT5ExactCleanupIssue.invalidPreservedProof }
+        let target = XT5ExactCleanupTarget(handle: manifest.candidateHandle, sourceSHA256: manifest.sourceSHA256, outputSHA256: manifest.outputSHA256,
+            quarantineURL: run.appendingPathComponent("quarantined-candidate.bin"), objectInfo: object, storageInfo: try bounded("output-storage-info.bin", maximum: 4096))
+        try Task.checkCancellation()
+        _ = try target.validateLocal(raw: raw)
+        let link = ["preservedRun":run.lastPathComponent, "sourceSHA256":raw.sha256, "outputSHA256":manifest.outputSHA256]
+        try JSONEncoder().encode(link).write(to: destination.appendingPathComponent("cleanup-source-reference.json"), options: [.atomic,.completeFileProtection])
+        return target
     }
 }
 #endif

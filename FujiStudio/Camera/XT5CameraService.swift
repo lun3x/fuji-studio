@@ -460,12 +460,13 @@ struct XT5RawBaselineEvidence: Sendable, Encodable {
     var unchangedConversion: XT5UnchangedConversionObservation?
     var readOnlyRecovery = false
     var quarantineRequested = false
+    var exactCleanup: XT5ExactCleanupObservation?
 }
 
 struct XT5RawBaselineFailure: Error, Sendable { let evidence: XT5RawBaselineEvidence }
 
 /// One original payload. Follows the pinned transient upload path only after a truly empty
-/// object view. Returned/new handles are observations, NEVER proof of ownership. No deletion API.
+/// object view. Generic new handles never prove ownership; only the explicit preserved-proof path may delete.
 actor XT5RawBaselineProbe {
     private struct Manifest: Encodable {
         struct ObjectCapture: Encodable {
@@ -498,7 +499,52 @@ actor XT5RawBaselineProbe {
     }
     func capture(raw: PreparedRAW, directory: URL,
                  onUpdate: @escaping @Sendable (XT5RawBaselineEvidence) async -> Void = { _ in }) async throws -> XT5RawBaselineEvidence {
-        try await gate.withExclusiveAccess { try await self.captureExclusively(raw: raw, directory: directory, onUpdate: onUpdate) }
+        try await gate.withExclusiveAccess { try await self.captureExclusively(raw: raw, directory: directory, conversionTrigger: self.experiment == .unchangedTrigger0 ? 0 : nil, onUpdate: onUpdate) }
+    }
+    /// Only the controller-authorized preserved phase-G output can pass this cleanup path.
+    /// The permit remains held through exact cleanup, upload, trigger, observation and native close.
+    func captureTriggerOne(after target: XT5ExactCleanupTarget, raw: PreparedRAW, directory: URL,
+                           onUpdate: @escaping @Sendable (XT5RawBaselineEvidence) async -> Void = { _ in }) async throws -> XT5RawBaselineEvidence {
+        try await gate.withExclusiveAccess { try await self.cleanupThenCapture(target: target, raw: raw, directory: directory, onUpdate: onUpdate) }
+    }
+    private func cleanupThenCapture(target: XT5ExactCleanupTarget, raw: PreparedRAW, directory: URL,
+                                    onUpdate: @escaping @Sendable (XT5RawBaselineEvidence) async -> Void) async throws -> XT5RawBaselineEvidence {
+        var evidence = XT5RawBaselineEvidence(); evidence.exactCleanup = XT5ExactCleanupObservation(); evidence.quarantineRequested = true
+        do {
+            _ = try target.validateLocal(raw: raw)
+            guard raw.metadata.cameraModel == "X-T5" else { throw XT5RawBaselineIssue.unsupportedContext }
+            let info = try XT5RecipeCodec.deviceInfo(await send(0x1001).data)
+            guard info.manufacturer == "FUJIFILM", info.model == "X-T5", info.firmware == "4.31" else { throw XT5RawBaselineIssue.unsupportedContext }
+            guard [UInt16(0x1005),0x1007,0x1008,0x1009,0x100B,0x1015,0x1016,0x900C,0x900D].allSatisfy(info.operations.contains),
+                  [UInt16(0xD16E),0xD183,0xD185,0xD186,0xD187].allSatisfy(info.properties.contains) else { throw XT5RawBaselineIssue.missingCapability }
+            guard try await send(0x1015, parameters: [0xD16E]).data == Data([6,0]) else { throw XT5RawBaselineIssue.unsupportedContext }
+            for code: UInt32 in [0xD186,0xD187] {
+                guard try XT5RecipeCodec.value(await send(0x1015, parameters: [code]).data, type: 0xffff).string == "X-T5_0200" else { throw XT5RawBaselineIssue.unsupportedContext }
+            }
+            evidence.model = "X-T5"; evidence.firmware = "4.31"; evidence.capability = "X-T5_0200"
+            let beforeCleanup = evidence
+            let cleanup = XT5ExactOutputCleanup(send: { opcode, parameters, data in
+                guard data == nil, [UInt16(0x1005),0x1007,0x1008,0x1009,0x100B].contains(opcode),
+                      opcode != 0x100B || parameters == [target.handle,0] else { throw PTPError.invalidParameters }
+                return try await self.send(opcode, parameters: parameters)
+            })
+            let result = await cleanup.run(target: target, raw: raw, directory: directory) { partial in
+                var report = beforeCleanup; report.exactCleanup = partial; await onUpdate(report)
+            }
+            evidence.exactCleanup = result
+            guard result.emptyViewVerified && result.failure == nil else { throw XT5ExactCleanupIssue.viewNotEmpty }
+        } catch {
+            evidence.failure = evidence.exactCleanup?.failure ?? Self.safeFailure(error)
+            let close = Task.detached { try await self.closeSession() }
+            do { try await close.value; evidence.sessionClosure = "confirmed" }
+            catch { evidence.sessionClosure = "unconfirmed"; evidence.sessionClosureFailure = Self.safeFailure(error) }
+            await onUpdate(evidence)
+            throw XT5RawBaselineFailure(evidence: evidence)
+        }
+        // No nested gate and no early close: only successful exact deletion + empty enumeration
+        // reaches the existing upload path. Its ordinary empty-view check is repeated before upload.
+        return try await captureExclusively(raw: raw, directory: directory, initialEvidence: evidence,
+                                            conversionTrigger: 1, quarantineOutput: true, onUpdate: onUpdate)
     }
     func recoverExistingOutput(raw: PreparedRAW, directory: URL, quarantine: Bool = false,
                                onUpdate: @escaping @Sendable (XT5RawBaselineEvidence) async -> Void = { _ in }) async throws -> XT5RawBaselineEvidence {
@@ -543,9 +589,10 @@ actor XT5RawBaselineProbe {
         guard evidence.probeFinished else { throw XT5RawBaselineFailure(evidence: evidence) }
         return evidence
     }
-    private func captureExclusively(raw: PreparedRAW, directory: URL,
+    private func captureExclusively(raw: PreparedRAW, directory: URL, initialEvidence: XT5RawBaselineEvidence = XT5RawBaselineEvidence(),
+                                    conversionTrigger: UInt16?, quarantineOutput: Bool = false,
                                     onUpdate: @escaping @Sendable (XT5RawBaselineEvidence) async -> Void) async throws -> XT5RawBaselineEvidence {
-        var evidence = XT5RawBaselineEvidence()
+        var evidence = initialEvidence
         var manifest = Manifest(sourceSHA256: raw.sha256)
         var uploadAttempted = false
         var afterObserved = false
@@ -557,7 +604,7 @@ actor XT5RawBaselineProbe {
             guard [UInt16(0x1015),0x1007,0x900C,0x900D].allSatisfy(info.operations.contains),
                   [UInt16(0xD16E),0xD185,0xD186,0xD187].allSatisfy(info.properties.contains) else { throw XT5RawBaselineIssue.missingCapability }
             canReadObjectInfo = info.operations.contains(0x1008)
-            if experiment == .unchangedTrigger0 {
+            if conversionTrigger != nil {
                 guard [UInt16(0x1008),0x1009,0x1016].allSatisfy(info.operations.contains), info.properties.contains(0xD183) else { throw XT5RawBaselineIssue.missingCapability }
             }
             guard try await send(0x1015, parameters: [0xD16E]).data == Data([6,0]) else { throw XT5RawBaselineIssue.unsupportedContext }
@@ -599,18 +646,18 @@ actor XT5RawBaselineProbe {
             try privateWrite(baseline, to: directory.appendingPathComponent("baseline.bin"))
             evidence.baselineBytes = baseline.count
             await onUpdate(evidence)
-            if experiment == .unchangedTrigger0 {
+            if conversionTrigger != nil {
                 let conversion = XT5UnchangedConversionProbe(send: { opcode, parameters, data in
                     try await self.send(opcode, parameters: parameters, data: data)
                 }, pollWait: pollWait)
                 let beforeConversion = evidence
-                let result = await conversion.run(raw: raw, directory: directory, canReadStorage: info.operations.contains(0x1005)) { partial in
+                let result = await conversion.run(raw: raw, directory: directory, canReadStorage: info.operations.contains(0x1005), quarantine: quarantineOutput, triggerValue: conversionTrigger ?? 0) { partial in
                     var report = beforeConversion; report.unchangedConversion = partial
                     await onUpdate(report)
                 }
                 evidence.unchangedConversion = result
                 await onUpdate(evidence)
-                guard result.jpegRetained && result.failure == nil else { throw XT5UnchangedConversionFailure(observation: result) }
+                guard (result.jpegRetained || (quarantineOutput && result.quarantineCaptured)) && result.failure == nil else { throw XT5UnchangedConversionFailure(observation: result) }
             }
             afterObserved = true
             let after = try await enumerate(directory: directory, phase: "after")
@@ -679,6 +726,7 @@ actor XT5RawBaselineProbe {
         catch { throw XT5RawBaselineIssue.artifactWriteFailed }
     }
     static func safeFailure(_ error: any Error) -> String {
+        if let error = error as? XT5ExactCleanupIssue { return String(describing: error) }
         if let error = error as? XT5UnchangedConversionFailure { return error.observation.failure ?? "unchanged conversion incomplete" }
         if let error = error as? XT5ConversionProbeIssue { return String(describing: error) }
         if let error = error as? XT5RawBaselineIssue { return String(describing: error) }
@@ -738,20 +786,21 @@ private actor XT5UnchangedConversionProbe {
         var outputSHA256: String?
     }
     init(send: @escaping Send, pollWait: @escaping @Sendable () async throws -> Void) { self.send = send; self.pollWait = pollWait }
-    func run(raw: PreparedRAW, directory: URL, canReadStorage: Bool, recovery: Bool = false, quarantine: Bool = false,
+    func run(raw: PreparedRAW, directory: URL, canReadStorage: Bool, recovery: Bool = false, quarantine: Bool = false, triggerValue: UInt16 = 0,
              onUpdate: @escaping @Sendable (XT5UnchangedConversionObservation) async -> Void) async -> XT5UnchangedConversionObservation {
         self.onUpdate = onUpdate
+        observation.triggerValue = Int(triggerValue)
         if recovery {
             observation.readOnlyRecovery = true; observation.triggerValue = nil
             observation.label = "existing candidate recovery; interrupted-operation provenance unconfirmed"
         }
         if quarantine {
             observation.quarantineRequested = true
-            observation.label = "unvalidated private quarantine; interrupted-operation provenance unconfirmed"
+            observation.label = recovery ? "unvalidated private quarantine; interrupted-operation provenance unconfirmed" : "unchanged camera baseline trigger 1; unvalidated private diagnostic"
         }
         do {
             try await withThrowingTaskGroup(of: Void.self) { group in
-                group.addTask { try await self.capture(raw: raw, directory: directory, canReadStorage: canReadStorage, recovery: recovery, quarantine: quarantine) }
+                group.addTask { try await self.capture(raw: raw, directory: directory, canReadStorage: canReadStorage, recovery: recovery, quarantine: quarantine, triggerValue: triggerValue) }
                 group.addTask { try await Task.sleep(for: .seconds(45)); throw XT5ConversionProbeIssue.outputTimeout }
                 defer { group.cancelAll() }
                 try await group.next()
@@ -759,8 +808,8 @@ private actor XT5UnchangedConversionProbe {
         } catch { observation.failure = XT5RawBaselineProbe.safeFailure(error) }
         return observation
     }
-    private func capture(raw: PreparedRAW, directory: URL, canReadStorage: Bool, recovery: Bool, quarantine: Bool) async throws {
-        guard !quarantine || recovery else { throw PTPError.invalidParameters }
+    private func capture(raw: PreparedRAW, directory: URL, canReadStorage: Bool, recovery: Bool, quarantine: Bool, triggerValue: UInt16) async throws {
+        guard triggerValue <= 1, !quarantine || recovery || triggerValue == 1 else { throw PTPError.invalidParameters }
         var manifest = Manifest(sourceSHA256: raw.sha256, readOnlyRecovery: recovery, privateQuarantine: quarantine)
         defer { try? persist(manifest, directory: directory) }
         let before = try await handles()
@@ -776,7 +825,7 @@ private actor XT5UnchangedConversionProbe {
             try Task.checkCancellation()
             observation.triggerAttempted = true
             await onUpdate(observation)
-            _ = try await send(0x1016, [0xD183], Data([0,0]))
+            _ = try await send(0x1016, [0xD183], Data([UInt8(triggerValue),0]))
             observation.triggerAccepted = true
             await onUpdate(observation)
             var candidate: UInt32?
