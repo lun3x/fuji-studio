@@ -278,7 +278,7 @@ private actor BaselineLibrary: PhotoLibraryReading {
         let flag = "--xt5-raw-baseline-probe"
         let flags = ["--xt5-read-only-probe","--xt5-direct-values-probe","--xt5-bank-import-probe","--camera-reconnect-probe"]
         let recovery = "--xt5-output-recovery-probe"
-        let modes = [flag,"--xt5-unchanged-baseline-probe",recovery,"--xt5-output-quarantine-probe","--xt5-trigger-one-probe"]
+        let modes = [flag,"--xt5-unchanged-baseline-probe",recovery,"--xt5-output-quarantine-probe","--xt5-trigger-one-probe","--xt5-film-only-probe"]
         let mixed = modes.enumerated().flatMap { index, first in modes.dropFirst(index + 1).map { [first,$0] } }
         for args in [["FujiStudio"]] + mixed + modes.flatMap({ mode in flags.map { [mode,$0] } }) {
             let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -359,6 +359,18 @@ private actor BaselineLibrary: PhotoLibraryReading {
         #expect(await library.materializedIDs.isEmpty)
         #expect(runner.status.contains("invalidPreservedProof"))
         #expect(FileManager.default.fileExists(atPath: fixture.directory.appendingPathComponent("xt5-trigger-one-status.txt").path))
+    }
+    @Test func filmProbeRequiresRetainedBaselineBeforeCameraAndNeverUsesPhotosFallback() async throws {
+        let fixture = try BaselineFixture(); defer { fixture.remove() }
+        let driver = BaselineProbeDriver()
+        let library = BaselineLibrary(ids: ["reference"])
+        let runner = XT5RawBaselineLaunchRunner(transport: ImageCaptureTransport(driver: driver), directory: fixture.directory,
+            preparer: RAWBaselineSourcePreparer(reader: library), retainedSource: { _,_ in fixture.raw })
+        await runner.runIfRequested(arguments: ["--xt5-film-only-probe"])
+        #expect(driver.startCount == 0)
+        #expect(await library.materializedIDs.isEmpty)
+        #expect(runner.status.contains("invalidReference"))
+        #expect(FileManager.default.fileExists(atPath: fixture.directory.appendingPathComponent("xt5-film-only-status.txt").path))
     }
     @Test func retainedSelectionRejectsMissingAndAmbiguousRunsWithoutGuessingLatest() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

@@ -461,6 +461,7 @@ struct XT5RawBaselineEvidence: Sendable, Encodable {
     var readOnlyRecovery = false
     var quarantineRequested = false
     var exactCleanup: XT5ExactCleanupObservation?
+    var filmProbe: XT5FilmProbeObservation?
 }
 
 struct XT5RawBaselineFailure: Error, Sendable { let evidence: XT5RawBaselineEvidence }
@@ -500,6 +501,15 @@ actor XT5RawBaselineProbe {
     func capture(raw: PreparedRAW, directory: URL,
                  onUpdate: @escaping @Sendable (XT5RawBaselineEvidence) async -> Void = { _ in }) async throws -> XT5RawBaselineEvidence {
         try await gate.withExclusiveAccess { try await self.captureExclusively(raw: raw, directory: directory, conversionTrigger: self.experiment == .unchangedTrigger0 ? 0 : nil, onUpdate: onUpdate) }
+    }
+    func captureFilmOnly(raw: PreparedRAW, reference: XT5FilmProbeReference, directory: URL,
+                         onUpdate: @escaping @Sendable (XT5RawBaselineEvidence) async -> Void = { _ in }) async throws -> XT5RawBaselineEvidence {
+        var initial = XT5RawBaselineEvidence(); initial.quarantineRequested = true; initial.filmProbe = XT5FilmProbeObservation()
+        let evidence = initial
+        return try await gate.withExclusiveAccess {
+            try await self.captureExclusively(raw: raw, directory: directory, initialEvidence: evidence,
+                conversionTrigger: 1, quarantineOutput: true, filmReference: reference, onUpdate: onUpdate)
+        }
     }
     /// Only the controller-authorized preserved phase-G output can pass this cleanup path.
     /// The permit remains held through exact cleanup, upload, trigger, observation and native close.
@@ -590,7 +600,7 @@ actor XT5RawBaselineProbe {
         return evidence
     }
     private func captureExclusively(raw: PreparedRAW, directory: URL, initialEvidence: XT5RawBaselineEvidence = XT5RawBaselineEvidence(),
-                                    conversionTrigger: UInt16?, quarantineOutput: Bool = false,
+                                    conversionTrigger: UInt16?, quarantineOutput: Bool = false, filmReference: XT5FilmProbeReference? = nil,
                                     onUpdate: @escaping @Sendable (XT5RawBaselineEvidence) async -> Void) async throws -> XT5RawBaselineEvidence {
         var evidence = initialEvidence
         var manifest = Manifest(sourceSHA256: raw.sha256)
@@ -599,6 +609,7 @@ actor XT5RawBaselineProbe {
         var canReadObjectInfo = false
         var expectedOutputHandle: UInt32?
         do {
+            try filmReference?.validate(raw: raw)
             guard raw.metadata.cameraModel == "X-T5" else { throw XT5RawBaselineIssue.unsupportedContext }
             let info = try XT5RecipeCodec.deviceInfo(await send(0x1001).data)
             guard info.manufacturer == "FUJIFILM", info.model == "X-T5", info.firmware == "4.31" else { throw XT5RawBaselineIssue.unsupportedContext }
@@ -647,12 +658,28 @@ actor XT5RawBaselineProbe {
             try privateWrite(baseline, to: directory.appendingPathComponent("baseline.bin"))
             evidence.baselineBytes = baseline.count
             await onUpdate(evidence)
+            if let filmReference {
+                let beforeFilm = evidence
+                let profile = XT5FilmWorkingProfileProbe(send: { opcode, parameters, data in
+                    guard parameters == [0xD185],
+                          (opcode == 0x1015 && data == nil) || (opcode == 0x1016 && data?.count == 625) else { throw PTPError.invalidParameters }
+                    return try await self.send(opcode, parameters: parameters, data: data)
+                })
+                let result = await profile.run(baseline: baseline, reference: filmReference, directory: directory) { partial in
+                    var report = beforeFilm; report.filmProbe = partial; await onUpdate(report)
+                }
+                evidence.filmProbe = result
+                guard result.patchReadbackMatches && result.failure == nil else {
+                    evidence.failure = result.failure
+                    throw XT5FilmProbeIssue.patchMismatch
+                }
+            }
             if conversionTrigger != nil {
                 let conversion = XT5UnchangedConversionProbe(send: { opcode, parameters, data in
                     try await self.send(opcode, parameters: parameters, data: data)
                 }, pollWait: pollWait)
                 let beforeConversion = evidence
-                let result = await conversion.run(raw: raw, directory: directory, canReadStorage: info.operations.contains(0x1005), quarantine: quarantineOutput, triggerValue: conversionTrigger ?? 0) { partial in
+                let result = await conversion.run(raw: raw, directory: directory, canReadStorage: info.operations.contains(0x1005), quarantine: quarantineOutput, triggerValue: conversionTrigger ?? 0, diagnosticLabel: filmReference == nil ? nil : "experimental film-only working profile; no imported bank applied") { partial in
                     var report = beforeConversion; report.unchangedConversion = partial
                     await onUpdate(report)
                 }
@@ -670,7 +697,7 @@ actor XT5RawBaselineProbe {
                 guard let expectedOutputHandle, after == [expectedOutputHandle] else { throw XT5ConversionProbeIssue.ambiguousOutput }
             }
             try await observeObjects(after, phase: "after", allowed: canReadObjectInfo, directory: directory, manifest: &manifest, evidence: &evidence)
-        } catch { evidence.failure = Self.safeFailure(error) }
+        } catch { evidence.failure = evidence.failure ?? Self.safeFailure(error) }
 
         if uploadAttempted && !afterObserved {
             // Read-only observation after a complete camera rejection; never retry upload or guess
@@ -733,6 +760,7 @@ actor XT5RawBaselineProbe {
         catch { throw XT5RawBaselineIssue.artifactWriteFailed }
     }
     static func safeFailure(_ error: any Error) -> String {
+        if let error = error as? XT5FilmProbeIssue { return String(describing: error) }
         if let error = error as? XT5ExactCleanupIssue { return String(describing: error) }
         if let error = error as? XT5UnchangedConversionFailure { return error.observation.failure ?? "unchanged conversion incomplete" }
         if let error = error as? XT5ConversionProbeIssue { return String(describing: error) }
@@ -794,7 +822,7 @@ private actor XT5UnchangedConversionProbe {
         var outputSHA256: String?
     }
     init(send: @escaping Send, pollWait: @escaping @Sendable () async throws -> Void) { self.send = send; self.pollWait = pollWait }
-    func run(raw: PreparedRAW, directory: URL, canReadStorage: Bool, recovery: Bool = false, quarantine: Bool = false, triggerValue: UInt16 = 0,
+    func run(raw: PreparedRAW, directory: URL, canReadStorage: Bool, recovery: Bool = false, quarantine: Bool = false, triggerValue: UInt16 = 0, diagnosticLabel: String? = nil,
              onUpdate: @escaping @Sendable (XT5UnchangedConversionObservation) async -> Void) async -> XT5UnchangedConversionObservation {
         self.onUpdate = onUpdate
         observation.triggerValue = Int(triggerValue)
@@ -806,6 +834,7 @@ private actor XT5UnchangedConversionProbe {
             observation.quarantineRequested = true
             observation.label = recovery ? "unvalidated private quarantine; interrupted-operation provenance unconfirmed" : "unchanged camera baseline trigger 1; unvalidated private diagnostic"
         }
+        if let diagnosticLabel { observation.label = diagnosticLabel }
         do {
             try await withThrowingTaskGroup(of: Void.self) { group in
                 group.addTask { try await self.capture(raw: raw, directory: directory, canReadStorage: canReadStorage, recovery: recovery, quarantine: quarantine, triggerValue: triggerValue) }
