@@ -4,8 +4,181 @@ import Testing
 @testable import FujiStudio
 
 @MainActor struct ImageCaptureSessionDriverTests {
+    @Test func removalBeforeBrowserCacheUpdateCannotReopenDetachedCamera() throws {
+        let browser = SessionTestBrowser(); let callbacks = DriverCallbackQueue(); let camera = SessionTestCamera()
+        browser.cachedDevices = [camera]
+        let driver = ImageCaptureSessionDriver(makeBrowser: { browser }, deliverCompletion: { callbacks.enqueue($0) })
+        var opened = 0
+        driver.start { event in
+            if case .removed = event { driver.close { driver.start { if case .opened = $0 { opened += 1 } } } }
+        }
+        camera.completeOpen(error: nil); callbacks.drain()
+        let delegate = try #require(camera.delegate)
+        delegate.didRemove(camera) // Device callback can precede the browser updating its cache.
+        #expect(camera.pendingOpenCount == 1)
+        browser.cachedDevices = []
+        driver.deviceBrowser(browser, didRemove: camera, moreGoing: false)
+        browser.cachedDevices = [camera]
+        driver.deviceBrowser(browser, didAdd: camera, moreComing: false)
+        camera.completeOpen(error: nil); callbacks.drain()
+        #expect(opened == 1)
+        #expect(camera.pendingOpenCount == 2)
+        driver.close {}; callbacks.drain()
+    }
+
+    @Test func retainedBrowserCannotOpenWhileNewAuthorizationIsPending() {
+        let browser = SessionTestBrowser(automaticallyAuthorize: false); let callbacks = DriverCallbackQueue()
+        let driver = ImageCaptureSessionDriver(makeBrowser: { browser }, deliverCompletion: { callbacks.enqueue($0) })
+        driver.start { _ in }; driver.close {}
+        browser.completeContents(.notDetermined)
+        driver.start { _ in }
+        let camera = SessionTestCamera(); browser.cachedDevices = [camera]
+        driver.deviceBrowser(browser, didAdd: camera, moreComing: false)
+        #expect(camera.pendingOpenCount == 0)
+        browser.completeContents(.authorized); callbacks.drain()
+        #expect(camera.pendingOpenCount == 1)
+        camera.completeOpen(error: nil); callbacks.drain()
+        driver.close {}; callbacks.drain()
+    }
+
+    @Test func reconnectLaunchWaitsForNativeCloseThenReadsSameCachedCamera() async throws {
+        let browser = SessionTestBrowser(); let callbacks = DriverCallbackQueue(); let camera = SessionTestCamera()
+        browser.cachedDevices = [camera]; camera.automaticallyClose = false
+        let driver = ImageCaptureSessionDriver(makeBrowser: { browser }, deliverCompletion: { callbacks.enqueue($0) })
+        let transport = ImageCaptureTransport(driver: driver, timeouts: ControlledCameraTimeouts())
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let runner = CameraReconnectLaunchRunner(transport: transport, directory: directory)
+        let task = Task { await runner.runIfRequested(arguments: ["--camera-reconnect-probe"]) }
+        await camera.waitForOpenCount(1)
+        camera.completeOpen(error: nil); callbacks.drain()
+        await camera.waitForPTPCount(1)
+        camera.completePTP(command: nativeCommand(1), response: nativeResponse(9), data: Data("PRIVATE_PAYLOAD".utf8)); callbacks.drain()
+        await camera.waitForCloseCount(1)
+        #expect(camera.pendingOpenCount == 1)
+        camera.delegate?.device(camera, didCloseSessionWithError: nil)
+        #expect(camera.pendingOpenCount == 1)
+        camera.completeClose(error: nil); callbacks.drain()
+        await camera.waitForOpenCount(2)
+        camera.completeOpen(error: nil); callbacks.drain()
+        await camera.waitForPTPCount(2)
+        camera.completePTP(command: nativeCommand(2), response: nativeResponse(12)); callbacks.drain()
+        await camera.waitForCloseCount(2)
+        camera.completeClose(error: nil); callbacks.drain()
+        await task.value
+        let text = try String(contentsOf: directory.appendingPathComponent("camera-reconnect-status.txt"), encoding: .utf8)
+        #expect(text.contains("Reconnect probe complete; both session closures confirmed"))
+        #expect(text.contains("logical=1 wire=9"))
+        #expect(text.contains("logical=2 wire=12"))
+        #expect(!text.contains("PRIVATE_PAYLOAD"))
+        #expect(browser.stopCount == 0)
+        await runner.runIfRequested(arguments: ["--camera-reconnect-probe"])
+        #expect(camera.pendingOpenCount == 2)
+    }
+
+    @Test func closeConfirmationDeadlineDoesNotReleaseQuarantine() async throws {
+        let browser = SessionTestBrowser(); let callbacks = DriverCallbackQueue(); let camera = SessionTestCamera()
+        browser.cachedDevices = [camera]; camera.automaticallyClose = false
+        let clock = ControlledCameraTimeouts()
+        let driver = ImageCaptureSessionDriver(makeBrowser: { browser }, deliverCompletion: { callbacks.enqueue($0) })
+        let transport = ImageCaptureTransport(driver: driver, timeouts: clock)
+        let opening = Task { try await transport.connect() }
+        await camera.waitForOpenCount(1)
+        camera.completeOpen(error: nil); callbacks.drain(); try await opening.value
+        let closing = Task { try await transport.disconnectAndWaitForConfirmation() }
+        await camera.waitForCloseCount(1)
+        clock.fireAll()
+        await #expect(throws: PTPError.timeout) { try await closing.value }
+        await #expect(throws: PTPError.sessionClosing) { try await transport.connect() }
+        camera.completeClose(error: nil); callbacks.drain()
+        #expect(clock.pendingCount == 0)
+    }
+
+    @Test func engineeringLaunchFlagsAreMutuallyExclusiveAndOrdinaryLaunchIsInert() async {
+        for arguments in [["FujiStudio"], ["--camera-reconnect-probe", "--xt5-read-only-probe"]] {
+            let browser = SessionTestBrowser(); let callbacks = DriverCallbackQueue()
+            let driver = ImageCaptureSessionDriver(makeBrowser: { browser }, deliverCompletion: { callbacks.enqueue($0) })
+            let transport = ImageCaptureTransport(driver: driver)
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            let reconnect = CameraReconnectLaunchRunner(transport: transport, directory: directory)
+            let protocolProbe = XT5ProbeLaunchRunner(transport: transport, directory: directory)
+            await reconnect.runIfRequested(arguments: arguments)
+            await protocolProbe.runIfRequested(arguments: arguments)
+            #expect(!browser.didStart)
+            #expect(!FileManager.default.fileExists(atPath: directory.path))
+        }
+    }
+
+    @Test func cachedSameCameraReconnectsWithoutAnotherDidAddAndOldCallbacksCannotCloseIt() throws {
+        let browser = SessionTestBrowser(); let callbacks = DriverCallbackQueue(); let camera = SessionTestCamera()
+        var browserCreations = 0
+        let driver = ImageCaptureSessionDriver(makeBrowser: { browserCreations += 1; return browser }, deliverCompletion: { callbacks.enqueue($0) })
+        driver.start { _ in }
+        browser.cachedDevices = [camera]
+        driver.deviceBrowser(browser, didAdd: camera, moreComing: false)
+        camera.completeOpen(error: nil); callbacks.drain()
+        let oldDelegate = try #require(camera.delegate)
+        let oldOpen = try #require(camera.openCompletion)
+        camera.automaticallyClose = false
+        var firstClosed = 0; var newEvents: [CameraDriverEvent] = []
+        driver.close {
+            firstClosed += 1
+            driver.start { newEvents.append($0) } // Reentrant consumer, identical framework object.
+        }
+        let oldClose = try #require(camera.closeCompletion)
+        camera.completeClose(error: nil); callbacks.drain()
+        #expect(browserCreations == 1)
+        #expect(browser.stopCount == 0)
+        #expect(camera.pendingOpenCount == 2) // No second didAdd was manufactured.
+        #expect(firstClosed == 1)
+        camera.completeOpen(error: nil); callbacks.drain()
+        #expect(openedCount(newEvents) == 1)
+        oldOpen(nil); oldClose(nil)
+        oldDelegate.device(camera, didOpenSessionWithError: nil)
+        oldDelegate.device(camera, didCloseSessionWithError: nil)
+        oldDelegate.didRemove(camera)
+        driver.deviceBrowser(browser, didRemove: camera, moreGoing: false) // Late notice, still in live cache.
+        callbacks.drain()
+        #expect(openedCount(newEvents) == 1)
+        #expect(failedCount(newEvents) == 0)
+        #expect(!newEvents.contains { if case .removed = $0 { true } else { false } })
+        var secondClosed = 0
+        driver.close { secondClosed += 1 }
+        #expect(camera.closeRequestCount == 2)
+        oldClose(nil); oldDelegate.device(camera, didCloseSessionWithError: nil)
+        camera.delegate?.device(camera, didCloseSessionWithError: nil) // Unscoped delegate is never close acknowledgement.
+        callbacks.drain()
+        #expect(secondClosed == 0)
+        camera.completeClose(error: nil); callbacks.drain()
+        #expect(secondClosed == 1)
+    }
+
+    @Test func idleDiscoveryNeverOpensAndPhysicalRemovalAllowsSameObjectToReturn() throws {
+        let browser = SessionTestBrowser(); let callbacks = DriverCallbackQueue(); let camera = SessionTestCamera()
+        let driver = ImageCaptureSessionDriver(makeBrowser: { browser }, deliverCompletion: { callbacks.enqueue($0) })
+        driver.start { _ in }; driver.close {}
+        browser.cachedDevices = [camera]
+        driver.deviceBrowser(browser, didAdd: camera, moreComing: false)
+        #expect(camera.pendingOpenCount == 0)
+        var removed = 0
+        driver.start { if case .removed = $0 { removed += 1; driver.close {} } }
+        camera.completeOpen(error: nil); callbacks.drain()
+        let oldDelegate = try #require(camera.delegate)
+        browser.cachedDevices = []
+        driver.deviceBrowser(browser, didRemove: camera, moreGoing: false)
+        #expect(removed == 1)
+        browser.cachedDevices = [camera]
+        driver.deviceBrowser(browser, didAdd: camera, moreComing: false)
+        var opened = 0
+        driver.start { if case .opened = $0 { opened += 1 } }
+        oldDelegate.didRemove(camera)
+        camera.completeOpen(error: nil); callbacks.drain()
+        #expect(opened == 1)
+        driver.close {}; callbacks.drain()
+    }
+
     @Test func stopGeneratedRemovalCannotSkipCloseOrRetireReentrantReplacement() {
-        let first = SessionTestBrowser(); let second = SessionTestBrowser(); var browsers = [first, second]
+        let first = SessionTestBrowser(); let second = first; var browsers = [first]
         let callbacks = DriverCallbackQueue()
         let driver = ImageCaptureSessionDriver(makeBrowser: { browsers.removeFirst() }, deliverCompletion: { callbacks.enqueue($0) })
         let oldCamera = SessionTestCamera(); let freshCamera = SessionTestCamera()
@@ -27,7 +200,7 @@ import Testing
         #expect(first.stopCount == 0)
         #expect(closeCompletions == 0)
         oldCamera.completeClose(error: nil); callbacks.drain()
-        #expect(first.stopCount == 1)
+        #expect(first.stopCount == 0)
         #expect(!oldCamera.hasOpenSession)
         #expect(closeCompletions == 1)
         #expect(freshOpened == 1)
@@ -44,7 +217,7 @@ import Testing
         driver.close {}; callbacks.drain()
     }
 
-    @Test func closeWhileOpeningWaitsForNativeCloseBeforeStoppingBrowser() {
+    @Test func closeWhileOpeningWaitsForNativeCloseAndPreservesDiscovery() {
         let browser = SessionTestBrowser(); let callbacks = DriverCallbackQueue(); let camera = SessionTestCamera()
         let driver = ImageCaptureSessionDriver(makeBrowser: { browser }, deliverCompletion: { callbacks.enqueue($0) })
         camera.automaticallyClose = false
@@ -61,7 +234,7 @@ import Testing
         #expect(browser.stopCount == 0)
         #expect(closed == 0)
         camera.completeClose(error: nil); callbacks.drain()
-        #expect(browser.stopCount == 1)
+        #expect(browser.stopCount == 0)
         #expect(closed == 1)
         #expect(!camera.hasOpenSession)
     }
@@ -86,7 +259,7 @@ import Testing
         #expect(sendFailure == .notConnected)
         // Discovery was never stopped; this is a separately delivered physical-removal event.
         driver.didRemove(camera)
-        #expect(browser.stopCount == 1)
+        #expect(browser.stopCount == 0)
         #expect(closed == 1)
         camera.completeClose(error: nil); callbacks.drain()
         #expect(closed == 1)
@@ -111,14 +284,14 @@ import Testing
         callbacks.drain()
         let completed = driver.lifecycleDiagnosticMessages().joined(separator: "\n")
         #expect(completed.contains("close.completion current=true errorCode=none"))
-        #expect(completed.contains("browser.stop.after"))
+        #expect(!completed.contains("browser.stop.after"))
         #expect(completed.contains("close.finished"))
-        #expect(completed.contains("browser=none"))
+        #expect(completed.contains("browser=1 browsing=true"))
         #expect(!completed.contains("PRIVATE_DEVICE_NAME"))
     }
 
-    @Test func lifecycleSnapshotShowsReplacementBrowserCacheEvenWithoutAddedCallback() {
-        let first = SessionTestBrowser(); let second = SessionTestBrowser(); var browsers = [first, second]
+    @Test func lifecycleSnapshotShowsRetainedBrowserCacheEvenWithoutAddedCallback() {
+        let first = SessionTestBrowser(); let second = first; var browsers = [first]
         let callbacks = DriverCallbackQueue()
         let driver = ImageCaptureSessionDriver(makeBrowser: { browsers.removeFirst() }, deliverCompletion: { callbacks.enqueue($0) })
         driver.start { _ in }; callbacks.drain()
@@ -129,7 +302,7 @@ import Testing
         second.cachedDevices = [SessionTestCamera()]
         second.suspensionFlag = true
         let snapshot = driver.lifecycleDiagnosticMessages().last ?? ""
-        #expect(snapshot.contains("browser=2"))
+        #expect(snapshot.contains("browser=1"))
         #expect(snapshot.contains("cached=1"))
         #expect(snapshot.contains("usbPTP=1"))
         #expect(snapshot.contains("suspended=true"))
@@ -160,8 +333,8 @@ import Testing
     }
 
     @Test func removalBeforeOpenCompletionClosesAndReconnectsWithoutThatCompletion() {
-        let firstBrowser = SessionTestBrowser(); let secondBrowser = SessionTestBrowser()
-        var browsers = [firstBrowser, secondBrowser]
+        let firstBrowser = SessionTestBrowser(); let secondBrowser = firstBrowser
+        var browsers = [firstBrowser]
         let callbacks = DriverCallbackQueue()
         let driver = ImageCaptureSessionDriver(makeBrowser: { browsers.removeFirst() }, deliverCompletion: { callbacks.enqueue($0) })
         let firstCamera = SessionTestCamera()
@@ -343,52 +516,49 @@ import Testing
     }
 
     @Test func cancelledPermissionWaitRejectsOldAuthorizationAndAllowsFreshConnect() async throws {
-        let old = SessionTestBrowser(control: .notDetermined, automaticallyAuthorize: false)
-        let fresh = SessionTestBrowser(); var browsers = [old, fresh]
+        let browser = SessionTestBrowser(control: .notDetermined, automaticallyAuthorize: false)
         let callbacks = DriverCallbackQueue(); let clock = ControlledCameraTimeouts()
-        let driver = ImageCaptureSessionDriver(makeBrowser: { browsers.removeFirst() }, deliverCompletion: { callbacks.enqueue($0) })
+        let driver = ImageCaptureSessionDriver(makeBrowser: { browser }, deliverCompletion: { callbacks.enqueue($0) })
         let transport = ImageCaptureTransport(driver: driver, timeouts: clock)
         let cancelled = Task { try await transport.connect() }
-        await old.waitForControlRequest()
+        await browser.waitForControlRequest()
         #expect(clock.scheduledCount == 0)
         cancelled.cancel()
         await #expect(throws: CancellationError.self) { try await cancelled.value }
+        browser.completeControl(.authorized) // The grant persists; its old completion stays queued.
         let replacement = Task { try await transport.connect() }
-        await fresh.waitUntilBrowsing()
-        old.completeControl(.authorized); callbacks.drain()
-        #expect(!old.didStart)
-        #expect(old.contentsRequestCount == 0)
-        #expect(fresh.controlRequestCount == 0)
-        #expect(fresh.contentsRequestCount == 0)
+        await browser.waitUntilBrowsing()
+        callbacks.drain()
+        #expect(browser.controlRequestCount == 1)
+        #expect(browser.contentsRequestCount == 0)
+        #expect(clock.scheduledCount == 1)
         let camera = SessionTestCamera()
-        driver.deviceBrowser(fresh, didAdd: camera, moreComing: false)
+        driver.deviceBrowser(browser, didAdd: camera, moreComing: false)
         camera.completeOpen(error: nil); callbacks.drain()
         try await replacement.value
         #expect(clock.pendingCount == 0)
         await transport.disconnect(); callbacks.drain()
     }
 
-    @Test func discoveryTimeoutBeginsAfterGrantsAndStaleTimerCannotPoisonFreshSession() async throws {
-        let old = SessionTestBrowser(control: .notDetermined, automaticallyAuthorize: false)
-        let fresh = SessionTestBrowser(); var browsers = [old, fresh]
+    @Test func discoveryDeadlineStartsAfterAuthorizationAndLateGrantCannotReopenExpiredRun() async throws {
+        let browser = SessionTestBrowser(control: .notDetermined, automaticallyAuthorize: false)
         let callbacks = DriverCallbackQueue(); let clock = ControlledCameraTimeouts()
-        let driver = ImageCaptureSessionDriver(makeBrowser: { browsers.removeFirst() }, deliverCompletion: { callbacks.enqueue($0) })
+        let driver = ImageCaptureSessionDriver(makeBrowser: { browser }, deliverCompletion: { callbacks.enqueue($0) })
         let transport = ImageCaptureTransport(driver: driver, timeouts: clock)
         let expired = Task { try await transport.connect() }
-        await old.waitForControlRequest()
+        await browser.waitForControlRequest()
         #expect(clock.scheduledCount == 0)
-        old.completeControl(.authorized); callbacks.drain()
-        #expect(old.didStart)
+        browser.completeControl(.authorized); callbacks.drain()
+        #expect(browser.didStart)
         #expect(clock.pendingCount == 1)
         clock.fireAll()
         await #expect(throws: PTPError.timeout) { try await expired.value }
+        let camera = SessionTestCamera(); browser.cachedDevices = [camera]
         let replacement = Task { try await transport.connect() }
-        await fresh.waitUntilBrowsing()
+        await camera.waitForOpenCount(1)
         #expect(clock.pendingCount == 1)
-        old.completeControl(.authorized); callbacks.drain()
-        clock.replayScheduled(at: 0) // Even a cancelled/late scheduler callback carries the old attempt ID.
-        let camera = SessionTestCamera()
-        driver.deviceBrowser(fresh, didAdd: camera, moreComing: false)
+        browser.completeControl(.authorized); callbacks.drain()
+        clock.replayScheduled(at: 0)
         camera.completeOpen(error: nil); callbacks.drain()
         try await replacement.value
         #expect(clock.pendingCount == 0)
@@ -532,7 +702,7 @@ import Testing
     }
 
     @Test func staleNativeContextCannotCompleteReplacementRequest() throws {
-        let first = SessionTestBrowser(); let second = SessionTestBrowser(); var browsers = [first, second]
+        let first = SessionTestBrowser(); let second = first; var browsers = [first]
         let callbacks = DriverCallbackQueue()
         let driver = ImageCaptureSessionDriver(makeBrowser: { browsers.removeFirst() }, deliverCompletion: { callbacks.enqueue($0) })
         let oldCamera = SessionTestCamera()
@@ -687,6 +857,10 @@ private final class SessionTestCamera: ICCameraDevice {
         if ptpRequestCount > 0 { return }
         for await _ in ptpReceived.stream { return }
     }
+    @MainActor func waitForPTPCount(_ count: Int) async {
+        if ptpRequestCount >= count { return }
+        for await _ in ptpReceived.stream { if ptpRequestCount >= count { return } }
+    }
     private(set) var lastPTPUsedSelector = false
     override func requestSendPTPCommand(_ command: Data, outData: Data?, completion: @escaping @Sendable (Data, Data, (any Error)?) -> Void) {
         ptpRequestCount += 1; ptpReceived.continuation.yield(())
@@ -710,12 +884,22 @@ private final class SessionTestCamera: ICCameraDevice {
 
         } else { ptpBlock?(data, response, nil) }
     }
-    private var openCompletion: (@Sendable ((any Error)?) -> Void)?
-    private var closeCompletion: (@Sendable ((any Error)?) -> Void)?
+    var openCompletion: (@Sendable ((any Error)?) -> Void)?
+    var closeCompletion: (@Sendable ((any Error)?) -> Void)?
     var automaticallyClose = true
     private var sessionIsOpen = false
     private(set) var pendingOpenCount = 0
+    private let openReceived = AsyncStream<Void>.makeStream()
+    @MainActor func waitForOpenCount(_ count: Int) async {
+        if pendingOpenCount >= count { return }
+        for await _ in openReceived.stream { if pendingOpenCount >= count { return } }
+    }
     private(set) var closeRequestCount = 0
+    private let closeReceived = AsyncStream<Void>.makeStream()
+    @MainActor func waitForCloseCount(_ count: Int) async {
+        if closeRequestCount >= count { return }
+        for await _ in closeReceived.stream { if closeRequestCount >= count { return } }
+    }
     override var usbVendorID: Int32 { 0x04cb }
     override var usbProductID: Int32 { 1 }
     override var transportType: String? { ICDeviceTransport.transportTypeUSB.rawValue }
@@ -723,10 +907,10 @@ private final class SessionTestCamera: ICCameraDevice {
     override var name: String? { "PRIVATE_DEVICE_NAME" }
     override var hasOpenSession: Bool { sessionIsOpen }
     override func requestOpenSession(options: [ICSessionOptions: Any]?, completion: @escaping @Sendable ((any Error)?) -> Void) {
-        pendingOpenCount += 1; openCompletion = completion
+        pendingOpenCount += 1; openCompletion = completion; openReceived.continuation.yield(())
     }
     override func requestCloseSession(options: [ICSessionOptions: Any]?, completion: @escaping @Sendable ((any Error)?) -> Void) {
-        closeRequestCount += 1; closeCompletion = completion
+        closeRequestCount += 1; closeCompletion = completion; closeReceived.continuation.yield(())
         if automaticallyClose { completeClose(error: nil) }
     }
     func completeOpen(error: (any Error)?) { sessionIsOpen = error == nil; openCompletion?(error) }

@@ -297,7 +297,7 @@ final class XT5ProbeLaunchRunner {
         self.transport = transport; self.requestedDirectory = directory
     }
     func runIfRequested(arguments: [String]) async {
-        guard arguments.contains("--xt5-read-only-probe"), !didRun else { return }
+        guard arguments.contains("--xt5-read-only-probe"), !arguments.contains("--camera-reconnect-probe"), !didRun else { return }
         didRun = true
         do {
             let output = try requestedDirectory ?? FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
@@ -335,6 +335,65 @@ final class XT5ProbeLaunchRunner {
         guard let directory else { return }
         let text = "\(Date().formatted(.iso8601))\niOS \(UIDevice.current.systemVersion)\n\(message)\nNo conversion or seven-bank support claimed.\n"
         try text.write(to: directory.appendingPathComponent("xt5-protocol-status.txt"), atomically: true, encoding: .utf8)
+    }
+    private func saveLifecycle() {
+        guard let directory else { return }
+        let text = "Public lifecycle:\n" + transport.lifecycleDiagnosticMessages().joined(separator: "\n")
+            + "\nGetDeviceInfo headers (payload omitted):\n" + transport.ptpDiagnosticMessages().joined(separator: "\n")
+        try? text.write(to: directory.appendingPathComponent("camera-diagnostics.txt"), atomically: true, encoding: .utf8)
+    }
+}
+
+/// A separate explicit launch mode for same-process session recovery. No payload is exported.
+@MainActor @Observable
+final class CameraReconnectLaunchRunner {
+    var status = "Reconnect probe has not run"
+    private let transport: ImageCaptureTransport
+    private let requestedDirectory: URL?
+    private let gate = SerialCameraGate()
+    private var directory: URL?
+    private var didRun = false
+    private var steps: [String] = []
+
+    init(transport: ImageCaptureTransport = ImageCaptureTransport(), directory: URL? = nil) {
+        self.transport = transport; requestedDirectory = directory
+    }
+    func runIfRequested(arguments: [String]) async {
+        guard arguments.contains("--camera-reconnect-probe"), !arguments.contains("--xt5-read-only-probe"), !didRun else { return }
+        didRun = true
+        do {
+            let output = try requestedDirectory ?? FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+            try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+            directory = output
+            try record("Reconnect probe starting; iOS \(UIDevice.current.systemVersion)")
+            saveLifecycle() // Replace prior trace before any native request.
+            try await gate.withExclusiveAccess { try await self.runSequence() }
+        } catch {
+            try? record("Reconnect probe failed: \(XT5ProtocolProbe.safeError(error))")
+            await transport.disconnect()
+            saveLifecycle()
+        }
+    }
+    private func runSequence() async throws {
+        for transaction: UInt32 in [1, 2] {
+            try record("Session \(transaction): connecting")
+            try await transport.connect()
+            let reply = try await transport.execute(PTPCommand(opcode: 0x1001, parameters: [], transactionID: transaction), data: nil)
+            try record("Session \(transaction): GetDeviceInfo accepted logical=\(reply.logicalTransactionID) wire=\(reply.wireTransactionID) bytes=\(reply.data.count)")
+            saveLifecycle()
+            try record("Session \(transaction): awaiting native close confirmation")
+            try await transport.disconnectAndWaitForConfirmation()
+            try record("Session \(transaction): session closure confirmed")
+            saveLifecycle()
+        }
+        try record("Reconnect probe complete; both session closures confirmed")
+    }
+    private func record(_ message: String) throws {
+        status = message
+        steps.append("\(Date().formatted(.iso8601)) \(message)")
+        if steps.count > 16 { steps.removeFirst(steps.count - 16) }
+        guard let directory else { return }
+        try steps.joined(separator: "\n").write(to: directory.appendingPathComponent("camera-reconnect-status.txt"), atomically: true, encoding: .utf8)
     }
     private func saveLifecycle() {
         guard let directory else { return }

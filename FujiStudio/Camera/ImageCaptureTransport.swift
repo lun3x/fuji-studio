@@ -66,8 +66,43 @@ import ImageCaptureCore
     }
 
     #if DEBUG
+    private struct CloseWait {
+        let id: UUID
+        let deadline: UUID
+        let continuation: CheckedContinuation<Void, Error>
+    }
+    private var closeWait: CloseWait?
     func ptpDiagnosticMessages() -> [String] { (driver as? ImageCaptureSessionDriver)?.ptpDiagnostics ?? [] }
     func lifecycleDiagnosticMessages() -> [String] { (driver as? ImageCaptureSessionDriver)?.lifecycleDiagnosticMessages() ?? [] }
+
+    /// Engineering probes wait for the driver's authoritative acknowledgement. The bounded
+    /// wait can fail, but it never clears the transport's uncertain-close quarantine.
+    func disconnectAndWaitForConfirmation() async throws {
+        try Task.checkCancellation()
+        invalidate(PTPError.notConnected, state: .disconnected)
+        guard closing else { return }
+        guard closeWait == nil else { throw PTPError.busy }
+        let id = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                let deadline = timeouts.schedule(after: timeout) { [weak self] in
+                    guard let self, self.closeWait?.id == id else { return }
+                    self.finishCloseWait(.failure(PTPError.timeout))
+                }
+                closeWait = CloseWait(id: id, deadline: deadline, continuation: continuation)
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                guard let self, self.closeWait?.id == id else { return }
+                self.finishCloseWait(.failure(CancellationError()))
+            }
+        }
+    }
+    private func finishCloseWait(_ result: Result<Void, Error>) {
+        guard let pending = closeWait else { return }
+        closeWait = nil; timeouts.cancel(pending.deadline)
+        pending.continuation.resume(with: result)
+    }
     #endif
 
     func disconnect() async { invalidate(PTPError.notConnected, state: .disconnected) }
@@ -175,6 +210,9 @@ import ImageCaptureCore
             guard self.closeID == closeID else { return }
             self.closeID = nil
             self.closing = false
+            #if DEBUG
+            self.finishCloseWait(.success(()))
+            #endif
         }
     }
     private func publish(_ value: CameraState) {
@@ -184,7 +222,7 @@ import ImageCaptureCore
 }
 
 /// Framework objects stay on MainActor. Completion handlers explicitly hop back; headers permit arbitrary queues.
-@MainActor final class ImageCaptureSessionDriver: NSObject, CameraSessionDriver, @preconcurrency ICDeviceBrowserDelegate, @preconcurrency ICCameraDeviceDelegate {
+@MainActor final class ImageCaptureSessionDriver: NSObject, CameraSessionDriver, @preconcurrency ICDeviceBrowserDelegate {
     /// Framework completions may arrive on arbitrary queues. The default always hops to MainActor.
     typealias CompletionDelivery = @Sendable (@escaping @MainActor @Sendable () -> Void) -> Void
     private nonisolated let deliverCompletion: CompletionDelivery
@@ -210,10 +248,14 @@ import ImageCaptureCore
     #endif
     private var browser: ICDeviceBrowser?
     private var camera: ICCameraDevice?
+    private weak var detachedCamera: ICDevice?
+    private var cameraDelegate: SessionDelegate?
     private var events: (@MainActor @Sendable (CameraDriverEvent) -> Void)?
     private var run = UUID()
     private var opening = false
+    private var discovering = false
     private var closing = false
+    private var closeRequested = false
     private var closeCompletion: (@MainActor @Sendable () -> Void)?
 
     init(makeBrowser: @escaping @MainActor () -> ICDeviceBrowser = { ICDeviceBrowser() },
@@ -224,15 +266,22 @@ import ImageCaptureCore
     }
 
     func start(events: @escaping @MainActor @Sendable (CameraDriverEvent) -> Void) {
+        guard !closing else { events(.failed(.sessionClosing)); return }
+        guard self.events == nil else { events(.failed(.busy)); return }
         self.events = events; run = UUID(); let current = run
-        let browser = makeBrowser()
-        self.browser = browser
-        #if DEBUG
-        browserSequence += 1
-        #endif
-        browser.delegate = self
-        browser.browsedDeviceTypeMask = ICDeviceTypeMask(rawValue: ICDeviceTypeMask.camera.rawValue | ICDeviceLocationTypeMask.local.rawValue)!
-        recordLifecycle("browser.created")
+        // Discovery outlives sessions. Closing a session does not detach the camera, and a
+        // browser replacement is not guaranteed to receive didAdd for an already found device.
+        if browser == nil {
+            let browser = makeBrowser()
+            self.browser = browser
+            #if DEBUG
+            browserSequence += 1
+            #endif
+            browser.delegate = self
+            browser.browsedDeviceTypeMask = ICDeviceTypeMask(rawValue: ICDeviceTypeMask.camera.rawValue | ICDeviceLocationTypeMask.local.rawValue)!
+            recordLifecycle("browser.created")
+        }
+        guard let browser else { return }
         let statuses = [browser.controlAuthorizationStatus, browser.contentsAuthorizationStatus]
         guard statuses.allSatisfy({ $0 == .authorized || $0 == .notDetermined }) else {
             events(.failed(.authorizationDenied))
@@ -277,13 +326,21 @@ import ImageCaptureCore
         events?(.discoveryStarted)
         // The event can synchronously invalidate this run; never start an already closed browser.
         guard run == current, !closing, self.browser === browser else { return }
-        recordLifecycle("browser.start.before")
-        browser.start()
-        recordLifecycle("browser.start.after")
+        discovering = true
+        if !browser.isBrowsing {
+            recordLifecycle("browser.start.before")
+            browser.start()
+            recordLifecycle("browser.start.after")
+        }
+        recordLifecycle("browser.reconcile")
+        for device in browser.devices ?? [] {
+            guard run == current, !closing, events != nil else { return }
+            selectCamera(device)
+        }
     }
     func close(completion: @escaping @MainActor @Sendable () -> Void) {
         nativeRequest = nil
-        closing = true; closeCompletion = completion; events = nil
+        closing = true; discovering = false; closeCompletion = completion; events = nil
         // stop() can synchronously emit didRemove for a still-open camera. Keep discovery
         // alive until native close is confirmed, or independently observed removal retires it.
         // Opening has no public cancellation API. Wait for its terminal callback, then close it.
@@ -292,6 +349,8 @@ import ImageCaptureCore
     }
     private func closeCamera() {
         guard let camera else { finishClose(); return }
+        guard !closeRequested else { return }
+        closeRequested = true
         let current = run
         let deliver = deliverCompletion
         recordLifecycle("close.request")
@@ -308,17 +367,13 @@ import ImageCaptureCore
     private func finishClose() {
         guard closing else { return }
         recordLifecycle("close.retiring")
-        camera?.delegate = nil; camera = nil
+        camera?.delegate = nil; cameraDelegate = nil; camera = nil
         nativeRequest = nil
         opening = false; run = UUID()
         let completion = closeCompletion; closeCompletion = nil
-        // Retire identity/delegates before stop's reentrant callbacks; publish completion only
-        // after stop returns so a synchronously opened replacement cannot be cleared here.
-        browser?.delegate = nil
-        recordLifecycle("browser.stop.before")
-        browser?.stop()
-        recordLifecycle("browser.stop.after")
-        browser = nil; closing = false
+        // Keep the browser and its live devices. Retire all session state before allowing
+        // a completion consumer to synchronously reconnect using the very same device.
+        closeRequested = false; closing = false
         recordLifecycle("close.finished")
         completion?()
     }
@@ -414,16 +469,23 @@ import ImageCaptureCore
     }
     func deviceBrowser(_ browser: ICDeviceBrowser, didAdd device: ICDevice, moreComing: Bool) {
         recordLifecycle("browser.didAdd current=\(browser === self.browser) more=\(moreComing)")
-        guard browser === self.browser, !closing, camera == nil,
+        guard browser === self.browser else { return }
+        if detachedCamera === device { detachedCamera = nil }
+        selectCamera(device)
+    }
+    private func selectCamera(_ device: ICDevice) {
+        guard discovering, events != nil, !closing, camera == nil, device !== detachedCamera,
               let camera = device as? ICCameraDevice, camera.usbVendorID == 0x04cb else { return }
         guard camera.transportType == ICDeviceTransport.transportTypeUSB.rawValue,
               camera.capabilities.contains(ICDeviceCapability.cameraDeviceCanAcceptPTPCommands.rawValue) else {
             events?(.failed(.wrongMode("Visible Fujifilm device lacks USB PTP control. Check USB RAW CONV./BACKUP RESTORE on the camera.")))
             return
         }
-        self.camera = camera; camera.delegate = self; opening = true
-        events?(.opening)
         let current = run
+        let delegate = SessionDelegate(owner: self, run: current)
+        self.camera = camera; cameraDelegate = delegate; camera.delegate = delegate; opening = true
+        events?(.opening)
+        guard run == current, self.camera === camera else { return }
         let deliver = deliverCompletion
         recordLifecycle("open.request")
         camera.requestOpenSession(options: nil) { [weak self] error in
@@ -432,7 +494,7 @@ import ImageCaptureCore
     }
     private func openFinished(_ error: (any Error)?, run current: UUID) {
         recordLifecycle("open.completion current=\(run == current) errorCode=\(error.map { String(($0 as NSError).code) } ?? "none")")
-        guard run == current else { return }
+        guard run == current, opening else { return }
         opening = false
         if closing { closeCamera(); return }
         if let error { events?(.failed(.sessionFailure("\((error as NSError).domain):\((error as NSError).code)"))); return }
@@ -441,30 +503,28 @@ import ImageCaptureCore
     }
     func deviceBrowser(_ browser: ICDeviceBrowser, didRemove device: ICDevice, moreGoing: Bool) {
         recordLifecycle("browser.didRemove current=\(browser === self.browser) selected=\(device === camera) more=\(moreGoing)")
+        // Browser callbacks have discovery lifetime, not session identity. A delayed removal
+        // for an object currently present in the live list cannot retire its newer session.
+        guard browser === self.browser, !(browser.devices ?? []).contains(where: { $0 === device }) else { return }
         didRemove(device)
     }
     func didRemove(_ device: ICDevice) {
         recordLifecycle("device.didRemove selected=\(device === camera)")
         guard device === camera else { return }
+        // Device removal can precede the browser cache update. Do not select this cached
+        // instance again until a fresh browser didAdd establishes its return.
+        detachedCamera = device
         nativeRequest = nil
         // Observed detachment is terminal even if requestOpenSession never completes. Retire
         // its identity and opening state BEFORE .removed synchronously asks us to close.
         camera?.delegate = nil
+        cameraDelegate = nil
         camera = nil
         opening = false
         run = UUID()
         if closing { finishClose() }
         else { events?(.removed) }
     }
-    // The camera delegate is required by the public API even though this transport does not consume its card catalog.
-    func cameraDevice(_ camera: ICCameraDevice, didAdd items: [ICCameraItem]) {}
-    func cameraDevice(_ camera: ICCameraDevice, didRemove items: [ICCameraItem]) {}
-    func cameraDevice(_ camera: ICCameraDevice, didRenameItems items: [ICCameraItem]) {}
-    func cameraDevice(_ camera: ICCameraDevice, didReceiveThumbnail thumbnail: CGImage?, for item: ICCameraItem, error: (any Error)?) {}
-    func cameraDevice(_ camera: ICCameraDevice, didReceiveMetadata metadata: [AnyHashable: Any]?, for item: ICCameraItem, error: (any Error)?) {}
-    func cameraDevice(_ camera: ICCameraDevice, didReceivePTPEvent eventData: Data) {}
-    func deviceDidBecomeReady(withCompleteContentCatalog device: ICCameraDevice) {}
-    func cameraDeviceDidRemoveAccessRestriction(_ device: ICDevice) {}
     func cameraDeviceDidEnableAccessRestriction(_ device: ICDevice) {
         guard device === camera, !closing else { return }
         events?(.failed(.authorizationDenied))
@@ -475,17 +535,15 @@ import ImageCaptureCore
             events?(.failed(.wrongMode("USB PTP control capability changed. Check the camera USB mode.")))
         }
     }
-    func cameraDevice(_ camera: ICCameraDevice, shouldGetThumbnailOf item: ICCameraItem) -> Bool { false }
-    func cameraDevice(_ camera: ICCameraDevice, shouldGetMetadataOf item: ICCameraItem) -> Bool { false }
     func device(_ device: ICDevice, didOpenSessionWithError error: (any Error)?) {
         recordLifecycle("open.delegate selected=\(device === camera) errorCode=\(error.map { String(($0 as NSError).code) } ?? "none")")
     }
     func device(_ device: ICDevice, didCloseSessionWithError error: (any Error)?) {
         recordLifecycle("close.delegate selected=\(device === camera) errorCode=\(error.map { String(($0 as NSError).code) } ?? "none")")
-        guard device === camera else { return }
-        if closing {
-            if error == nil { finishClose() }
-        } else { events?(.failed(.notConnected)) }
+        // This notification has no request identity. Only the captured native block may
+        // acknowledge our close, even when the same device object is reused across runs.
+        guard device === camera, !closing, !opening, !device.hasOpenSession else { return }
+        events?(.failed(.notConnected))
     }
     func device(_ device: ICDevice, didEncounterError error: (any Error)?) {
         recordLifecycle("device.error selected=\(device === camera) errorCode=\(error.map { String(($0 as NSError).code) } ?? "none")")
@@ -503,5 +561,31 @@ import ImageCaptureCore
     }
     func deviceBrowserDidResumeOperations(_ browser: ICDeviceBrowser) {
         recordLifecycle("browser.didResume current=\(browser === self.browser)")
+    }
+
+    /// A new delegate per session prevents already queued device callbacks from crossing runs.
+    /// Native open/close blocks independently capture the same run; neither relies on object identity.
+    @MainActor private final class SessionDelegate: NSObject, @preconcurrency ICCameraDeviceDelegate {
+        weak var owner: ImageCaptureSessionDriver?
+        let run: UUID
+        init(owner: ImageCaptureSessionDriver, run: UUID) { self.owner = owner; self.run = run }
+        private var current: ImageCaptureSessionDriver? { owner?.run == run ? owner : nil }
+        func didRemove(_ device: ICDevice) { current?.didRemove(device) }
+        func device(_ device: ICDevice, didOpenSessionWithError error: (any Error)?) { current?.device(device, didOpenSessionWithError: error) }
+        func device(_ device: ICDevice, didCloseSessionWithError error: (any Error)?) { current?.device(device, didCloseSessionWithError: error) }
+        func device(_ device: ICDevice, didEncounterError error: (any Error)?) { current?.device(device, didEncounterError: error) }
+        func cameraDeviceDidEnableAccessRestriction(_ device: ICDevice) { current?.cameraDeviceDidEnableAccessRestriction(device) }
+        func cameraDeviceDidChangeCapability(_ camera: ICCameraDevice) { current?.cameraDeviceDidChangeCapability(camera) }
+        // Required public delegate methods; this transport does not consume the card catalog.
+        func cameraDevice(_ camera: ICCameraDevice, didAdd items: [ICCameraItem]) {}
+        func cameraDevice(_ camera: ICCameraDevice, didRemove items: [ICCameraItem]) {}
+        func cameraDevice(_ camera: ICCameraDevice, didRenameItems items: [ICCameraItem]) {}
+        func cameraDevice(_ camera: ICCameraDevice, didReceiveThumbnail thumbnail: CGImage?, for item: ICCameraItem, error: (any Error)?) {}
+        func cameraDevice(_ camera: ICCameraDevice, didReceiveMetadata metadata: [AnyHashable: Any]?, for item: ICCameraItem, error: (any Error)?) {}
+        func cameraDevice(_ camera: ICCameraDevice, didReceivePTPEvent eventData: Data) {}
+        func deviceDidBecomeReady(withCompleteContentCatalog device: ICCameraDevice) {}
+        func cameraDeviceDidRemoveAccessRestriction(_ device: ICDevice) {}
+        func cameraDevice(_ camera: ICCameraDevice, shouldGetThumbnailOf item: ICCameraItem) -> Bool { false }
+        func cameraDevice(_ camera: ICCameraDevice, shouldGetMetadataOf item: ICCameraItem) -> Bool { false }
     }
 }
