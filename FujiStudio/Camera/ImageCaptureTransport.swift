@@ -165,6 +165,11 @@ import ImageCaptureCore
 
 /// Framework objects stay on MainActor. Completion handlers explicitly hop back; headers permit arbitrary queues.
 @MainActor final class ImageCaptureSessionDriver: NSObject, CameraSessionDriver, @preconcurrency ICDeviceBrowserDelegate, @preconcurrency ICCameraDeviceDelegate {
+    /// Framework completions may arrive on arbitrary queues. The default always hops to MainActor.
+    typealias CompletionDelivery = @Sendable (@escaping @MainActor @Sendable () -> Void) -> Void
+    private let deliverCompletion: CompletionDelivery
+    private let makeBrowser: @MainActor () -> ICDeviceBrowser
+
     private var browser: ICDeviceBrowser?
     private var camera: ICCameraDevice?
     private var events: (@MainActor @Sendable (CameraDriverEvent) -> Void)?
@@ -173,17 +178,25 @@ import ImageCaptureCore
     private var closing = false
     private var closeCompletion: (@MainActor @Sendable () -> Void)?
 
+    init(makeBrowser: @escaping @MainActor () -> ICDeviceBrowser = { ICDeviceBrowser() },
+         deliverCompletion: @escaping CompletionDelivery = { action in Task { @MainActor in action() } }) {
+        self.deliverCompletion = deliverCompletion
+        self.makeBrowser = makeBrowser
+        super.init()
+    }
+
     func start(events: @escaping @MainActor @Sendable (CameraDriverEvent) -> Void) {
         self.events = events; run = UUID(); let current = run
-        let browser = ICDeviceBrowser()
+        let browser = makeBrowser()
         self.browser = browser
         browser.delegate = self
-        browser.browsedDeviceTypeMask = .camera
+        browser.browsedDeviceTypeMask = ICDeviceTypeMask(rawValue: ICDeviceTypeMask.camera.rawValue | ICDeviceLocationTypeMask.local.rawValue)!
         if browser.controlAuthorizationStatus != .authorized || browser.contentsAuthorizationStatus != .authorized {
             events(.authorizationRequired)
         }
+        let deliver = deliverCompletion
         browser.requestControlAuthorization { [weak self] status in
-            Task { @MainActor in
+            deliver {
                 guard let self, self.run == current, !self.closing else { return }
                 guard status == .authorized else { self.events?(.failed(.authorizationDenied)); return }
                 self.authorizeContents(current)
@@ -191,8 +204,9 @@ import ImageCaptureCore
         }
     }
     private func authorizeContents(_ current: UUID) {
+        let deliver = deliverCompletion
         browser?.requestContentsAuthorization { [weak self] status in
-            Task { @MainActor in
+            deliver {
                 guard let self, self.run == current, !self.closing else { return }
                 guard status == .authorized else { self.events?(.failed(.authorizationDenied)); return }
                 self.browser?.start()
@@ -209,8 +223,9 @@ import ImageCaptureCore
     private func closeCamera() {
         guard let camera else { finishClose(); return }
         let current = run
+        let deliver = deliverCompletion
         camera.requestCloseSession(options: nil) { [weak self] error in
-            Task { @MainActor in
+            deliver {
                 guard let self, self.run == current, self.closing else { return }
                 // A failed close is uncertain. Keep quarantined until didRemoveDevice observes detachment.
                 guard error == nil else { return }
@@ -226,13 +241,14 @@ import ImageCaptureCore
     }
     func send(command: Data, data: Data?, completion: @escaping @MainActor @Sendable (Result<PTPWireReply, PTPError>) -> Void) {
         guard let camera, !closing, camera.hasOpenSession else { completion(.failure(.notConnected)); return }
+        let deliver = deliverCompletion
         camera.requestSendPTPCommand(command, outData: data) { payload, response, error in
             // SDK argument names: responseData (data phase), ptpResponseData (PTP response container).
             // Strict decoding prevents an ambiguous/malformed callback from becoming image success.
             let result: Result<PTPWireReply, PTPError>
             if let error { result = .failure(.sessionFailure("\((error as NSError).domain):\((error as NSError).code)")) }
             else { result = .success(PTPWireReply(response: response, data: payload)) }
-            Task { @MainActor in completion(result) }
+            deliver { completion(result) }
         }
     }
     func deviceBrowser(_ browser: ICDeviceBrowser, didAdd device: ICDevice, moreComing: Bool) {
@@ -246,8 +262,9 @@ import ImageCaptureCore
         self.camera = camera; camera.delegate = self; opening = true
         events?(.opening)
         let current = run
+        let deliver = deliverCompletion
         camera.requestOpenSession(options: nil) { [weak self] error in
-            Task { @MainActor in self?.openFinished(error, run: current) }
+            deliver { self?.openFinished(error, run: current) }
         }
     }
     private func openFinished(_ error: (any Error)?, run current: UUID) {
@@ -261,8 +278,14 @@ import ImageCaptureCore
     func deviceBrowser(_ browser: ICDeviceBrowser, didRemove device: ICDevice, moreGoing: Bool) { didRemove(device) }
     func didRemove(_ device: ICDevice) {
         guard device === camera else { return }
+        // Observed detachment is terminal even if requestOpenSession never completes. Retire
+        // its identity and opening state BEFORE .removed synchronously asks us to close.
+        camera?.delegate = nil
+        camera = nil
+        opening = false
+        run = UUID()
         if closing { finishClose() }
-        else { camera = nil; events?(.removed) }
+        else { events?(.removed) }
     }
     // The camera delegate is required by the public API even though this transport does not consume its card catalog.
     func cameraDevice(_ camera: ICCameraDevice, didAdd items: [ICCameraItem]) {}

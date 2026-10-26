@@ -2,27 +2,27 @@
 
 ## Gate 1 — actual Photos originals: PENDING
 
-No actual iPhone RAF/JPEG resource retrieval has been observed by this implementation task. Simulator tests are software evidence only and do not pass this gate.
+The controller observed successful original-byte retrieval on the installed `4246325e66e8ec06e8d7d249e1583c280ec52bec` build under full Photos access, including an X-T5 pair and standalone RAF. Limited-access, iCloud and cancellation experiments remain pending, so the full gate is not passed. Simulator tests are software evidence only.
 
 - Intended phone: iPhone 15 Pro. Controller reports iOS 27.0.1 and Developer Mode enabled; pending on-device probe confirmation.
 - Camera: Fujifilm X-T5. Actual firmware: **not yet recorded**.
 - Build baseline: iOS 27.0, Swift 6, bundle ID `com.lun3x.FujiStudio`.
 - Available simulator evidence: Xcode 27.1 (27A9275), iPhone Duo iOS 27.1. Not a hardware substitute.
-- Signing: simulator builds unsigned. Controller reports the existing provisioning profile belongs to another app; a valid profile for this bundle ID is still required. No Apple developer account or provisioning changes were made.
+- Signing/install: controller installed build `4246325e` for these physical Photos observations. This implementation worker uses unsigned simulator builds and made no Apple developer-account, provisioning or device-install changes.
 
-Use the DEBUG **Hardware probe** from the app's initial screen. The probe lists public PhotoKit resource type discriminators, normalized original/adjusted roles, content types, filenames and available sizes without fetching bytes. Selecting **Retrieve and inspect selected originals** performs sequential original retrieval and reports actual byte sizes, SHA-256, X-T5 model verification, container/crop geometry, recorded aspect, crop origin and orientation. Successful probe files are removed; cancelled/failed downloads remove partial files. The original-resource controls never start a camera workflow.
+Use the DEBUG **Hardware probe** from the app's initial screen. The probe lists public PhotoKit resource type discriminators, normalized original/adjusted roles, content types, filenames and available sizes without fetching bytes. Selecting **Retrieve and inspect selected originals** performs sequential original retrieval and reports actual byte sizes, SHA-256, X-T5 model verification, container/crop geometry, recorded aspect, crop origin and orientation. The controller verified that toolbar Inspect and Results work on the physical phone. Successful probe files are removed; cancelled/failed downloads remove partial files. The original-resource controls never start a camera workflow.
 
 | Experiment | Access | Required observations | Outcome |
 | --- | --- | --- | --- |
-| SD-imported RAF+JPEG pair | Full | Both original resource roles/types/sizes, both byte retrievals, RAF identity/hash, X-T5 metadata; one source | Pending |
-| Standalone RAF | Full | No invented JPEG; RAF identity/hash and X-T5 metadata | Pending |
+| SD-imported RAF+JPEG pair | Full | Both original resource roles/types/sizes, both byte retrievals, RAF identity/hash, X-T5 metadata; one source | Controller observed an existing X-T5 pair: JPEG 26,250,674 bytes and RAF 41,113,648 bytes. Full-resource retrieval succeeded. Import provenance remains to be recorded. |
+| Standalone RAF | Full | No invented JPEG; RAF identity/hash and X-T5 metadata | Controller observed one RAF descriptor, no invented JPEG; X-T5 RAF 40,946,272 bytes retrieved and model verified. |
 | Same pair and standalone | Limited | Only allowed IDs discovered, both originals still retrievable; change allowed set and rediscover | Pending |
 | Cloud-evicted original | Full/limited | Descriptor retained before download, progress, original identity after download | Pending |
 | Cancel cloud download | Full/limited | Cancellation outcome and partial-file removal; subsequent retrieval succeeds | Pending |
-| Other Fujifilm model / renamed non-RAF | Either | Incompatible model or invalid-container error, no conversion eligibility | Pending |
-| Recorded geometry | Either | Reference 3:2 X-T5 output 7728 × 5152; compare other recorded aspects/orientations and used compression modes | Pending |
+| Other Fujifilm model / renamed non-RAF | Either | Incompatible model or invalid-container error, no conversion eligibility | Controller observed an older X-E3 pair: both resources retrieved, then correctly rejected as incompatible. Renamed non-RAF experiment pending. |
+| Recorded geometry | Either | Reference 3:2 X-T5 output 7728 × 5152; compare other recorded aspects/orientations and used compression modes | Both observed X-T5 sources: container 7872 × 5196, recorded 7728 × 5152, 3:2, crop top 21 / left 12, orientation 1. Other aspects/orientations/compression modes pending. |
 
-Record phone OS and actual camera firmware before these experiments. Preserve redacted role/type/size and outcome evidence here; keep personal filenames, local IDs and images out of version control. Failure changes the investigation; it does not authorize dropping paired assets, reimporting, or substituting phone processing.
+Controller supplied these aggregate observations from physical probe screenshots kept only in ignored local build artifacts; no personal filename, local identifier, image or hash is committed. Gate 2 remains unrun and no camera authorization outcome has been observed. Record phone OS and actual camera firmware before further hardware experiments. Preserve redacted role/type/size and outcome evidence here; keep personal filenames, local IDs and images out of version control. Failure changes the investigation; it does not authorize dropping paired assets, reimporting, or substituting phone processing.
 
 ## Gate 2 — public USB PTP session: PENDING
 
