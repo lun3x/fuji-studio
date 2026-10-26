@@ -15,7 +15,7 @@ import Foundation
         commands.append(completion); changed()
     }
     func emit(_ event: CameraDriverEvent) { events?(event) }
-    func reply(at index: Int, response: Data, data: Data) { commands[index](.success(PTPWireReply(response: response, data: data))) }
+    func reply(at index: Int, response: Data, data: Data) { commands[index](.success(PTPWireReply(correlation: .directWireTransaction, response: response, data: data))) }
     func finishClose(at index: Int? = nil) { closeCompletions[index ?? (closeCompletions.count - 1)]() }
     func waitForStartCount(_ count: Int) async { while startCount < count { await changedNext() } }
     func waitForCommandCount(_ count: Int) async { while commands.count < count { await changedNext() } }

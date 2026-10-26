@@ -134,7 +134,15 @@ import ImageCaptureCore
         guard current == generation, !closing, let pending = transaction, pending.id == id else { return }
         do {
             let wire = try result.get()
-            let reply = try PTPCodec.decode(response: wire.response, data: wire.data, for: pending.command, maximumDataBytes: maximumDataBytes)
+            let reply: PTPReply
+            switch wire.correlation {
+            case .directWireTransaction:
+                reply = try PTPCodec.decode(response: wire.response, data: wire.data, for: pending.command, maximumDataBytes: maximumDataBytes)
+            case .imageCaptureCoreCallback(let echoedCommand):
+                reply = try PTPCodec.decodeFrameworkManaged(response: wire.response, data: wire.data, for: pending.command,
+                                                          echoedCommand: echoedCommand, maximumDataBytes: maximumDataBytes)
+            }
+
             transaction = nil; timeouts.cancel(pending.timeout)
             if let session { publish(.sessionOpen(session)) }
             pending.continuation.resume(returning: reply)
@@ -333,8 +341,9 @@ import ImageCaptureCore
         }
         do {
             let callback = try PTPCodec.validateCallbackCommand(command, for: pending.submitted)
-            _ = try PTPCodec.decode(response: response, data: data, for: callback)
-            pending.completion(.success(PTPWireReply(response: response, data: data)))
+            _ = try PTPCodec.decodeFrameworkManaged(response: response, data: data, for: pending.submitted, echoedCommand: callback)
+            pending.completion(.success(PTPWireReply(correlation: .imageCaptureCoreCallback(echoedCommand: callback), response: response, data: data)))
+
         } catch let failure as PTPError {
             #if DEBUG
             if pending.submitted.opcode == 0x1001 { recordPTPDiagnostic("rejected request=\(pending.id): \(failure)") }

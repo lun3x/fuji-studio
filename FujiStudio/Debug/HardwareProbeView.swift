@@ -252,7 +252,7 @@ private final class CameraProbeModel {
 
             do {
                 let reply = try await transport.execute(PTPCommand(opcode: 0x1001, parameters: [], transactionID: transaction), data: nil)
-                trace += "GetDeviceInfo: response \(String(reply.responseCode, radix: 16)), transaction \(reply.transactionID), payload \(reply.data.count) bytes. Firmware/model parsing and RAW mode verification are Task 3 prerequisites.\n"
+                trace += "GetDeviceInfo: response \(String(reply.responseCode, radix: 16)), logical transaction \(reply.logicalTransactionID), observed wire transaction \(reply.wireTransactionID), correlation \(reply.correlation), payload \(reply.data.count) bytes. Firmware/model parsing and RAW mode verification are Task 3 prerequisites.\n"
             } catch { trace += "Read-only PTP outcome: \(error)\n" }
         }
     }

@@ -15,6 +15,7 @@ protocol PTPTransport: Sendable {
 }
 
 struct PTPWireReply: Sendable {
+    let correlation: PTPCorrelation
     let response: Data
     let data: Data
 }

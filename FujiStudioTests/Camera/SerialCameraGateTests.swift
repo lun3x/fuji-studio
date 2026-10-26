@@ -66,7 +66,7 @@ private let pausedCommand = PTPCommand(opcode: 0x1001, parameters: [], transacti
 private actor PausedCameraSteps: PTPTransport {
     func execute(_ command: PTPCommand, data: Data?) async throws -> PTPReply {
         await pause()
-        return PTPReply(opcode: command.opcode, parameters: [], transactionID: command.transactionID, responseCode: 0x2001, data: Data())
+        return PTPReply(opcode: command.opcode, parameters: [], logicalTransactionID: command.transactionID, wireTransactionID: command.transactionID, correlation: .directWireTransaction, responseCode: 0x2001, rawResponse: Data([12,0,0,0,3,0,1,32,1,0,0,0]), data: Data())
     }
 
     private(set) var steps: [String] = []

@@ -274,7 +274,7 @@ import Testing
         await transport.disconnect(); callbacks.drain()
     }
 
-    @Test func nativeSelectorPreservesStrictRejectionOfUnverifiedFrameworkTransaction() throws {
+    @Test func nativeChangedLogicalEchoIDIsRejectedEvenWhenResponseUsesSameID() throws {
         let fixture = openNativeDriver()
         var result: Result<PTPWireReply, PTPError>?
         fixture.driver.send(command: nativeCommand(1), data: nil) { result = $0 }
@@ -299,14 +299,93 @@ import Testing
         }
     }
 
-    @Test func nativeResponseIDMismatchRemainsTypedFailure() throws {
+    @Test func nativeCallbackRetainsFrameworkManagedResponseWithoutInventingExpectedWireID() throws {
         let fixture = openNativeDriver()
         var result: Result<PTPWireReply, PTPError>?
         fixture.driver.send(command: nativeCommand(1), data: nil) { result = $0 }
-        fixture.camera.completePTP(command: nativeCommand(1), response: nativeResponse(7))
+        fixture.camera.completePTP(command: nativeCommand(1), response: nativeResponse(9), data: Data([42]))
+        fixture.callbacks.drain()
+        let completed = try #require(result).get()
+        #expect(completed.response == nativeResponse(9))
+        #expect(completed.data == Data([42]))
+        fixture.driver.close {}; fixture.callbacks.drain()
+    }
+
+    @Test func actualNativeTransportAcceptsContextAssociatedLogical1Wire9() async throws {
+        let browser = SessionTestBrowser(); let callbacks = DriverCallbackQueue(); let camera = SessionTestCamera()
+        let driver = ImageCaptureSessionDriver(makeBrowser: { browser }, deliverCompletion: { callbacks.enqueue($0) })
+        let transport = ImageCaptureTransport(driver: driver, timeouts: ControlledCameraTimeouts())
+        let opening = Task { try await transport.connect() }
+        await browser.waitUntilBrowsing()
+        driver.deviceBrowser(browser, didAdd: camera, moreComing: false)
+        camera.completeOpen(error: nil); callbacks.drain()
+        try await opening.value
+        let pending = Task { try await transport.execute(PTPCommand(opcode: 0x1001, parameters: [], transactionID: 1), data: nil) }
+        await camera.waitForPTPRequest()
+        camera.completePTP(command: nativeCommand(1), response: nativeResponse(9), data: Data([42]))
+        callbacks.drain()
+        let reply = try await pending.value
+        #expect(reply.data == Data([42]))
+        #expect(reply.logicalTransactionID == 1)
+        #expect(reply.wireTransactionID == 9)
+        #expect(reply.rawResponse == nativeResponse(9))
+        #expect(reply.correlation == .imageCaptureCoreCallback(echoedCommand: PTPCommand(opcode: 0x1001, parameters: [], transactionID: 1)))
+        await transport.disconnect(); callbacks.drain()
+    }
+
+    @Test func nativeMalformedAndNonSuccessResponsesRemainTypedFailures() throws {
+        var length = nativeResponse(9); length[0] = 16
+        var kind = nativeResponse(9); kind[4] = 2
+        var failed = nativeResponse(9); failed[6] = 2
+        let cases: [(Data, PTPError)] = [
+            (Data(nativeResponse(9).prefix(11)), .truncatedContainer),
+            (Data(repeating: 0, count: 36), .oversizedContainer),
+            (length, .invalidContainerLength), (kind, .unexpectedContainerType(2)),
+            (failed, .responseCode(0x2002))
+        ]
+        for (response, expected) in cases {
+            let fixture = openNativeDriver(); var result: Result<PTPWireReply, PTPError>?
+            fixture.driver.send(command: nativeCommand(1), data: nil) { result = $0 }
+            fixture.camera.completePTP(command: nativeCommand(1), response: response)
+            fixture.callbacks.drain()
+            let completed = try #require(result)
+            #expect(throws: expected) { try completed.get() }
+            fixture.driver.close {}; fixture.callbacks.drain()
+        }
+    }
+
+    @Test func nativeChangedParametersRejectBeforeFrameworkCorrelation() throws {
+        let fixture = openNativeDriver(); var result: Result<PTPWireReply, PTPError>?
+        let submitted = Data([16,0,0,0,1,0,0x15,0x10,1,0,0,0,0x85,0xd1,0,0])
+        var changed = submitted; changed[12] = 0x86
+        fixture.driver.send(command: submitted, data: nil) { result = $0 }
+        fixture.camera.completePTP(command: changed, response: nativeResponse(9))
         fixture.callbacks.drain()
         let completed = try #require(result)
-        #expect(throws: PTPError.wrongTransaction(expected: 1, actual: 7)) { try completed.get() }
+        #expect(throws: PTPError.callbackCommandMismatch) { try completed.get() }
+        fixture.driver.close {}; fixture.callbacks.drain()
+    }
+
+    @Test func wrongMissingAndDuplicateNativeContextsNeverResumeAnotherRequest() throws {
+        let fixture = openNativeDriver(); var replies = 0
+        fixture.driver.send(command: nativeCommand(1), data: nil) { _ in replies += 1 }
+        let oldContext = try #require(fixture.camera.contextValue)
+        fixture.camera.completePTP(command: nativeCommand(1), response: nativeResponse(9), context: .missing)
+        fixture.camera.completePTP(command: nativeCommand(1), response: nativeResponse(9), context: .value(999))
+        fixture.callbacks.drain()
+        #expect(replies == 0)
+        fixture.camera.completePTP(command: nativeCommand(1), response: nativeResponse(9)); fixture.callbacks.drain()
+        #expect(replies == 1)
+        fixture.camera.completePTP(command: nativeCommand(1), response: nativeResponse(9)); fixture.callbacks.drain()
+        #expect(replies == 1)
+        var fresh: Result<PTPWireReply, PTPError>?
+        fixture.driver.send(command: nativeCommand(1), data: nil) { fresh = $0 }
+        fixture.camera.completePTP(command: nativeCommand(1), response: nativeResponse(9), data: Data([99]), context: .value(oldContext))
+        fixture.callbacks.drain()
+        #expect(fresh == nil)
+        fixture.camera.completePTP(command: nativeCommand(1), response: nativeResponse(11), data: Data([42]))
+        fixture.callbacks.drain()
+        #expect(try #require(fresh).get().data == Data([42]))
         fixture.driver.close {}; fixture.callbacks.drain()
     }
 
@@ -451,18 +530,34 @@ private final class SessionTestCamera: ICCameraDevice {
     private var ptpTarget: NSObject?
     private var ptpSelector: Selector?
     private var ptpContext: UnsafeMutableRawPointer?
+    private let ptpReceived = AsyncStream<Void>.makeStream()
+    private var ptpRequestCount = 0
+    var contextValue: UInt? { ptpContext.map { UInt(bitPattern: $0) } }
+    @MainActor func waitForPTPRequest() async {
+        if ptpRequestCount > 0 { return }
+        for await _ in ptpReceived.stream { return }
+    }
     private(set) var lastPTPUsedSelector = false
     override func requestSendPTPCommand(_ command: Data, outData: Data?, completion: @escaping @Sendable (Data, Data, (any Error)?) -> Void) {
+        ptpRequestCount += 1; ptpReceived.continuation.yield(())
         lastPTPUsedSelector = false; ptpBlock = completion
     }
     override func requestSendPTPCommand(_ command: Data, outData: Data?, sendCommandDelegate: Any, didSendCommand selector: Selector, contextInfo: UnsafeMutableRawPointer?) {
+        ptpRequestCount += 1; ptpReceived.continuation.yield(())
         lastPTPUsedSelector = true; ptpTarget = sendCommandDelegate as? NSObject; ptpSelector = selector; ptpContext = contextInfo
     }
-    func completePTP(command: Data, response: Data, data: Data = Data()) {
+    func completePTP(command: Data, response: Data, data: Data = Data(), context: NativeContext = .current) {
         if let target = ptpTarget, let selector = ptpSelector {
             typealias Callback = @convention(c) (AnyObject, Selector, NSData, NSData, NSData, NSError?, UnsafeMutableRawPointer?) -> Void
             let invoke = unsafeBitCast(target.method(for: selector), to: Callback.self)
-            invoke(target, selector, command as NSData, data as NSData, response as NSData, nil, ptpContext)
+            let deliveredContext: UnsafeMutableRawPointer?
+            switch context {
+            case .current: deliveredContext = ptpContext
+            case .missing: deliveredContext = nil
+            case .value(let value): deliveredContext = UnsafeMutableRawPointer(bitPattern: value)
+            }
+            invoke(target, selector, command as NSData, data as NSData, response as NSData, nil, deliveredContext)
+
         } else { ptpBlock?(data, response, nil) }
     }
     private var openCompletion: (@Sendable ((any Error)?) -> Void)?
@@ -498,3 +593,5 @@ private final class DriverCallbackQueue: @unchecked Sendable {
         }
     }
 }
+
+private enum NativeContext { case current, missing, value(UInt) }

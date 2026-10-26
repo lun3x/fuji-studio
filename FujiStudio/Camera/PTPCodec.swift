@@ -19,17 +19,21 @@ enum PTPCodec {
         return result
     }
 
-    /// The selector callback supplies an independent command buffer. Until native header evidence
-    /// establishes a wire-ID mapping, every submitted field (including ID) must match exactly.
+    /// The native callback echoes the submitted logical command. Every field, including its
+    /// logical ID, must match before trusting framework-managed response association.
     static func validateCallbackCommand(_ buffer: Data, for submitted: PTPCommand) throws -> PTPCommand {
         let callback = try decodeCommand(buffer)
+        try validateLogicalEcho(callback, for: submitted)
+        return callback
+    }
+
+    private static func validateLogicalEcho(_ callback: PTPCommand, for submitted: PTPCommand) throws {
         guard callback.opcode == submitted.opcode, callback.parameters == submitted.parameters else {
             throw PTPError.callbackCommandMismatch
         }
         guard callback.transactionID == submitted.transactionID else {
             throw PTPError.wrongTransaction(expected: submitted.transactionID, actual: callback.transactionID)
         }
-        return callback
     }
 
     static func decodeCommand(_ buffer: Data) throws -> PTPCommand {
@@ -44,25 +48,50 @@ enum PTPCodec {
         return command
     }
 
+    /// Direct/raw transports must independently match the expected on-wire transaction.
     static func decode(response: Data, data: Data, for command: PTPCommand,
                        maximumDataBytes: Int = maximumDataBytes) throws -> PTPReply {
+        let container = try responseContainer(response, data: data, maximumDataBytes: maximumDataBytes)
+        guard container.transactionID == command.transactionID else {
+            throw PTPError.wrongTransaction(expected: command.transactionID, actual: container.transactionID)
+        }
+        return try reply(container, raw: response, data: data, command: command, correlation: .directWireTransaction)
+    }
+
+    /// Only for the context/run-associated ImageCaptureCore callback. Its command is the original
+    /// logical echo; the framework-owned assigned wire ID is observable only in the raw response.
+    /// No alleged expected wire ID is synthesized from that observation.
+    static func decodeFrameworkManaged(response: Data, data: Data, for submitted: PTPCommand,
+                                       echoedCommand: PTPCommand, maximumDataBytes: Int = maximumDataBytes) throws -> PTPReply {
+        try validateLogicalEcho(echoedCommand, for: submitted)
+        let container = try responseContainer(response, data: data, maximumDataBytes: maximumDataBytes)
+        return try reply(container, raw: response, data: data, command: submitted,
+                         correlation: .imageCaptureCoreCallback(echoedCommand: echoedCommand))
+    }
+
+    private struct ResponseContainer {
+        let transactionID: UInt32
+        let code: UInt16
+        let parameters: [UInt32]
+    }
+    private static func responseContainer(_ response: Data, data: Data, maximumDataBytes: Int) throws -> ResponseContainer {
         guard data.count <= maximumDataBytes else { throw PTPError.payloadTooLarge }
         guard response.count <= 32 else { throw PTPError.oversizedContainer }
         guard response.count >= 12 else { throw PTPError.truncatedContainer }
-        // Normalize indices: Data slices need not start at zero. No unaligned integer loads.
+        // Normalize slice indices; never use unaligned integer loads.
         let bytes = [UInt8](response)
-        let length = uint32(bytes, 0)
-        guard length == response.count, (response.count - 12) % 4 == 0 else { throw PTPError.invalidContainerLength }
+        guard uint32(bytes, 0) == response.count, (response.count - 12) % 4 == 0 else { throw PTPError.invalidContainerLength }
         let kind = uint16(bytes, 4)
         guard kind == 3 else { throw PTPError.unexpectedContainerType(kind) }
-        let transaction = uint32(bytes, 8)
-        guard transaction == command.transactionID else {
-            throw PTPError.wrongTransaction(expected: command.transactionID, actual: transaction)
-        }
-        let code = uint16(bytes, 6)
-        guard code == 0x2001 else { throw PTPError.responseCode(code) }
-        let parameters = stride(from: 12, to: bytes.count, by: 4).map { uint32(bytes, $0) }
-        return PTPReply(opcode: command.opcode, parameters: parameters, transactionID: transaction, responseCode: code, data: data)
+        return ResponseContainer(transactionID: uint32(bytes, 8), code: uint16(bytes, 6),
+                                 parameters: stride(from: 12, to: bytes.count, by: 4).map { uint32(bytes, $0) })
+    }
+    private static func reply(_ container: ResponseContainer, raw: Data, data: Data,
+                              command: PTPCommand, correlation: PTPCorrelation) throws -> PTPReply {
+        guard container.code == 0x2001 else { throw PTPError.responseCode(container.code) }
+        return PTPReply(opcode: command.opcode, parameters: container.parameters,
+                        logicalTransactionID: command.transactionID, wireTransactionID: container.transactionID,
+                        correlation: correlation, responseCode: container.code, rawResponse: raw, data: data)
     }
 
     private static func append<T: FixedWidthInteger>(_ value: T, to data: inout Data) {

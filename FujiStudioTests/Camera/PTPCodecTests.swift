@@ -15,7 +15,10 @@ struct PTPCodecTests {
         let reply = try PTPCodec.decode(response: ok, data: payload, for: command, maximumDataBytes: 4)
         #expect(reply.data == payload)
         #expect(reply.opcode == 0x1001)
-        #expect(reply.transactionID == 7)
+        #expect(reply.logicalTransactionID == 7)
+        #expect(reply.wireTransactionID == 7)
+        #expect(reply.rawResponse == ok)
+        #expect(reply.correlation == .directWireTransaction)
         #expect(reply.responseCode == 0x2001)
     }
     @Test func truncatedContainerFails() {
@@ -67,6 +70,31 @@ struct PTPCodecTests {
         }
         #expect(throws: PTPError.invalidOpcode(0)) {
             try PTPCodec.encode(PTPCommand(opcode: 0, parameters: [], transactionID: 1))
+        }
+    }
+
+    @Test func directWireMismatchStaysStrictWhileFrameworkReplyPreservesBothIdentities() throws {
+        let logical = PTPCommand(opcode: 0x1001, parameters: [], transactionID: 1)
+        let raw = Data([12,0,0,0,3,0,1,32,9,0,0,0])
+        #expect(throws: PTPError.wrongTransaction(expected: 1, actual: 9)) {
+            try PTPCodec.decode(response: raw, data: Data([42]), for: logical)
+        }
+        let managed = try PTPCodec.decodeFrameworkManaged(response: raw, data: Data([42]), for: logical, echoedCommand: logical)
+        #expect(managed.logicalTransactionID == 1)
+        #expect(managed.wireTransactionID == 9)
+        #expect(managed.rawResponse == raw)
+        #expect(managed.correlation == .imageCaptureCoreCallback(echoedCommand: logical))
+    }
+
+    @Test func frameworkResponseStillRequiresLogicalEchoAndBoundedData() {
+        let logical = PTPCommand(opcode: 0x1001, parameters: [], transactionID: 1)
+        let changed = PTPCommand(opcode: 0x1001, parameters: [], transactionID: 2)
+        let raw = Data([12,0,0,0,3,0,1,32,9,0,0,0])
+        #expect(throws: PTPError.wrongTransaction(expected: 1, actual: 2)) {
+            try PTPCodec.decodeFrameworkManaged(response: raw, data: Data(), for: logical, echoedCommand: changed)
+        }
+        #expect(throws: PTPError.payloadTooLarge) {
+            try PTPCodec.decodeFrameworkManaged(response: raw, data: Data([1,2]), for: logical, echoedCommand: logical, maximumDataBytes: 1)
         }
     }
 
