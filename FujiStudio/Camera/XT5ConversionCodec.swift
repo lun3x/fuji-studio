@@ -1,4 +1,7 @@
 import Foundation
+import ImageIO
+import UniformTypeIdentifiers
+
 
 /// Standard ObjectInfo field order used by pinned libfuji's vendor 900C RAF upload. No profile
 /// offsets, conversion triggers, response-handle ownership assumptions or deletion logic.
@@ -28,5 +31,90 @@ enum XT5ConversionCodec {
         for offset in stride(from: 4, to: data.count, by: 4) { result.append(word(offset)) }
         guard Set(result).count == result.count, !result.contains(0), !result.contains(UInt32.max) else { throw PTPError.invalidParameters }
         return result
+    }
+}
+
+struct XT5ObjectInfo: Sendable, Equatable, Encodable {
+    let storageID: UInt32, format: UInt16, protection: UInt16, byteCount: UInt32
+    let width: UInt32, height: UInt32, parent: UInt32, associationType: UInt16
+}
+struct XT5StorageInfo: Sendable, Encodable {
+    let storageType: UInt16, filesystemType: UInt16, access: UInt16
+    let capacity: UInt64, freeBytes: UInt64, freeObjects: UInt32
+}
+struct XT5JPEGObservation: Sendable, Encodable {
+    let width: Int, height: Int, orientation: Int?
+    let modelMatches: Bool, recordedGeometryMatches: Bool, orientationMatches: Bool
+    let fineQualityValidated = false
+}
+enum XT5ConversionProbeIssue: Error, Sendable {
+    case invalidJPEG, unexpectedObjectMetadata, ambiguousOutput, outputTimeout, unexpectedJPEGContext, retainedSourceUnavailable
+}
+
+extension XT5ConversionCodec {
+    static func objectInfo(_ data: Data) throws -> XT5ObjectInfo {
+        var r = try DatasetReader(data)
+        let storage = try r.u32(), format = try r.u16(), protection = try r.u16(), size = try r.u32()
+        _ = try r.u16(); _ = try r.u32(); _ = try r.u32(); _ = try r.u32()
+        let width = try r.u32(), height = try r.u32()
+        _ = try r.u32()
+        let parent = try r.u32(), association = try r.u16()
+        _ = try r.u32(); _ = try r.u32()
+        for _ in 0..<4 { try r.skipString() }
+        try r.finish()
+        return XT5ObjectInfo(storageID: storage, format: format, protection: protection, byteCount: size, width: width, height: height, parent: parent, associationType: association)
+    }
+    static func storageInfo(_ data: Data) throws -> XT5StorageInfo {
+        var r = try DatasetReader(data)
+        let result = try XT5StorageInfo(storageType: r.u16(), filesystemType: r.u16(), access: r.u16(), capacity: r.u64(), freeBytes: r.u64(), freeObjects: r.u32())
+        try r.skipString(); try r.skipString(); try r.finish()
+        return result
+    }
+    private struct DatasetReader {
+        let data: Data
+        var offset = 0
+        init(_ data: Data) throws {
+            guard data.count <= 4096 else { throw XT5ProtocolError.oversized }
+            self.data = Data(data)
+        }
+        mutating func integer(_ width: Int) throws -> UInt64 {
+            guard width <= data.count - offset else { throw XT5ProtocolError.truncated }
+            defer { offset += width }
+            return data[offset..<(offset + width)].enumerated().reduce(0) { $0 | UInt64($1.element) << ($1.offset * 8) }
+        }
+        mutating func u16() throws -> UInt16 { UInt16(try integer(2)) }
+        mutating func u32() throws -> UInt32 { UInt32(try integer(4)) }
+        mutating func u64() throws -> UInt64 { try integer(8) }
+        mutating func skipString() throws {
+            guard offset < data.count else { throw XT5ProtocolError.truncated }
+            let length = 1 + Int(data[offset]) * 2
+            guard length <= data.count - offset else { throw XT5ProtocolError.truncated }
+            _ = try XT5RecipeCodec.value(data.subdata(in: offset..<(offset + length)), type: 0xffff)
+            offset += length
+        }
+        func finish() throws { guard offset == data.count else { throw XT5ProtocolError.trailingBytes } }
+    }
+}
+
+extension XT5ConversionCodec {
+    static func jpegObservation(_ data: Data, expected: RAWMetadata) throws -> XT5JPEGObservation {
+        guard data.count >= 4, data.count <= PTPCodec.maximumDataBytes,
+              data.prefix(2) == Data([0xff,0xd8]), data.suffix(2) == Data([0xff,0xd9]),
+              let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
+              CGImageSourceGetCount(source) == 1,
+              CGImageSourceGetType(source) as String? == UTType.jpeg.identifier,
+              CGImageSourceGetStatus(source) == .statusComplete,
+              let p = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String:Any],
+              let width = (p[kCGImagePropertyPixelWidth as String] as? NSNumber)?.intValue,
+              let height = (p[kCGImagePropertyPixelHeight as String] as? NSNumber)?.intValue,
+              width > 0, height > 0, width <= 20_000, height <= 20_000 else { throw XT5ConversionProbeIssue.invalidJPEG }
+        let orientation = (p[kCGImagePropertyOrientation as String] as? NSNumber)?.intValue
+        guard orientation == nil || (1...8).contains(orientation!) else { throw XT5ConversionProbeIssue.invalidJPEG }
+        let tiff = p[kCGImagePropertyTIFFDictionary as String] as? [String:Any]
+        let model = (tiff?[kCGImagePropertyTIFFModel as String] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return XT5JPEGObservation(width: width, height: height, orientation: orientation,
+                                  modelMatches: model == expected.cameraModel,
+                                  recordedGeometryMatches: width == expected.recordedGeometry.width && height == expected.recordedGeometry.height,
+                                  orientationMatches: orientation == expected.orientation)
     }
 }

@@ -276,7 +276,8 @@ private actor BaselineLibrary: PhotoLibraryReading {
 @MainActor struct XT5RawBaselineLaunchTests {
     @Test func ordinaryAndConflictingFlagsAreInertForEveryRunner() async {
         let flag = "--xt5-raw-baseline-probe"
-        for args in [["FujiStudio"]] + ["--xt5-read-only-probe","--xt5-direct-values-probe","--xt5-bank-import-probe","--camera-reconnect-probe"].map({ [flag,$0] }) {
+        let flags = ["--xt5-read-only-probe","--xt5-direct-values-probe","--xt5-bank-import-probe","--camera-reconnect-probe"]
+        for args in [["FujiStudio"], [flag,"--xt5-unchanged-baseline-probe"]] + flags.map({ [flag,$0] }) + flags.map({ ["--xt5-unchanged-baseline-probe",$0] }) {
             let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
             let driver = BaselineProbeDriver()
             let transport = ImageCaptureTransport(driver: driver)
@@ -289,6 +290,34 @@ private actor BaselineLibrary: PhotoLibraryReading {
             #expect(await library.materializedIDs.isEmpty)
             #expect(!FileManager.default.fileExists(atPath: directory.path))
         }
+    }
+    @Test func unchangedProbeRequiresRetainedOriginalAndNeverFallsBackToPhotos() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let library = BaselineLibrary(ids: ["reference"])
+        let driver = BaselineProbeDriver()
+        let runner = XT5RawBaselineLaunchRunner(transport: ImageCaptureTransport(driver: driver),directory: directory,
+            preparer: RAWBaselineSourcePreparer(reader: library), retainedSource: { _,_ in throw XT5ConversionProbeIssue.retainedSourceUnavailable })
+        await runner.runIfRequested(arguments: ["--xt5-unchanged-baseline-probe"])
+        #expect(driver.startCount == 0)
+        #expect(await library.materializedIDs.isEmpty)
+        #expect(runner.status.contains("retainedSourceUnavailable"))
+        #expect(FileManager.default.fileExists(atPath: directory.appendingPathComponent("xt5-unchanged-baseline-status.txt").path))
+    }
+    @Test func retainedSelectionRejectsMissingAndAmbiguousRunsWithoutGuessingLatest() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let output = directory.appendingPathComponent("output")
+        try FileManager.default.createDirectory(at: output,withIntermediateDirectories: true)
+        await #expect(throws: (any Error).self) { try await RetainedRAWProbeSource.prepare(documents: directory,destination: output) }
+        for _ in 0..<2 {
+            let run = directory.appendingPathComponent("xt5-raw-baseline-private").appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: run,withIntermediateDirectories: true)
+            try Data().write(to: run.appendingPathComponent("source.RAF"))
+            try Data().write(to: run.appendingPathComponent("source-manifest.json"))
+        }
+        await #expect(throws: (any Error).self) { try await RetainedRAWProbeSource.prepare(documents: directory,destination: output) }
+        #expect(try FileManager.default.contentsOfDirectory(atPath: output.path).isEmpty)
     }
     @Test func explicitCaptureKeepsOriginalPrivateAndAwaitsNativeClose() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

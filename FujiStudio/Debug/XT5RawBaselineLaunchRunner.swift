@@ -77,27 +77,36 @@ final class XT5RawBaselineLaunchRunner {
     private let transport: ImageCaptureTransport
     private let requestedDirectory: URL?
     private let preparer: RAWBaselineSourcePreparer
+    private let retainedSource: @Sendable (URL, URL) async throws -> PreparedRAW
+    private var prefix = "xt5-raw-baseline"
     private var directory: URL?
     private var didRun = false
     private var artifactWriteFailed = false
     init(transport: ImageCaptureTransport = ImageCaptureTransport(), directory: URL? = nil,
-         preparer: RAWBaselineSourcePreparer = RAWBaselineSourcePreparer(reader: PhotoLibraryReader())) {
+         preparer: RAWBaselineSourcePreparer = RAWBaselineSourcePreparer(reader: PhotoLibraryReader()),
+         retainedSource: @escaping @Sendable (URL, URL) async throws -> PreparedRAW = { try await RetainedRAWProbeSource.prepare(documents: $0,destination: $1) }) {
         self.transport = transport; requestedDirectory = directory; self.preparer = preparer
+        self.retainedSource = retainedSource
     }
     func runIfRequested(arguments: [String]) async {
         let otherFlags = ["--xt5-read-only-probe", "--xt5-direct-values-probe", "--camera-reconnect-probe", "--xt5-bank-import-probe"]
-        guard arguments.contains("--xt5-raw-baseline-probe"), !otherFlags.contains(where: arguments.contains), !didRun else { return }
+        let baseline = arguments.contains("--xt5-raw-baseline-probe")
+        let unchanged = arguments.contains("--xt5-unchanged-baseline-probe")
+        guard baseline != unchanged, !otherFlags.contains(where: arguments.contains), !didRun else { return }
         didRun = true
+        if unchanged { prefix = "xt5-unchanged-baseline" }
         var probeOwnsClose = false
         do {
             let output = try requestedDirectory ?? FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-            let privateRun = output.appendingPathComponent("xt5-raw-baseline-private", isDirectory: true).appendingPathComponent(UUID().uuidString, isDirectory: true)
+            let privateRun = output.appendingPathComponent(prefix + "-private", isDirectory: true).appendingPathComponent(UUID().uuidString, isDirectory: true)
             try FileManager.default.createDirectory(at: privateRun, withIntermediateDirectories: true, attributes: [.protectionKey: FileProtectionType.complete])
             directory = output
-            try Data("{\"state\":\"preparing original\"}".utf8).write(to: output.appendingPathComponent("xt5-raw-baseline-evidence.json"), options: .atomic)
+            try Data("{\"state\":\"preparing original\"}".utf8).write(to: output.appendingPathComponent(prefix + "-evidence.json"), options: .atomic)
             saveLifecycle()
-            try writeStatus("Preparing one original using existing Photos access")
-            let selected = try await preparer.prepareOne(in: privateRun)
+            try writeStatus(unchanged ? "Verifying the retained original for unchanged-baseline trigger 0" : "Preparing one original using existing Photos access")
+            let raw: PreparedRAW
+            if unchanged { raw = try await retainedSource(output, privateRun) }
+            else { raw = try await preparer.prepareOne(in: privateRun).raw }
             try writeStatus("Original retained privately; connecting for bounded RAW upload")
             try await transport.connect()
             let native = transport
@@ -108,10 +117,11 @@ final class XT5RawBaselineLaunchRunner {
                 // MainActor keeps identity validation and close initiation together. There is no
                 // independent connect path on this privately owned transport during the operation.
                 try await Self.close(native, expectedGeneration: generation)
-            })
+            }, experiment: unchanged ? .unchangedTrigger0 : .baselineOnly)
             probeOwnsClose = true
-            _ = try await probe.capture(raw: selected.raw, directory: privateRun) { [weak self] report in await self?.save(report) }
-            try writeStatus(artifactWriteFailed ? "Baseline operation finished, but public evidence writing failed" : "Baseline probe complete; native session closed; upload buffer cleanup remains unconfirmed; conversion unvalidated")
+            _ = try await probe.capture(raw: raw, directory: privateRun) { [weak self] report in await self?.save(report) }
+            let success = unchanged ? "Unchanged-baseline JPEG retained; native session closed; input/output cleanup unconfirmed; FINE and imported recipes unvalidated" : "Baseline probe complete; native session closed; upload buffer cleanup remains unconfirmed; conversion unvalidated"
+            try writeStatus(artifactWriteFailed ? "Probe operation finished, but public evidence writing failed" : success)
         } catch let failure as XT5RawBaselineFailure {
             try? writeStatus("Baseline probe incomplete: \(failure.evidence.failure ?? failure.evidence.sessionClosureFailure ?? "unknown outcome"); native closure \(failure.evidence.sessionClosure); buffer cleanup unconfirmed")
         } catch {
@@ -136,7 +146,7 @@ final class XT5RawBaselineLaunchRunner {
         guard let directory else { return }
         do {
             let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]; encoder.dateEncodingStrategy = .iso8601
-            try encoder.encode(report).write(to: directory.appendingPathComponent("xt5-raw-baseline-evidence.json"), options: .atomic)
+            try encoder.encode(report).write(to: directory.appendingPathComponent(prefix + "-evidence.json"), options: .atomic)
             try writeStatus("RAW upload accepted: \(report.rawUploadSucceeded); baseline bytes: \(report.baselineBytes ?? 0); native closure: \(report.sessionClosure); buffer cleanup unconfirmed")
         } catch { artifactWriteFailed = true; status = "Evidence file write failed; native closure must still finish" }
         saveLifecycle()
@@ -144,14 +154,51 @@ final class XT5RawBaselineLaunchRunner {
     private func writeStatus(_ message: String) throws {
         status = message
         guard let directory else { return }
-        try "\(Date().formatted(.iso8601))\n\(message)\nPrivate source/profile/context under xt5-raw-baseline-private; never publish these files.\n"
-            .write(to: directory.appendingPathComponent("xt5-raw-baseline-status.txt"), atomically: true, encoding: .utf8)
+        try "\(Date().formatted(.iso8601))\n\(message)\nPrivate source/profile/context under \(prefix)-private; never publish these files.\n"
+            .write(to: directory.appendingPathComponent(prefix + "-status.txt"), atomically: true, encoding: .utf8)
     }
     private func saveLifecycle() {
         guard let directory else { return }
         let text = "Public lifecycle:\n" + transport.lifecycleDiagnosticMessages().joined(separator: "\n")
             + "\nGetDeviceInfo headers (payload omitted):\n" + transport.ptpDiagnosticMessages().joined(separator: "\n")
         try? text.write(to: directory.appendingPathComponent("camera-diagnostics.txt"), atomically: true, encoding: .utf8)
+    }
+}
+#endif
+
+#if DEBUG
+/// Reuses exactly one retained phase-D original. No Photos fallback and no most-recent guessing.
+enum RetainedRAWProbeSource {
+    private struct Manifest: Decodable {
+        let sourceID: String, sourceRevision: String, originalFilename: String, resourceRole: String, sha256: String
+    }
+    static func prepare(documents: URL, destination: URL) async throws -> PreparedRAW {
+        let task = Task.detached { try load(documents: documents, destination: destination) }
+        return try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+    }
+    private static func load(documents: URL, destination: URL) throws -> PreparedRAW {
+        let root = documents.appendingPathComponent("xt5-raw-baseline-private",isDirectory: true)
+        guard let entries = try? FileManager.default.contentsOfDirectory(at: root,includingPropertiesForKeys: [.isDirectoryKey]) else { throw XT5ConversionProbeIssue.retainedSourceUnavailable }
+        let candidates = entries.filter {
+            UUID(uuidString: $0.lastPathComponent) != nil &&
+            FileManager.default.fileExists(atPath: $0.appendingPathComponent("source.RAF").path) &&
+            FileManager.default.fileExists(atPath: $0.appendingPathComponent("source-manifest.json").path)
+        }
+        guard candidates.count == 1, let run = candidates.first else { throw XT5ConversionProbeIssue.retainedSourceUnavailable }
+        let data = try Data(contentsOf: run.appendingPathComponent("source-manifest.json"))
+        guard data.count <= 65_536 else { throw XT5ProtocolError.oversized }
+        let manifest = try JSONDecoder().decode(Manifest.self,from: data)
+        guard let role = ResourceRole(rawValue: manifest.resourceRole), role != .adjusted else { throw XT5ConversionProbeIssue.retainedSourceUnavailable }
+        let token = ResourceToken(assetID: manifest.sourceID,role: role,contentTypeIdentifier: "com.fuji.raw-image",format: .raf,
+                                  originalFilename: manifest.originalFilename,discriminator: "retained-original",sourceRevision: manifest.sourceRevision)
+        let local = LocalResource(token: token,fileURL: run.appendingPathComponent("source.RAF"),checksum: manifest.sha256)
+        try Task.checkCancellation()
+        let raw = try RAFMetadataReader().prepare(local)
+        try Task.checkCancellation()
+        try data.write(to: destination.appendingPathComponent("source-manifest.json"),options: [.atomic,.completeFileProtection])
+        let reference = ["retainedRun": run.lastPathComponent,"filename": "source.RAF","sha256": raw.sha256]
+        try JSONEncoder().encode(reference).write(to: destination.appendingPathComponent("source-reference.json"),options: [.atomic,.completeFileProtection])
+        return raw
     }
 }
 #endif
