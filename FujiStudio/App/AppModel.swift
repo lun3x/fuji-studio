@@ -45,6 +45,11 @@ import Observation
     @ObservationIgnored private var sceneRevision: UInt64 = 0
     @ObservationIgnored private var previewInFlight = false
 
+    #if DEBUG
+    /// Read-only lifecycle continuity for opt-in acceptance instrumentation.
+    var validationScene: (revision: UInt64, foreground: Bool) { (sceneRevision, foreground) }
+    #endif
+
     init(environment: AppEnvironment) { self.environment = environment }
     deinit {
         streams.forEach { $0.cancel() }; displayTask?.cancel(); allTask?.cancel(); contextTask?.cancel(); versionRefreshTask?.cancel()

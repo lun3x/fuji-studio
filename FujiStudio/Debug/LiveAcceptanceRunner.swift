@@ -35,9 +35,12 @@ private enum LiveAcceptanceFailure: Error { case stopped(String) }
     }
     private(set) var status = "Live validation not started"
     private var didRun = false
+    private var runSceneRevision: UInt64?
 
     func run(model: AppModel, id: UUID, documents requested: URL? = nil) async {
         guard !didRun else { return }; didRun = true
+        let sceneRevision = model.validationScene.revision
+        runSceneRevision = sceneRevision
         var evidence = Evidence()
         var run: LiveAcceptanceRun?
         do {
@@ -55,6 +58,7 @@ private enum LiveAcceptanceFailure: Error { case stopped(String) }
                 await model.reconcile()
                 let expected = try claim.read(Expected.self, name: "expected.json")
                 try await verify(model: model, jobID: jobID, expected: expected, run: claim, evidence: &evidence)
+                try requireForeground(model, revision: sceneRevision)
                 evidence.complete = evidence.originalDefaultsVerified && evidence.previewCount == 7 && evidence.banksPreserved
                     && evidence.previewPhotoCountUnchanged && evidence.singleViewedExport && evidence.nativeCloseConfirmed
                 evidence.stage = evidence.complete ? "reopened exact saved version; no export replay" : "saved version verified read-only; original run remains incomplete"
@@ -152,10 +156,7 @@ private enum LiveAcceptanceFailure: Error { case stopped(String) }
             try claim.write(model.state.recipes, name: "banks-after.json")
             evidence.banksPreserved = true
             evidence.stage = "one save verified; relaunch same UUID for read-only reopen proof"
-            await model.environment.camera.disconnect()
-            try await wait(model) { model.state.cameraState == .disconnected }
-            evidence.nativeCloseConfirmed = true; evidence.complete = true
-            try publish(evidence, run: claim)
+            try await finish(model: model, run: claim, evidence: &evidence, sceneRevision: sceneRevision)
         } catch {
             evidence.complete = false
             if case LiveAcceptanceFailure.stopped(let reason) = error { evidence.failure = reason }
@@ -169,6 +170,20 @@ private enum LiveAcceptanceFailure: Error { case stopped(String) }
             }
             status = evidence.failure ?? "Validation stopped"
         }
+    }
+
+    func finish(model: AppModel, run: LiveAcceptanceRun, evidence: inout Evidence, sceneRevision: UInt64) async throws {
+        await model.environment.camera.disconnect()
+        // The lifecycle reducer can synthesize disconnected even after native close fails.
+        // A fresh service subscription yields its authoritative current outcome.
+        var states = await model.environment.camera.states().makeAsyncIterator()
+        guard await states.next() == .disconnected else {
+            throw LiveAcceptanceFailure.stopped("Native close unconfirmed; run remains incomplete")
+        }
+        // No suspension point may separate this continuity check from flags/publication.
+        try requireForeground(model, revision: sceneRevision)
+        evidence.nativeCloseConfirmed = true; evidence.complete = true
+        try publish(evidence, run: run)
     }
 
     static func banksMatch(state: WorkspaceState, retained: [RecipeSnapshot]) -> Bool {
@@ -284,10 +299,19 @@ private enum LiveAcceptanceFailure: Error { case stopped(String) }
         evidence.locationPreserved = true; evidence.originalsUnchanged = true; evidence.catalogAssociation = true
         evidence.width = expected.preview.width; evidence.height = expected.preview.height; evidence.orientation = expected.preview.orientation
     }
-    private func wait(_ model: AppModel, until condition: () -> Bool) async throws {
+    private func requireForeground(_ model: AppModel, revision: UInt64) throws {
+        let scene = model.validationScene
+        guard !Task.isCancelled, !model.isSuspended, scene.foreground, scene.revision == revision else {
+            throw LiveAcceptanceFailure.stopped("Validation interrupted; no automatic retry")
+        }
+    }
+    func wait(_ model: AppModel, until condition: () -> Bool) async throws {
+        let revision = runSceneRevision ?? model.validationScene.revision
         let deadline = ContinuousClock.now.advanced(by: .seconds(180))
-        while !condition() {
-            guard !model.isSuspended, ContinuousClock.now < deadline else { throw LiveAcceptanceFailure.stopped("Validation interrupted or timed out; no automatic retry") }
+        while true {
+            try requireForeground(model, revision: revision)
+            if condition() { return }
+            guard ContinuousClock.now < deadline else { throw LiveAcceptanceFailure.stopped("Validation timed out; no automatic retry") }
             try await Task.sleep(for: .milliseconds(50))
         }
     }

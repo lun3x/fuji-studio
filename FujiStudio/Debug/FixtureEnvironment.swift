@@ -33,7 +33,7 @@ import Observation
         let writer: FixtureWriter
         let platform: FixturePlatform
     }
-    static func make(access: LibraryAccess = .full, uncertain: Bool = false) async throws -> Bundle {
+    static func make(access: LibraryAccess = .full, uncertain: Bool = false, cameraOverride: (any CameraServing)? = nil) async throws -> Bundle {
         let images = try WorkspaceFixture()
         let originals = Array(images.sources.prefix(3)).enumerated().map { offset, s in
             var raw = s.originalResources.raf; raw.sourceRevision = s.resourceRevision
@@ -50,6 +50,7 @@ import Observation
         }.value
         let reader = FixtureLibrary(sources: originals, image: images.file, root: root, access: access)
         let camera = FixtureCamera(recipes: images.state.recipes, image: images.file, root: root)
+        let selectedCamera: any CameraServing = cameraOverride ?? camera
         let writer = FixtureWriter(reader: reader, uncertain: uncertain)
         let pool = OriginalResourcePool(reader: reader, prepare: { local in
             PreparedRAW(fileURL: local.fileURL, sha256: local.checksum, sourceID: local.token.assetID, sourceRevision: local.token.sourceRevision,
@@ -57,13 +58,13 @@ import Observation
         })
         let scheduler = CameraWorkScheduler()
         let resolver = VersionImageResolver(library: reader, catalog: storage.0, pool: pool, rawRenderer: storage.2, cache: storage.1)
-        let preview = PreviewCoordinator(pool: pool, camera: camera, scheduler: scheduler, cache: storage.1, rawRenderer: storage.2,
+        let preview = PreviewCoordinator(pool: pool, camera: selectedCamera, scheduler: scheduler, cache: storage.1, rawRenderer: storage.2,
             storedDisplay: { source, version in try await resolver.resolve(source: source, version: version).lease })
-        let exports = ExportCoordinator(reader: reader, camera: camera, catalog: storage.0, writer: writer, pool: pool, cache: storage.1, scheduler: scheduler)
+        let exports = ExportCoordinator(reader: reader, camera: selectedCamera, catalog: storage.0, writer: writer, pool: pool, cache: storage.1, scheduler: scheduler)
         let platform = FixturePlatform()
         // Cached recipes exercise useful disconnected browsing, without selecting a recipe.
         try await storage.0.replaceRecipes(images.state.recipes)
-        return Bundle(environment: AppEnvironment(reader: reader, camera: camera, catalog: storage.0, preview: preview,
+        return Bundle(environment: AppEnvironment(reader: reader, camera: selectedCamera, catalog: storage.0, preview: preview,
             resolver: resolver, exports: exports, cache: storage.1, thumbnails: images.thumbnails, platform: platform),
             reader: reader, camera: camera, writer: writer, platform: platform)
     }

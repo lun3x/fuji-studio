@@ -210,7 +210,10 @@ actor ProductionSession: CameraSessionTransport {
         let pair=AsyncStream<CameraState>.makeStream();subscribers.append(pair.continuation);return pair.stream }
     func connect() throws { connects += 1;if mode == .closeFails && closes > 0 { throw PTPError.sessionClosing };connected=true;emit(.sessionOpen(snapshot())) }
     func currentSession() throws -> CameraSession { guard connected else { throw PTPError.notConnected };return snapshot() }
-    func close() throws { closes += 1;connected=false;emit(.disconnected);if mode == .closeFails { throw PTPError.timeout } }
+    private var closeBarrier: FixtureBarrier?
+    private(set) var closeEntered = false
+    func holdClose(_ barrier: FixtureBarrier) { closeBarrier = barrier }
+    func close() async throws { closeEntered = true;if let closeBarrier { await closeBarrier.wait() };closes += 1;connected=false;emit(.disconnected);if mode == .closeFails { throw PTPError.timeout } }
     func snapshot()->CameraSession { .init(generation:generation,connection:.init(name:"Synthetic",usbVendorID:0x04cb,usbProductID:0x2fc)) }
     func emit(_ state:CameraState) { subscribers.forEach { $0.yield(state) } }
     func simulatePhysicalReconnect(empty:Bool) { connected=false;generation += 1;outputPresent = !empty;mode = .normal }

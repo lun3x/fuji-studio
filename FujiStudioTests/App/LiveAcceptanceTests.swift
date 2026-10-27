@@ -3,6 +3,77 @@ import Testing
 @testable import FujiStudio
 
 @MainActor struct LiveAcceptanceTests {
+    enum CloseScenario: CaseIterable {
+        case confirmed, failedClose, failedCloseInBackground, background, inactive, returnedActive
+    }
+    @Test(arguments: CloseScenario.allCases)
+    func completionRequiresAuthoritativeCloseAndUninterruptedForeground(_ scenario: CloseScenario) async throws {
+        let operation = try ProductionOperationFixture(); defer { operation.remove() }
+        let fails = scenario == .failedClose || scenario == .failedCloseInBackground
+        let wire = ProductionSession(fixture: operation, mode: fails ? .closeFails : .normal)
+        let service = XT5CameraService(session: wire, journal: try CameraOperationJournal(directory: operation.directory.appendingPathComponent("journal")))
+        let fixture = try await FixtureEnvironment.make(cameraOverride: service)
+        let model = AppModel(environment: fixture.environment)
+        // Keep stream consumption out of this ordering: background itself supplies the UI
+        // disconnected reduction, while the real camera service owns the native close result.
+        try await service.connect()
+        let documents = operation.directory.appendingPathComponent("documents")
+        let run = LiveAcceptanceRun(root: documents.appendingPathComponent("live-acceptance-private/runs"), id: UUID())
+        #expect(try run.claim())
+        try run.write(LiveAcceptanceRunner.Evidence(), name: "evidence.json")
+        let revision = model.validationScene.revision, barrier = FixtureBarrier()
+        await wire.holdClose(barrier)
+        defer { Task { await barrier.release() } }
+        let finishing = Task {
+            var evidence = LiveAcceptanceRunner.Evidence()
+            do {
+                try await LiveAcceptanceRunner().finish(model: model, run: run, evidence: &evidence, sceneRevision: revision)
+                return false
+            } catch { return true }
+        }
+        try await requireEventually { await wire.closeEntered }
+        var background: Task<Void, Never>?
+        if scenario == .background || scenario == .failedCloseInBackground {
+            background = Task { await model.sceneChanged(.background) }
+            try await requireEventually { model.isSuspended }
+        } else if scenario == .inactive || scenario == .returnedActive {
+            await model.sceneChanged(.inactive)
+            if scenario == .returnedActive { await model.sceneChanged(.active) }
+        }
+        await barrier.release()
+        let rejected = await finishing.value
+        await background?.value
+        var states = await service.states().makeAsyncIterator()
+        #expect(await states.next() == (fails ? .recoverableError(.sessionFailure("Native close unconfirmed")) : .disconnected))
+        if background != nil { #expect(model.state.cameraState == .disconnected) }
+        let saved = try run.read(LiveAcceptanceRunner.Evidence.self, name: "evidence.json")
+        let shouldComplete = scenario == .confirmed
+        #expect(rejected == !shouldComplete)
+        #expect(saved.nativeCloseConfirmed == shouldComplete)
+        #expect(saved.complete == shouldComplete)
+        let publicURL = documents.appendingPathComponent("live-acceptance-evidence.json")
+        if FileManager.default.fileExists(atPath: publicURL.path) {
+            let published = try JSONDecoder().decode(LiveAcceptanceRunner.Evidence.self, from: Data(contentsOf: publicURL))
+            #expect(published.complete == shouldComplete)
+        }
+        #expect(await fixture.writer.requests.isEmpty)
+    }
+
+    private func requireEventually(_ condition: () async -> Bool) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while !(await condition()), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(await condition(), "Regression fixture did not reach its required ordering point within five seconds")
+        try #require(await condition())
+    }
+
+    @Test func alreadySatisfiedWaitRejectsSuspension() async throws {
+        let fixture = try await FixtureEnvironment.make(), model = AppModel(environment: fixture.environment)
+        await model.sceneChanged(.background)
+        await #expect(throws: (any Error).self) { try await LiveAcceptanceRunner().wait(model) { true } }
+    }
+
     @Test func claimSurvivesReopenBeforeAnyJobIDAndNeverRearms() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
