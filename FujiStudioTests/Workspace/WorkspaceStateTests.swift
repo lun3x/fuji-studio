@@ -3,6 +3,21 @@ import Testing
 @testable import FujiStudio
 
 struct WorkspaceStateTests {
+    @Test func rangeReplacementOnlyChangesMembershipAndPrunesInaccessibleIDs() throws {
+        let f = try WorkspaceFixture()
+        var state = f.state()
+        state.reduce(.sourceTapped("viewed")); state.reduce(.select)
+        state.reduce(.drawerMoved(.expanded))
+        let version = state.displayedVersion
+        #expect(state.reduce(.checkedSourcesReplaced(["next", "missing"])).isEmpty)
+        #expect(state.checkedSourceIDs == ["next"])
+        #expect(state.viewedSourceID == "viewed")
+        #expect(state.displayedVersion == version)
+        #expect(state.drawerDetent == .expanded)
+        state.reduce(.done)
+        state.reduce(.checkedSourcesReplaced(["next"]))
+        #expect(state.checkedSourceIDs.isEmpty)
+    }
     @Test func browseExportsViewedPhotoWithoutEnteringSelect() throws {
         let f = try WorkspaceFixture()
         var state = f.state()
