@@ -26,6 +26,7 @@ struct PhotoGrid: UIViewControllerRepresentable {
     let thumbnails: any GridThumbnailProviding
     var scrollRequest: GridScrollRequest? = nil
     var gridMetrics: GridMetrics? = nil
+    var bottomInset: CGFloat = 0
     var onSourceTapped: (SourceID) -> Void
     var onCheckedChanged: (Set<SourceID>) -> Void
     var onViewportChanged: (GridViewport) -> Void = { _ in }
@@ -35,7 +36,7 @@ struct PhotoGrid: UIViewControllerRepresentable {
         controller.onSourceTapped = onSourceTapped; controller.onCheckedChanged = onCheckedChanged
         controller.onViewportChanged = onViewportChanged
         controller.update(sources: sources, checked: checkedSourceIDs, selecting: isSelecting,
-                          viewed: viewedSourceID, scrollRequest: scrollRequest, gridMetrics: gridMetrics)
+                          viewed: viewedSourceID, scrollRequest: scrollRequest, gridMetrics: gridMetrics, bottomInset: bottomInset)
     }
     static func dismantleUIViewController(_ controller: PhotoGridController, coordinator: ()) { controller.stop() }
 }

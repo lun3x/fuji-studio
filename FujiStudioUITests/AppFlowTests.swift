@@ -80,7 +80,7 @@ import XCTest
         app.buttons["viewer.status.done"].tap()
         XCTAssertTrue(app.buttons["viewer.fit"].isHittable)
         let grid = app.collectionViews["photoGrid"], side = app.cells["grid.source-0"].frame.width
-        XCTAssertEqual(grid.frame.height, side * 2 + 19, accuracy: 0.5)
+        XCTAssertEqual(grid.frame.height, side, accuracy: 0.5)
         let frame = app.scrollViews["viewer.image"].frame
         app.buttons["drawer.toggle"].tap(); wait { app.buttons["drawer.toggle"].value as? String == "Expanded" }
         XCTAssertFalse(app.buttons["viewer.zoomIn"].exists)
@@ -232,7 +232,7 @@ import XCTest
         }
         inspect("AX5 collapsed enabled export and actual inspection actions")
         let frame = viewer.frame, side = app.cells["grid.source-0"].frame.width
-        XCTAssertEqual(grid.frame.height, side * 2 + 19, accuracy: 0.5)
+        XCTAssertEqual(grid.frame.height, side, accuracy: 0.5)
         app.buttons["workspace.select"].tap()
         XCTAssertEqual(app.cells["grid.source-0"].frame.width, side, accuracy: 0.5)
         app.buttons["drawer.toggle"].tap(); wait { app.buttons["drawer.toggle"].value as? String == "Expanded" }
@@ -243,7 +243,7 @@ import XCTest
         app.buttons["drawer.toggle"].tap(); wait { app.buttons["drawer.toggle"].value as? String == "Collapsed" }
         XCTAssertEqual(viewer.frame, frame)
         XCTAssertEqual(app.cells["grid.source-0"].frame.width, side, accuracy: 0.5)
-        XCTAssertEqual(grid.frame.height, side * 2 + 19, accuracy: 0.5)
+        XCTAssertEqual(grid.frame.height, side, accuracy: 0.5)
         inspect("AX5 recollapsed inspection remains operable without export")
     }
 

@@ -68,10 +68,13 @@ private struct WorkspaceFixtureView: View {
 final class WorkspaceFixture {
     let sources: [PhotoSource]
     let file: DisplayFileLease
-    let geometry = ImageGeometry(encoded: PixelSize(width: 1800, height: 1200), orientation: 1)
+    let geometry: ImageGeometry
     let thumbnails = WorkspaceFixtureThumbnails()
     let state: WorkspaceState
     init() throws {
+        let portrait = ProcessInfo.processInfo.arguments.contains("--fixture-portrait")
+        let size = portrait ? CGSize(width: 1200, height: 1800) : CGSize(width: 1800, height: 1200)
+        geometry = ImageGeometry(encoded: PixelSize(width: Int(size.width), height: Int(size.height)), orientation: 1)
         sources = (0..<120).map { index in
             let id = "source-\(index)"
             return PhotoSource(id: id, originalResources: .init(raf: .init(assetID: id, role: .primaryOriginal,
@@ -80,9 +83,9 @@ final class WorkspaceFixture {
                     originalFilename: "GENERATED_\(index).JPG", discriminator: "jpeg")), captureDate: nil, location: nil, resourceRevision: "generated")
         }
         let format = UIGraphicsImageRendererFormat(); format.scale = 1
-        let data = UIGraphicsImageRenderer(size: CGSize(width: 1800, height: 1200), format: format).jpegData(withCompressionQuality: 0.95) { renderer in
+        let data = UIGraphicsImageRenderer(size: size, format: format).jpegData(withCompressionQuality: 0.95) { renderer in
             let c = renderer.cgContext
-            UIColor(red: 0.67, green: 0.78, blue: 0.83, alpha: 1).setFill(); c.fill(CGRect(x: 0, y: 0, width: 1800, height: 1200))
+            UIColor(red: 0.67, green: 0.78, blue: 0.83, alpha: 1).setFill(); c.fill(CGRect(origin: .zero, size: size))
             UIColor(red: 0.93, green: 0.77, blue: 0.46, alpha: 1).setFill(); c.fillEllipse(in: CGRect(x: 1200, y: 150, width: 180, height: 180))
             for layer in 0..<5 {
                 UIColor(red: 0.24 - Double(layer) * 0.025, green: 0.4 - Double(layer) * 0.035, blue: 0.38 - Double(layer) * 0.025, alpha: 1).setFill()
@@ -140,6 +143,32 @@ private struct WorkspaceNativeMetrics: UIViewRepresentable {
     func updateUIView(_ uiView: WorkspaceNativeMetricsView, context: Context) {}
 }
 private final class WorkspaceNativeMetricsView: UIView {
+    private var link: CADisplayLink?
+    private var drawerPositions: [CGFloat] = []
+    override func didMoveToWindow() {
+        super.didMoveToWindow(); link?.invalidate(); link = nil
+        if window != nil && ProcessInfo.processInfo.arguments.contains("--fixture-drawer-trace") {
+            let link = CADisplayLink(target: self, selector: #selector(recordDrawerPosition))
+            link.add(to: .main, forMode: .common); self.link = link
+        }
+    }
+    @objc private func recordDrawerPosition() {
+        guard let window else { return }
+        func find(_ view: UIView) -> UIView? {
+            if view.accessibilityIdentifier == "photoGrid" { return view }
+            return view.subviews.lazy.compactMap(find).first
+        }
+        guard let grid = find(window) else { return }
+        let y = grid.convert(grid.bounds, to: window).minY
+        if drawerPositions.last.map({ abs($0 - y) > 0.02 }) ?? true {
+            drawerPositions.append(y)
+            if drawerPositions.count > 512 { drawerPositions.removeFirst() }
+        }
+    }
+    override var accessibilityValue: String? {
+        get { drawerPositions.map { String(format: "%.3f", $0) }.joined(separator: ",") }
+        set {}
+    }
     init() { super.init(frame: .zero); isAccessibilityElement = true; accessibilityIdentifier = "fixture.nativeMetrics"; isUserInteractionEnabled = false }
     required init?(coder: NSCoder) { fatalError() }
     override var accessibilityLabel: String? {

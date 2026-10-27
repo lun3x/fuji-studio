@@ -41,7 +41,7 @@ final class WorkspaceLayoutTests: XCTestCase {
                 return abs(app.buttons["drawer.toggle"].frame.minY - bottom - 8) <= 1
             }
             let side = app.cells.allElementsBoundByIndex.first!.frame.width
-            return abs(grid.frame.height - side * 2 - 19) <= 1
+            return abs(grid.frame.height - side) <= 1
         }
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: nil)], timeout: 5), .completed, file: file, line: line)
     }
@@ -75,10 +75,13 @@ final class WorkspaceLayoutTests: XCTestCase {
         let app = launch(), grid = app.collectionViews["photoGrid"]
         let side = tile(app, 0).frame.width, viewer = app.scrollViews["viewer.image"]
         XCTAssertTrue(viewer.waitForExistence(timeout: 10))
-        XCTAssertEqual(grid.frame.height, side * 2 + 19, accuracy: 0.5)
+        XCTAssertEqual(grid.frame.height, side, accuracy: 0.5)
         XCTAssertEqual(viewer.frame.width, grid.frame.width, accuracy: 0.5)
         XCTAssertEqual(tile(app, 0).frame.width, tile(app, 0).frame.height, accuracy: 0.5)
         let base = viewer.frame
+        let nextRow = tile(app, 3)
+        XCTAssertFalse(nextRow.isHittable)
+        if nextRow.exists { XCTAssertFalse(nextRow.frame.intersects(grid.frame)) }
         shot(app, "Workspace light collapsed")
         app.buttons["drawer.toggle"].tap()
         XCTAssertEqual(app.buttons["drawer.toggle"].value as? String, "Expanded")
@@ -192,7 +195,7 @@ final class WorkspaceLayoutTests: XCTestCase {
         let app = launch(["--fixture-accessibility", "--fixture-stale"])
         let grid = app.collectionViews["photoGrid"]
         let side = tile(app, 0).frame.width
-        XCTAssertEqual(grid.frame.height, side * 2 + 19, accuracy: 0.5)
+        XCTAssertEqual(grid.frame.height, side, accuracy: 0.5)
         XCTAssertTrue(app.buttons["workspace.select"].isHittable)
         XCTAssertTrue(app.buttons["workspace.export"].isHittable)
         app.buttons["drawer.toggle"].tap()
@@ -267,6 +270,60 @@ final class WorkspaceLayoutTests: XCTestCase {
             .press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.85)))
         XCTAssertEqual(header.value as? String, "Collapsed")
     }
+    private func drawerTrace(_ app: XCUIApplication) -> [Double] {
+        (app.otherElements["fixture.nativeMetrics"].value as? String ?? "").split(separator: ",").compactMap { Double($0) }
+    }
+    private func assertTrajectory(_ values: [Double], opening: Bool, file: StaticString = #filePath, line: UInt = #line) {
+        let attachment = XCTAttachment(string: values.description); attachment.name = "Native grid top during drawer gesture"; attachment.lifetime = .keepAlways; add(attachment)
+        XCTAssertGreaterThan(values.count, 6, "Must observe actual intermediate native frames", file: file, line: line)
+        for (previous, next) in zip(values, values.dropFirst()) {
+            if opening { XCTAssertLessThanOrEqual(next, previous + 1.5, "Opening must not jump back down on release", file: file, line: line) }
+            else { XCTAssertGreaterThanOrEqual(next, previous - 1.5, "Closing must not jump back up on release", file: file, line: line) }
+        }
+    }
+    func testFullExpansionReleaseDoesNotReverseOrJump() {
+        let app = launch(["--fixture-drawer-trace"]), handle = app.buttons["drawer.toggle"]
+        let before = drawerTrace(app)
+        handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).press(forDuration: 0.05,
+            thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.1)),
+            withVelocity: .slow, thenHoldForDuration: 0.3)
+        waitForDetent(app, expanded: true)
+        assertTrajectory(Array(drawerTrace(app).dropFirst(max(0, before.count - 1))), opening: true)
+        XCTAssertEqual(handle.value as? String, "Expanded")
+        XCTAssertFalse(app.staticTexts["Expand photos"].exists)
+        XCTAssertFalse(app.staticTexts["Collapse photos"].exists)
+    }
+    func testSlowPartialDragSettlesBackWithoutHeightReset() {
+        let app = launch(["--fixture-drawer-trace"]), handle = app.buttons["drawer.toggle"]
+        let before = drawerTrace(app), start = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4))
+        start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -70)),
+            withVelocity: XCUIGestureVelocity(rawValue: 40), thenHoldForDuration: 0.3)
+        XCTAssertEqual(handle.value as? String, "Collapsed")
+        waitForDetent(app, expanded: false)
+        let values = Array(drawerTrace(app).dropFirst(max(0, before.count - 1)))
+        let attachment = XCTAttachment(string: values.description); attachment.name = "Same-detent release frames"; attachment.lifetime = .keepAlways; add(attachment)
+        XCTAssertGreaterThan(values.count, 6)
+        XCTAssertEqual(values.first ?? -1, values.last ?? -2, accuracy: 0.5)
+        for (previous, next) in zip(values, values.dropFirst()) {
+            XCTAssertLessThanOrEqual(abs(next - previous), 30, "A slow 70-point drag must animate back rather than reset on release")
+        }
+    }
+    func testShortFlicksUseMomentumInBothDirections() {
+        let app = launch(["--fixture-drawer-trace"]), handle = app.buttons["drawer.toggle"]
+        var before = drawerTrace(app)
+        var start = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4))
+        start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -90)),
+            withVelocity: XCUIGestureVelocity(rawValue: 2000), thenHoldForDuration: 0)
+        XCTAssertEqual(handle.value as? String, "Expanded")
+        waitForDetent(app, expanded: true)
+        assertTrajectory(Array(drawerTrace(app).dropFirst(max(0, before.count - 1))), opening: true)
+        before = drawerTrace(app); start = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4))
+        start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: 90)),
+            withVelocity: XCUIGestureVelocity(rawValue: 2000), thenHoldForDuration: 0)
+        XCTAssertEqual(handle.value as? String, "Collapsed")
+        waitForDetent(app, expanded: false)
+        assertTrajectory(Array(drawerTrace(app).dropFirst(max(0, before.count - 1))), opening: false)
+    }
     func testActualViewportResizeKeepsGeometryAndControlsUsable() {
         let app = launch(["--fixture-compact"])
         let grid = app.collectionViews["photoGrid"]
@@ -274,7 +331,7 @@ final class WorkspaceLayoutTests: XCTestCase {
         app.buttons["fixture.resize"].tap()
         XCTAssertNotEqual(grid.frame, original)
         let side = tile(app, 0).frame.width
-        XCTAssertEqual(grid.frame.height, side * 2 + 19, accuracy: 0.5)
+        XCTAssertEqual(grid.frame.height, side, accuracy: 0.5)
         app.buttons["drawer.toggle"].tap()
         XCTAssertEqual(app.buttons["drawer.toggle"].value as? String, "Expanded")
         waitForDetent(app, expanded: true)

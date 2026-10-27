@@ -36,7 +36,7 @@ struct WorkspaceView: View {
             let toolbarTop = safe.top + 8
             // Consolidate chrome if the exact preferred rows leave less than a second measured
             // control stack for the photo and inline version/zoom controls.
-            let reservedRows = GridGeometry.metrics(width: width).height(rows: 2) + drawerHeaderHeight + safe.top + safe.bottom
+            let reservedRows = GridGeometry.metrics(width: width).tileHeight + drawerHeaderHeight + safe.top + safe.bottom
             let controlStack = toolbarHeight + recipeFrame.height + 16
             let compactControls = size.height < size.width || dynamicTypeSize.isAccessibilitySize || size.height - reservedRows < controlStack * 2
             let regularPhotoTop = toolbarTop + toolbarHeight + 8
@@ -52,7 +52,7 @@ struct WorkspaceView: View {
             // reserves their measured height; expansion covers this same fixed viewer frame.
             let inspectionReserve = compactControls && imageGeometry != nil ? max(44, inspectionHeight) + 8 + 44 : 0
             let available = size.height - safe.bottom - drawerHeaderHeight - controlFrame.maxY - DrawerGeometry.controlClearance - inspectionReserve
-            let gridMetrics = DrawerGeometry.gridMetrics(width: width, availableTwoRowHeight: available)
+            let gridMetrics = DrawerGeometry.gridMetrics(width: width, availableGridHeight: available)
             let detents = DrawerGeometry.detents(container: size, safeArea: safe, headerHeight: drawerHeaderHeight,
                 grid: gridMetrics, recipeControlFrame: controlFrame)
             let viewerHeight = max(1, size.height - detents.collapsedHeight - photoTop)
@@ -74,7 +74,7 @@ struct WorkspaceView: View {
                         }, header: { selectionHeader }, grid: {
                             PhotoGrid(sources: sources, checkedSourceIDs: state.checkedSourceIDs, isSelecting: state.isSelecting,
                                 viewedSourceID: state.viewedSourceID, thumbnails: thumbnails, scrollRequest: scrollRequest,
-                                gridMetrics: gridMetrics,
+                                gridMetrics: gridMetrics, bottomInset: state.drawerDetent == .expanded ? safe.bottom : 0,
                                 onSourceTapped: { onAction(.sourceTapped($0)) },
                                 onCheckedChanged: { onAction(.checkedSourcesReplaced($0)) }, onViewportChanged: onViewportChanged)
                         })

@@ -66,7 +66,7 @@ final class PhotoGridController: UIViewController, UICollectionViewDelegate, UIC
         if let request = pendingScroll {
             if let index = indices[request.sourceID] {
                 if request.afterViewportHeight.map({ abs($0 - collectionView.bounds.height) < 0.5 }) ?? true {
-                    let y = metrics.offsetToReveal(index: index, viewportHeight: collectionView.bounds.height,
+                    let y = metrics.offsetToReveal(index: index, viewportHeight: max(1, collectionView.bounds.height - collectionView.contentInset.bottom),
                         currentOffset: collectionView.contentOffset.y, itemCount: sources.count)
                     collectionView.setContentOffset(CGPoint(x: 0, y: y), animated: false)
                     pendingScroll = nil
@@ -75,9 +75,11 @@ final class PhotoGridController: UIViewController, UICollectionViewDelegate, UIC
         }
         publishViewport(); cacheVisible()
     }
-    func update(sources: [PhotoSource], checked: Set<SourceID>, selecting: Bool, viewed: SourceID?, scrollRequest: GridScrollRequest?, gridMetrics: GridMetrics? = nil) {
+    func update(sources: [PhotoSource], checked: Set<SourceID>, selecting: Bool, viewed: SourceID?, scrollRequest: GridScrollRequest?, gridMetrics: GridMetrics? = nil, bottomInset: CGFloat = 0) {
         loadViewIfNeeded()
         suppliedMetrics = gridMetrics
+        collectionView.contentInset.bottom = max(0, bottomInset)
+        collectionView.verticalScrollIndicatorInsets.bottom = max(0, bottomInset)
         let idsChanged = self.sources.map(\.id) != sources.map(\.id)
         let metadataChanged = self.sources != sources
         if sweeping && (idsChanged || !selecting) { finishSweep(cancelled: true) }
@@ -126,7 +128,7 @@ final class PhotoGridController: UIViewController, UICollectionViewDelegate, UIC
     }
     private func restoreAnchor(_ anchor: Anchor?) {
         guard let anchor, let id = anchor.candidates.first(where: { byID[$0] != nil }), let index = sources.firstIndex(where: { $0.id == id }) else { return }
-        let maxY = max(0, metrics.height(rows: metrics.contentRows(itemCount: sources.count)) - collectionView.bounds.height)
+        let maxY = max(0, metrics.height(rows: metrics.contentRows(itemCount: sources.count)) - collectionView.bounds.height + collectionView.contentInset.bottom)
         collectionView.contentOffset.y = min(maxY, max(0, metrics.rect(index: index).minY + anchor.delta))
     }
     private func publishViewport() {
@@ -198,7 +200,7 @@ final class PhotoGridController: UIViewController, UICollectionViewDelegate, UIC
     @objc private func edgeTick(_ link: CADisplayLink) {
         let edge: CGFloat = min(60, collectionView.bounds.height / 4)
         let velocity = finger.y < edge ? -max(0, 1 - finger.y / edge) : finger.y > collectionView.bounds.height - edge ? max(0, 1 - (collectionView.bounds.height - finger.y) / edge) : 0
-        let maxY = max(0, collectionView.contentSize.height - collectionView.bounds.height)
+        let maxY = max(0, collectionView.contentSize.height - collectionView.bounds.height + collectionView.contentInset.bottom)
         collectionView.contentOffset.y = min(maxY, max(0, collectionView.contentOffset.y + velocity * 650 * CGFloat(link.targetTimestamp - link.timestamp)))
         updateSweep()
     }

@@ -92,6 +92,23 @@ final class PhotoGridControllerTests: XCTestCase {
         controller.collectionView.contentOffset.y = 0; controller.view.layoutIfNeeded()
         XCTAssertEqual(controller.collectionView.cellForItem(at: IndexPath(item: 0, section: 0))?.accessibilityValue, "Checked")
     }
+    func testOneRowRevealKeepsViewedPhotoAboveHomeArea() {
+        let controller = PhotoGridController(thumbnails: GridThumbnailSpy())
+        let sources = (0..<120).map { source("source-\($0)") }
+        controller.update(sources: sources, checked: ["source-20"], selecting: true, viewed: "source-20",
+            scrollRequest: nil, bottomInset: 34)
+        let window = host(controller, height: 172.6666666667)
+        defer { controller.stop(); window.isHidden = true }
+        // Submit after attachment, as the workspace does when manually collapsing its drawer.
+        controller.update(sources: sources, checked: ["source-20"], selecting: true, viewed: "source-20",
+            scrollRequest: GridScrollRequest(sourceID: "source-20", afterViewportHeight: 172.6666666667), bottomInset: 34)
+        controller.view.setNeedsLayout(); controller.view.layoutIfNeeded()
+        // 3 columns, 122 2/3 pt squares: row 6 bottom 884 2/3, usable viewport 138 2/3.
+        XCTAssertEqual(controller.collectionView.contentOffset.y, 746, accuracy: 0.01)
+        let rect = controller.metrics.rect(index: 20)
+        XCTAssertLessThanOrEqual(rect.maxY - controller.collectionView.contentOffset.y, controller.collectionView.bounds.height - 34 + 0.5)
+        XCTAssertEqual(controller.collectionView.cellForItem(at: IndexPath(item: 20, section: 0))?.accessibilityValue, "Checked")
+    }
     func testLargestNativeTextBadgeStaysInsideSquareAndKeepsSpokenKind() {
         let controller = PhotoGridController(thumbnails: GridThumbnailSpy())
         controller.traitOverrides.preferredContentSizeCategory = .accessibilityExtraExtraExtraLarge

@@ -63,7 +63,7 @@ struct ZoomPhotoView: UIViewRepresentable {
         func attach(_ scroll: InspectionScrollView) {
             self.scroll = scroll
             scroll.delegate = self
-            scroll.backgroundColor = .black
+            scroll.backgroundColor = .systemBackground
             scroll.contentInsetAdjustmentBehavior = .never
             scroll.showsHorizontalScrollIndicator = false; scroll.showsVerticalScrollIndicator = false
             scroll.bouncesZoom = false; scroll.bounces = false
