@@ -156,8 +156,8 @@ actor ExportCoordinator {
             var job = try await catalog.job(id: id)
             for index in job.items.indices {
                 switch job.items[index].state {
-                case .preparing, .converting: job.items[index].state = .queued
-                case .failed, .cancelled, .unprocessed:
+                case .preparing, .converting, .unprocessed: job.items[index].state = .queued
+                case .failed, .cancelled:
                     if retryFailures { job.items[index].state = .queued }
                 default: break
                 }

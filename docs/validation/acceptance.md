@@ -132,8 +132,12 @@ one wheel attempt produced no scrolling. The user subsequently performed a real
 finger sweep across thumbnails and the next row on the installed reviewed build
 and confirmed: “All crossed photos become checked.” This supplies a bounded
 **human-observed range-selection pass**, separate from the remote drag attempts.
-Pan and vertical scrolling remain unverified; no cause is assigned to the remote
-input result, and the existing software tests are not weakened.
+The user then answered “Both work” when asked to confirm pinch zoom/pan of the
+main photo and vertical scrolling of the expanded grid on the installed
+`75fbd` build. This adds bounded human-observed pinch/pan and vertical-scroll
+passes. It is not a physical check of the later final-correction code, a precise
+region/detail measurement, or performance, rotation or VoiceOver evidence. No
+cause is assigned to the earlier remote-input result.
 
 These later interactions are outside the fixed 156-assertion audit snapshot.
 Normal Connect/C3 preview may involve native or cached work; the earlier identical
@@ -164,10 +168,10 @@ only to the observed inputs/context; unrelated variants remain open.
 | A08 viewed source without Select | Browse export/effective-selection tests. | **Bounded pass:** one deliberate viewed paired-B export through the actual model in Browse. |
 | A09 Select/Done/All/None/sweeps | Reducer, metadata All and grid/sweep tests. | **Bounded pass:** ordinary Select/Done, All (761), None (0); user confirmed all crossed thumbnails became checked during a real finger sweep across the next row. Remote endpoint-only drags remain separate observations. |
 | A10 unchanged thumbnail geometry | Native geometry assertions across selection modes. | **Partial:** two-row square grid looked unchanged when Select added checkboxes. Precise physical geometry measurement remains unrun. |
-| A11 square vertical rows/two collapsed rows | Measured native layout/long synthetic grid tests. | **Partial:** two collapsed/four expanded rows observed. Wheel attempt did not scroll; successful physical vertical scrolling/layout measurement remains unverified. |
+| A11 square vertical rows/two collapsed rows | Measured native layout/long synthetic grid tests. | **Partial:** two collapsed/four expanded rows observed. User confirmed expanded-grid vertical scrolling on installed `75fbd`; the earlier wheel attempt did not scroll. Precise layout/performance measurement remains unrun. |
 | A12 drawer overlay/framing | Native hosting/viewport/literal-detent tests. | **Partial:** ordinary expansion overlaid most of the viewer and manual collapse worked. Drag/accessibility paths remain unrun. |
 | A13 no automatic collapse/viewed reveal | Browse/Select and manual-collapse visibility tests. | **Bounded pass:** Done/source navigation kept the drawer expanded; manual collapse kept the viewed A tile visible. Broader navigation remains open. |
-| A14 detail/zoom/version region/reset | UIKit viewer finite-metric/detail/reset tests. | **Partial:** upright RAW/B display plus actual Zoom+, Fit and double-tap zoom/reset observed. Pinch/pan and exact region/detail comparison remain unrun. |
+| A14 detail/zoom/version region/reset | UIKit viewer finite-metric/detail/reset tests. | **Partial:** upright RAW/B display plus actual Zoom+, Fit and double-tap zoom/reset observed. User confirmed real pinch zoom/pan on installed `75fbd`; exact region/detail comparison remains unrun. |
 | A15 floating recipe menu | Native selection/clear/dismissal/padding/size tests. | **Partial:** actual floating seven-slot menu, C3 selection and No Recipe clear observed. Hardware Escape/accessibility remain unverified; simulator key synthesis did not deliver Escape or an independent control key. |
 | A16 frozen original-RAF job | Mixed-job/cache/revision/immutable snapshot tests. | **Partial:** actual live source hashes and frozen current recipe provenance verified. Real mixed Photos batch remains unrun. |
 | A17 full FINE geometry/orientation/fidelity | Strict profile/JPEG validation. | **Partial:** eight actual live FINE outputs and all-seven same-A Mac comparison passed. No Mac B reference or broader formats/firmware/lens proof. |

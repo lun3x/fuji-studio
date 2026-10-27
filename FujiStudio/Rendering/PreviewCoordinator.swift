@@ -20,7 +20,7 @@ struct PreviewEvent: Sendable, Equatable {
 
 actor PreviewCoordinator {
     /// Resolves existing paired JPEG/saved versions; RAW is always handled through the shared pool.
-    typealias StoredDisplay = @Sendable (PhotoSource, VersionID) async throws -> DisplayFileLease
+    typealias StoredDisplay = @Sendable (PhotoSource, VersionID, @escaping @Sendable (Double) -> Void) async throws -> DisplayFileLease
     private let pool: OriginalResourcePool
     private let camera: any CameraServing
     private let scheduler: any CameraWorkScheduling
@@ -31,6 +31,7 @@ actor PreviewCoordinator {
     private var currentJPEG: CameraJPEG?
     private var displayIntent: UInt64?
     private var generation: UInt64 = 0
+    private var loadingGeneration: UInt64?
     private var source: PhotoSource?
     private var observers: [UUID: AsyncStream<PreviewEvent>.Continuation] = [:]
     private(set) var displayedVersion: VersionID?
@@ -49,10 +50,18 @@ actor PreviewCoordinator {
     }
     private func removeObserver(_ id: UUID) { observers[id] = nil }
     private func emit(_ state: PreviewState, source: PhotoSource, generation: UInt64, version: VersionID?, request: WorkspacePreviewRequest?) {
+        switch state {
+        case .ready, .failed: if loadingGeneration == generation { loadingGeneration = nil }
+        default: break
+        }
         let file: DisplayFileLease? = if case .ready = state { currentDisplayFile } else { nil }
         let event = PreviewEvent(generation: generation, sourceID: source.id, version: version,
             workspaceRequest: request, state: state, displayFile: file, jpeg: file == nil ? nil : currentJPEG, displayIntent: displayIntent)
         observers.values.forEach { $0.yield(event) }
+    }
+    private func reportProgress(_ value: Double, source: PhotoSource, intent: UInt64, version: VersionID?, request: WorkspacePreviewRequest?) {
+        guard value.isFinite, generation == intent, loadingGeneration == intent else { return }
+        emit(.progress(max(0, min(1, value))), source: source, generation: intent, version: version, request: request)
     }
 
     /// The await spans completion. Concurrent calls supersede display intent immediately; queued
@@ -62,6 +71,7 @@ actor PreviewCoordinator {
         displayIntent = nil
         currentJPEG = nil
         let intent = generation
+        loadingGeneration = intent
         if self.source?.id != source.id || self.source?.resourceRevision != source.resourceRevision { displayedVersion = nil }
         self.source = source
         emit(.loading, source: source, generation: intent, version: recipe == nil ? .raw : nil, request: workspaceRequest)
@@ -73,7 +83,8 @@ actor PreviewCoordinator {
             if let recipe {
                 let jpeg = try await scheduler.withPreview {
                     try await self.requireCurrent(intent)
-                    return try await self.pool.withPreparedRAW(source: source, beforeMaterialize: { try await self.requireCurrent(intent) }) { raw in
+                    return try await self.pool.withPreparedRAW(source: source, beforeMaterialize: { try await self.requireCurrent(intent) },
+                        progress: { value in Task { await self.reportProgress(value, source: source, intent: intent, version: nil, request: workspaceRequest) } }) { raw in
                         try await self.requireCurrent(intent)
                         let context = try await self.camera.executionContext()
                         if let request = workspaceRequest, request.cameraContext != context { throw CameraServiceError.unsupportedContext }
@@ -85,7 +96,12 @@ actor PreviewCoordinator {
                         guard try await self.camera.executionContext() == context else { throw CameraServiceError.unsupportedContext }
                         try await self.requireCurrent(intent)
                         if let hit { return hit }
-                        let result = try await self.camera.render(raw: raw, recipe: recipe, policy: .fullSizeFineRecordedGeometry)
+                        // Display cancellation must reach PhotoKit preparation, but an admitted
+                        // native transaction owns its complete drain/quarantine/cleanup lifetime.
+                        // Await this independent task even if the display caller is cancelled;
+                        // the RAW lease and scheduler permit stay held until it actually returns.
+                        let native = Task { try await self.camera.render(raw: raw, recipe: recipe, policy: .fullSizeFineRecordedGeometry) }
+                        let result = try await native.value
                         let resultKey = result.key
                         guard resultKey.sourceID == raw.sourceID, resultKey.sourceRevision == raw.sourceRevision,
                               resultKey.sourceSHA256 == raw.sha256, resultKey.settingsDigest == recipe.settingsDigest,
@@ -130,6 +146,7 @@ actor PreviewCoordinator {
         currentJPEG = nil
         generation &+= 1
         let intent = generation
+        loadingGeneration = intent
         emit(.loading, source: source, generation: intent, version: version, request: nil)
         do { try await showStored(version, source: source, intent: intent) }
         catch {
@@ -140,9 +157,12 @@ actor PreviewCoordinator {
 
     private func showStored(_ version: VersionID, source: PhotoSource, intent: UInt64) async throws {
         let file: DisplayFileLease
+        let progress: @Sendable (Double) -> Void = { value in
+            Task { await self.reportProgress(value, source: source, intent: intent, version: version, request: nil) }
+        }
         switch version {
         case .raw:
-            file = try await pool.withPreparedRAW(source: source, beforeMaterialize: { try await self.requireCurrent(intent) }) { raw in
+            file = try await pool.withPreparedRAW(source: source, beforeMaterialize: { try await self.requireCurrent(intent) }, progress: progress) { raw in
                 try await self.requireCurrent(intent)
                 return try DisplayFileLease.copy(from: await self.rawRenderer.render(raw), geometry: ImageGeometry.raw(raw.metadata))
             }
@@ -151,7 +171,7 @@ actor PreviewCoordinator {
             file = try await cache.copyForDisplay(key)
         case .cameraJPEG, .saved:
             try requireCurrent(intent)
-            file = try await storedDisplay(source, version)
+            file = try await storedDisplay(source, version, progress)
         }
         guard generation == intent else { return }
         currentDisplayFile = file
@@ -166,6 +186,7 @@ actor PreviewCoordinator {
         currentDisplayFile = nil
         currentJPEG = nil
         displayIntent = nil
+        loadingGeneration = nil
     }
 
     private func requireCurrent(_ intent: UInt64) throws {

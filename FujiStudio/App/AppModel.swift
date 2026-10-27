@@ -123,6 +123,7 @@ import Observation
     }
 
     private func requestDisplay(_ request: WorkspacePreviewRequest?) {
+        displayTask?.cancel()
         displayIntent &+= 1
         let intent = displayIntent
         // Supersede intent in the coordinator; an already-active camera operation must drain.
@@ -164,6 +165,8 @@ import Observation
                     previewInFlight = false
                     state.reduce(.previewInterrupted)
                     if displayFile == nil { resolveFallbackOriginal() }
+                } else {
+                    imageStatus = Self.loadingMessage(event.state)
                 }
                 return
             }
@@ -182,7 +185,7 @@ import Observation
             if let file = event.displayFile, let version = event.version, let revision = state.viewedSourceRevision {
                 availableDisplay = AvailableDisplay(sourceID: event.sourceID, revision: revision, version: version, file: file)
             }
-        case .loading, .progress: imageStatus = "Loading image…"
+        case .loading, .progress: imageStatus = displayFailure ?? Self.loadingMessage(event.state)
         case .failed(let failure): displayFailure = Self.previewMessage(failure); imageStatus = displayFailure
         }
     }
@@ -341,6 +344,12 @@ import Observation
         guard state.canExport, !isSubmitting, !recovering, !isSuspended, let recipe = state.selectedRecipe else { return }
         isSubmitting = true
         let sources = state.effectiveSources, engine = environment.exports
+        // Revoke obsolete preparation before export reserves the shared scheduler/pool. An
+        // already admitted native render remains independently owned by PreviewCoordinator.
+        displayTask?.cancel(); displayIntent &+= 1; displayRequest = nil
+        if previewInFlight { state.reduce(.previewInterrupted); previewInFlight = false }
+        imageStatus = displayFile == nil ? "Image loading stopped. Select a version to retry." : displayFailure
+        await environment.preview.invalidate()
         let task = Task { try await engine.start(sources: sources, recipe: recipe) }
         submissionTask = task
         do {
@@ -419,6 +428,7 @@ import Observation
             foreground = false; isSuspended = true; restoreIdle()
             selectionIntent &+= 1; isSelectingAll = false; allTask?.cancel()
             displayIntent &+= 1
+            displayTask?.cancel(); displayRequest = nil
         }
         let preceding = sceneTask
         let task = Task { [weak self] in
@@ -525,6 +535,7 @@ import Observation
             if case .saved(let selected) = state.displayedVersion,
                let version = versions.first(where: { $0.id == selected }), version.availability != .available {
                 displayIntent &+= 1
+                displayTask?.cancel(); displayRequest = nil; availableDisplay = nil
                 displayFile = nil
                 imageStatus = "This saved image is unavailable. Manage Photos access to include it."
                 await environment.preview.invalidate()
@@ -558,5 +569,11 @@ import Observation
         case .cancelled: "Image loading stopped. Select a version to retry."
         case .unavailable: "This image is unavailable. Manage Photos access or select another version."
         }
+    }
+    private static func loadingMessage(_ state: PreviewState) -> String {
+        if case .progress(let value) = state, value.isFinite {
+            return "Downloading image… \(Int((max(0, min(1, value)) * 100).rounded()))%"
+        }
+        return "Loading image…"
     }
 }

@@ -276,15 +276,18 @@ was tapped, so the total Photos export count stays one.
 Two remote drag attempts selected only an endpoint and a wheel attempt did not
 scroll. The user subsequently confirmed on the installed reviewed build that all
 crossed photos became checked during a real finger sweep across thumbnails and
-the next row: a bounded human-observed range-selection pass. Pan and vertical
-scroll remain unverified; the remote-input cause is not asserted. These ordinary
-UI observations postdate the fixed
+the next row: a bounded human-observed range-selection pass. The user subsequently
+answered “Both work” to the explicit pinch zoom/pan of the main photo and expanded
+grid vertical-scroll check on installed `75fbd`. These are bounded human
+observations, not a physical pass of the later final-correction code or evidence
+for precise detail preservation, performance, rotation or VoiceOver. The earlier
+remote-input cause is not asserted. These ordinary UI observations postdate the fixed
 156-assertion snapshot. Normal C3 preview may involve native/cached camera work;
 the byte-identical journal proof applies only to the earlier reopen interval.
 
 Still NOT RUN: active Home/background/disconnect/unknown-save recovery,
 Photos chronological UI/tie order, nonnil GPS, limited/cloud cases, native
-vertical scroll/pinch/pan/rotation/VoiceOver/hardware-keyboard checks, broader
+rotation/VoiceOver/hardware-keyboard and precise detail checks, broader
 firmware/lens/aspect/
 compression classes and mixed-50-source Instruments measurements. This bounded
 pass does not close full device acceptance. All exact run/source/asset values,

@@ -101,7 +101,7 @@ actor VersionImageResolver {
     func resolve(source: PhotoSource, version: VersionID, progress: @escaping @Sendable (Double) -> Void = { _ in }) async throws -> ViewerFile {
         switch version {
         case .raw:
-            return try await pool.withPreparedRAW(source: source) { raw in
+            return try await pool.withPreparedRAW(source: source, progress: progress) { raw in
                 let url = try await self.rawRenderer.render(raw)
                 let geometry = ImageGeometry.raw(raw.metadata)
                 return ViewerFile(lease: try DisplayFileLease.copy(from: url, geometry: geometry), geometry: geometry)

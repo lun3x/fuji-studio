@@ -59,7 +59,7 @@ import Observation
         let scheduler = CameraWorkScheduler()
         let resolver = VersionImageResolver(library: reader, catalog: storage.0, pool: pool, rawRenderer: storage.2, cache: storage.1)
         let preview = PreviewCoordinator(pool: pool, camera: selectedCamera, scheduler: scheduler, cache: storage.1, rawRenderer: storage.2,
-            storedDisplay: { source, version in try await resolver.resolve(source: source, version: version).lease })
+            storedDisplay: { source, version, progress in try await resolver.resolve(source: source, version: version, progress: progress).lease })
         let exports = ExportCoordinator(reader: reader, camera: selectedCamera, catalog: storage.0, writer: writer, pool: pool, cache: storage.1, scheduler: scheduler)
         let platform = FixturePlatform()
         // Cached recipes exercise useful disconnected browsing, without selecting a recipe.

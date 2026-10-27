@@ -7,7 +7,7 @@ struct PreviewCoordinatorTests {
         let f = try RenderFixture(); defer { f.remove() }
         let cache = try f.cache(), latch = RenderLatch(), camera = RenderCamera(f, latch: latch), reader = RenderLibrary(f)
         let coordinator = PreviewCoordinator(pool: reader.pool(), camera: camera, scheduler: ImmediateCameraScheduler(), cache: cache,
-            rawRenderer: try RawDisplayRenderer(directory: f.root.appendingPathComponent("display")), storedDisplay: { _,_ in try DisplayFileLease.copy(from: f.raw.fileURL) })
+            rawRenderer: try RawDisplayRenderer(directory: f.root.appendingPathComponent("display")), storedDisplay: { _,_,_ in try DisplayFileLease.copy(from: f.raw.fileURL) })
         let request = WorkspacePreviewRequest(generation: 103, sourceID: f.source.id, sourceRevision: f.source.resourceRevision, recipe: f.recipe, cameraContext: f.context)
         var events = await coordinator.events().makeAsyncIterator()
         let pending = Task { await coordinator.request(source: f.source, recipe: f.recipe, workspaceRequest: request) }
@@ -26,7 +26,7 @@ struct PreviewCoordinatorTests {
     @Test func latestRecipeWinsAndReturnsOriginalExternalGenerationNotActorCounter() async throws {
         let f = try RenderFixture(); defer { f.remove() }
         let reader = RenderLibrary(f), camera = RenderCamera(f), cache = try f.cache()
-        let coordinator = PreviewCoordinator(pool: reader.pool(), camera: camera, scheduler: ImmediateCameraScheduler(), cache: cache, rawRenderer: try RawDisplayRenderer(directory: f.root.appendingPathComponent("display")), storedDisplay: { _,_ in try DisplayFileLease.copy(from: f.raw.fileURL) })
+        let coordinator = PreviewCoordinator(pool: reader.pool(), camera: camera, scheduler: ImmediateCameraScheduler(), cache: cache, rawRenderer: try RawDisplayRenderer(directory: f.root.appendingPathComponent("display")), storedDisplay: { _,_,_ in try DisplayFileLease.copy(from: f.raw.fileURL) })
         var events = await coordinator.events().makeAsyncIterator()
         let external = WorkspacePreviewRequest(generation: 78, sourceID: f.source.id, sourceRevision: f.source.resourceRevision, recipe: f.recipe, cameraContext: f.context)
         await coordinator.request(source: f.source, recipe: f.recipe, workspaceRequest: external)
@@ -39,7 +39,7 @@ struct PreviewCoordinatorTests {
     @Test func staleExternalContextDoesNotReadCacheOrRender() async throws {
         let f = try RenderFixture(); defer { f.remove() }
         let reader = RenderLibrary(f), camera = RenderCamera(f), cache = try f.cache()
-        let coordinator = PreviewCoordinator(pool: reader.pool(), camera: camera, scheduler: ImmediateCameraScheduler(), cache: cache, rawRenderer: try RawDisplayRenderer(directory: f.root.appendingPathComponent("display")), storedDisplay: { _,_ in try DisplayFileLease.copy(from: f.raw.fileURL) })
+        let coordinator = PreviewCoordinator(pool: reader.pool(), camera: camera, scheduler: ImmediateCameraScheduler(), cache: cache, rawRenderer: try RawDisplayRenderer(directory: f.root.appendingPathComponent("display")), storedDisplay: { _,_,_ in try DisplayFileLease.copy(from: f.raw.fileURL) })
         let newer = CameraExecutionContext(model: f.context.model, firmware: f.context.firmware, capability: f.context.capability, supportVersion: f.context.supportVersion, sessionIdentity: UUID(), generation: 2)
         await camera.changeContext(newer)
         let request = WorkspacePreviewRequest(generation: 9, sourceID: f.source.id, sourceRevision: f.source.resourceRevision, recipe: f.recipe, cameraContext: f.context)
@@ -56,7 +56,7 @@ extension PreviewCoordinatorTests {
         let holder = Task { try await gate.withExclusiveAccess { await latch.wait() } }
         await latch.entered()
         let coordinator = PreviewCoordinator(pool: reader.pool(), camera: camera, scheduler: GatedCameraScheduler(gate: gate), cache: cache,
-            rawRenderer: try RawDisplayRenderer(directory: f.root.appendingPathComponent("display")), storedDisplay: { _,_ in try DisplayFileLease.copy(from: f.raw.fileURL) })
+            rawRenderer: try RawDisplayRenderer(directory: f.root.appendingPathComponent("display")), storedDisplay: { _,_,_ in try DisplayFileLease.copy(from: f.raw.fileURL) })
         var events = await coordinator.events().makeAsyncIterator()
         let first = Task { await coordinator.request(source: f.source, recipe: f.recipe) }
         _ = await events.next()
@@ -83,7 +83,7 @@ extension PreviewCoordinatorTests {
         let original = try f.jpeg(); try await cache.store(original, key: original.key)
         let renamed = f.recipe(named: "Renamed")
         let coordinator = PreviewCoordinator(pool: reader.pool(), camera: camera, scheduler: ImmediateCameraScheduler(), cache: cache,
-            rawRenderer: try RawDisplayRenderer(directory: f.root.appendingPathComponent("display")), storedDisplay: { _,_ in try DisplayFileLease.copy(from: f.raw.fileURL) })
+            rawRenderer: try RawDisplayRenderer(directory: f.root.appendingPathComponent("display")), storedDisplay: { _,_,_ in try DisplayFileLease.copy(from: f.raw.fileURL) })
         let request = WorkspacePreviewRequest(generation: 99, sourceID: f.source.id, sourceRevision: f.source.resourceRevision, recipe: renamed, cameraContext: f.context)
         var events = await coordinator.events().makeAsyncIterator()
         await coordinator.request(source: f.source, recipe: renamed, workspaceRequest: request)
@@ -103,7 +103,7 @@ extension PreviewCoordinatorTests {
         let f = try RenderFixture(); defer { f.remove() }
         let reader = RenderLibrary(f), camera = RenderCamera(f), cache = try f.cache()
         let coordinator = PreviewCoordinator(pool: reader.pool(), camera: camera, scheduler: ImmediateCameraScheduler(), cache: cache,
-            rawRenderer: try RawDisplayRenderer(directory: f.root.appendingPathComponent("display")), storedDisplay: { _,_ in try DisplayFileLease.copy(from: f.raw.fileURL) })
+            rawRenderer: try RawDisplayRenderer(directory: f.root.appendingPathComponent("display")), storedDisplay: { _,_,_ in try DisplayFileLease.copy(from: f.raw.fileURL) })
         await coordinator.request(source: f.source, recipe: f.recipe)
         await coordinator.selectStoredVersion(.cameraJPEG, source: f.source)
         var events = await coordinator.events().makeAsyncIterator()
@@ -125,7 +125,7 @@ extension PreviewCoordinatorTests {
         let wrong = f.key(hash: "other-source-bytes")
         await camera.overrideResult(wrong)
         let coordinator = PreviewCoordinator(pool: reader.pool(), camera: camera, scheduler: ImmediateCameraScheduler(), cache: cache,
-            rawRenderer: try RawDisplayRenderer(directory: f.root.appendingPathComponent("display")), storedDisplay: { _,_ in try DisplayFileLease.copy(from: f.raw.fileURL) })
+            rawRenderer: try RawDisplayRenderer(directory: f.root.appendingPathComponent("display")), storedDisplay: { _,_,_ in try DisplayFileLease.copy(from: f.raw.fileURL) })
         await coordinator.request(source: f.source, recipe: f.recipe)
         #expect(await coordinator.displayedVersion == nil)
         #expect(await cache.lookup(wrong) == nil)
@@ -140,7 +140,7 @@ extension PreviewCoordinatorTests {
         let holder = Task { try await pool.withPreparedRAW(source: f.source) { _ in await latch.wait() } }
         await latch.entered()
         let coordinator = PreviewCoordinator(pool: pool, camera: camera, scheduler: ImmediateCameraScheduler(), cache: cache,
-            rawRenderer: try RawDisplayRenderer(directory: f.root.appendingPathComponent("display")), storedDisplay: { _,_ in try DisplayFileLease.copy(from: f.raw.fileURL) })
+            rawRenderer: try RawDisplayRenderer(directory: f.root.appendingPathComponent("display")), storedDisplay: { _,_,_ in try DisplayFileLease.copy(from: f.raw.fileURL) })
         let obsolete = Task { await coordinator.request(source: f.source, recipe: f.recipe) }
         while await gate.queuedOperationCount != 1 { await Task.yield() }
         let latest = Task { await coordinator.request(source: f.source, recipe: f.recipe) }
@@ -161,7 +161,7 @@ extension PreviewCoordinatorTests {
         let holder = Task { try await pool.withPreparedRAW(source: f.source) { _ in await latch.wait() } }
         await latch.entered()
         let coordinator = PreviewCoordinator(pool: pool, camera: camera, scheduler: ImmediateCameraScheduler(), cache: cache,
-            rawRenderer: try RawDisplayRenderer(directory: f.root.appendingPathComponent("display")), storedDisplay: { _,_ in try DisplayFileLease.copy(from: f.raw.fileURL) })
+            rawRenderer: try RawDisplayRenderer(directory: f.root.appendingPathComponent("display")), storedDisplay: { _,_,_ in try DisplayFileLease.copy(from: f.raw.fileURL) })
         let raw = Task { await coordinator.request(source: f.source, recipe: nil) }
         while await gate.queuedOperationCount != 1 { await Task.yield() }
         await coordinator.selectStoredVersion(.cameraJPEG, source: f.source)
@@ -178,7 +178,7 @@ extension PreviewCoordinatorTests {
         let f = try RenderFixture(); defer { f.remove() }
         let cache = try f.cache(), reader = RenderLibrary(f), camera = RenderCamera(f)
         let coordinator = PreviewCoordinator(pool: reader.pool(), camera: camera, scheduler: ImmediateCameraScheduler(), cache: cache,
-            rawRenderer: try RawDisplayRenderer(directory: f.root.appendingPathComponent("display")), storedDisplay: { _,_ in try DisplayFileLease.copy(from: f.raw.fileURL) })
+            rawRenderer: try RawDisplayRenderer(directory: f.root.appendingPathComponent("display")), storedDisplay: { _,_,_ in try DisplayFileLease.copy(from: f.raw.fileURL) })
         var events = await coordinator.events().makeAsyncIterator()
         let request = WorkspacePreviewRequest(generation: 77, sourceID: f.source.id, sourceRevision: f.source.resourceRevision, recipe: f.recipe, cameraContext: f.context)
         await coordinator.request(source: f.source, recipe: f.recipe, workspaceRequest: request)

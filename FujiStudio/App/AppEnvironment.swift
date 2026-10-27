@@ -66,7 +66,7 @@ import UIKit
         let scheduler = CameraWorkScheduler()
         let resolver = VersionImageResolver(library: reader, catalog: storage.0, pool: pool, rawRenderer: storage.3, cache: storage.1)
         let preview = PreviewCoordinator(pool: pool, camera: camera, scheduler: scheduler, cache: storage.1, rawRenderer: storage.3,
-            storedDisplay: { source, version in try await resolver.resolve(source: source, version: version).lease })
+            storedDisplay: { source, version, progress in try await resolver.resolve(source: source, version: version, progress: progress).lease })
         let exports = ExportCoordinator(reader: reader, camera: camera, catalog: storage.0, writer: PhotoLibraryWriter(), pool: pool, cache: storage.1, scheduler: scheduler)
         return AppEnvironment(reader: reader, camera: camera, catalog: storage.0, originals: pool, preview: preview, resolver: resolver,
             exports: exports, cache: storage.1, thumbnails: ThumbnailProvider(), platform: NativeAppPlatform())

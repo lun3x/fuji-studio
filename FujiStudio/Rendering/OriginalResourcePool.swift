@@ -33,7 +33,8 @@ actor OriginalResourcePool {
         observers.values.forEach { $0.yield(detected) }
     }
     /// Revalidate queued work only after the resource permit is acquired, before any download.
-    func withPreparedRAW<T: Sendable>(source: PhotoSource, beforeMaterialize: @Sendable () async throws -> Void = {}, operation: @Sendable (PreparedRAW) async throws -> T) async throws -> T {
+    func withPreparedRAW<T: Sendable>(source: PhotoSource, beforeMaterialize: @Sendable () async throws -> Void = {},
+        progress: @escaping @Sendable (Double) -> Void = { _ in }, operation: @Sendable (PreparedRAW) async throws -> T) async throws -> T {
         try await gate.withExclusiveAccess {
             try Task.checkCancellation()
             try await beforeMaterialize()
@@ -42,7 +43,7 @@ actor OriginalResourcePool {
             let token = source.originalResources.raf
             guard token.assetID == source.id, token.sourceRevision == source.resourceRevision,
                   token.format == .raf, token.role != .adjusted else { throw ResourceError.resourceChanged }
-            let resource = try await self.reader.materialize(token, progress: { _ in })
+            let resource = try await self.reader.materialize(token, progress: progress)
             defer { try? FileManager.default.removeItem(at: resource.fileURL) }
             try Task.checkCancellation()
             guard resource.token == token else { throw ResourceError.resourceChanged }

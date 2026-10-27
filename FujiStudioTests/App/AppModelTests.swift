@@ -347,7 +347,7 @@ import Testing
         #expect(model.state.displayedVersion == .cameraJPEG)
         #expect(model.state.selectedRecipe == nil)
         await barrier.release()
-        await eventually { await f.reader.materializations == 2 }
+        await eventually { await f.reader.materializations == (held ? 1 : 2) }
         try await Task.sleep(for: .milliseconds(50))
         #expect(model.displayFile === replacement)
         #expect(try Data(contentsOf: replacement.fileURL) == expected)
