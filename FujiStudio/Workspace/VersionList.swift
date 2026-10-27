@@ -8,7 +8,11 @@ struct VersionList: View {
         let label: String
         let accessibilityIdentifier: String
         var subtitle: String? = nil
-        var accessibilityLabel: String { subtitle.map { label + ", " + $0 } ?? label }
+        var recipeSlot: Int? = nil
+        var accessibilityLabel: String {
+            let title = recipeSlot.map { "C\($0) \(label)" } ?? label
+            return subtitle.map { title + ", " + $0 } ?? title
+        }
     }
     let source: PhotoSource
     let saved: [SavedVersion]
@@ -39,9 +43,10 @@ struct VersionList: View {
             let peers = labels.indices.filter { labels[$0] == base && timestamps[$0] == timestamps[index] }
             let ordinal = peers.count > 1 ? " · Export \((peers.firstIndex(of: index) ?? 0) + 1)" : ""
             let availability = version.availability == .available ? "" : " · unavailable (\(version.availability.rawValue))"
-            result.append(Entry(id: .saved(version.id), label: base,
+            result.append(Entry(id: .saved(version.id), label: version.recipeSnapshot.name,
                 accessibilityIdentifier: "version.saved.\(version.id.uuidString)",
-                subtitle: timestamps[index] + ordinal + availability))
+                subtitle: timestamps[index] + ordinal + availability,
+                recipeSlot: version.recipeSnapshot.slot))
         }
         if let preview, preview.sourceID == source.id, preview.sourceRevision == source.resourceRevision,
            preview.key.sourceID == source.id, preview.key.sourceRevision == source.resourceRevision {
@@ -52,20 +57,31 @@ struct VersionList: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                Text("Image versions").font(.headline).padding()
+            VStack(alignment: .trailing, spacing: 0) {
+                Text("Image versions").font(.headline)
+                    .frame(maxWidth: .infinity, alignment: .trailing).padding()
                 ForEach(entries) { entry in
                     Button { onVersionSelected(entry.id) } label: {
                         HStack(alignment: .firstTextBaseline) {
-                            VStack(alignment: .leading, spacing: 4) {
+                            Image(systemName: "checkmark")
+                                .opacity(selected == entry.id ? 1 : 0).accessibilityHidden(true)
+                            Spacer(minLength: 8)
+                            VStack(alignment: .trailing, spacing: 4) {
                                 Text(entry.label)
                                 if let subtitle = entry.subtitle {
                                     Text(subtitle).font(.caption).foregroundStyle(.secondary)
                                 }
                             }.fixedSize(horizontal: false, vertical: true)
-                            Spacer(minLength: 8)
-                            if selected == entry.id { Image(systemName: "checkmark").accessibilityHidden(true) }
-                        }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            if let slot = entry.recipeSlot {
+                                Text("C\(slot)")
+                                    .font(.caption.monospaced().weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                    .padding(.horizontal, 6).padding(.vertical, 3)
+                                    .background(Color(uiColor: .secondarySystemFill), in: RoundedRectangle(cornerRadius: 4))
+                                    .fixedSize()
+                                    .accessibilityHidden(true)
+                            }
+                        }.frame(maxWidth: .infinity, minHeight: 44, alignment: .trailing)
                             .padding(.horizontal).padding(.vertical, 8).contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -74,6 +90,7 @@ struct VersionList: View {
                     .accessibilityAddTraits(selected == entry.id ? .isSelected : [])
                 }
             }
+            .multilineTextAlignment(.trailing)
         }
         .accessibilityIdentifier("version.options")
         .frame(idealWidth: 320, maxHeight: 520)

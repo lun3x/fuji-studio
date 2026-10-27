@@ -30,7 +30,7 @@ struct VersionListTests {
         #expect(Set(entries.map(\.accessibilityLabel)).count == 3)
         #expect(entries.first { $0.id == .saved(a.id) }?.subtitle == "27/10/26 13:39 · Export 1")
         #expect(entries.first { $0.id == .saved(b.id) }?.subtitle == "27/10/26 13:39 · Export 2")
-        #expect(entries.allSatisfy { $0.label == "C7 Job chosen name" })
+        #expect(entries.allSatisfy { $0.label == "Job chosen name" && $0.recipeSlot == 7 })
         #expect(entries.contains { $0.subtitle?.contains("unavailable") == true })
         let local = VersionList(source: f.source, saved: [a], preview: nil,
             timeZone: TimeZone(secondsFromGMT: 3600)!).entries.first { $0.id == .saved(a.id) }
