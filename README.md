@@ -60,9 +60,10 @@ integration corrections with no new findings:
 
 Software review is clear; the branch remains unmerged. The controller signed,
 verified and installed exact `86eacb7a` on the phone. A normal launch attempt
-while locked timed out; the user later reported the phone unlocked and Fuji
-Studio open. That report does not establish a current-code conversion/export or
-complete device acceptance.
+while locked timed out. After the user unlocked and opened Fuji Studio, the
+controller directly observed the normal library UI with live thumbnails. This
+confirms launch and library loading only; current-code interaction, conversion
+and export acceptance remain open.
 
 The earlier physical preview/export/reopen evidence belongs to reviewed
 `75fbd61b`. The controller completed seven temporary same-source recipe previews

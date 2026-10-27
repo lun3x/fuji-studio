@@ -61,9 +61,15 @@ notices are not claimed absent.
 The controller subsequently signed exact `86eacb7a`, verified its code signature
 (exit 0), and installed it successfully on the physical phone. Normal launch
 while the phone was locked timed out after 20 seconds (exit 2). The user then
-reported the phone unlocked and Fuji Studio open. No independent current-code UI
-smoke result, native conversion or Photos export is established by this record;
-the earlier physical evidence below retains its original revision and limits.
+reported the phone unlocked and Fuji Studio open. The controller then directly
+observed the exact installed build in the normal Photos route: light theme, live
+photo thumbnails with RAF and RAW+JPEG badges, camera disconnected, Browse with
+selection count 0, All enabled and None disabled. This confirms **launch and
+library UI loading only**. Device Hub remote clicks on All and a paired thumbnail
+produced no visible state transition; they establish no current physical
+selection/version-interaction pass, and no cause is assigned. No additional
+Photos writes or native conversions were performed. The earlier physical
+interaction and native evidence below retains its original revision and limits.
 
 ### Earlier software chronology
 
