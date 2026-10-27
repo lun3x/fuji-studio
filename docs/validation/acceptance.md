@@ -1,9 +1,10 @@
 # Fuji Studio acceptance record
 
 Recorded 2026-10-27. **Software review is clear at `86eacb7a`; device acceptance
-is incomplete.** The bounded physical preview/export/reopen and later human
-interaction evidence belongs to `75fbd61b`. The remaining matrix below prevents
-that earlier result from being mistaken for current-code or complete product
+is incomplete.** The original physical preview/export/reopen and later human
+interaction evidence belongs to `75fbd61b`. A later ordinary-app two-source C3
+mixed batch passed on `86eacb7a`; a C4 Home interruption is paused with recovery
+still in progress. These bounded results do not establish complete product
 acceptance.
 
 The accepted app composition entered Task13 at `fd94d301`. Earlier paired local
@@ -68,7 +69,7 @@ selection count 0, All enabled and None disabled. This confirms **launch and
 library UI loading only**. Device Hub remote clicks on All and a paired thumbnail
 produced no visible state transition; they establish no current physical
 selection/version-interaction pass, and no cause is assigned. No additional
-Photos writes or native conversions were performed. The earlier physical
+Photos writes or native conversions were performed during that launch check. The earlier physical
 interaction and native evidence below retains its original revision and limits.
 
 ### Earlier software chronology
@@ -115,6 +116,25 @@ counts and diagnostic classifications remain in the Task13 report. Known
 AppIntents/SDK/simulator notices and deliberate invalid-RAW decoder diagnostics
 are not claimed absent. Final complete and targeted logs contain zero unsafe
 SQLite warning patterns.
+
+## Current native mixed batch and interruption
+
+The ordinary physical app at `86eacb7a` completed one C3 export job containing
+the known standalone RAW and RAW+JPEG sources: **2 saved, 0 failed, 0 cancelled,
+0 remaining, 0 unconfirmed**. Both visible status and human report agree with
+the copied catalog's one new job and two distinct saved associations. Native
+records bind the frozen recipe, exact retained source hashes, full FINE geometry,
+candidate readbacks and owned-output cleanup. One source used its cached preview;
+this is not a two-fresh-conversion performance run. Original resource descriptors
+and the previous saved job/version remain unchanged.
+
+A separately deliberate C4 job was interrupted with physical Home and reopened:
+**0 saved, 2 remaining**, with an uncertain timed-out camera operation and confirmed
+native close. The app retained the existing job, blocked Resume until camera
+readiness, and created no additional saved version. Explicit camera reconciliation
+and remaining-item recovery are in progress. This is camera uncertainty, not an
+observed uncertain PhotoKit transaction. See the [native validation record](native-batch-recovery.md)
+for the exact scope and remaining proof.
 
 ## Original `75fbd61b` live run and evidence boundaries
 
@@ -202,14 +222,14 @@ full hashes, profile values and media.
 ## A01–A24 traceability
 
 “Software covered” does not replace physical proof. A bounded pass below applies
-only to the observed inputs/context on the recorded original revisions; these
-physical rows do not establish a pass for corrected `86eacb7a`. Unrelated
-variants remain open.
+only to the observed inputs/context on the recorded revisions. Physical rows
+refer to earlier evidence unless they explicitly identify the current-code C3
+batch or C4 interruption. Unrelated variants remain open.
 
 | Check | Software evidence | Physical status and remaining proof |
 | --- | --- | --- |
 | A01 paired RAF retrieval | Original-role selection/discovery/transfer tests keep a pair one source. | **Partial:** actual paired original roles/revisions/hashes verified, including the live conversion. Limited/cloud variants remain unrun. |
-| A02 mixed standalone/pair batch | Frozen mixed-source tests; shared original pool. | **Partial:** both retained sources converted in production and the live run. A real mixed export job remains unrun. |
+| A02 mixed standalone/pair batch | Frozen mixed-source tests; shared original pool. | **Bounded pass:** ordinary current-code C3 job saved the two known standalone/paired sources; one fresh render and one cached preview. Larger and broader batches remain open. |
 | A03 seven recipes, unchanged banks | Atomic import/catalog and fresh-session assertions. | **Bounded pass:** current live C1–C7 imports/previews; all seven names and 23 fields preserved. Broader settings remain unproved. |
 | A04 original default/clear, zero preview saves | Reducer/AppModel/preview tests; no-recipe Export disabled. | **Bounded pass:** original defaults and seven no-save previews passed; ordinary No Recipe restored RAW and disabled Export while camera-ready. |
 | A05 late render/navigation safety | Generation/revision/manual-version regressions. | **Not run:** fast physical interaction with real camera/library. |
@@ -223,13 +243,13 @@ variants remain open.
 | A13 no automatic collapse/viewed reveal | Browse/Select and manual-collapse visibility tests. | **Bounded pass:** Done/source navigation kept the drawer expanded; manual collapse kept the viewed A tile visible. Broader navigation remains open. |
 | A14 detail/zoom/version region/reset | UIKit viewer finite-metric/detail/reset tests. | **Partial:** upright RAW/B display plus actual Zoom+, Fit and double-tap zoom/reset observed. User confirmed real pinch zoom/pan on installed `75fbd`; exact region/detail comparison remains unrun. |
 | A15 floating recipe menu | Native selection/clear/dismissal/padding/size tests. | **Partial:** actual floating seven-slot menu, C3 selection and No Recipe clear observed. Hardware Escape/accessibility remain unverified; simulator key synthesis did not deliver Escape or an independent control key. |
-| A16 frozen original-RAF job | Mixed-job/cache/revision/immutable snapshot tests. | **Partial:** actual live source hashes and frozen current recipe provenance verified. Real mixed Photos batch remains unrun. |
+| A16 frozen original-RAF job | Mixed-job/cache/revision/immutable snapshot tests. | **Bounded pass:** current-code two-source C3 job retained exact source hashes and one frozen recipe through both saved associations. Physical recipe changes during active export remain open. |
 | A17 full FINE geometry/orientation/fidelity | Strict profile/JPEG validation. | **Partial:** eight actual live FINE outputs and all-seven same-A Mac comparison passed. No Mac B reference or broader formats/firmware/lens proof. |
 | A18 new asset/source preserved/date/location | Writer/journal/original-resource tests. | **Partial:** one new asset, exact bytes, original capture date and unchanged originals passed on device. Location absence preserved; nonnil GPS case remains unrun. |
 | A19 Date Captured chronology | Writer preserves effective Photos capture date. | **Partial:** exact date equality passed on device; Photos chronological UI/tie ordering remain unobserved. |
 | A20 cancel/retry/uncertain save | Crash-window/exact-lookup/pin/no-replay tests. | **Partial:** successful saved-run read-only reopen passed. Actual uncertain save, active cancellation and retry/reconciliation remain unrun. |
 | A21 actionable failure states | Authorization/cloud/storage/transport fixtures. | **Partial:** historical transport/reconnect and incompatible-model refusal, plus explicit unarmed validation failure. Current app limited/cloud/wrong-mode/disconnect matrix remains unrun. |
-| A22 suspension preserves truthful outcome | Injected-scene/admission/held-save/recovery tests; authoritative-close regression. | **Not run:** active physical Home/background/disconnect interruption. Terminating after completion is not this proof; native simulator Home remains skipped. |
+| A22 suspension preserves truthful outcome | Injected-scene/admission/held-save/recovery tests; authoritative-close regression. | **Partial:** physical Home during the current C4 job left 0 saved/2 remaining; camera timeout/uncertainty and confirmed close were retained, with Resume blocked. Explicit reconciliation/resume remains in progress; disconnect/uncertain-Photos windows remain open. |
 | A23 orientation/accessibility controls | Largest-text/dark/compact native tests. | **Not run:** native rotation, VoiceOver, Reduce Motion/Transparency, contrast and hardware-keyboard physical checks. Screenshot/resize is not interaction evidence. |
 | A24 bounded operation/scrolling/zero saves | Shared pool/scheduler/cache and sequential-export tests. | **Partial:** seven physical previews produced no Photos assets. Mixed-50-source Instruments memory/cache/latency/concurrency/scrolling measurements remain unrun. |
 
