@@ -48,6 +48,11 @@ All and None, including the full-library scan
 triggered by All, have been removed. Tap and range selection retain the existing
 viewed photo and scrolling behavior. See the
 [selection design](docs/superpowers/specs/2026-10-27-photos-selection-design.md).
+The selection implementation passed **439 tests, 3 established skips, 0
+failures**; the count-only follow-up passed three focused UI cases. Final
+Release and signed phone builds passed, and the refined build is installed on
+the phone. See the [selection validation](docs/validation/photos-selection.md)
+for the exact gate boundaries and screenshot evidence.
 
 The native workspace composes the real Photos reader/writer, X-T5 camera
 service, preview/export coordinators and durable local catalog. The workspace layout
