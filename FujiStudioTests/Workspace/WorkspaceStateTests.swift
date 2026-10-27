@@ -245,21 +245,120 @@ struct WorkspaceStateTests {
         #expect(state.canExport)
     }
 
-    @Test func recipesFromDifferentCameraSessionRequireRefreshBeforeExportOrPreview() throws {
+    @Test func compatibleReconnectUsesRetainedRecipeAfterFailedRefreshAndRejectsOldContext() throws {
         let f = try WorkspaceFixture()
         var state = f.state()
-        state.reduce(.sourceTapped("viewed"))
-        let other = CameraExecutionContext(model: f.context.model, firmware: f.context.firmware,
+        let old = try #require(preview(in: state.reduce(.sourceTapped("viewed"))))
+        state.reduce(.cameraChanged(.disconnected, context: nil))
+        let reconnected = CameraExecutionContext(model: f.context.model, firmware: f.context.firmware,
             capability: f.context.capability, supportVersion: f.context.supportVersion,
-            sessionIdentity: UUID(), generation: f.context.generation)
-        #expect(state.reduce(.cameraChanged(.ready(f.session), context: other)).isEmpty)
-        #expect(state.exportDisabledReason == .recipeCameraMismatch)
-        #expect(state.selectedRecipe?.id == f.recipes[2].id)
+            sessionIdentity: UUID(), generation: 2)
+        let session = CameraSession(generation: 2, connection: f.session.connection)
+        state.reduce(.recipeRefreshFailed("Synthetic refresh failure"))
+        let effects = state.reduce(.cameraChanged(.ready(session), context: reconnected))
+        #expect(state.canExport)
+        #expect(state.selectedRecipe == f.recipes[2])
+        #expect(state.recipes == f.recipes)
+        #expect(state.recipeRefreshState == .stale("Synthetic refresh failure"))
+        let latest = try #require(preview(in: effects))
+        #expect(latest.cameraContext == reconnected)
+        #expect(latest.recipe.cameraContext == old.recipe.cameraContext)
+        state.reduce(.previewCompleted(request: old, key: f.key(old)))
+        #expect(state.displayedVersion == .cameraJPEG)
+        state.reduce(.previewCompleted(request: latest, key: f.key(latest)))
+        #expect(state.displayedVersion == .preview(f.key(latest)))
+    }
+
+    @Test func incompatibleReconnectStillRequiresSupportedCameraAndMatchingNativeGeneration() throws {
+        let f = try WorkspaceFixture()
+        for (model, firmware, capability, support) in [
+            ("X-T4", f.context.firmware, f.context.capability, f.context.supportVersion),
+            (f.context.model, "wrong", f.context.capability, f.context.supportVersion),
+            (f.context.model, f.context.firmware, "wrong", f.context.supportVersion),
+            (f.context.model, f.context.firmware, f.context.capability, "wrong")
+        ] {
+            var state = f.state()
+            state.reduce(.sourceTapped("viewed"))
+            let context = CameraExecutionContext(model: model, firmware: firmware, capability: capability,
+                supportVersion: support, sessionIdentity: UUID(), generation: 1)
+            #expect(state.reduce(.cameraChanged(.ready(f.session), context: context)).isEmpty)
+            #expect(state.exportDisabledReason == .recipeCameraMismatch)
+        }
+        var state = f.state()
+        state.reduce(.sourceTapped("viewed"))
         let wrongGeneration = CameraExecutionContext(model: f.context.model, firmware: f.context.firmware,
             capability: f.context.capability, supportVersion: f.context.supportVersion,
-            sessionIdentity: f.context.sessionIdentity, generation: 2)
+            sessionIdentity: UUID(), generation: 2)
         #expect(state.reduce(.cameraChanged(.ready(f.session), context: wrongGeneration)).isEmpty)
         #expect(state.exportDisabledReason == .cameraContextUnavailable)
+    }
+
+    @Test func ownBusyReadyCyclePreservesPreviewWithEitherCompletionOrderAndNeverRequeuesIt() throws {
+        let f = try WorkspaceFixture()
+        for completionBeforeReady in [false, true] {
+            var state = f.state()
+            let request = try #require(preview(in: state.reduce(.sourceTapped("viewed"))))
+            #expect(state.reduce(.cameraChanged(.busy(f.session), context: f.context)).isEmpty)
+            #expect(state.exportDisabledReason == .cameraNotReady)
+            if completionBeforeReady {
+                state.reduce(.previewCompleted(request: request, key: f.key(request)))
+                #expect(state.displayedVersion == .preview(f.key(request)))
+            }
+            #expect(state.reduce(.cameraChanged(.ready(f.session), context: f.context)).isEmpty)
+            if !completionBeforeReady {
+                state.reduce(.previewCompleted(request: request, key: f.key(request)))
+            }
+            #expect(state.displayedVersion == .preview(f.key(request)))
+            #expect(state.canExport)
+            #expect(state.reduce(.cameraChanged(.busy(f.session), context: f.context)).isEmpty)
+            #expect(state.reduce(.cameraChanged(.ready(f.session), context: f.context)).isEmpty)
+            #expect(state.displayedVersion == .preview(f.key(request)))
+        }
+    }
+
+    @Test func sourceIntentChangedWhileBusySupersedesOldPreviewAndRequestsLatestOnceReady() throws {
+        let f = try WorkspaceFixture()
+        var state = f.state()
+        let old = try #require(preview(in: state.reduce(.sourceTapped("viewed"))))
+        state.reduce(.cameraChanged(.busy(f.session), context: f.context))
+        #expect(state.reduce(.sourceTapped("next")).isEmpty)
+        state.reduce(.previewCompleted(request: old, key: f.key(old)))
+        #expect(state.displayedVersion == .raw)
+        let latest = try #require(preview(in: state.reduce(.cameraChanged(.ready(f.session), context: f.context))))
+        #expect(latest.sourceID == "next")
+        #expect(latest.generation > old.generation)
+        state.reduce(.cameraChanged(.busy(f.session), context: f.context))
+        state.reduce(.previewCompleted(request: latest, key: f.key(latest)))
+        #expect(state.reduce(.cameraChanged(.ready(f.session), context: f.context)).isEmpty)
+        #expect(state.displayedVersion == .preview(f.key(latest)))
+    }
+
+    @Test func recipeIntentChangedWhileBusySupersedesOldPreviewAndRequestsLatestOnceReady() throws {
+        let f = try WorkspaceFixture()
+        var state = f.state()
+        let old = try #require(preview(in: state.reduce(.sourceTapped("viewed"))))
+        state.reduce(.cameraChanged(.busy(f.session), context: f.context))
+        #expect(state.reduce(.recipeSelected(slot: 4)).isEmpty)
+        state.reduce(.previewCompleted(request: old, key: f.key(old)))
+        #expect(state.displayedVersion == .cameraJPEG)
+        let latest = try #require(preview(in: state.reduce(.cameraChanged(.ready(f.session), context: f.context))))
+        #expect(latest.recipe.id == f.recipes[3].id)
+        state.reduce(.cameraChanged(.busy(f.session), context: f.context))
+        #expect(state.reduce(.cameraChanged(.ready(f.session), context: f.context)).isEmpty)
+        state.reduce(.previewCompleted(request: latest, key: f.key(latest)))
+        #expect(state.displayedVersion == .preview(f.key(latest)))
+    }
+
+    @Test func manualVersionChosenWhileBusyRejectsOldPreviewWithoutRequestWhenReady() throws {
+        let f = try WorkspaceFixture()
+        var state = f.state()
+        let old = try #require(preview(in: state.reduce(.sourceTapped("viewed"))))
+        state.reduce(.cameraChanged(.busy(f.session), context: f.context))
+        state.reduce(.versionSelected(.raw))
+        state.reduce(.previewCompleted(request: old, key: f.key(old)))
+        #expect(state.reduce(.cameraChanged(.ready(f.session), context: f.context)).isEmpty)
+        #expect(state.displayedVersion == .raw)
+        #expect(state.selectedRecipe == f.recipes[2])
     }
 
     @Test func repeatedSameSourceRequestRejectsOlderGeneration() throws {

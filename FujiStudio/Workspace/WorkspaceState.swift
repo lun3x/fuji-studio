@@ -73,6 +73,7 @@ struct WorkspaceState: Sendable {
     private var displayGeneration: UInt64 = 0
     private var pendingPreview: WorkspacePreviewRequest?
     private var wantsRecipePreview = false
+    private var previewSatisfied = false
 
     init(sources: [PhotoSource] = [], access: LibraryAccess = .notDetermined) {
         libraryAccess = access
@@ -206,10 +207,14 @@ struct WorkspaceState: Sendable {
 
         case .cameraChanged(let state, let context):
             guard cameraState != state || currentCameraExecutionContext != context else { return [] }
+            let continuesExecution = context == currentCameraExecutionContext &&
+                belongsToExecution(cameraState, context: context) && belongsToExecution(state, context: context)
             cameraState = state
             currentCameraExecutionContext = context
-            // A camera event must never override an explicit manual version choice.
-            return requestPreview()
+            // Render admission/completion publishes busy/ready for the same verified execution.
+            // Preserve its pending or satisfied preview; disconnects and context changes supersede it.
+            if !continuesExecution { invalidatePreview() }
+            return requestUnsatisfiedPreview()
 
         case .activeJobChanged(let id):
             activeJobID = id
@@ -226,6 +231,7 @@ struct WorkspaceState: Sendable {
                   key.settingsDigest == request.recipe.settingsDigest,
                   key.cameraContext == request.cameraContext else { return [] }
             pendingPreview = nil
+            previewSatisfied = true
             displayedVersion = .preview(key)
         }
         return []
@@ -239,11 +245,17 @@ struct WorkspaceState: Sendable {
     private mutating func invalidatePreview() {
         displayGeneration &+= 1
         pendingPreview = nil
+        previewSatisfied = false
     }
 
     private mutating func requestPreview() -> [WorkspaceEffect] {
         invalidatePreview()
-        guard wantsRecipePreview, let id = viewedSourceID, let source = sources[id],
+        return requestUnsatisfiedPreview()
+    }
+
+    private mutating func requestUnsatisfiedPreview() -> [WorkspaceEffect] {
+        guard !previewSatisfied, pendingPreview == nil,
+              wantsRecipePreview, let id = viewedSourceID, let source = sources[id],
               eligibleSourceIDs.contains(id), let recipe = selectedRecipe,
               case .supported = recipe.renderingSupport,
               case .ready(let session) = cameraState,
@@ -258,8 +270,15 @@ struct WorkspaceState: Sendable {
     private func matches(recipe: RecipeSnapshot, context: CameraExecutionContext) -> Bool {
         let imported = recipe.cameraContext
         return imported.model == context.model && imported.firmware == context.firmware &&
-            imported.capability == context.capability && imported.sessionIdentity == context.sessionIdentity &&
-            imported.sessionGeneration == context.generation && context.supportVersion == XT5WorkingProfile.supportVersion
+            imported.capability == context.capability && context.supportVersion == XT5WorkingProfile.supportVersion
+    }
+
+    private func belongsToExecution(_ state: CameraState, context: CameraExecutionContext?) -> Bool {
+        guard let context else { return false }
+        switch state {
+        case .ready(let session), .busy(let session): return session.generation == context.generation
+        default: return false
+        }
     }
 
     private static func accessibleIndex(_ sources: [PhotoSource], access: LibraryAccess) -> [SourceID: PhotoSource] {
