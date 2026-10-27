@@ -88,3 +88,15 @@ not select a source. The user subsequently confirmed photo selection, the
 top-right versions menu, switching versions and pinch-to-zoom on `2e45055b`, with
 the bottom zoom buttons and versions row removed. This human confirmation is
 separate from the software gate above.
+
+## Follow-up: compact saved-version labels
+
+Split VersionList entries into a primary recipe label and secondary compact
+local timestamp (`dd/MM/yy HH:mm`), retaining duplicate-minute ordinals and
+unavailable status in the secondary text. VersionMenu speaks both lines. Existing
+identity/selection, timezone formatting and normal/AX app-flow checks cover this
+presentation change; inspect the rendered smaller grey subtitle.
+
+- [x] Observe the existing saved-version label assertion fail before the change.
+- [x] Verify compact dates, duplicate-minute identities, timezone and menu actions.
+- [ ] Inspect normal/AX presentation; review, build, commit/push and install.

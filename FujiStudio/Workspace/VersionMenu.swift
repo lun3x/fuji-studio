@@ -10,11 +10,12 @@ struct VersionMenu: View {
     var onControlFrameChanged: (CGRect) -> Void = { _ in }
     @State private var presented = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.timeZone) private var timeZone
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
 
     private var options: VersionList {
-        VersionList(source: source, saved: saved, preview: preview, selected: selected,
+        VersionList(source: source, saved: saved, preview: preview, selected: selected, timeZone: timeZone,
             onVersionSelected: { presented = false; onVersionSelected($0) })
     }
     var body: some View {
@@ -28,7 +29,7 @@ struct VersionMenu: View {
         }
         .overlay { if contrast == .increased { Capsule().stroke(.primary, lineWidth: 1).allowsHitTesting(false) } }
         .accessibilityLabel("Image versions")
-        .accessibilityValue(options.entries.first { $0.id == selected }?.label ?? "No image version")
+        .accessibilityValue(options.entries.first { $0.id == selected }?.accessibilityLabel ?? "No image version")
         .accessibilityHint("Choose the original RAW, camera JPEG or a saved version")
         .accessibilityIdentifier("workspace.versions")
         .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named("workspace")) }, action: onControlFrameChanged)

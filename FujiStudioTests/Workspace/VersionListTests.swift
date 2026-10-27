@@ -17,17 +17,24 @@ struct VersionListTests {
         #expect(VersionList(source: paired, saved: [], preview: nil).entries.map(\.id) == [.raw, .cameraJPEG])
         #expect(VersionList(source: f.source, saved: [], preview: try f.jpeg(key: f.key(revision: "old"))).entries.map(\.id) == [.raw])
     }
-    @Test func sameSecondExportsHaveDistinctJobRecipeLabelsAndUnavailableRecordsRemain() throws {
+    @Test func sameMinuteExportsHaveCompactDatesDistinctLabelsAndUnavailableRecordsRemain() throws {
         let f = try RenderFixture(); defer { f.remove() }
         let jpeg = try f.jpeg(), recipe = f.recipe(named: "Job chosen name")
-        let a = saved(f, jpeg: jpeg, recipe: recipe), b = saved(f, jpeg: jpeg, recipe: recipe)
-        let deleted = saved(f, jpeg: jpeg, recipe: recipe, availability: .deleted)
-        let entries = VersionList(source: f.source, saved: [b, a, deleted], preview: nil).entries.filter { if case .saved = $0.id { true } else { false } }
+        let date = Date(timeIntervalSince1970: 1_793_108_340) // 27 October 2026, 13:39 UTC.
+        let a = saved(f, jpeg: jpeg, recipe: recipe, exportedAt: date)
+        let b = saved(f, jpeg: jpeg, recipe: recipe, exportedAt: date.addingTimeInterval(30))
+        let deleted = saved(f, jpeg: jpeg, recipe: recipe, availability: .deleted, exportedAt: date.addingTimeInterval(45))
+        let entries = VersionList(source: f.source, saved: [b, a, deleted], preview: nil,
+            timeZone: TimeZone(secondsFromGMT: 0)!).entries.filter { if case .saved = $0.id { true } else { false } }
         #expect(entries.count == 3)
-        #expect(Set(entries.map(\.label)).count == 3)
-        #expect(entries.first { $0.id == .saved(a.id) }?.label != entries.first { $0.id == .saved(b.id) }?.label)
-        #expect(entries.allSatisfy { $0.label.contains("Job chosen name") && $0.label.contains("Exported") })
-        #expect(entries.contains { $0.label.contains("unavailable") })
+        #expect(Set(entries.map(\.accessibilityLabel)).count == 3)
+        #expect(entries.first { $0.id == .saved(a.id) }?.subtitle == "27/10/26 13:39 · Export 1")
+        #expect(entries.first { $0.id == .saved(b.id) }?.subtitle == "27/10/26 13:39 · Export 2")
+        #expect(entries.allSatisfy { $0.label == "C7 Job chosen name" })
+        #expect(entries.contains { $0.subtitle?.contains("unavailable") == true })
+        let local = VersionList(source: f.source, saved: [a], preview: nil,
+            timeZone: TimeZone(secondsFromGMT: 3600)!).entries.first { $0.id == .saved(a.id) }
+        #expect(local?.subtitle == "27/10/26 14:39")
         #expect(jpeg.recipeSnapshotID != recipe.id)
     }
     @Test func recordedGeometryAndOrientationAreSeparateFromFitFileResolution() {
@@ -63,8 +70,9 @@ struct VersionListTests {
         #expect(!FileManager.default.fileExists(atPath: url.path))
     }
     private func saved(_ f: RenderFixture, jpeg: CameraJPEG, sourceID: String? = nil,
-                       recipe: RecipeSnapshot? = nil, availability: AssetAvailability = .available) -> SavedVersion {
+                       recipe: RecipeSnapshot? = nil, availability: AssetAvailability = .available,
+                       exportedAt: Date = Date(timeIntervalSince1970: 100)) -> SavedVersion {
         SavedVersion(id: UUID(), sourceID: sourceID ?? f.source.id, outputAssetID: UUID().uuidString,
-            recipeSnapshot: recipe ?? f.recipe, operationID: UUID(), exportedAt: Date(timeIntervalSince1970: 100), jpeg: jpeg, availability: availability)
+            recipeSnapshot: recipe ?? f.recipe, operationID: UUID(), exportedAt: exportedAt, jpeg: jpeg, availability: availability)
     }
 }

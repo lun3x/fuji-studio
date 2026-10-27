@@ -163,6 +163,11 @@ drag the drawer; drawer resizing starts on its grabber/header drag region.
 The versions row is replaced by a floating glass button at the top-right of the
 main photo, opposite the recipe control. It opens a vertically scrolling menu
 over the image with full version labels and a checkmark on the current version.
+Saved exports show only the slot and recipe name on the first line, for example
+`C3 Contrast Chrome`, with a smaller secondary-grey local timestamp beneath it
+in `dd/MM/yy HH:mm` format, for example `27/10/26 13:39`. Repeated exports with
+the same visible recipe and minute retain ordinal disambiguation; unavailable
+status also belongs in the secondary text. Spoken labels include both lines.
 Choosing an entry closes the menu and displays that stored version; dismissing
 the menu leaves the selection unchanged. Original RAW, paired camera JPEG,
 tracked exports and a matching temporary preview retain their existing identity

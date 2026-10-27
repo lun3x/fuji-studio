@@ -135,7 +135,8 @@ import XCTest
                 withVelocity: 100, thenHoldForDuration: 0.2)
         }
         XCTAssertTrue(saved.label.contains("C1 Soft daylight"))
-        XCTAssertTrue(saved.label.contains("Exported"))
+        XCTAssertFalse(saved.label.contains("Exported"))
+        XCTAssertNotNil(saved.label.range(of: #"\d{2}/\d{2}/\d{2} \d{2}:\d{2}"#, options: .regularExpression))
         XCTAssertGreaterThan(saved.frame.height, app.buttons["version.raw"].frame.height, "The full saved label wraps")
         XCTAssertGreaterThanOrEqual(saved.frame.minY, options.frame.minY - 0.5)
         XCTAssertLessThanOrEqual(saved.frame.maxY, options.frame.maxY + 0.5)
@@ -201,7 +202,9 @@ import XCTest
         app.buttons["workspace.export"].tap()
         wait { app.buttons["app.status"].label.contains("1 saved") }
         let saved = version("version.saved.", in: app)
-        XCTAssertTrue(saved.label.contains("C3 Mountain greens")); saved.tap()
+        XCTAssertTrue(saved.label.contains("C3 Mountain greens"))
+        shot(app, "Saved version recipe title and compact date subtitle")
+        saved.tap()
         XCTAssertTrue(app.scrollViews["viewer.image"].exists)
         app.buttons["app.status"].tap()
         XCTAssertTrue(app.staticTexts["export.counts"].waitForExistence(timeout: 5))
