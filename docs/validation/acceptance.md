@@ -3,8 +3,9 @@
 Recorded 2026-10-27. **Software review is clear at `86eacb7a`; device acceptance
 is incomplete.** The original physical preview/export/reopen and later human
 interaction evidence belongs to `75fbd61b`. A later ordinary-app two-source C3
-mixed batch passed on `86eacb7a`; a C4 Home interruption is paused with recovery
-still in progress. These bounded results do not establish complete product
+mixed batch and a C4 Home interruption/recovery passed on `86eacb7a`. The latter
+required a human camera power cycle followed by explicit same-job Resume.
+These bounded results do not establish complete product
 acceptance.
 
 The accepted app composition entered Task13 at `fd94d301`. Earlier paired local
@@ -131,8 +132,21 @@ and the previous saved job/version remain unchanged.
 A separately deliberate C4 job was interrupted with physical Home and reopened:
 **0 saved, 2 remaining**, with an uncertain timed-out camera operation and confirmed
 native close. The app retained the existing job, blocked Resume until camera
-readiness, and created no additional saved version. Explicit camera reconciliation
-and remaining-item recovery are in progress. This is camera uncertainty, not an
+readiness, and created no additional saved version. Connect alone failed; after
+the user power-cycled the camera and connected, fresh-session empty-output
+reconciliation restored readiness without replaying the old operation. The
+frozen job and all saved associations remained unchanged, and all seven fresh
+recipe imports matched. Explicit Resume then completed the same C4 job with
+**2 saved and 0 remaining**, retaining the original source/recipe/Photos-operation
+identities and adding exactly two saved versions through two fresh native camera
+attempts. Earlier saved jobs/versions and native records were unchanged. No item
+had saved before interruption, so physical remaining-only skipping of an already
+saved item remains open.
+
+A normal process restart after completion retained all three jobs, five saved
+versions, 42 recipe snapshots and 79 unchanged native journal files, with no new
+camera operation or saved association. Camera power cycling was needed; no
+seamless-recovery claim follows. These are camera-uncertainty checks, not an
 observed uncertain PhotoKit transaction. See the [native validation record](native-batch-recovery.md)
 for the exact scope and remaining proof.
 
@@ -234,7 +248,7 @@ batch or C4 interruption. Unrelated variants remain open.
 | A04 original default/clear, zero preview saves | Reducer/AppModel/preview tests; no-recipe Export disabled. | **Bounded pass:** original defaults and seven no-save previews passed; ordinary No Recipe restored RAW and disabled Export while camera-ready. |
 | A05 late render/navigation safety | Generation/revision/manual-version regressions. | **Not run:** fast physical interaction with real camera/library. |
 | A06 independent version choices/labels | Resolver, viewer and AppFlow tests. | **Partial:** saved C7 association/labels and ordinary RAW↔Temporary Preview switching observed without clearing C3/export eligibility. Broader independent version cases remain open. |
-| A07 restart associations/equal dates | Disk reopen/equal-date identity and recovery tests. | **Partial:** actual same-UUID process relaunch reopened the exact saved version without resaving. Real equal-date cases remain unrun. |
+| A07 restart associations/equal dates | Disk reopen/equal-date identity and recovery tests. | **Partial:** original same-UUID saved-version reopen; current normal process restart retains 3 jobs/5 versions with no new saved association or camera operation. Current saved-version selection and real equal-date cases remain open. |
 | A08 viewed source without Select | Browse export/effective-selection tests. | **Bounded pass:** one deliberate viewed paired-B export through the actual model in Browse. |
 | A09 Select/Done/All/None/sweeps | Reducer, metadata All and grid/sweep tests. | **Bounded pass:** ordinary Select/Done, All (761), None (0); user confirmed all crossed thumbnails became checked during a real finger sweep across the next row. Remote endpoint-only drags remain separate observations. |
 | A10 unchanged thumbnail geometry | Native geometry assertions across selection modes. | **Partial:** two-row square grid looked unchanged when Select added checkboxes. Precise physical geometry measurement remains unrun. |
@@ -247,9 +261,9 @@ batch or C4 interruption. Unrelated variants remain open.
 | A17 full FINE geometry/orientation/fidelity | Strict profile/JPEG validation. | **Partial:** eight actual live FINE outputs and all-seven same-A Mac comparison passed. No Mac B reference or broader formats/firmware/lens proof. |
 | A18 new asset/source preserved/date/location | Writer/journal/original-resource tests. | **Partial:** one new asset, exact bytes, original capture date and unchanged originals passed on device. Location absence preserved; nonnil GPS case remains unrun. |
 | A19 Date Captured chronology | Writer preserves effective Photos capture date. | **Partial:** exact date equality passed on device; Photos chronological UI/tie ordering remain unobserved. |
-| A20 cancel/retry/uncertain save | Crash-window/exact-lookup/pin/no-replay tests. | **Partial:** successful saved-run read-only reopen passed. Actual uncertain save, active cancellation and retry/reconciliation remain unrun. |
+| A20 cancel/retry/uncertain save | Crash-window/exact-lookup/pin/no-replay tests. | **Partial:** saved-run reopen and current C4 camera-uncertainty reconciliation/explicit same-job Resume passed. Active cancellation/Retry, skipping a previously saved item and uncertain PhotoKit completion remain unrun. |
 | A21 actionable failure states | Authorization/cloud/storage/transport fixtures. | **Partial:** historical transport/reconnect and incompatible-model refusal, plus explicit unarmed validation failure. Current app limited/cloud/wrong-mode/disconnect matrix remains unrun. |
-| A22 suspension preserves truthful outcome | Injected-scene/admission/held-save/recovery tests; authoritative-close regression. | **Partial:** physical Home during the current C4 job left 0 saved/2 remaining; camera timeout/uncertainty and confirmed close were retained, with Resume blocked. Explicit reconciliation/resume remains in progress; disconnect/uncertain-Photos windows remain open. |
+| A22 suspension preserves truthful outcome | Injected-scene/admission/held-save/recovery tests; authoritative-close regression. | **Bounded pass:** physical Home during C4 conversion retained 0 saved/2 remaining and camera uncertainty/confirmed close; human camera power cycle plus fresh empty-output reconciliation enabled explicit same-job Resume to 2 saved. Active disconnect and uncertain-Photos windows remain open. |
 | A23 orientation/accessibility controls | Largest-text/dark/compact native tests. | **Not run:** native rotation, VoiceOver, Reduce Motion/Transparency, contrast and hardware-keyboard physical checks. Screenshot/resize is not interaction evidence. |
 | A24 bounded operation/scrolling/zero saves | Shared pool/scheduler/cache and sequential-export tests. | **Partial:** seven physical previews produced no Photos assets. Mixed-50-source Instruments memory/cache/latency/concurrency/scrolling measurements remain unrun. |
 

@@ -62,8 +62,16 @@ Software review is clear; the branch remains unmerged. The controller signed,
 verified and installed exact `86eacb7a` on the phone. A normal launch attempt
 while locked timed out. After the user unlocked and opened Fuji Studio, the
 controller directly observed the normal library UI with live thumbnails. This
-confirms launch and library loading only; current-code interaction, conversion
-and export acceptance remain open.
+confirms launch and library loading only; later native checks are recorded below.
+
+Subsequent ordinary-app checks on `86eacb7a` completed a two-source C3 mixed
+RAW/RAW+JPEG batch. A separate C4 job was interrupted with physical Home during
+conversion, retained 0 saved / 2 remaining, then completed the same job after a
+human camera power cycle, reconciliation and explicit Resume. Each job saved
+exactly two distinct versions with frozen source/recipe/save-operation identity.
+A normal restart preserved all three saved jobs and five versions, with no new
+camera operation or saved association. See the [native validation record](docs/validation/native-batch-recovery.md)
+for the power-cycle requirement, evidence bounds and remaining checks.
 
 The earlier physical preview/export/reopen evidence belongs to reviewed
 `75fbd61b`. The controller completed seven temporary same-source recipe previews
@@ -83,8 +91,9 @@ Zoom+/Fit/double-tap, recipe preview/manual RAW switching and No Recipe clear,
 without another export. The user confirmed real finger range selection, main
 photo pinch zoom/pan and expanded-grid vertical scrolling on that revision.
 
-Final device acceptance remains **incomplete**: current-code physical validation,
-real interruption recovery, limited/nonlocal Photos, Photos chronology UI, nonnil
+Final device acceptance remains **incomplete**: further physical validation,
+active cancellation and recovery from uncertain Photos saves, limited/nonlocal
+Photos, Photos chronology UI, nonnil
 GPS preservation, precise image-region/detail preservation, rotation and
 accessibility, broader RAW/camera support, and a measured mixed batch of at least
 50 sources remain open. The retained native observations cover two inputs on

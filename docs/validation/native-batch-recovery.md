@@ -36,9 +36,10 @@ These native saved associations and completion callbacks do not constitute a
 separate offline rehash of the two new PhotoKit originals, a chronology UI check,
 or a measured performance result. Live catalog copies pass SQLite integrity
 checks, but are observations, not a replacement for a same-job process-reopen
-durability check. No user asset was deleted.
+durability check. The later normal restart below separately checks persistence.
+No user asset was deleted.
 
-## C4 Home interruption — recovery in progress
+## C4 Home interruption and explicit recovery
 
 The user selected C4, submitted the same two sources once, followed the request
 to swipe Home during “Converting on camera,” then reopened the app. The user and
@@ -52,9 +53,59 @@ Photos operations queued, and the saved-version count remains three, including
 the earlier single export and the two C3 outputs. No automatic replacement
 submission or claimed Photos save occurred.
 
-Explicit reconnect/recovery of this existing job is pending. Camera-operation
-uncertainty is separate from an uncertain PhotoKit save: this run has not entered
-that Photos failure window. No completed interruption-recovery pass is claimed.
+Connect alone did not restore readiness. The user switched the camera off/on,
+then connected again. The controller observed Camera ready and enabled Resume,
+with the same 0 saved / 2 remaining counts. The copied catalog still has exactly
+the same three jobs and three saved versions; the complete frozen C4 job is
+unchanged. All seven newly imported banks match their previous names, imported
+bytes, settings digests and support assessment; all old snapshots remain intact.
+
+The one uncertain native record changed to `reconciledMissing` following the
+service's fresh-session empty-output check. Its original trigger acknowledgement,
+confirmed close and lack of capture/deletion remain preserved. No new camera
+record, Photos submission or deletion was replayed during this reconnection.
+This establishes observed output absence, not the old conversion's success or
+opaque uploaded-RAW buffer release.
+
+The user then tapped Resume once, observed export success with 2 saved and 0
+remaining, and disconnected the camera to charge the phone. The controller
+subsequently observed **2 saved, 0 failed, 0 cancelled, 0 remaining, 0
+unconfirmed** on the ordinary status screen while the camera was disconnected.
+
+Offline comparison of the copied native records verifies:
+
+- The same C4 job completed, with its original submission date, recipe snapshot,
+  ordered sources and Photos operation IDs. No replacement job was created.
+- Exactly two new saved versions belong to those two operations and sources.
+  The previous saved jobs and versions remain unchanged; all five catalogued
+  versions have distinct Photos asset IDs and operation IDs.
+- Both resumed outputs bind the exact retained source hashes and frozen C4
+  settings, with full FINE 7728 × 5152 / orientation 8 geometry. Each has a new
+  completed camera attempt, matching candidate/readback bytes, acknowledged
+  owned deletion and an empty output view.
+- All earlier native journal files remain byte-identical to the recovered
+  checkpoint. The old uncertain trigger or deletion was not replayed. The two
+  fresh camera attempts belong to the two explicitly resumed items.
+
+**Bounded pass:** Home interruption, truthful paused state, camera-uncertainty
+quarantine, human camera power cycle, fresh empty-output reconciliation, then
+explicit completion of the same two-item job. Connect alone was insufficient;
+this is not seamless recovery. No item had saved before this interruption, so
+skipping an already saved item during this physical Resume remains unproved.
+Camera uncertainty is separate from an uncertain PhotoKit save: this run never
+entered that Photos failure window. Unplugging after completion does not prove
+active-disconnect recovery.
+
+## Read-only normal restart after completion
+
+With the camera disconnected and all three jobs saved, the controller terminated
+and launched the ordinary app without diagnostic/export flags. Launch succeeded
+and the native Photos workspace loaded. The reopened catalog retains the same
+three jobs, five saved versions and 42 imported recipe snapshots. All 79 native
+journal files are byte-identical, with zero new camera operation or saved
+association across this restart interval. This is a restart after completion,
+not termination during a PhotoKit transaction. Selecting a saved version after
+restart and separately hashing its PhotoKit original remain pending.
 
 ## Evidence and remaining scope
 
@@ -63,6 +114,11 @@ ignored `.build/native-device-validation-20261027/`. Exact source, job, operatio
 asset and run identifiers, filenames, hashes, profile names/settings and media
 are not committed. The diagnostic text file copied from Documents contains old
 timestamps and is not used as a current-run transport trace.
+
+This native sequence added four saved versions through two deliberately
+submitted jobs; the earlier single export makes five catalogued saved versions
+in total. No user asset was deleted. The camera is disconnected while the phone
+charges; no further physical camera test is running.
 
 See the [acceptance matrix](acceptance.md) for remaining device gates. A distinct
 mixed set of at least 50 sources with Instruments, active cancellation/retry,
