@@ -124,6 +124,11 @@ final class PhotoGridControllerTests: XCTestCase {
         XCTAssertTrue(cell.contentView.bounds.contains(badge.frame), "Decorative badge must not spill into another row")
         XCTAssertTrue(cell.accessibilityLabel!.contains("RAW + JPEG"))
         XCTAssertEqual(cell.bounds.width, cell.bounds.height, accuracy: 0.01)
+        controller.update(sources: [paired], checked: ["badge"], selecting: true, viewed: "badge", scrollRequest: nil)
+        cell.setNeedsLayout(); cell.layoutIfNeeded()
+        let check = cell.contentView.subviews.compactMap { $0 as? UIImageView }.last!
+        XCTAssertFalse(check.isHidden)
+        XCTAssertFalse(badge.frame.intersects(check.frame), "The selection check must not cover the source kind")
     }
     func testReuseCancelsAndLateCallbackCannotReplaceNewSourceImage() {
         let provider = GridThumbnailSpy(), controller = PhotoGridController(thumbnails: provider)

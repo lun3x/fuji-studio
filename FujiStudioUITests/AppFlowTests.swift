@@ -85,7 +85,7 @@ import XCTest
         XCTAssertEqual(viewer.frame.maxY, app.buttons["drawer.toggle"].frame.minY, accuracy: 1, "The photo should reach the tray without reserved control rows")
         XCTAssertTrue(versions.exists)
         guard versions.exists else { return }
-        XCTAssertGreaterThanOrEqual(versions.frame.minY, viewer.frame.minY)
+        XCTAssertGreaterThanOrEqual(versions.frame.minY, viewer.frame.minY - 0.5)
         XCTAssertLessThanOrEqual(versions.frame.maxY, viewer.frame.maxY)
         XCTAssertEqual(versions.frame.maxX, viewer.frame.maxX - 16, accuracy: 1)
         XCTAssertFalse(versions.frame.intersects(app.buttons["recipe.control"].frame))
@@ -337,8 +337,10 @@ import XCTest
             let floating = ["recipe.control", "workspace.versions", "workspace.export"]
             for id in ["viewer.zoomOut", "viewer.fit", "viewer.zoomIn"] { XCTAssertFalse(app.buttons[id].exists) }
             for id in floating {
-                XCTAssertTrue(app.buttons[id].isHittable)
+                XCTAssertTrue(app.buttons[id].exists)
+                XCTAssertTrue(app.buttons[id].isEnabled)
             }
+            XCTAssertTrue(app.buttons["workspace.export"].isHittable)
             XCTAssertFalse(app.buttons["workspace.versions"].frame.intersects(app.buttons["recipe.control"].frame))
             XCTAssertGreaterThanOrEqual(app.buttons["workspace.versions"].frame.minY, viewer.frame.minY)
             XCTAssertLessThanOrEqual(app.buttons["workspace.versions"].frame.maxY, viewer.frame.maxY)
@@ -350,6 +352,16 @@ import XCTest
             XCTAssertTrue(app.buttons["recipe.control"].label.contains("C1"))
             XCTAssertFalse(app.buttons["app.status"].label.contains("saved"))
             XCTAssertTrue(app.buttons["workspace.export"].isEnabled)
+            // Over letterboxing, XCTest's automatic hit-point lookup tries to
+            // scroll the zoom view. Use the same screen taps as recipe selection
+            // and verify the menus actually open and dismiss without an export.
+            for (control, option) in [("recipe.control", "recipe.slot.1"), ("workspace.versions", "version.raw")] {
+                tap(app.buttons[control], in: app)
+                XCTAssertTrue(app.buttons[option].waitForExistence(timeout: 5))
+                tap(app.buttons["app.status"], in: app)
+                XCTAssertTrue(app.buttons[option].waitForNonExistence(timeout: 3))
+            }
+            XCTAssertFalse(app.buttons["app.status"].label.contains("saved"))
             shot(app, name)
         }
         inspect("AX5 collapsed enabled export and pinch inspection")

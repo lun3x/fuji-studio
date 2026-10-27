@@ -260,10 +260,11 @@ private final class PhotoGridCell: UICollectionViewCell {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override func layoutSubviews() {
         super.layoutSubviews(); image.frame = contentView.bounds; selectionShade.frame = contentView.bounds
-        let badge = type.sizeThatFits(CGSize(width: max(1, bounds.width - 16), height: 44))
+        let badgeWidth = max(0, bounds.width - 8 - (mark.isHidden ? 0 : 32))
+        let badge = type.sizeThatFits(CGSize(width: max(1, badgeWidth - 8), height: 44))
         let badgeHeight = min(max(0, bounds.height - 8), ceil(badge.height) + 4)
         type.frame = CGRect(x: 4, y: bounds.height - badgeHeight - 4,
-                            width: min(max(0, bounds.width - 8), ceil(badge.width) + 8), height: badgeHeight)
+                            width: min(badgeWidth, ceil(badge.width) + 8), height: badgeHeight)
         mark.frame = CGRect(x: bounds.width - 30, y: bounds.height - 30, width: 24, height: 24)
     }
     func configure(source: PhotoSource, selecting: Bool, checked: Bool, viewed: Bool, thumbnails: any GridThumbnailProviding, pixelSize: CGSize, onTap: @escaping () -> Void) {
@@ -287,6 +288,7 @@ private final class PhotoGridCell: UICollectionViewCell {
         let selected = selecting && checked
         selectionShade.isHidden = !selected
         mark.isHidden = !selected
+        setNeedsLayout()
         isSelected = selected
         accessibilityValue = selecting ? (checked ? "Checked" : "Unchecked") : (viewed ? "Viewed" : "")
         accessibilityTraits = checked && selecting ? [.button, .selected] : [.button]
