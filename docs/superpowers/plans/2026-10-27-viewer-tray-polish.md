@@ -54,4 +54,4 @@ identity, and the partial-row cue.
 - [x] Observe RED for one-row ordering/no title/photo-space/status action checks.
 - [x] Implement and verify normal/AX/compact layout and existing actions.
 - [x] Complete full simulator/Release/signed builds and fresh scoped review.
-- [ ] Commit/push, install and record bounded phone verification.
+- [x] Commit/push, install and record bounded phone verification.

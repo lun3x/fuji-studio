@@ -1,6 +1,6 @@
 # Fuji Studio acceptance record
 
-Recorded 2026-10-27. **The latest UI correction at `0c008f73` passes its software
+Recorded 2026-10-27. **The latest UI correction at `b0620450` passes its software
 gates; full device acceptance is incomplete.** The original physical
 preview/export/reopen and later human
 interaction evidence belongs to `75fbd61b`. A later ordinary-app two-source C3
@@ -29,6 +29,39 @@ Reproducible commands, selecting an available simulator on the local machine:
 FUJI_STUDIO_DESTINATION='platform=iOS Simulator,id=YOUR_SIMULATOR_UUID' Scripts/test-ios.sh
 xcodebuild -project FujiStudio.xcodeproj -scheme FujiStudio -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
 ```
+
+### Single workspace header (`b0620450`)
+
+Status, Export and Connect share one measured row. The main Fuji Studio title
+and former outer status row are removed, reclaiming their height for the image.
+Caller-owned actions and the status sheet are retained through typed view-builder
+slots. Idle status text uses Ready/Disconnected while retaining the full spoken
+label. Large-text mode uses icons with accessible labels and 44-point targets.
+
+Complete simulator gate: **440 passed, 3 established skips, 0 failures**, exit 0
+/ TEST SUCCEEDED: 396 Swift functions in 50 suites, 14 native XCTest cases and
+33 UI cases (30 passed, 3 skipped). Universal arm64/x86_64 Release and signed
+Debug phone builds passed, as did strict code-signature verification, all exit 0.
+The focused gate passed 4 native and 4 UI cases after observing the old two-row
+layout fail the new checks. Tests verify same-row ordering, hit sizes, no title
+or reserved photo gap, status/Connect actions, compact resizing and largest-text
+recipe Refresh. Viewer/grid identity, zoom, drawer motion and the partial-row
+cue remain covered. Fresh scoped review found no Critical, Important or Minor
+issues. No runtime changes followed these gates.
+
+Ignored evidence: `.build/single-header-full.log`,
+`.build/TestResults/single-header-full.xcresult`, `single-header-release.log`,
+`single-header-device.log` and `single-header-final-attachments`. Full and Release
+logs have zero unsafe SQLite unlink/API-violation/open-fd pattern matches;
+existing SDK notices remain.
+
+The signed update was installed and launched normally on the iPhone, both exit
+0. The controller observed the loaded library, Status/Export/Connect on one row,
+no main title, and the retained partial second row without a bottom band. A
+Device Hub thumbnail click produced no visible selection, so this observation
+does not claim a physical viewer-spacing or interaction pass; those checks
+passed in the simulator. No camera operation, Photos write, permission or system
+appearance change was made. Earlier native/human evidence retains its revision.
 
 ### Collapsed-tray scrolling cue (`0c008f73`)
 

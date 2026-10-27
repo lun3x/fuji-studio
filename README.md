@@ -43,12 +43,14 @@ sets out the hardware feasibility gates, native app tasks, and acceptance checks
 
 The native workspace composes the real Photos reader/writer, X-T5 camera
 service, preview/export coordinators and durable local catalog. The current code
-at `0c008f73` passed the complete simulator gate: **439 passed, 3 established
+at `b0620450` passed the complete simulator gate: **440 passed, 3 established
 native-gate skips, 0 failures**, exit 0. Its unsigned Release simulator build
 passed for arm64 and x86_64, exit 0. The UI correction makes letterboxing follow
 the light/dark theme, removes the visible expansion label, shows one full row
 plus the top of the next when collapsed, fixes release/tap arbitration and motion,
-and removes the bottom material overlay. The production integration review at
+and removes the bottom material overlay. Status, Export and Connect now share
+one measured top row, with the title removed to give space back to the photo.
+The production integration review at
 `86eacb7a` approved these five earlier corrections:
 
 - Persisted failed, cancelled and unprocessed jobs remain visible after restart
@@ -61,10 +63,13 @@ and removes the bottom material overlay. The production integration review at
 - Obsolete original preparation is cancelled and reports progress, while admitted
   native camera work retains ownership until completion and cleanup.
 
-The latest collapsed-tray follow-up was reviewed with no findings; the branch
-remains unmerged. The controller signed, verified, installed and normally launched
-`0c008f73` on the phone, then observed the partial second row reaching the bottom
-without a covering band. The overall collapsed height is unchanged. The user
+The single-header follow-up was reviewed with no findings; the branch remains
+unmerged. The controller signed, verified, installed and normally launched
+`b0620450` on the phone, then observed the single action row, absent title and
+retained partial second row without a covering band. Simulator tests verify
+photo spacing and the status/Connect actions at normal and large text sizes.
+The preceding `0c008f73` phone observation also verified the scrolling cue with
+unchanged overall collapsed height. The user
 previously confirmed white light-mode portrait margins and smooth tray flicks on
 `f823a1d3`; motion and theme regressions also pass on the current code. No camera
 conversion or Photos export was performed for these UI corrections.
