@@ -15,6 +15,7 @@ struct ImportedRecipeProperty: Sendable, Equatable, Codable {
 }
 
 enum RecipeRenderingIssue: Sendable, Equatable, Codable {
+    case unsupportedMeasuredDomain, unsupportedCameraContext
     case conversionProfileUnvalidated
     case unmappedProperty(UInt16)
     case unsupportedValue(UInt16)
@@ -25,8 +26,8 @@ enum RecipeImportError: Error, Sendable, Equatable {
     case unsupportedRendering([RecipeRenderingIssue])
 }
 
-/// Import snapshot only. Normalized conversion settings must not be invented before the actual
-/// per-RAF profile schema is established. Every imported byte remains available for that work.
+/// Immutable lossless import with current finite support assessed from its preserved raw values.
+/// Requested settings remain independent of source-specific effective conversion adjustments.
 struct RecipeSnapshot: Sendable, Equatable, Codable, Identifiable {
     let id: UUID
     let slot: Int
@@ -37,9 +38,21 @@ struct RecipeSnapshot: Sendable, Equatable, Codable, Identifiable {
     let settingsDigest: String
     let cameraContext: RecipeCameraContext
     let importedAt: Date
+    /// Recorded import observations. Frozen older observations are not an executable support cache.
     let renderingIssues: [RecipeRenderingIssue]
+    var normalizedSettings: NormalizedRecipeSettings { get throws { try XT5WorkingProfile.normalize(self) } }
+    var renderingSupport: RecipeRenderingSupport {
+        do { return .supported(try normalizedSettings) }
+        catch CameraServiceError.unsupportedContext { return .unsupported([.unsupportedCameraContext]) }
+        catch { return .unsupported([.unsupportedMeasuredDomain]) }
+    }
 
     func requireRenderable() throws {
-        guard renderingIssues.isEmpty else { throw RecipeImportError.unsupportedRendering(renderingIssues) }
+        if case .unsupported(let issues) = renderingSupport { throw RecipeImportError.unsupportedRendering(issues) }
     }
+}
+
+enum RecipeRenderingSupport: Sendable, Equatable {
+    case supported(NormalizedRecipeSettings)
+    case unsupported([RecipeRenderingIssue])
 }

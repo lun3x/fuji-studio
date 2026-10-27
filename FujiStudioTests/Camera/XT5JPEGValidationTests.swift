@@ -4,6 +4,21 @@ import Testing
 @testable import FujiStudio
 
 struct XT5JPEGValidationTests {
+  @Test func lensOptimizerIsOptionalButStrictlyTypedWhenPresent() throws {
+    #expect(try FujiJPEGMetadataReader.read(JPEGQualityFixture().jpeg).lensOptimizer == nil)
+    for value:UInt32 in [0,1] {
+      let f=JPEGQualityFixture(lensOptimizer:value)
+      #expect(try FujiJPEGMetadataReader.read(f.jpeg).lensOptimizer == (value == 1))
+      let observed=try XT5ConversionCodec.validateFullSizeFineJPEG(f.inject(into:ObjectObservationFixture.jpeg()),expected:ObjectObservationFixture.metadata)
+      #expect(observed.lensOptimizer == (value == 1))
+    }
+    let f=JPEGQualityFixture(lensOptimizer:1)
+    for invalid in [JPEGQualityFixture(lensOptimizer:2).jpeg,
+      f.changed(f.qualityEntry+12+2,bytes:[3,0]),f.changed(f.qualityEntry+12+4,bytes:[2,0,0,0]),
+      f.changed(f.qualityEntry,bytes:[0x45,0x10])] {
+      #expect(throws:FujiJPEGValidationError.self) { try FujiJPEGMetadataReader.read(invalid) }
+    }
+  }
   @Test func readsFineAndNormalWithBothTIFFByteOrdersAndMatchingThumbnail() throws {
     for little in [true, false] {
       for quality in ["FINE   ", "NORMAL "] {
@@ -127,7 +142,7 @@ struct JPEGQualityFixture {
   init(
     quality: String = "FINE   ", make: String = "FUJIFILM", model: String = "X-T5",
     orientation: UInt16 = 8, little: Bool = true, thumbnailOrientation: UInt16? = nil,
-    duplicateQuality: Bool = false, duplicateMaker: Bool = false, duplicateOrientation: Bool = false
+    duplicateQuality: Bool = false, duplicateMaker: Bool = false, duplicateOrientation: Bool = false, lensOptimizer: UInt32? = nil
   ) {
     func u16(_ v: UInt16, _ le: Bool) -> Data {
       Data(
@@ -140,14 +155,16 @@ struct JPEGQualityFixture {
     }
     var note = Data("FUJIFILM".utf8) + u32(12, true)
     let qualityCount = duplicateQuality ? 2 : 1
-    note.append(u16(UInt16(qualityCount), true))
+    let noteCount = qualityCount + (lensOptimizer == nil ? 0 : 1)
+    note.append(u16(UInt16(noteCount), true))
     let qualityBytes = Data(quality.utf8) + Data([0])
-    let qualityOffset = 12 + 2 + 12 * qualityCount + 4
+    let qualityOffset = 12 + 2 + 12 * noteCount + 4
     for _ in 0..<qualityCount {
       note.append(
         u16(0x1000, true) + u16(2, true) + u32(UInt32(qualityBytes.count), true)
           + u32(UInt32(qualityOffset), true))
     }
+    if let lensOptimizer { note.append(u16(0x1045,true)+u16(4,true)+u32(1,true)+u32(lensOptimizer,true)) }
     note.append(u32(0, true))
     note.append(qualityBytes)
     var b = Data(little ? [0x49, 0x49, 42, 0, 8, 0, 0, 0] : [0x4d, 0x4d, 0, 42, 0, 0, 0, 8])

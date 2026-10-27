@@ -278,7 +278,7 @@ private actor BaselineLibrary: PhotoLibraryReading {
         let flag = "--xt5-raw-baseline-probe"
         let flags = ["--xt5-read-only-probe","--xt5-direct-values-probe","--xt5-bank-import-probe","--camera-reconnect-probe"]
         let recovery = "--xt5-output-recovery-probe"
-        let modes = [flag,"--xt5-unchanged-baseline-probe",recovery,"--xt5-output-quarantine-probe","--xt5-trigger-one-probe","--xt5-film-only-probe","--xt5-recipe-batch-probe","--xt5-paired-baseline-probe"]
+        let modes = [flag,"--xt5-unchanged-baseline-probe",recovery,"--xt5-output-quarantine-probe","--xt5-trigger-one-probe","--xt5-film-only-probe","--xt5-recipe-batch-probe","--xt5-paired-baseline-probe","--xt5-production-acceptance-probe"]
         let mixed = modes.enumerated().flatMap { index, first in modes.dropFirst(index + 1).map { [first,$0] } }
         for args in [["FujiStudio"]] + mixed + modes.flatMap({ mode in flags.map { [mode,$0] } }) {
             let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -618,6 +618,9 @@ private actor PairedBaselineLibrary: PhotoLibraryReading {
     @Test func unavailablePairStopsBeforeConnectWithoutStandaloneFallback() async throws {
         let directory=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at:directory) }
+        try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true)
+        let stale=directory.appendingPathComponent("xt5-paired-baseline-source-evidence.json")
+        try Data("{\"pairedOriginals\":true,\"pairedCandidatesExamined\":1}".utf8).write(to:stale)
         let driver=BaselineProbeDriver(),library=PairedBaselineLibrary(ids:["standalone"])
         let runner=XT5RawBaselineLaunchRunner(transport:ImageCaptureTransport(driver:driver),directory:directory,
             preparer:RAWBaselineSourcePreparer(reader:library,prepare:XT5PairedBaselinePreparationTests.parse))
@@ -626,5 +629,7 @@ private actor PairedBaselineLibrary: PhotoLibraryReading {
         #expect(await library.materialized.isEmpty)
         #expect(await library.authorizationRequests == 0)
         #expect(runner.status.contains("no compatible paired RAW"))
+        let current=try #require(JSONSerialization.jsonObject(with:Data(contentsOf:stale)) as? [String:Any])
+        #expect(current["pairedOriginals"] == nil && current["pairedCandidatesExamined"] == nil)
     }
 }

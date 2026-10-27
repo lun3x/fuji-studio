@@ -153,7 +153,7 @@ final class XT5RawBaselineLaunchRunner {
         self.retainedSource = retainedSource
     }
     func runIfRequested(arguments: [String]) async {
-        let otherFlags = ["--xt5-read-only-probe", "--xt5-direct-values-probe", "--camera-reconnect-probe", "--xt5-bank-import-probe"]
+        let otherFlags = ["--xt5-read-only-probe", "--xt5-direct-values-probe", "--camera-reconnect-probe", "--xt5-bank-import-probe", "--xt5-production-acceptance-probe"]
         let baseline = arguments.contains("--xt5-raw-baseline-probe")
         let paired = arguments.contains("--xt5-paired-baseline-probe")
         let unchanged = arguments.contains("--xt5-unchanged-baseline-probe")
@@ -179,6 +179,7 @@ final class XT5RawBaselineLaunchRunner {
             try FileManager.default.createDirectory(at: privateRun, withIntermediateDirectories: true, attributes: [.protectionKey: FileProtectionType.complete])
             directory = output
             try Data("{\"state\":\"preparing original\"}".utf8).write(to: output.appendingPathComponent(prefix + "-evidence.json"), options: .atomic)
+            if paired { try Data("{\"state\":\"preparing\"}".utf8).write(to: output.appendingPathComponent(prefix + "-source-evidence.json"), options: .atomic) }
             saveLifecycle()
             try writeStatus(readOnly ? "Verifying retained original for read-only existing-output observation" : !baseline && !paired ? "Verifying retained original and required private diagnostic proof" : "Preparing one original using existing Photos access")
             let raw: PreparedRAW

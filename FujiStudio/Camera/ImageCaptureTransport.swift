@@ -72,17 +72,19 @@ import ImageCaptureCore
         }
     }
 
-    #if DEBUG
     private struct CloseWait {
         let id: UUID
         let deadline: UUID
         let continuation: CheckedContinuation<Void, Error>
     }
     private var closeWait: CloseWait?
+    #if DEBUG
     func ptpDiagnosticMessages() -> [String] { (driver as? ImageCaptureSessionDriver)?.ptpDiagnostics ?? [] }
     func lifecycleDiagnosticMessages() -> [String] { (driver as? ImageCaptureSessionDriver)?.lifecycleDiagnosticMessages() ?? [] }
 
-    /// Engineering probes wait for the driver's authoritative acknowledgement. The bounded
+    #endif
+
+    /// Lifecycle owners wait for the driver's authoritative acknowledgement. The bounded
     /// wait can fail, but it never clears the transport's uncertain-close quarantine.
     func disconnectAndWaitForConfirmation() async throws {
         try Task.checkCancellation()
@@ -110,7 +112,6 @@ import ImageCaptureCore
         closeWait = nil; timeouts.cancel(pending.deadline)
         pending.continuation.resume(with: result)
     }
-    #endif
 
     func disconnect() async { invalidate(PTPError.notConnected, state: .disconnected) }
 
@@ -217,9 +218,7 @@ import ImageCaptureCore
             guard self.closeID == closeID else { return }
             self.closeID = nil
             self.closing = false
-            #if DEBUG
             self.finishCloseWait(.success(()))
-            #endif
         }
     }
     private func publish(_ value: CameraState) {

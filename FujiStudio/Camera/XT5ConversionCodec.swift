@@ -125,6 +125,7 @@ struct XT5ValidatedJPEGMetadata: Sendable, Equatable {
   let width: Int, height: Int, orientation: Int
   let make: String, model: String
   let quality: FujiJPEGQuality
+  let lensOptimizer: Bool?
 }
 
 extension XT5ConversionCodec {
@@ -148,6 +149,6 @@ extension XT5ConversionCodec {
     }
     return XT5ValidatedJPEGMetadata(
       width: metadata.width, height: metadata.height, orientation: metadata.orientation,
-      make: metadata.make, model: metadata.model, quality: metadata.quality)
+      make: metadata.make, model: metadata.model, quality: metadata.quality, lensOptimizer: metadata.lensOptimizer)
   }
 }

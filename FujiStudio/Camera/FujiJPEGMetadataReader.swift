@@ -15,6 +15,7 @@ struct FujiJPEGMetadata: Sendable, Equatable {
   let width: Int, height: Int, orientation: Int
   let make: String, model: String
   let quality: FujiJPEGQuality
+  let lensOptimizer: Bool?
   func requireFine(width: Int, height: Int, orientation: Int, model: String) throws {
     guard model == "X-T5", self.model == model, make == "FUJIFILM" else {
       throw FujiJPEGValidationError.cameraMismatch
@@ -248,6 +249,7 @@ enum FujiJPEGMetadataReader {
     var reader: IFDReader?
     var make: String?, model: String?, orientation: Int?, thumbnailOrientation: Int?,
       quality: FujiJPEGQuality?
+    var lensOptimizer: Bool?
     var thumbnailMake: String?, thumbnailModel: String?, pixelWidth: Int?, pixelHeight: Int?,
       thumbnailOffset: Int?, thumbnailLength: Int?
     mutating func read(width: Int, height: Int) throws -> FujiJPEGMetadata {
@@ -281,7 +283,7 @@ enum FujiJPEGMetadataReader {
       }
       return FujiJPEGMetadata(
         width: width, height: height, orientation: orientation, make: make, model: model,
-        quality: quality)
+        quality: quality, lensOptimizer: lensOptimizer)
     }
     mutating func visit(_ offset: Int, kind: Kind, depth: Int) throws {
       guard depth <= 4 else { throw FujiJPEGValidationError.resourceLimit }
@@ -315,7 +317,9 @@ enum FujiJPEGMetadataReader {
           guard kind == .exif, e.type == 7, quality == nil else {
             throw FujiJPEGValidationError.duplicateMetadata
           }
-          quality = try makerQuality(region.slice(e.value, e.length))
+          let maker = try makerQuality(region.slice(e.value, e.length))
+          quality = maker.quality
+          lensOptimizer = maker.lensOptimizer
         case 0xa002, 0xa003:
           guard kind == .exif else { throw FujiJPEGValidationError.conflictingMetadata }
           let value = try reader!.scalar(e)
@@ -333,7 +337,7 @@ enum FujiJPEGMetadataReader {
         try visit(dir.next, kind: .thumbnail, depth: depth + 1)
       }
     }
-    private func makerQuality(_ note: Region) throws -> FujiJPEGQuality {
+    private func makerQuality(_ note: Region) throws -> (quality: FujiJPEGQuality, lensOptimizer: Bool?) {
       guard note.starts(Array("FUJIFILM".utf8)) else {
         throw FujiJPEGValidationError.unsupportedMakerNote
       }
@@ -349,7 +353,15 @@ enum FujiJPEGMetadataReader {
       guard let quality = FujiJPEGQuality(rawValue: text) else {
         throw FujiJPEGValidationError.unsupportedQuality
       }
-      return quality
+      var lensOptimizer: Bool?
+      if let entry = dir.entries.first(where: { $0.tag == 0x1045 }) {
+        guard entry.type == 4, entry.count == 1 else { throw FujiJPEGValidationError.invalidTIFF }
+        let value = try note.u32(entry.value, little: true)
+        guard value == 0 || value == 1 else { throw FujiJPEGValidationError.conflictingMetadata }
+        lensOptimizer = value == 1
+      }
+      return (quality, lensOptimizer)
+
     }
   }
 }
