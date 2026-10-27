@@ -117,26 +117,69 @@ import Testing
         state.reduce(.cameraChanged(.ready(await f.camera.session), context: try await f.camera.executionContext()))
         #expect(!LiveAcceptanceRunner.banksMatch(state: state, retained: banks))
     }
-    @Test func strictBindingRejectsChangedDiscriminatorAndPairedJPEGFilename() throws {
+    @Test(arguments: [false, true])
+    func exactRetainedManifestShapesPreserveHistoricalBinding(_ paired: Bool) throws {
         let f = try RenderFixture(); defer { f.remove() }
-        let manifest = f.root.appendingPathComponent("manifest.json")
-        let jpeg = ResourceToken(assetID: f.source.id, role: .alternateOriginal, contentTypeIdentifier: "public.jpeg", format: .jpeg,
-            originalFilename: "paired.JPG", discriminator: "jpeg-original", sourceRevision: f.source.resourceRevision)
-        try JSONSerialization.data(withJSONObject: ["rafDiscriminator": f.token.discriminator, "jpegOriginalFilename": "paired.JPG", "jpegDiscriminator": "jpeg-original"])
-            .write(to: manifest)
-        let retained = RetainedRAWSource(raw: f.raw, rafRole: .primaryOriginal, jpegRole: .alternateOriginal,
-            originalFilename: f.token.originalFilename, manifestURL: manifest, protocolURL: manifest)
-        func source(_ raw: ResourceToken, _ jpeg: ResourceToken?) -> PhotoSource {
-            PhotoSource(id: f.source.id, originalResources: .init(raf: raw, jpeg: jpeg), captureDate: nil, location: nil, resourceRevision: f.source.resourceRevision)
+        let capture = try RetainedRAWFixture(directory: f.root.appendingPathComponent("retained"), paired: paired)
+        let retained = try RetainedProductionAcceptanceInputs.loadSource(root: capture.root, paired: paired)
+        let source = Self.liveSource(retained, paired: paired)
+        try LiveAcceptanceRunner.validate(source: source, retained: retained, paired: paired)
+        for field in ["assetID", "role", "originalFilename", "sourceRevision"] {
+            let changed = try Self.changedRAW(source, field: field)
+            #expect(throws: ResourceError.resourceChanged) { try LiveAcceptanceRunner.validate(source: changed, retained: retained, paired: paired) }
         }
-        try LiveAcceptanceRunner.validate(source: source(f.token, jpeg), retained: retained, paired: true)
-        let wrongRAW = ResourceToken(assetID: f.token.assetID, role: f.token.role, contentTypeIdentifier: f.token.contentTypeIdentifier,
-            format: f.token.format, originalFilename: f.token.originalFilename, discriminator: "changed", sourceRevision: f.token.sourceRevision)
-        #expect(throws: (any Error).self) { try LiveAcceptanceRunner.validate(source: source(wrongRAW, jpeg), retained: retained, paired: true) }
-        let wrongJPEG = ResourceToken(assetID: jpeg.assetID, role: jpeg.role, contentTypeIdentifier: jpeg.contentTypeIdentifier,
-            format: jpeg.format, originalFilename: "changed.JPG", discriminator: jpeg.discriminator, sourceRevision: jpeg.sourceRevision)
-        #expect(throws: (any Error).self) { try LiveAcceptanceRunner.validate(source: source(f.token, wrongJPEG), retained: retained, paired: true) }
-        #expect(throws: (any Error).self) { try LiveAcceptanceRunner.validate(source: source(f.token, nil), retained: retained, paired: true) }
+        if paired {
+            let missingPair = PhotoSource(id: source.id, originalResources: .init(raf: source.originalResources.raf, jpeg: nil),
+                captureDate: source.captureDate, location: source.location, resourceRevision: source.resourceRevision)
+            #expect(throws: ResourceError.resourceChanged) { try LiveAcceptanceRunner.validate(source: missingPair, retained: retained, paired: true) }
+            #expect(throws: ResourceError.resourceChanged) {
+                try LiveAcceptanceRunner.validate(source: Self.changedRAW(source, field: "discriminator"), retained: retained, paired: true)
+            }
+            let original = try Data(contentsOf: retained.manifestURL)
+            for field in ["rafDiscriminator", "jpegOriginalFilename", "jpegDiscriminator"] {
+                for missing in [false, true] {
+                    var manifest = try #require(JSONSerialization.jsonObject(with: original) as? [String: Any])
+                    manifest[field] = missing ? nil : "changed"
+                    try JSONSerialization.data(withJSONObject: manifest).write(to: retained.manifestURL)
+                    #expect(throws: (any Error).self) { try LiveAcceptanceRunner.validate(source: source, retained: retained, paired: true) }
+                }
+            }
+        }
+    }
+
+    @Test(arguments: ["unchanged", "discriminator", "assetID", "role", "originalFilename", "sourceRevision", "byteCount"])
+    func liveDescriptorChangeDuringMaterializationCannotKeepMatchingBytes(_ field: String) async throws {
+        let f = try RenderFixture(); defer { f.remove() }
+        let a = try RetainedProductionAcceptanceInputs.loadSource(root: RetainedRAWFixture(directory: f.root.appendingPathComponent("A"), paired: false).root, paired: false)
+        let b = try RetainedProductionAcceptanceInputs.loadSource(root: RetainedRAWFixture(directory: f.root.appendingPathComponent("B")).root, paired: true)
+        let sourceA = Self.liveSource(a, paired: false), sourceB = Self.liveSource(b, paired: true)
+        let changed = field == "unchanged" ? sourceA : try Self.changedRAW(sourceA, field: field)
+        let reader = LiveBindingLibrary(a: sourceA, b: sourceB, changedA: changed, root: f.root)
+        let runner = LiveAcceptanceRunner()
+        if field == "unchanged" {
+            let hashes = try await runner.originalHashes(reader: reader, a: sourceA, b: sourceB)
+            #expect(hashes.count == 3)
+        } else {
+            await #expect(throws: ResourceError.resourceChanged) { try await runner.originalHashes(reader: reader, a: sourceA, b: sourceB) }
+        }
+        #expect(await reader.files.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) })
+    }
+
+    private static func liveSource(_ retained: RetainedRAWSource, paired: Bool) -> PhotoSource {
+        let id = retained.raw.sourceID, revision = retained.raw.sourceRevision
+        let raw = ResourceToken(assetID: id, role: retained.rafRole, contentTypeIdentifier: "com.fuji.raw-image", format: .raf,
+            originalFilename: retained.originalFilename, discriminator: paired ? "paired-raf" : "fresh-live-standalone-raf", sourceRevision: revision)
+        let jpeg = paired ? ResourceToken(assetID: id, role: .primaryOriginal, contentTypeIdentifier: "public.jpeg", format: .jpeg,
+            originalFilename: "synthetic.JPG", discriminator: "paired-jpeg", sourceRevision: revision) : nil
+        return PhotoSource(id: id, originalResources: .init(raf: raw, jpeg: jpeg), captureDate: nil, location: nil, resourceRevision: revision)
+    }
+    private static func changedRAW(_ source: PhotoSource, field: String) throws -> PhotoSource {
+        var value = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(source)) as? [String: Any])
+        var originals = try #require(value["originalResources"] as? [String: Any])
+        var raw = try #require(originals["raf"] as? [String: Any])
+        raw[field] = field == "role" ? "adjusted" : field == "byteCount" ? 123 : "changed"
+        originals["raf"] = raw; value["originalResources"] = originals
+        return try JSONDecoder().decode(PhotoSource.self, from: JSONSerialization.data(withJSONObject: value))
     }
     @Test func mixedAndMalformedLiveLaunchNeverReachLiveConstruction() {
         let id = "11111111-1111-1111-1111-111111111111"
@@ -148,5 +191,31 @@ import Testing
         }
         #expect(FixtureEnvironment.route(arguments: ["--live-acceptance-run", id], unitHost: true) == .unitHost)
         #expect(FixtureEnvironment.route(arguments: ["--live-acceptance-run", id], unitHost: false) == .liveAcceptance(UUID(uuidString: id)!))
+    }
+}
+
+/// Changes the live descriptor while returning the originally requested token and valid bytes.
+/// The driver must re-read the source, rather than trusting matching payload/checksum alone.
+private actor LiveBindingLibrary: PhotoLibraryReading {
+    private var a: PhotoSource
+    private let b: PhotoSource, changedA: PhotoSource, root: URL
+    private(set) var files: [URL] = []
+    init(a: PhotoSource, b: PhotoSource, changedA: PhotoSource, root: URL) {
+        self.a = a; self.b = b; self.changedA = changedA; self.root = root
+    }
+    func requestAccess() -> LibraryAccess { .full }
+    func sources() -> AsyncThrowingStream<[PhotoSource], Error> { AsyncThrowingStream { $0.yield([a, b]); $0.finish() } }
+    func source(id: SourceID) throws -> PhotoSource {
+        if id == a.id { return a }; if id == b.id { return b }; throw ResourceError.inaccessibleAsset(id)
+    }
+    func resources(assetID: String) throws -> [ResourceToken] {
+        let source = try source(id: assetID); return [source.originalResources.raf] + (source.originalResources.jpeg.map { [$0] } ?? [])
+    }
+    func changes() -> AsyncStream<LibraryChange> { AsyncStream { $0.finish() } }
+    func materialize(_ token: ResourceToken, progress: @escaping @Sendable (Double) -> Void) throws -> LocalResource {
+        let file = root.appendingPathComponent("live-transfer-\(UUID().uuidString)")
+        try Data("synthetic live payload".utf8).write(to: file); files.append(file)
+        if token.assetID == a.id { a = changedA }
+        return LocalResource(token: token, fileURL: file, checksum: try ResourceChecksum.sha256(file))
     }
 }

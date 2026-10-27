@@ -86,7 +86,11 @@ private enum LiveAcceptanceFailure: Error { case stopped(String) }
                   model.sources.filter({ $0 == a }).count == 1, model.sources.filter({ $0 == b }).count == 1 else {
                 throw LiveAcceptanceFailure.stopped("Retained originals do not uniquely match the current library")
             }
-            let hashes = try await originalHashes(model: model, a: a, b: b)
+            // Fresh LIVE descriptors, not fields invented in retained proof.
+            struct LiveBindings: Encodable { let provenance: String; let sourceA: PhotoSource, sourceB: PhotoSource }
+            try claim.write(LiveBindings(provenance: "LIVE current PhotoSource descriptors; standalone A discriminator freshly observed", sourceA: a, sourceB: b),
+                name: "live-source-bindings.json")
+            let hashes = try await originalHashes(reader: model.environment.reader, a: a, b: b)
             guard hashes["A-RAF"] == inputs.a.sha256, hashes["B-RAF"] == inputs.b.sha256 else { throw ResourceError.checksumMismatch }
             let originalAssetIDs = Self.assetIDs()
             model.send(.recipeSelected(slot: nil)); model.send(.sourceTapped(a.id))
@@ -199,20 +203,18 @@ private enum LiveAcceptanceFailure: Error { case stopped(String) }
         return Set((0..<fetched.count).map { fetched.object(at: $0).localIdentifier })
     }
     static func validate(source: PhotoSource, retained: RetainedRAWSource, paired: Bool) throws {
-        struct Descriptors: Decodable {
-            let rafDiscriminator: String
-            let jpegOriginalFilename: String?, jpegDiscriminator: String?
-        }
-        guard let size = try retained.manifestURL.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 65_536 else { throw ResourceError.resourceChanged }
-        let descriptors = try JSONDecoder().decode(Descriptors.self, from: Data(contentsOf: retained.manifestURL))
         let raw = source.originalResources.raf
         guard source.id == retained.raw.sourceID, source.resourceRevision == retained.raw.sourceRevision,
               raw.assetID == source.id, raw.sourceRevision == source.resourceRevision, raw.format == .raf,
               raw.role == retained.rafRole, raw.role != .adjusted, raw.originalFilename == retained.originalFilename,
-              raw.discriminator == descriptors.rafDiscriminator,
               (source.originalResources.jpeg != nil) == paired else { throw ResourceError.resourceChanged }
         if let jpeg = source.originalResources.jpeg {
-            guard jpeg.assetID == source.id, jpeg.sourceRevision == source.resourceRevision, jpeg.format == .jpeg,
+            // Only paired B recorded these descriptors. A retains its original proof and
+            // gets a separate fresh LIVE descriptor capture, checked throughout this run.
+            struct PairedDescriptors: Decodable { let rafDiscriminator: String, jpegOriginalFilename: String, jpegDiscriminator: String }
+            guard let size = try retained.manifestURL.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 65_536 else { throw ResourceError.resourceChanged }
+            let descriptors = try JSONDecoder().decode(PairedDescriptors.self, from: Data(contentsOf: retained.manifestURL))
+            guard raw.discriminator == descriptors.rafDiscriminator, jpeg.assetID == source.id, jpeg.sourceRevision == source.resourceRevision, jpeg.format == .jpeg,
                   jpeg.role == retained.jpegRole, jpeg.role != .adjusted, jpeg.role != raw.role,
                   jpeg.originalFilename == descriptors.jpegOriginalFilename, jpeg.discriminator == descriptors.jpegDiscriminator else { throw ResourceError.resourceChanged }
         }
@@ -238,14 +240,16 @@ private enum LiveAcceptanceFailure: Error { case stopped(String) }
         try run.write(jpeg, name: stem + "-record.json")
     }
     private func checksum(_ url: URL) async throws -> String { try await Task.detached { try ResourceChecksum.sha256(url) }.value }
-    private func originalHashes(model: AppModel, a: PhotoSource, b: PhotoSource) async throws -> [String: String] {
-        guard try await model.environment.reader.source(id: a.id) == a, try await model.environment.reader.source(id: b.id) == b,
+    func originalHashes(reader: any PhotoLibraryReading, a: PhotoSource, b: PhotoSource) async throws -> [String: String] {
+        guard try await reader.source(id: a.id) == a, try await reader.source(id: b.id) == b,
               let jpeg = b.originalResources.jpeg else { throw ResourceError.resourceChanged }
         var hashes: [String: String] = [:]
         for (name, token) in [("A-RAF", a.originalResources.raf), ("B-RAF", b.originalResources.raf), ("B-JPEG", jpeg)] {
-            let local = try await model.environment.reader.materialize(token, progress: { _ in })
+            guard try await reader.source(id: a.id) == a, try await reader.source(id: b.id) == b else { throw ResourceError.resourceChanged }
+            let local = try await reader.materialize(token, progress: { _ in })
             defer { try? FileManager.default.removeItem(at: local.fileURL) }
             guard local.token == token, try await checksum(local.fileURL) == local.checksum else { throw ResourceError.checksumMismatch }
+            guard try await reader.source(id: a.id) == a, try await reader.source(id: b.id) == b else { throw ResourceError.resourceChanged }
             hashes[name] = local.checksum
         }
         return hashes
@@ -287,7 +291,7 @@ private enum LiveAcceptanceFailure: Error { case stopped(String) }
         guard asset.count == 1, let saved = asset.firstObject, saved.creationDate == expected.sourceB.captureDate else { throw LiveAcceptanceFailure.stopped("Photos capture date mismatch") }
         let location = saved.location.map { PhotoLocation(latitude: $0.coordinate.latitude, longitude: $0.coordinate.longitude, altitude: $0.altitude) }
         guard location == expected.sourceB.location else { throw LiveAcceptanceFailure.stopped("Photos location mismatch") }
-        guard try await originalHashes(model: model, a: expected.sourceA, b: expected.sourceB) == expected.originalHashes else { throw ResourceError.checksumMismatch }
+        guard try await originalHashes(reader: model.environment.reader, a: expected.sourceA, b: expected.sourceB) == expected.originalHashes else { throw ResourceError.checksumMismatch }
         try run.write(job, name: evidence.reopened ? "reopened-job.json" : "saved-job.json")
         try run.write(version, name: evidence.reopened ? "reopened-version.json" : "saved-version.json")
         model.send(.recipeSelected(slot: nil)); model.send(.sourceTapped(expected.sourceB.id))
