@@ -87,6 +87,7 @@ actor FixtureLibrary: PhotoLibraryReading {
     private var resourcesBarrier: FixtureBarrier?
     private var discoveryBarrier: FixtureBarrier?
     private var materializeBarriers: [String: FixtureBarrier] = [:]
+    private var materializeFailures: [String: ResourceError] = [:]
     private var discoveryLimit: Int?
     private var revisionBytes: [String: Data] = [:]
     private(set) var materializations = 0
@@ -101,6 +102,7 @@ actor FixtureLibrary: PhotoLibraryReading {
     func holdDiscovery(_ barrier: FixtureBarrier) { discoveryBarrier = barrier }
     func limitDiscovery(_ count: Int) { discoveryLimit = count }
     func holdMaterialize(_ id: String, barrier: FixtureBarrier) { materializeBarriers[id] = barrier }
+    func failMaterialize(_ id: String, error: ResourceError) { materializeFailures[id] = error }
     func replaceOriginal(_ id: String, revision: String) throws -> Data {
         guard let i = index.firstIndex(where: { $0.id == id }) else { throw ResourceError.inaccessibleAsset(id) }
         let old = index[i]
@@ -145,6 +147,7 @@ actor FixtureLibrary: PhotoLibraryReading {
         let bytes = try revisionBytes[resource.sourceRevision] ?? Data(contentsOf: image.fileURL)
         if let barrier = materializeBarriers[resource.assetID] { await barrier.wait() }
         try Task.checkCancellation()
+        if let error = materializeFailures[resource.assetID] { throw error }
         if resource.format == .raf { rawReads += 1 }
         let url = root.appendingPathComponent("transfer-\(UUID().uuidString).JPG")
         try bytes.write(to: url)
@@ -164,6 +167,7 @@ actor FixtureCamera: CameraServing {
     private var observers: [AsyncStream<CameraState>.Continuation] = []
     private var shouldFailImport = false
     private var shouldFailRender = false
+    private var shouldFailRenderWithoutDisconnect = false
     private var renderBarrier: FixtureBarrier?
     private var disconnectBarrier: FixtureBarrier?
     private(set) var cancelledRenders = 0
@@ -188,6 +192,7 @@ actor FixtureCamera: CameraServing {
     func cycleBusyReady() { emit(.busy(session)); emit(.ready(session)) }
     func holdRender(_ barrier: FixtureBarrier) { renderBarrier = barrier }
     func failRender() { shouldFailRender = true }
+    func failRenderWithoutDisconnect() { shouldFailRenderWithoutDisconnect = true }
     func failImport() { shouldFailImport = true }
     func importRecipes() async throws -> [RecipeSnapshot] {
         importCount += 1; emit(.busy(session)); await Task.yield(); defer { emit(.ready(session)) }
@@ -201,6 +206,7 @@ actor FixtureCamera: CameraServing {
         if let renderBarrier { await renderBarrier.wait() }
         if Task.isCancelled { cancelledRenders += 1; throw CancellationError() }
         if shouldFailRender { shouldFailRender = false; emit(.disconnected); throw CameraServiceError.uncertainOperation(UUID()) }
+        if shouldFailRenderWithoutDisconnect { shouldFailRenderWithoutDisconnect = false; emit(.ready(session)); throw CameraServiceError.storage }
         defer { emit(.ready(session)) }
         let url = root.appendingPathComponent("render-\(UUID().uuidString).JPG")
         try FileManager.default.copyItem(at: image.fileURL, to: url)

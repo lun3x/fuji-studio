@@ -73,7 +73,8 @@ struct AppWorkspaceView: View {
     var body: some View {
         WorkspaceView(state: model.state, sources: model.sources, thumbnails: model.environment.thumbnails,
             imageURL: model.displayFile?.fileURL, imageGeometry: model.displayFile?.geometry,
-            displayFile: model.displayFile, detail: model.detail, imageLoading: model.imageLoading, imageStatus: model.imageStatus,
+            displayFile: model.displayFile, imageIdentity: model.imageIdentity,
+            detail: model.detail, imageLoading: model.imageLoading, imageStatus: model.imageStatus,
             imageStatusIsFailure: model.imageStatusIsFailure,
             savedVersions: model.savedVersions, exportPending: model.isSubmitting, previewLoading: model.isLoadingPreview,
             onAction: model.send, onRefreshRecipes: { Task { await model.refreshRecipes() } },

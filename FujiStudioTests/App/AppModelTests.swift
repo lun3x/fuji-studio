@@ -165,7 +165,7 @@ import Testing
         model.send(.sourceTapped("source-0"))
         #expect(model.displayFile === original)
         model.send(.sourceTapped("source-2"))
-        #expect(model.displayFile == nil)
+        #expect(model.displayFile === original)
         #expect(model.imageLoading == .loading)
         #expect(!model.imageStatusIsFailure)
 
@@ -544,10 +544,10 @@ import Testing
         let old = Task { await model.reloadLibrary() }
         await barrier.entered()
         model.send(.sourceTapped("source-2"))
-        await eventually { model.displayFile != nil && model.savedVersions.isEmpty }
+        await eventually { model.displayFile != nil && model.imageLoading == nil && model.savedVersions.isEmpty }
         await f.reader.removeOutput(saved.outputAssetID, notify: false)
         model.send(.sourceTapped("source-0"))
-        await eventually { model.savedVersions.first?.availability == .inaccessible && model.displayFile != nil }
+        await eventually { model.savedVersions.first?.availability == .inaccessible && model.displayFile != nil && model.imageLoading == nil }
         let current = model.displayFile
         await barrier.release(); await old.value
         #expect(model.savedVersions.first?.id == saved.id)
