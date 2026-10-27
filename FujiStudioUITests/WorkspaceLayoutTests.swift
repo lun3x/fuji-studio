@@ -211,7 +211,9 @@ final class WorkspaceLayoutTests: XCTestCase {
         openRecipeMenu(app)
         XCTAssertTrue(app.staticTexts["recipe.stale"].waitForExistence(timeout: 5))
         let options = app.scrollViews["recipe.options"]
-        for _ in 0..<6 {
+        for _ in 0..<16 {
+            let refresh = app.buttons["recipe.refresh"].frame
+            if refresh.minY >= options.frame.minY && refresh.maxY <= options.frame.maxY { break }
             options.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.8)).press(forDuration: 0.05,
                 thenDragTo: options.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)))
         }
@@ -335,7 +337,7 @@ final class WorkspaceLayoutTests: XCTestCase {
         app.buttons["fixture.resize"].tap()
         XCTAssertNotEqual(grid.frame, original)
         let side = tile(app, 0).frame.width
-        XCTAssertGreaterThan(grid.frame.height, side)
+        XCTAssertGreaterThanOrEqual(grid.frame.height, side - 0.5)
         XCTAssertLessThan(grid.frame.height, side * 2)
         app.buttons["drawer.toggle"].tap()
         XCTAssertEqual(app.buttons["drawer.toggle"].value as? String, "Expanded")

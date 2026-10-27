@@ -199,7 +199,8 @@ private struct WorkspaceHostingHarness: View {
     let store: WorkspaceHostingStore
     var body: some View {
         WorkspaceView(state: store.state, sources: store.sources, thumbnails: store.thumbnails,
-            onAction: { store.state.reduce($0) }, onRefreshRecipes: {}, onExport: {})
+            onAction: { store.state.reduce($0) }, onRefreshRecipes: {}, onExport: {},
+            statusControl: { EmptyView() }, connectionControl: { EmptyView() })
     }
 }
 @MainActor private final class HostingThumbnails: GridThumbnailProviding {

@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Presentation only. The caller owns the reducer, accessible source index and service effects.
-struct WorkspaceView: View {
+struct WorkspaceView<StatusControl: View, ConnectionControl: View>: View {
     let state: WorkspaceState
     let sources: [PhotoSource]
     let thumbnails: any GridThumbnailProviding
@@ -17,12 +17,13 @@ struct WorkspaceView: View {
     var onAction: (WorkspaceAction) -> Void
     var onRefreshRecipes: () -> Void
     var onExport: () -> Void
+    @ViewBuilder var statusControl: () -> StatusControl
+    @ViewBuilder var connectionControl: () -> ConnectionControl
     var onViewportChanged: (GridViewport) -> Void = { _ in }
     @State private var drawerHeaderHeight: CGFloat = 0
     @State private var inspectionHeight: CGFloat = 0
     @State private var toolbarHeight: CGFloat = 0
     @State private var recipeFrame: CGRect = .zero
-    @State private var exportFrame: CGRect = .zero
     @State private var versionFrame: CGRect = .zero
     @State private var versionMenuPresented = false
     @State private var scrollRequest: GridScrollRequest?
@@ -44,8 +45,8 @@ struct WorkspaceView: View {
             // Intrinsic heights remain measured from the actual native controls.
             let recipeHeight = max(44, recipeFrame.height)
             let controlBottom = compactControls
-                ? toolbarTop + max(recipeHeight, exportFrame.height, versionFrame.height)
-                : max(regularPhotoTop + recipeHeight, toolbarTop + toolbarHeight)
+                ? regularPhotoTop + max(recipeHeight, versionFrame.height)
+                : regularPhotoTop + recipeHeight
             let controlFrame = CGRect(x: safe.leading + 16, y: toolbarTop, width: max(1, width - 32), height: controlBottom - toolbarTop)
             let photoTop = compactControls ? controlBottom + DrawerGeometry.controlClearance : regularPhotoTop
             // The collapsed viewer owns a real inspection row and image area. Grid adaptation
@@ -81,16 +82,17 @@ struct WorkspaceView: View {
                         .frame(width: width)
                 }.frame(width: width, height: size.height).offset(x: safe.leading)
                 GlassEffectContainer(spacing: 8) {
-                    if compactControls {
-                        HStack(alignment: .top, spacing: 8) { recipeControl; Spacer(minLength: 0); versionControl; exportButton(compact: true) }
-                    } else {
-                        VStack(alignment: .leading, spacing: 8) {
-                            toolbar.onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { toolbarHeight = $0 }
-                            recipeControl
-                        }
+                    toolbar(compact: dynamicTypeSize.isAccessibilitySize)
+                        .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { toolbarHeight = $0 }
+                }.padding(.horizontal, 12).frame(width: width)
+                    .offset(x: safe.leading, y: toolbarTop).zIndex(10)
+                GlassEffectContainer(spacing: 8) {
+                    HStack(alignment: .top, spacing: 8) {
+                        recipeControl
+                        if compactControls { Spacer(minLength: 0); versionControl }
                     }
                 }.padding(.horizontal, 16).frame(width: width, alignment: .leading)
-                    .offset(x: safe.leading, y: toolbarTop).zIndex(10)
+                    .offset(x: safe.leading, y: regularPhotoTop).zIndex(10)
             }
             .coordinateSpace(name: "workspace")
             .frame(width: size.width, height: size.height)
@@ -113,11 +115,12 @@ struct WorkspaceView: View {
             ContentUnavailableView("Choose a photo", systemImage: "photo.on.rectangle")
         }
     }
-    private var toolbar: some View {
-        HStack(alignment: .center, spacing: 12) {
-            Text("Fuji Studio").font(.headline).lineLimit(1).minimumScaleFactor(0.7)
+    private func toolbar(compact: Bool) -> some View {
+        HStack(alignment: .center, spacing: 8) {
+            statusControl().buttonStyle(.bordered).frame(minWidth: 44).layoutPriority(-1)
             Spacer(minLength: 0)
-            exportButton(compact: false)
+            exportButton(compact: compact).fixedSize(horizontal: true, vertical: true)
+            connectionControl().buttonStyle(.bordered).fixedSize(horizontal: true, vertical: true)
         }
     }
     private var recipeControl: some View {
@@ -132,7 +135,6 @@ struct WorkspaceView: View {
         }
             .buttonStyle(.glassProminent).disabled(!state.canExport || exportPending)
             .accessibilityLabel("Export").accessibilityIdentifier("workspace.export")
-            .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named("workspace")) }) { exportFrame = $0 }
             .accessibilityHint(exportPending ? "Preparing export submission" : state.exportDisabledReason?.message ?? "Export \(state.effectiveSources.count) photos using the selected recipe")
     }
     private func versionList(source: PhotoSource) -> VersionList {

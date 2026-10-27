@@ -42,3 +42,16 @@ scrolling content in both positions, and preserve viewed-item reveal.
 - [x] Update native/window/next-row visibility expectations and observe RED.
 - [x] Remove reserved band; verify visible partial row, final-row clearance and unchanged motion/theme behavior.
 - [x] Run the full software gate, inspect the screenshot, commit/push and install the signed update.
+
+## Follow-up: single workspace header
+
+Use generic status/connect view-builder slots in WorkspaceView so one measured
+row owns status, Export, Connect. AppWorkspaceView keeps the status sheet and
+service actions, without an outer accessory row. Remove the title and its
+reserved height. Preserve recipe/version access, AX icon adaptations, image/grid
+identity, and the partial-row cue.
+
+- [x] Observe RED for one-row ordering/no title/photo-space/status action checks.
+- [x] Implement and verify normal/AX/compact layout and existing actions.
+- [x] Complete full simulator/Release/signed builds and fresh scoped review.
+- [ ] Commit/push, install and record bounded phone verification.

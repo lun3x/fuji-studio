@@ -39,7 +39,20 @@ private struct WorkspaceFixtureView: View {
                 imageURL: state.displayedVersion == .raw ? nil : fixture.file.fileURL,
                 imageGeometry: fixture.geometry, displayFile: fixture.file,
                 imageStatus: "Generated fixture has no RAW display; original JPEG remains available.",
-                onAction: { state.reduce($0) }, onRefreshRecipes: { refreshCount += 1 }, onExport: { exportCount += 1 })
+                onAction: { state.reduce($0) }, onRefreshRecipes: { refreshCount += 1 }, onExport: { exportCount += 1 },
+                statusControl: {
+                    Button {} label: {
+                        if flags.contains("--fixture-accessibility") || nativeDynamicTypeSize.isAccessibilitySize {
+                            Image(systemName: "info.circle").frame(minWidth: 44, minHeight: 44)
+                        } else {
+                            Label("Generated status", systemImage: "info.circle").font(.caption).lineLimit(1).frame(minHeight: 44)
+                        }
+                    }.accessibilityLabel("Generated status").accessibilityIdentifier("app.status")
+                }, connectionControl: {
+                    Button {} label: {
+                        Image(systemName: "cable.connector").frame(minWidth: 44, minHeight: 44)
+                    }.accessibilityLabel("Connect").accessibilityIdentifier("app.connect").disabled(true)
+                })
                 .frame(width: compact ? proxy.size.width - 32 : proxy.size.width,
                     height: compact ? max(360, proxy.size.height * 0.65) : proxy.size.height)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)

@@ -86,6 +86,11 @@ version, or batch selection. Selecting a photo does not collapse the drawer.
 
 ### Main viewer and recipe control
 
+A single top row contains the status pill, Export and Connect, in that order.
+There is no main-screen Fuji Studio title or second toolbar row. At large text
+sizes the controls may use icons while retaining full accessible labels and
+44-point touch targets. Status details remain available by tapping the pill.
+
 The photo occupies the main content area. Letterboxing is white in light mode
 and black in dark mode, and follows theme changes without resetting zoom. A single floating control near its top
 right displays the selected slot, for example `C3`. With no recipe selected it
@@ -105,7 +110,8 @@ photo drawer expanded, without covering its Export or selection controls.
 ### Photo drawer
 
 The bottom drawer contains a grabber, Select/Done, All, None, the effective
-selection count, Export, and the vertically scrolling thumbnail grid.
+selection count and the vertically scrolling thumbnail grid. Export remains in
+the single top header.
 
 - Collapsed: show one full square row and the partial top of the next row as a
   cue that more photos are below. The grid reaches the bottom edge, with no

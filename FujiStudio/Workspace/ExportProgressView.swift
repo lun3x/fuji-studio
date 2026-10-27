@@ -71,38 +71,14 @@ struct AppWorkspaceView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var statusPresented = false
     var body: some View {
-        // This intrinsic accessory is part of the layout. Workspace's measured detents receive
-        // the remaining viewport; no status overlay can cover its recipe/version/selection row.
-        VStack(spacing: 0) {
-            HStack {
-                Button { statusPresented = true } label: {
-                    if dynamicTypeSize.isAccessibilitySize {
-                        Image(systemName: model.exportEvent == nil ? "info.circle" : "arrow.up.doc")
-                            .font(.system(size: 24)).frame(minWidth: 44, minHeight: 44)
-                    } else {
-                        Label(statusLabel, systemImage: model.exportEvent == nil ? "info.circle" : "arrow.up.doc")
-                            .lineLimit(1).font(.caption).frame(minHeight: 44).contentShape(Rectangle())
-                    }
-                }.accessibilityLabel(statusLabel).accessibilityIdentifier("app.status")
-                Spacer(minLength: 8)
-                Button { Task { await model.connect() } } label: {
-                    if dynamicTypeSize.isAccessibilitySize {
-                        Image(systemName: "cable.connector").font(.system(size: 24)).frame(minWidth: 44, minHeight: 44)
-                    } else {
-                        Text(model.isConnecting ? "Connecting…" : "Connect").frame(minWidth: 44, minHeight: 44)
-                    }
-                }.accessibilityLabel(model.isConnecting ? "Connecting…" : "Connect")
-                    .disabled(model.isConnecting || model.isSuspended || model.state.currentCameraExecutionContext != nil)
-                    .accessibilityIdentifier("app.connect")
-            }.buttonStyle(.bordered).padding(.horizontal, 12).padding(.vertical, 4)
-            WorkspaceView(state: model.state, sources: model.sources, thumbnails: model.environment.thumbnails,
-                imageURL: model.displayFile?.fileURL, imageGeometry: model.displayFile?.geometry,
-                displayFile: model.displayFile, detail: model.detail, imageStatus: model.imageStatus,
-                imageStatusIsFailure: model.imageStatusIsFailure,
-                savedVersions: model.savedVersions, preview: model.preview, exportPending: model.isSubmitting,
-                onAction: model.send, onRefreshRecipes: { Task { await model.refreshRecipes() } },
-                onExport: { Task { await model.export() } })
-        }
+        WorkspaceView(state: model.state, sources: model.sources, thumbnails: model.environment.thumbnails,
+            imageURL: model.displayFile?.fileURL, imageGeometry: model.displayFile?.geometry,
+            displayFile: model.displayFile, detail: model.detail, imageStatus: model.imageStatus,
+            imageStatusIsFailure: model.imageStatusIsFailure,
+            savedVersions: model.savedVersions, preview: model.preview, exportPending: model.isSubmitting,
+            onAction: model.send, onRefreshRecipes: { Task { await model.refreshRecipes() } },
+            onExport: { Task { await model.export() } },
+            statusControl: { statusButton }, connectionControl: { connectButton })
         .sheet(isPresented: $statusPresented) {
             NavigationStack {
                 ScrollView {
@@ -127,6 +103,35 @@ struct AppWorkspaceView: View {
                 }.navigationTitle("Fuji Studio status")
                     .toolbar { Button("Done") { statusPresented = false } }
             }
+        }
+    }
+    private var statusButton: some View {
+        Button { statusPresented = true } label: {
+            if dynamicTypeSize.isAccessibilitySize {
+                Image(systemName: model.exportEvent == nil ? "info.circle" : "arrow.up.doc")
+                    .font(.system(size: 24)).frame(minWidth: 44, minHeight: 44)
+            } else {
+                Label(statusTitle, systemImage: model.exportEvent == nil ? "info.circle" : "arrow.up.doc")
+                    .lineLimit(1).font(.caption).frame(minHeight: 44).contentShape(Rectangle())
+            }
+        }.accessibilityLabel(statusLabel).accessibilityIdentifier("app.status")
+    }
+    private var connectButton: some View {
+        Button { Task { await model.connect() } } label: {
+            if dynamicTypeSize.isAccessibilitySize {
+                Image(systemName: "cable.connector").font(.system(size: 24)).frame(minWidth: 44, minHeight: 44)
+            } else {
+                Text(model.isConnecting ? "Connecting…" : "Connect").frame(minWidth: 44, minHeight: 44)
+            }
+        }.accessibilityLabel(model.isConnecting ? "Connecting…" : "Connect")
+            .disabled(model.isConnecting || model.isSuspended || model.state.currentCameraExecutionContext != nil)
+            .accessibilityIdentifier("app.connect")
+    }
+    private var statusTitle: String {
+        switch statusLabel {
+        case "Photos · Camera disconnected": "Disconnected"
+        case "Photos · Camera ready": "Ready"
+        default: statusLabel
         }
     }
     private var statusLabel: String {

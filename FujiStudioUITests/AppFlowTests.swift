@@ -38,6 +38,37 @@ import XCTest
         XCTAssertFalse(app.buttons["workspace.export"].isEnabled)
         shot(app, "Offline paired original")
     }
+    private func assertSingleHeaderRow(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
+        let status = app.buttons["app.status"], export = app.buttons["workspace.export"], connect = app.buttons["app.connect"]
+        for control in [status, export, connect] {
+            XCTAssertGreaterThanOrEqual(control.frame.height, 44, file: file, line: line)
+            XCTAssertGreaterThanOrEqual(control.frame.width, 44, file: file, line: line)
+            XCTAssertEqual(control.frame.midY, status.frame.midY, accuracy: 1, file: file, line: line)
+            XCTAssertGreaterThanOrEqual(control.frame.minX, app.frame.minX, file: file, line: line)
+            XCTAssertLessThanOrEqual(control.frame.maxX, app.frame.maxX, file: file, line: line)
+        }
+        XCTAssertLessThanOrEqual(status.frame.maxX, export.frame.minX, file: file, line: line)
+        XCTAssertLessThanOrEqual(export.frame.maxX, connect.frame.minX, file: file, line: line)
+        XCTAssertFalse(app.staticTexts["Fuji Studio"].exists, file: file, line: line)
+    }
+    func testSingleHeaderRowGivesSpaceBackToPhotoAndKeepsStatusActions() {
+        let app = launch()
+        app.cells["grid.source-0"].tap()
+        XCTAssertTrue(app.scrollViews["viewer.image"].waitForExistence(timeout: 5))
+        assertSingleHeaderRow(app)
+        let bottom = max(app.buttons["app.status"].frame.maxY, app.buttons["workspace.export"].frame.maxY, app.buttons["app.connect"].frame.maxY)
+        let viewer = app.scrollViews["viewer.image"]
+        XCTAssertGreaterThanOrEqual(viewer.frame.minY, bottom)
+        XCTAssertLessThanOrEqual(viewer.frame.minY - bottom, 12, "No empty title row should remain above the photo")
+        XCTAssertTrue(app.buttons["app.status"].isHittable)
+        app.buttons["app.status"].tap()
+        XCTAssertTrue(app.staticTexts["app.access"].waitForExistence(timeout: 5))
+        app.buttons["Done"].tap()
+        app.buttons["app.connect"].tap()
+        wait { app.buttons["app.status"].label.contains("Camera ready") }
+        assertSingleHeaderRow(app)
+        shot(app, "Single status export connect header above photo")
+    }
     func testAllDirectlyFromBrowseEntersSelectWithCompleteMembership() {
         let app = launch()
         XCTAssertEqual(app.buttons["workspace.select"].label, "Select")
@@ -253,6 +284,7 @@ import XCTest
     func testAccessibleStatusAndConnectionControlsStayOutsideWorkspaceControls() {
         let app = launch(["--fixture-accessibility", "--fixture-limited", "--fixture-dark"])
         app.cells["grid.source-0"].tap()
+        assertSingleHeaderRow(app)
         XCTAssertGreaterThanOrEqual(app.buttons["app.status"].frame.height, 44)
         XCTAssertGreaterThanOrEqual(app.buttons["app.connect"].frame.height, 44)
         XCTAssertLessThanOrEqual(app.buttons["app.connect"].frame.height, app.buttons["app.status"].frame.height + 1)
