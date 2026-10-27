@@ -1,7 +1,7 @@
 # Fuji Studio acceptance record
 
-Recorded 2026-10-27. **The latest version-row follow-up at `5594f110` passes its
-focused software checks; full device acceptance is incomplete.** The original physical
+Recorded 2026-10-27. **The full pre-merge simulator gate at `99ad471e` passes;
+full device acceptance is incomplete.** The original physical
 preview/export/reopen and later human
 interaction evidence belongs to `75fbd61b`. A later ordinary-app two-source C3
 mixed batch and a C4 Home interruption/recovery passed on `86eacb7a`. The latter
@@ -29,6 +29,20 @@ Reproducible commands, selecting an available simulator on the local machine:
 FUJI_STUDIO_DESTINATION='platform=iOS Simulator,id=YOUR_SIMULATOR_UUID' Scripts/test-ios.sh
 xcodebuild -project FujiStudio.xcodeproj -scheme FujiStudio -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
 ```
+
+### Pre-merge verification (`99ad471e`)
+
+The complete simulator suite passed on the implementation PR's final runtime
+and tests: **442 passed, 3 established native-gate skips, 0 failures**, exit 0 /
+TEST SUCCEEDED. This comprises 396 Swift functions in 50 suites, 14 native
+XCTest cases and 35 UI cases (32 passed, 3 skipped). It includes the compact
+saved-version row follow-up. Ignored evidence: `.build/pr-merge-full.log` and
+`.build/TestResults/pr-merge-full.xcresult`.
+
+Only README and this acceptance record changed after that gate, to record the
+result and remove stale integration-status wording. No runtime or test changes
+followed it. [PR #1](https://github.com/lun3x/fuji-studio/pull/1) collects the
+implementation and its validation. The physical acceptance limits below remain.
 
 ### Compact saved-version rows (`5594f110`)
 
@@ -232,8 +246,8 @@ The single scoped re-review of the correction package closed all five findings:
 | Cancellable preparation and progress | Obsolete PhotoKit preparation cancels and cleans up before ownership is released; current progress is visible, and admitted native camera work remains owned and awaited through completion. |
 
 The verdict was **APPROVED: I1–I5 addressed; 0 Critical, 0 Important, 0 Minor new
-findings**. Software review is clear for integration; the branch remains unmerged
-and main remains at `b53723cd`. This is not release acceptance. Exact commands,
+findings**. Software review was clear for integration; at that checkpoint the
+branch was unmerged and main was at `b53723cd`. This is not release acceptance. Exact commands,
 RED→GREEN history and the full review remain in ignored `final-fix-report.md`
 and `final-fix-review.md`. Current raw evidence is
 `.build/TestResults/final-fix-full.log`, `final-fix-full.xcresult` and
@@ -470,8 +484,8 @@ Instruments on at least 50 mixed sources: peak resident memory, one-item RAW
 temporary size, JPEG cache size, first/cached preview latency, per-stage export
 times and scrolling behavior. No numeric performance promise or inferred pass
 is made. The whole-branch review and its final scoped correction review are
-complete; software review is clear. Final integration remains pending, and the
-branch is unmerged.
+complete; software review is clear. Implementation integration is tracked in
+[PR #1](https://github.com/lun3x/fuji-studio/pull/1).
 
 ## Controlled validation route
 

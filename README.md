@@ -58,6 +58,9 @@ in `dd/MM/yy HH:mm` format. This presentation follow-up at `5594f110` passed fiv
 focused unit functions and two normal/AX app-flow cases, plus Release and signed
 phone builds; normal and large-text screenshots were inspected. The full-suite
 count above belongs to the preceding layout revision.
+A fresh full pre-merge simulator gate at `99ad471e` also passed **442 tests,
+3 established skips, 0 failures**, including the compact version-row follow-up.
+The implementation is collected in [PR #1](https://github.com/lun3x/fuji-studio/pull/1).
 The production integration review at
 `86eacb7a` approved these five earlier corrections:
 
@@ -71,8 +74,8 @@ The production integration review at
 - Obsolete original preparation is cancelled and reports progress, while admitted
   native camera work retains ownership until completion and cleanup.
 
-The floating-versions follow-up was reviewed with no findings; the branch remains
-unmerged. The controller signed, verified, installed and normally launched
+The floating-versions follow-up was reviewed with no findings.
+The controller signed, verified, installed and normally launched
 `2e45055b` on the phone. Simulator tests verify reclaimed photo space, menu
 selection/dismissal, unavailable RAW recovery, wrapped saved-version labels at
 the largest text size, and zoom/pan retention across version changes.
