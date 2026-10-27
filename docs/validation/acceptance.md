@@ -1,7 +1,8 @@
 # Fuji Studio acceptance record
 
-Recorded 2026-10-27. **Software review is clear at `86eacb7a`; device acceptance
-is incomplete.** The original physical preview/export/reopen and later human
+Recorded 2026-10-27. **The latest UI correction at `f823a1d3` passes its software
+gates; full device acceptance is incomplete.** The original physical
+preview/export/reopen and later human
 interaction evidence belongs to `75fbd61b`. A later ordinary-app two-source C3
 mixed batch and a C4 Home interruption/recovery passed on `86eacb7a`. The latter
 required a human camera power cycle followed by explicit same-job Resume.
@@ -29,7 +30,49 @@ FUJI_STUDIO_DESTINATION='platform=iOS Simulator,id=YOUR_SIMULATOR_UUID' Scripts/
 xcodebuild -project FujiStudio.xcodeproj -scheme FujiStudio -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
 ```
 
-### Current code gate and review clearance
+### Viewer and tray correction (`f823a1d3`)
+
+The 2026-10-27 UI correction passed the complete simulator gate: **439 passed,
+3 established skips, 0 failures**, exit 0 / TEST SUCCEEDED. This comprises
+396 Swift Testing functions in 50 suites, 14 native XCTest cases and 32 UI cases
+(29 passed, 3 skipped). The skips remain native Home, rotation and hardware
+Escape delivery. The unsigned Release build passed for arm64 and x86_64; the
+signed phone build and code-signature verification also passed, all exit 0.
+No runtime changes followed these gates.
+
+The native viewer follows light/dark backgrounds without replacing the view or
+resetting its 2x inspection. The tray has only a visual grabber, with retained
+spoken state/tap/adjustable actions. Actual native-frame traces cover full
+expansion, slow partial return and short fast throws in both directions. The
+fix removes both an automatic drag-offset reset and a duplicate tap after drag.
+
+Independent review caught a next-row fragment in the first one-row attempt.
+One correction pass added strict square-height and actual next-row visibility
+regressions, observed RED then GREEN. Workspace grids have no vertical section
+padding. Collapsed content is exactly one square row above the Home area, whose
+background matches the grid. Expanded content reaches the bottom edge and uses
+scroll padding so the last row and viewed item can clear the Home area. Light
+and dark screenshots and native window measurements were inspected. The final
+focused correction passed 3 geometry functions, 13 native cases and 5 UI cases;
+the subsequent complete gate above is authoritative.
+
+Current ignored evidence: `.build/ui-polish-corrected-full.log`,
+`.build/TestResults/ui-polish-corrected-full.xcresult`,
+`ui-polish-corrected-release.log`, `ui-polish-corrected-device.log`,
+`ui-polish-corrected-attachments` and `ui-polish-final-dark-attachments`.
+Earlier REDs and interrupted runs remain recorded in the patch ledger and are
+not passing evidence. Both complete/Release logs have zero unsafe SQLite
+unlink/API-violation/open-fd pattern matches; known SDK notices remain.
+
+The exact signed update was installed and launched normally on the iPhone, exit
+0. Its live library loaded with one square row, a grabber-only header and no
+overlapping bottom material strip. Physical gesture feel and physical dark-mode
+interaction are not inferred from simulator results. No new Photos writes,
+camera operations, permissions or system appearance changes were made for this
+UI correction. The earlier native conversion/recovery evidence below retains
+its original revision and limits.
+
+### Production integration gate and review clearance (`86eacb7a`)
 
 The final runtime revision `86eacb7a43b3e11087dc11a0afdcb4db86324560` passed
 one complete simulator gate after all five integration corrections: **433 passed,

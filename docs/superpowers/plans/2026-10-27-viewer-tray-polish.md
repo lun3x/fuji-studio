@@ -29,5 +29,5 @@
 - [x] Use dynamic system background, a grabber-only header, one-row measured detent, persistent drag height with velocity-projected release, and scrolling bottom padding instead of a material spacer.
 - [x] Run focused geometry/hosting/gesture UI coverage, including release at full expansion, same-detent return and upward/downward flicks.
 - [x] Run the complete simulator suite and universal Release build; inspect light/dark screenshots.
-- [ ] Commit and push using jj; obtain one fresh review of this change range and address substantive findings.
-- [ ] Install the reviewed build on the paired phone when reachable and record exactly what was verified.
+- [x] Commit and push using jj; obtain one fresh review of this change range and address substantive findings.
+- [x] Install the reviewed build on the paired phone when reachable and record exactly what was verified.

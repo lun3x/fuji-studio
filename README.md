@@ -43,10 +43,13 @@ sets out the hardware feasibility gates, native app tasks, and acceptance checks
 
 The native workspace composes the real Photos reader/writer, X-T5 camera
 service, preview/export coordinators and durable local catalog. The current code
-at `86eacb7a` passed the complete simulator gate: **433 passed, 3 established
+at `f823a1d3` passed the complete simulator gate: **439 passed, 3 established
 native-gate skips, 0 failures**, exit 0. Its unsigned Release simulator build
-passed for arm64 and x86_64, exit 0. The final scoped review approved all five
-integration corrections with no new findings:
+passed for arm64 and x86_64, exit 0. The UI correction makes letterboxing follow
+the light/dark theme, removes the visible expansion label, collapses to exactly
+one square row, fixes release/tap arbitration and velocity-based drawer motion,
+and removes the bottom material overlay. The production integration review at
+`86eacb7a` approved these five earlier corrections:
 
 - Persisted failed, cancelled and unprocessed jobs remain visible after restart
   for explicit remaining-only Retry or Resume, preserving confirmed saves.
@@ -58,13 +61,14 @@ integration corrections with no new findings:
 - Obsolete original preparation is cancelled and reports progress, while admitted
   native camera work retains ownership until completion and cleanup.
 
-Software review is clear; the branch remains unmerged. The controller signed,
-verified and installed exact `86eacb7a` on the phone. A normal launch attempt
-while locked timed out. After the user unlocked and opened Fuji Studio, the
-controller directly observed the normal library UI with live thumbnails. This
-confirms launch and library loading only; later native checks are recorded below.
+The UI patch was reviewed and its one-row visibility finding corrected and
+verified; the branch remains unmerged. The controller signed, verified, installed
+and normally launched `f823a1d3` on the phone, observing the loaded one-row library
+and grabber-only header. Current gesture trajectories and live theme changes
+were verified in the simulator; physical gesture feel remains a separate check.
+No camera conversion or Photos export was performed for this UI correction.
 
-Subsequent ordinary-app checks on `86eacb7a` completed a two-source C3 mixed
+Earlier ordinary-app checks on `86eacb7a` completed a two-source C3 mixed
 RAW/RAW+JPEG batch. A separate C4 job was interrupted with physical Home during
 conversion, retained 0 saved / 2 remaining, then completed the same job after a
 human camera power cycle, reconciliation and explicit Resume. Each job saved
