@@ -17,6 +17,7 @@ import Observation
     private(set) var isRefreshing = false
     private(set) var isConnecting = false
     private(set) var isSubmitting = false
+    private(set) var isLoadingPreview = false
     private(set) var isSuspended = false
     let environment: AppEnvironment
     @ObservationIgnored private var started = false
@@ -40,7 +41,6 @@ import Observation
     @ObservationIgnored private var reconnectOnReturn = false
     @ObservationIgnored private var foreground = true
     @ObservationIgnored private var sceneRevision: UInt64 = 0
-    @ObservationIgnored private var previewInFlight = false
     @ObservationIgnored private var displayRequest: WorkspacePreviewRequest?
     @ObservationIgnored private var displayFailure: String?
     private struct AvailableDisplay {
@@ -119,7 +119,7 @@ import Observation
         displayIntent &+= 1
         let intent = displayIntent
         // Supersede intent in the coordinator; an already-active camera operation must drain.
-        previewInFlight = request != nil
+        isLoadingPreview = request != nil
         displayRequest = request; displayFailure = nil
         if let availableDisplay, request != nil,
            availableDisplay.sourceID == state.viewedSourceID, availableDisplay.revision == state.viewedSourceRevision {
@@ -154,7 +154,7 @@ import Observation
             guard case .ready = event.state, let jpeg = event.jpeg, case .preview(let key) = event.version else {
                 if case .failed(let failure) = event.state, state.selectedRecipe == request.recipe {
                     displayFailure = Self.previewMessage(failure); imageStatus = displayFailure
-                    previewInFlight = false
+                    isLoadingPreview = false
                     state.reduce(.previewInterrupted)
                     if displayFile == nil { resolveFallbackOriginal() }
                 } else {
@@ -166,7 +166,7 @@ import Observation
             state.reduce(.previewCompleted(request: request, key: key))
             guard state.displayedVersion == .preview(key) else { return }
             preview = jpeg
-            previewInFlight = false
+            isLoadingPreview = false
         } else {
             guard event.displayIntent == displayIntent else { return }
             if case .ready = event.state, event.version != state.displayedVersion { return }
@@ -282,7 +282,7 @@ import Observation
             }
         default:
             contextTask?.cancel()
-            if previewInFlight { state.reduce(.previewInterrupted); previewInFlight = false }
+            if isLoadingPreview { state.reduce(.previewInterrupted); isLoadingPreview = false }
             reduce(.cameraChanged(event, context: nil))
         }
     }
@@ -318,8 +318,8 @@ import Observation
         // Revoke obsolete preparation before export reserves the shared scheduler/pool. An
         // already admitted native render remains independently owned by PreviewCoordinator.
         displayTask?.cancel(); displayIntent &+= 1; displayRequest = nil
-        if previewInFlight { state.reduce(.previewInterrupted); previewInFlight = false }
-        imageStatus = displayFile == nil ? "Image loading stopped. Select a version to retry." : displayFailure
+        if isLoadingPreview { state.reduce(.previewInterrupted); isLoadingPreview = false }
+        imageStatus = displayFile == nil ? "Image loading stopped. Select the recipe again to retry." : displayFailure
         await environment.preview.invalidate()
         let task = Task { try await engine.start(sources: sources, recipe: recipe) }
         submissionTask = task
@@ -395,7 +395,7 @@ import Observation
         if phase == .inactive { foreground = false; restoreIdle(); return }
         let revision = sceneRevision
         if phase == .background {
-            state.reduce(.previewInterrupted); previewInFlight = false
+            state.reduce(.previewInterrupted); isLoadingPreview = false
             foreground = false; isSuspended = true; restoreIdle()
             displayIntent &+= 1
             displayTask?.cancel(); displayRequest = nil

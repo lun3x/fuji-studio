@@ -35,7 +35,7 @@ private struct ViewerFixtureView: View {
                 geometry: fixture.geometry, displayFile: file)
                 .frame(height: compactViewport ? 210 : nil)
                 .overlay(alignment: .topTrailing) {
-                    VersionMenu(source: source, saved: [fixture.saved], preview: fixture.preview, selected: version,
+                    VersionMenu(source: source, saved: [fixture.saved], selected: version,
                         onVersionSelected: { state.reduce(.versionSelected($0)) }).padding(8)
                 }
             Text(version == .cameraJPEG ? "Original camera JPEG" : version == .raw ? "RAW" : "Stored version")

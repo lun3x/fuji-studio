@@ -41,6 +41,11 @@ sets out the hardware feasibility gates, native app tasks, and acceptance checks
 
 ## Status
 
+The floating top-right photo control shows Image versions when no recipe is
+selected and becomes an Export icon when a recipe is selected. Export no longer
+appears in the top status row. Clear the recipe to browse the original RAW,
+camera JPEG and saved exports; temporary previews are not version-menu entries.
+
 The photo tray now uses a floating glass Select button at the top right. Select
 becomes an X to cancel the batch; checked thumbnails are greyed with a blue
 checkmark at the bottom right. The floating count appears only in Select mode.

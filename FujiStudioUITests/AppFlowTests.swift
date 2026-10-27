@@ -15,6 +15,11 @@ import XCTest
         XCTAssertTrue(app.buttons["recipe.slot.\(slot)"].waitForExistence(timeout: 5))
         tap(app.buttons["recipe.slot.\(slot)"], in: app)
     }
+    private func clearRecipe(in app: XCUIApplication) {
+        tap(app.buttons["recipe.control"], in: app)
+        XCTAssertTrue(app.buttons["recipe.none"].waitForExistence(timeout: 5))
+        tap(app.buttons["recipe.none"], in: app)
+    }
     private func version(_ identifier: String, in app: XCUIApplication) -> XCUIElement {
         if app.buttons["workspace.versions"].exists { app.buttons["workspace.versions"].tap() }
         let button = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", identifier)).firstMatch
@@ -25,7 +30,8 @@ import XCTest
     }
     private func shot(_ app: XCUIApplication, _ name: String) {
         let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = name; shot.lifetime = .keepAlways; add(shot)
-        let bounds = XCTAttachment(string: "Status \(app.buttons["app.status"].frame); Connect \(app.buttons["app.connect"].frame); Recipe \(app.buttons["recipe.control"].frame); Export \(app.buttons["workspace.export"].frame); Grid \(app.collectionViews["photoGrid"].frame)")
+        let export = app.buttons["workspace.export"]
+        let bounds = XCTAttachment(string: "Status \(app.buttons["app.status"].frame); Connect \(app.buttons["app.connect"].frame); Recipe \(app.buttons["recipe.control"].frame); Export \(export.exists ? String(describing: export.frame) : "hidden"); Grid \(app.collectionViews["photoGrid"].frame)")
         bounds.name = name + " bounds"; bounds.lifetime = .keepAlways; add(bounds)
     }
     private func selectFirstRow(_ app: XCUIApplication) {
@@ -35,6 +41,62 @@ import XCTest
         let end = app.cells["grid.source-2"].coordinate(withNormalizedOffset: CGVector(dx: 0.75, dy: 0.65))
         start.press(forDuration: 0.05, thenDragTo: end)
     }
+    func testRecipeSelectionReplacesVersionsWithExport() {
+        let app = launch()
+        app.cells["grid.source-0"].tap()
+        let versions = app.buttons["workspace.versions"], export = app.buttons["workspace.export"]
+        XCTAssertTrue(versions.waitForExistence(timeout: 5))
+        XCTAssertFalse(export.exists)
+        let versionFrame = versions.frame
+        app.buttons["app.connect"].tap()
+        wait { app.buttons["app.status"].label.contains("Camera ready") }
+        XCTAssertFalse(export.exists)
+        recipe(3, in: app)
+        XCTAssertTrue(export.waitForExistence(timeout: 5))
+        XCTAssertFalse(versions.exists)
+        XCTAssertFalse(app.scrollViews["version.options"].exists)
+        XCTAssertEqual(export.frame, versionFrame)
+        wait { export.isEnabled }
+        shot(app, "Recipe replaces version selector with floating export")
+        export.tap()
+        wait { app.buttons["app.status"].label.contains("1 saved") }
+        XCTAssertFalse(versions.exists)
+        tap(app.buttons["recipe.control"], in: app)
+        tap(app.buttons["recipe.none"], in: app)
+        XCTAssertTrue(versions.waitForExistence(timeout: 5))
+        XCTAssertFalse(export.exists)
+        XCTAssertEqual(versions.frame, versionFrame)
+        versions.tap()
+        XCTAssertTrue(app.buttons["version.raw"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["version.cameraJPEG"].exists)
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "version.saved.")).firstMatch.exists)
+        XCTAssertFalse(app.buttons["version.preview"].exists)
+        shot(app, "Clearing recipe restores original and saved versions")
+    }
+    func testExportStaysDisabledUntilPreviewFinishesDespiteCameraReadyUpdates() {
+        let app = launch(["--fixture-held-preview"])
+        app.cells["grid.source-0"].tap()
+        app.buttons["app.connect"].tap()
+        wait { app.buttons["app.status"].label.contains("Camera ready") }
+        recipe(3, in: app)
+        let export = app.buttons["workspace.export"]
+        XCTAssertTrue(export.waitForExistence(timeout: 5))
+        wait { app.buttons["fixture.finishPreview"].value as? String == "Loading preview" }
+        XCTAssertFalse(export.isEnabled, "Export starts grey while the preview is being prepared")
+        for _ in 0..<3 {
+            app.buttons["fixture.cycleCamera"].tap()
+            wait { app.buttons["app.status"].label.contains("Camera ready") }
+            XCTAssertFalse(export.isEnabled, "A ready camera must not enable export before the preview is loaded")
+        }
+        shot(app, "Export stays grey while preview is loading")
+        app.buttons["fixture.finishPreview"].tap()
+        wait { export.isEnabled }
+        XCTAssertTrue(app.scrollViews["viewer.image"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["viewer.status"].exists)
+        shot(app, "Export becomes blue when preview is ready")
+        tap(export, in: app)
+        wait { app.buttons["app.status"].label.contains("1 saved") }
+    }
     func testInjectedFlowOpensRealWorkspaceWithoutSystemPermissions() {
         let app = launch()
         XCTAssertTrue(app.buttons["app.connect"].exists)
@@ -42,7 +104,7 @@ import XCTest
         XCTAssertFalse(XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch.exists)
         app.cells["grid.source-0"].tap()
         XCTAssertTrue(app.scrollViews["viewer.image"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["workspace.export"].isEnabled)
+        XCTAssertFalse(app.buttons["workspace.export"].exists)
         shot(app, "Offline paired original")
     }
     func testDisconnectedRecipeMenuSelectsNoneAndDisablesCachedRecipesAndRefresh() {
@@ -70,16 +132,16 @@ import XCTest
         XCTAssertTrue(app.buttons["recipe.refresh"].isEnabled)
     }
     private func assertSingleHeaderRow(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
-        let status = app.buttons["app.status"], export = app.buttons["workspace.export"], connect = app.buttons["app.connect"]
-        for control in [status, export, connect] {
+        let status = app.buttons["app.status"], connect = app.buttons["app.connect"]
+        for control in [status, connect] {
             XCTAssertGreaterThanOrEqual(control.frame.height, 44, file: file, line: line)
             XCTAssertGreaterThanOrEqual(control.frame.width, 44, file: file, line: line)
             XCTAssertEqual(control.frame.midY, status.frame.midY, accuracy: 1, file: file, line: line)
             XCTAssertGreaterThanOrEqual(control.frame.minX, app.frame.minX, file: file, line: line)
             XCTAssertLessThanOrEqual(control.frame.maxX, app.frame.maxX, file: file, line: line)
         }
-        XCTAssertLessThanOrEqual(status.frame.maxX, export.frame.minX, file: file, line: line)
-        XCTAssertLessThanOrEqual(export.frame.maxX, connect.frame.minX, file: file, line: line)
+        XCTAssertLessThanOrEqual(status.frame.maxX, connect.frame.minX, file: file, line: line)
+        XCTAssertFalse(app.buttons["workspace.export"].exists, file: file, line: line)
         XCTAssertFalse(app.staticTexts["Fuji Studio"].exists, file: file, line: line)
     }
     func testSingleHeaderRowGivesSpaceBackToPhotoAndKeepsStatusActions() {
@@ -87,7 +149,7 @@ import XCTest
         app.cells["grid.source-0"].tap()
         XCTAssertTrue(app.scrollViews["viewer.image"].waitForExistence(timeout: 5))
         assertSingleHeaderRow(app)
-        let bottom = max(app.buttons["app.status"].frame.maxY, app.buttons["workspace.export"].frame.maxY, app.buttons["app.connect"].frame.maxY)
+        let bottom = max(app.buttons["app.status"].frame.maxY, app.buttons["app.connect"].frame.maxY)
         let viewer = app.scrollViews["viewer.image"]
         XCTAssertGreaterThanOrEqual(viewer.frame.minY, bottom)
         XCTAssertLessThanOrEqual(viewer.frame.minY - bottom, 12, "No empty title row should remain above the photo")
@@ -98,7 +160,7 @@ import XCTest
         app.buttons["app.connect"].tap()
         wait { app.buttons["app.status"].label.contains("Camera ready") }
         assertSingleHeaderRow(app)
-        shot(app, "Single status export connect header above photo")
+        shot(app, "Single status and connect header above photo")
     }
     func testFloatingVersionsMenuReclaimsPhotoSpaceAndSwitchesWithoutExport() {
         let app = launch()
@@ -130,7 +192,7 @@ import XCTest
         viewer.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.8)).tap()
         XCTAssertFalse(app.buttons["version.raw"].exists)
         XCTAssertEqual(versions.value as? String, before)
-        XCTAssertFalse(app.buttons["workspace.export"].isEnabled)
+        XCTAssertFalse(app.buttons["workspace.export"].exists)
         shot(app, "Floating versions and photo without bottom controls")
     }
     func testFloatingSelectionEntersAndCancelsWithoutMovingPhotos() {
@@ -166,9 +228,10 @@ import XCTest
         app.buttons["app.connect"].tap()
         wait { app.buttons["app.status"].label.contains("Camera ready") }
         recipe(1, in: app)
-        version("version.preview", in: app).tap()
+        wait { app.buttons["workspace.export"].isEnabled }
         tap(app.buttons["workspace.export"], in: app)
         wait { app.buttons["app.status"].label.contains("1 saved") }
+        clearRecipe(in: app)
         let saved = version("version.saved.", in: app)
         let options = app.scrollViews["version.options"]
         for _ in 0..<12 {
@@ -204,7 +267,7 @@ import XCTest
         XCTAssertTrue(app.scrollViews["viewer.image"].exists)
         XCTAssertGreaterThan(app.scrollViews["viewer.image"].frame.height, 40)
         XCTAssertEqual(app.buttons["workspace.versions"].value as? String, "Original camera JPEG")
-        XCTAssertFalse(app.buttons["workspace.export"].isEnabled)
+        XCTAssertFalse(app.buttons["workspace.export"].exists)
         tap(app.buttons["recipe.control"], in: app)
         XCTAssertTrue(app.buttons["recipe.none"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["recipe.none"].isSelected)
@@ -231,13 +294,13 @@ import XCTest
         app.buttons["app.connect"].tap()
         wait { app.buttons["app.status"].label.contains("Camera ready") }
         recipe(3, in: app)
-        let preview = version("version.preview", in: app)
-        XCTAssertTrue(preview.isSelected)
-        preview.tap()
-        XCTAssertTrue(app.buttons["workspace.export"].isEnabled)
-        shot(app, "C3 temporary preview")
+        wait { app.scrollViews["viewer.image"].exists && !app.descendants(matching: .any)["viewer.status"].exists }
+        wait { app.buttons["workspace.export"].isEnabled }
+        XCTAssertFalse(app.buttons["workspace.versions"].exists)
+        shot(app, "C3 preview with floating export")
         app.buttons["workspace.export"].tap()
         wait { app.buttons["app.status"].label.contains("1 saved") }
+        clearRecipe(in: app)
         let saved = version("version.saved.", in: app)
         XCTAssertTrue(saved.label.contains("C3 Mountain greens"))
         shot(app, "Saved version recipe title and compact date subtitle")
@@ -249,25 +312,27 @@ import XCTest
         XCTAssertEqual(app.staticTexts["export.status"].label, "Export saved")
         shot(app, "Single export tracked and saved")
     }
-    func testMixedBatchKeepsFrozenC3WhileUIRecipeAndManualVersionChange() {
+    func testMixedBatchKeepsFrozenC3WhileRecipeChangesAndClearsForManualVersion() {
         let app = launch(["--fixture-held-save", "--fixture-held-start"])
         wait { app.buttons["fixture.finishStart"].value as? String == "active" }
         app.buttons["fixture.finishStart"].tap()
         app.cells["grid.source-0"].tap(); app.buttons["app.connect"].tap()
         wait { app.buttons["app.status"].label.contains("Camera ready") }
         recipe(3, in: app)
-        version("version.preview", in: app).tap()
         selectFirstRow(app)
         wait { app.staticTexts["workspace.count"].label == "3 selected" }
         app.buttons["workspace.export"].tap()
         wait { app.buttons["app.status"].label.contains("Saving to Photos") }
         XCTAssertEqual(app.buttons["fixture.finishSave"].value as? String, "Awake")
         recipe(2, in: app)
-        version("version.cameraJPEG", in: app).tap()
         XCTAssertTrue(app.buttons["recipe.control"].label.contains("C2"))
+        XCTAssertFalse(app.buttons["workspace.versions"].exists)
+        clearRecipe(in: app)
+        version("version.cameraJPEG", in: app).tap()
+        XCTAssertEqual(app.buttons["recipe.control"].label, "No recipe selected")
         XCTAssertEqual(app.staticTexts["workspace.count"].label, "3 selected")
-        XCTAssertFalse(app.buttons["workspace.export"].isEnabled)
-        shot(app, "Frozen C3 batch with C2 and manual original")
+        XCTAssertFalse(app.buttons["workspace.export"].exists)
+        shot(app, "Frozen C3 batch after clearing recipe and viewing original")
         app.buttons["fixture.finishSave"].tap()
         wait { app.buttons["app.status"].label.contains("3 saved") }
         app.buttons["app.status"].tap()
@@ -289,7 +354,8 @@ import XCTest
         app = launch(["--fixture-unknown-save"])
         app.cells["grid.source-0"].tap(); app.buttons["app.connect"].tap()
         wait { app.buttons["app.status"].label.contains("Camera ready") }
-        recipe(3, in: app); version("version.preview", in: app).tap()
+        recipe(3, in: app)
+        wait { app.buttons["workspace.export"].isEnabled }
         app.buttons["workspace.export"].tap()
         wait { app.buttons["app.status"].label.contains("Save unconfirmed") }
         app.buttons["app.status"].tap()
@@ -312,7 +378,7 @@ import XCTest
         let app = launch(["--fixture-held-save"] + (native ? [] : ["--fixture-scene-controls"]))
         app.cells["grid.source-0"].tap(); app.buttons["app.connect"].tap()
         wait { app.buttons["app.status"].label.contains("Camera ready") }
-        recipe(3, in: app); version("version.preview", in: app).tap()
+        recipe(3, in: app)
         selectFirstRow(app)
         wait { app.staticTexts["workspace.count"].label == "3 selected" }
         app.buttons["workspace.export"].tap()
@@ -346,22 +412,21 @@ import XCTest
         app.cells["grid.source-0"].tap(); app.buttons["app.connect"].tap()
         wait { app.buttons["app.status"].label.contains("Camera ready") }
         recipe(1, in: app)
-        version("version.preview", in: app).tap()
-        XCTAssertTrue(app.buttons["workspace.export"].isEnabled)
+        wait { app.buttons["workspace.export"].isEnabled }
         let viewer = app.scrollViews["viewer.image"], grid = app.collectionViews["photoGrid"]
         XCTAssertTrue(viewer.waitForExistence(timeout: 5))
         func magnitude() -> Double { Double((viewer.value as? String ?? "").split(separator: ",").first ?? "") ?? -1 }
         func inspect(_ name: String) {
-            let floating = ["recipe.control", "workspace.versions", "workspace.export"]
+            let floating = ["recipe.control", "workspace.export"]
             for id in ["viewer.zoomOut", "viewer.fit", "viewer.zoomIn"] { XCTAssertFalse(app.buttons[id].exists) }
             for id in floating {
                 XCTAssertTrue(app.buttons[id].exists)
                 XCTAssertTrue(app.buttons[id].isEnabled)
             }
-            XCTAssertTrue(app.buttons["workspace.export"].isHittable)
-            XCTAssertFalse(app.buttons["workspace.versions"].frame.intersects(app.buttons["recipe.control"].frame))
-            XCTAssertGreaterThanOrEqual(app.buttons["workspace.versions"].frame.minY, viewer.frame.minY)
-            XCTAssertLessThanOrEqual(app.buttons["workspace.versions"].frame.maxY, viewer.frame.maxY)
+            XCTAssertFalse(app.buttons["workspace.versions"].exists)
+            XCTAssertFalse(app.buttons["workspace.export"].frame.intersects(app.buttons["recipe.control"].frame))
+            XCTAssertGreaterThanOrEqual(app.buttons["workspace.export"].frame.minY, viewer.frame.minY - 0.5)
+            XCTAssertLessThanOrEqual(app.buttons["workspace.export"].frame.maxY, viewer.frame.maxY)
             let frames = XCTAttachment(string: floating.map { "\($0): \(app.buttons[$0].frame)" }.joined(separator: "\n") + "\nViewer: \(viewer.frame), Grid: \(grid.frame)")
             frames.name = name + " inspection frames"; frames.lifetime = .keepAlways; add(frames)
             viewer.pinch(withScale: 2.5, velocity: 1); wait { magnitude() > 1.5 }
@@ -373,12 +438,10 @@ import XCTest
             // Over letterboxing, XCTest's automatic hit-point lookup tries to
             // scroll the zoom view. Use the same screen taps as recipe selection
             // and verify the menus actually open and dismiss without an export.
-            for (control, option) in [("recipe.control", "recipe.slot.1"), ("workspace.versions", "version.raw")] {
-                tap(app.buttons[control], in: app)
-                XCTAssertTrue(app.buttons[option].waitForExistence(timeout: 5))
-                tap(app.buttons["app.status"], in: app)
-                XCTAssertTrue(app.buttons[option].waitForNonExistence(timeout: 3))
-            }
+            tap(app.buttons["recipe.control"], in: app)
+            XCTAssertTrue(app.buttons["recipe.slot.1"].waitForExistence(timeout: 5))
+            tap(app.buttons["app.status"], in: app)
+            XCTAssertTrue(app.buttons["recipe.slot.1"].waitForNonExistence(timeout: 3))
             XCTAssertFalse(app.buttons["app.status"].label.contains("saved"))
             shot(app, name)
         }
@@ -398,6 +461,11 @@ import XCTest
         XCTAssertGreaterThan(grid.frame.height, side)
         XCTAssertLessThan(grid.frame.height, side * 2)
         inspect("AX5 recollapsed pinch inspection remains operable without export")
+        // Floating controls over letterboxing can report isHittable == false to XCTest.
+        // Verify a real screen tap still exports the selected recipe after inspection.
+        tap(app.buttons["workspace.export"], in: app)
+        wait { app.buttons["app.status"].label.contains("1 saved") }
+        XCTAssertFalse(app.buttons["workspace.versions"].exists)
     }
 
     func testAccessibleStatusAndConnectionControlsStayOutsideWorkspaceControls() {
@@ -410,7 +478,7 @@ import XCTest
         XCTAssertLessThanOrEqual(app.buttons["app.status"].frame.maxY, app.buttons["recipe.control"].frame.minY)
         app.buttons["drawer.toggle"].tap()
         wait { app.buttons["drawer.toggle"].value as? String == "Expanded" }
-        let bottom = max(app.buttons["recipe.control"].frame.maxY, app.buttons["workspace.export"].frame.maxY)
+        let bottom = max(app.buttons["recipe.control"].frame.maxY, app.buttons["workspace.versions"].frame.maxY)
         XCTAssertGreaterThanOrEqual(app.buttons["drawer.toggle"].frame.minY, bottom)
         shot(app, "AX5 dark measured app controls and expanded drawer")
         app.buttons["app.status"].tap()

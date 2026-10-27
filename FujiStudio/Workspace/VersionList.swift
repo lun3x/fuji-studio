@@ -16,7 +16,6 @@ struct VersionList: View {
     }
     let source: PhotoSource
     let saved: [SavedVersion]
-    let preview: CameraJPEG?
     var selected: VersionID? = nil
     var timeZone: TimeZone = .current
     var onVersionSelected: (VersionID) -> Void = { _ in }
@@ -47,10 +46,6 @@ struct VersionList: View {
                 accessibilityIdentifier: "version.saved.\(version.id.uuidString)",
                 subtitle: timestamps[index] + ordinal + availability,
                 recipeSlot: version.recipeSnapshot.slot))
-        }
-        if let preview, preview.sourceID == source.id, preview.sourceRevision == source.resourceRevision,
-           preview.key.sourceID == source.id, preview.key.sourceRevision == source.resourceRevision {
-            result.append(Entry(id: .preview(preview.key), label: "Temporary preview", accessibilityIdentifier: "version.preview"))
         }
         return result
     }

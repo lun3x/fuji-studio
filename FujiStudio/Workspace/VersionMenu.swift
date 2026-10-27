@@ -4,7 +4,6 @@ import SwiftUI
 struct VersionMenu: View {
     let source: PhotoSource
     let saved: [SavedVersion]
-    let preview: CameraJPEG?
     let selected: VersionID?
     var onVersionSelected: (VersionID) -> Void
     var onControlFrameChanged: (CGRect) -> Void = { _ in }
@@ -15,7 +14,7 @@ struct VersionMenu: View {
     @Environment(\.colorSchemeContrast) private var contrast
 
     private var options: VersionList {
-        VersionList(source: source, saved: saved, preview: preview, selected: selected, timeZone: timeZone,
+        VersionList(source: source, saved: saved, selected: selected, timeZone: timeZone,
             onVersionSelected: { presented = false; onVersionSelected($0) })
     }
     var body: some View {

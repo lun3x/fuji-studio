@@ -15,7 +15,8 @@ final class WorkspaceLayoutTests: XCTestCase {
         return count.exists ? count.label : ""
     }
     private func shot(_ app: XCUIApplication, _ name: String) {
-        let metrics = XCTAttachment(string: "\(app.otherElements["fixture.nativeMetrics"].label)\nViewer \(app.scrollViews["viewer.image"].frame), value \(String(describing: app.scrollViews["viewer.image"].value)); Grid \(app.collectionViews["photoGrid"].frame); Export \(app.buttons["workspace.export"].frame); recipe \(app.buttons["recipe.control"].frame); drawer header \(app.buttons["drawer.toggle"].frame)")
+        let export = app.buttons["workspace.export"]
+        let metrics = XCTAttachment(string: "\(app.otherElements["fixture.nativeMetrics"].label)\nViewer \(app.scrollViews["viewer.image"].frame), value \(String(describing: app.scrollViews["viewer.image"].value)); Grid \(app.collectionViews["photoGrid"].frame); Export \(export.exists ? String(describing: export.frame) : "hidden"); recipe \(app.buttons["recipe.control"].frame); drawer header \(app.buttons["drawer.toggle"].frame)")
         metrics.name = name + " native bounds"; metrics.lifetime = .keepAlways; add(metrics)
         let attachment = XCTAttachment(screenshot: app.screenshot()); attachment.name = name
         attachment.lifetime = .keepAlways; add(attachment)
@@ -25,8 +26,8 @@ final class WorkspaceLayoutTests: XCTestCase {
         let before = [app.staticTexts["fixture.viewed"].label, countLabel(app), app.staticTexts["fixture.exportCount"].label, control.label]
         app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: rect.midX, dy: rect.midY)).tap()
         XCTAssertTrue(app.buttons["recipe.slot.3"].waitForExistence(timeout: 5), file: file, line: line)
-        // Tap above the popover in the measured Export region; native outside dismissal swallows it.
-        let outside = app.buttons["workspace.export"].frame
+        // Tap above the popover in the status region; native outside dismissal swallows it.
+        let outside = app.buttons["app.status"].frame
         app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: outside.midX, dy: outside.midY)).tap()
         XCTAssertTrue(app.buttons["recipe.none"].waitForNonExistence(timeout: 3), file: file, line: line)
         XCTAssertEqual([app.staticTexts["fixture.viewed"].label, countLabel(app), app.staticTexts["fixture.exportCount"].label, control.label], before, file: file, line: line)
@@ -35,6 +36,16 @@ final class WorkspaceLayoutTests: XCTestCase {
         let rect = app.buttons["recipe.control"].frame
         app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: rect.midX, dy: rect.midY)).tap()
         XCTAssertTrue(app.buttons["recipe.none"].waitForExistence(timeout: 5), file: file, line: line)
+    }
+    private func assertExportControlUsable(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
+        let export = app.buttons["workspace.export"]
+        XCTAssertTrue(export.exists, file: file, line: line)
+        XCTAssertTrue(export.isEnabled, file: file, line: line)
+        XCTAssertFalse(app.buttons["workspace.versions"].exists, file: file, line: line)
+        // Screen taps exercise floating controls even when XCTest cannot find a hit point over letterboxing.
+        let rect = export.frame
+        app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: rect.midX, dy: rect.midY)).tap()
+        XCTAssertEqual(app.staticTexts["fixture.exportCount"].label, "Export requests: 1", file: file, line: line)
     }
     private func waitForDetent(_ app: XCUIApplication, expanded: Bool, file: StaticString = #filePath, line: UInt = #line) {
         let predicate = NSPredicate { _, _ in
@@ -60,7 +71,7 @@ final class WorkspaceLayoutTests: XCTestCase {
         app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: app.scrollViews["recipe.options"].frame.maxX - 6, dy: app.buttons["recipe.none"].frame.midY)).tap()
         XCTAssertTrue(app.buttons["recipe.none"].waitForNonExistence(timeout: 3))
         XCTAssertEqual(app.buttons["recipe.control"].label, "No recipe selected")
-        XCTAssertFalse(app.buttons["workspace.export"].isEnabled)
+        XCTAssertFalse(app.buttons["workspace.export"].exists)
     }
     func testNativeHardwareEscapeDismissal() throws {
         guard ProcessInfo.processInfo.environment["FUJI_STUDIO_NATIVE_KEYBOARD"] == "1" else {
@@ -100,7 +111,7 @@ final class WorkspaceLayoutTests: XCTestCase {
         XCTAssertEqual(app.buttons["drawer.toggle"].value as? String, "Expanded")
         XCTAssertEqual(viewer.frame, base)
         assertRecipeControlUsable(app)
-        XCTAssertTrue(app.buttons["workspace.export"].isHittable)
+        assertExportControlUsable(app)
         shot(app, "Workspace light expanded browse")
     }
     func testSelectTapManualCollapseRevealsViewedAndRetainsChecks() {
@@ -157,15 +168,20 @@ final class WorkspaceLayoutTests: XCTestCase {
         app.buttons["recipe.none"].tap()
 
         XCTAssertEqual(app.buttons["recipe.control"].label, "No recipe selected")
-        XCTAssertFalse(app.buttons["workspace.export"].isEnabled)
+        XCTAssertFalse(app.buttons["workspace.export"].exists)
         openRecipeMenu(app)
         app.buttons["recipe.slot.3"].tap()
         XCTAssertTrue(app.buttons["workspace.export"].isEnabled)
         app.buttons["workspace.export"].tap()
         XCTAssertEqual(app.staticTexts["fixture.exportCount"].label, "Export requests: 1")
+        XCTAssertFalse(app.buttons["workspace.versions"].exists)
+        openRecipeMenu(app)
+        app.buttons["recipe.none"].tap()
         app.buttons["workspace.versions"].tap()
         XCTAssertTrue(app.buttons["version.cameraJPEG"].isSelected)
         app.buttons["version.cameraJPEG"].tap()
+        openRecipeMenu(app)
+        app.buttons["recipe.slot.3"].tap()
         openRecipeMenu(app)
 
         let options = app.scrollViews["recipe.options"]
@@ -204,7 +220,7 @@ final class WorkspaceLayoutTests: XCTestCase {
         XCTAssertGreaterThan(grid.frame.height, side)
         XCTAssertLessThan(grid.frame.height, side * 2)
         XCTAssertTrue(app.buttons["workspace.select"].isHittable)
-        XCTAssertTrue(app.buttons["workspace.export"].isHittable)
+        assertExportControlUsable(app)
         app.buttons["drawer.toggle"].tap()
         XCTAssertEqual(app.buttons["drawer.toggle"].value as? String, "Expanded")
         waitForDetent(app, expanded: true)
@@ -235,8 +251,9 @@ final class WorkspaceLayoutTests: XCTestCase {
 
         for id in ["viewer.zoomOut", "viewer.fit", "viewer.zoomIn"] { XCTAssertFalse(app.buttons[id].exists) }
         let viewer = app.scrollViews["viewer.image"]
-        XCTAssertGreaterThanOrEqual(app.buttons["workspace.versions"].frame.minY, viewer.frame.minY)
-        XCTAssertLessThanOrEqual(app.buttons["workspace.versions"].frame.maxY, viewer.frame.maxY)
+        XCTAssertFalse(app.buttons["workspace.versions"].exists)
+        XCTAssertGreaterThanOrEqual(app.buttons["workspace.export"].frame.minY, viewer.frame.minY - 0.5)
+        XCTAssertLessThanOrEqual(app.buttons["workspace.export"].frame.maxY, viewer.frame.maxY)
         let beforeZoom = [app.staticTexts["fixture.viewed"].label, countLabel(app), app.staticTexts["fixture.exportCount"].label, app.buttons["recipe.control"].label]
         viewer.pinch(withScale: 2.5, velocity: 1)
         let zoomed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
@@ -252,12 +269,15 @@ final class WorkspaceLayoutTests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [fitted], timeout: 5), .completed)
         XCTAssertEqual(Double((app.scrollViews["viewer.image"].value as! String).split(separator: ",")[0])!, 1, accuracy: 0.01)
         XCTAssertEqual([app.staticTexts["fixture.viewed"].label, countLabel(app), app.staticTexts["fixture.exportCount"].label, app.buttons["recipe.control"].label], beforeZoom)
-        XCTAssertFalse(app.buttons["workspace.versions"].frame.intersects(app.buttons["recipe.control"].frame))
         XCTAssertFalse(app.buttons["workspace.export"].frame.intersects(app.buttons["recipe.control"].frame))
+        openRecipeMenu(app)
+        app.buttons["recipe.none"].tap()
+        XCTAssertFalse(app.buttons["workspace.export"].exists)
+        XCTAssertFalse(app.buttons["workspace.versions"].frame.intersects(app.buttons["recipe.control"].frame))
         app.buttons["workspace.versions"].tap()
         app.buttons["version.raw"].tap()
         XCTAssertTrue(app.descendants(matching: .any)["viewer.unavailable"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["recipe.control"].label.contains("C3"))
+        XCTAssertEqual(app.buttons["recipe.control"].label, "No recipe selected")
         app.buttons["workspace.versions"].tap()
         app.buttons["version.cameraJPEG"].tap()
         XCTAssertTrue(app.scrollViews["viewer.image"].waitForExistence(timeout: 5))
@@ -344,8 +364,8 @@ final class WorkspaceLayoutTests: XCTestCase {
         XCTAssertEqual(app.buttons["drawer.toggle"].value as? String, "Expanded")
         waitForDetent(app, expanded: true)
         assertRecipeControlUsable(app)
-        XCTAssertTrue(app.buttons["workspace.export"].isHittable)
-        XCTAssertTrue(app.buttons["workspace.versions"].exists)
+        assertExportControlUsable(app)
+        XCTAssertFalse(app.buttons["workspace.versions"].exists)
         shot(app, "Workspace actual compact viewport resize, not native rotation")
     }
 }
