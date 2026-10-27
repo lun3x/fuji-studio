@@ -14,7 +14,6 @@ import Observation
     private var unfinishedEvents: [UUID: ExportEvent] = [:]
     private var jobOrder: [UUID] = []
     private(set) var isLoadingLibrary = false
-    private(set) var isSelectingAll = false
     private(set) var isRefreshing = false
     private(set) var isConnecting = false
     private(set) var isSubmitting = false
@@ -23,12 +22,10 @@ import Observation
     @ObservationIgnored private var started = false
     @ObservationIgnored private var streams: [Task<Void, Never>] = []
     @ObservationIgnored private var displayTask: Task<Void, Never>?
-    @ObservationIgnored private var allTask: Task<Void, Never>?
     @ObservationIgnored private var sceneTask: Task<Void, Never>?
     @ObservationIgnored private var submissionTask: Task<UUID, Error>?
     @ObservationIgnored private var libraryGeneration: UInt64 = 0
     @ObservationIgnored private var displayIntent: UInt64 = 0
-    @ObservationIgnored private var selectionIntent: UInt64 = 0
     @ObservationIgnored private var cameraEventGeneration: UInt64 = 0
     @ObservationIgnored private var importedSessions: Set<UUID> = []
     @ObservationIgnored private var contextTask: Task<Void, Never>?
@@ -62,7 +59,7 @@ import Observation
     init(environment: AppEnvironment) { self.environment = environment }
     var imageStatusIsFailure: Bool { displayFailure != nil }
     deinit {
-        streams.forEach { $0.cancel() }; displayTask?.cancel(); allTask?.cancel(); contextTask?.cancel(); versionRefreshTask?.cancel()
+        streams.forEach { $0.cancel() }; displayTask?.cancel(); contextTask?.cancel(); versionRefreshTask?.cancel()
     }
 
     var progressEvents: [ExportEvent] {
@@ -94,13 +91,6 @@ import Observation
     }
 
     func send(_ action: WorkspaceAction) {
-        switch action {
-        case .all:
-            selectAll(); return
-        case .none, .done, .select, .sourceTapped, .checkedSourcesReplaced:
-            selectionIntent &+= 1; isSelectingAll = false; allTask?.cancel()
-        default: break
-        }
         reduce(action)
     }
 
@@ -211,7 +201,6 @@ import Observation
 
     func reloadLibrary() async {
         libraryGeneration &+= 1; let generation = libraryGeneration
-        selectionIntent &+= 1; allTask?.cancel(); isSelectingAll = false
         isLoadingLibrary = true
         defer { if libraryGeneration == generation { isLoadingLibrary = false } }
         let access = await environment.reader.requestAccess()
@@ -240,26 +229,6 @@ import Observation
             try await environment.catalog.upsertSources(sources)
             await refreshVersions()
         } catch { if generation == libraryGeneration { message = Self.explain(error) } }
-    }
-
-    private func selectAll() {
-        selectionIntent &+= 1; let intent = selectionIntent, scope = libraryGeneration
-        allTask?.cancel(); isSelectingAll = true
-        let reader = environment.reader
-        allTask = Task { [weak self] in
-            do {
-                let complete = try await reader.allEligibleSources()
-                guard !Task.isCancelled, let self, self.selectionIntent == intent, self.libraryGeneration == scope, !self.isSuspended else { return }
-                self.sources = Self.sorted(complete.map(self.knownCompatibility))
-                self.reduce(.libraryUpdated(sources: self.sources, access: self.state.libraryAccess))
-                self.state.reduce(.all(accessibleEligibleSourceIDs: Set(complete.map(\.id))))
-                self.isSelectingAll = false
-            } catch {
-                guard let self, self.selectionIntent == intent else { return }
-                self.isSelectingAll = false
-                if !(error is CancellationError) { self.message = Self.explain(error) }
-            }
-        }
     }
 
     private func knownCompatibility(_ source: PhotoSource) -> PhotoSource {
@@ -426,7 +395,6 @@ import Observation
         if phase == .background {
             state.reduce(.previewInterrupted); previewInFlight = false
             foreground = false; isSuspended = true; restoreIdle()
-            selectionIntent &+= 1; isSelectingAll = false; allTask?.cancel()
             displayIntent &+= 1
             displayTask?.cancel(); displayRequest = nil
         }

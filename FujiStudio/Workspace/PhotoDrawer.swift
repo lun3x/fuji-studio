@@ -1,12 +1,11 @@
 import SwiftUI
 
 /// One persistent grid. Only the header recognizes the drawer drag; grid scroll/sweep stays native.
-struct PhotoDrawer<Header: View, Grid: View>: View {
+struct PhotoDrawer<Grid: View>: View {
     @Binding var detent: DrawerDetent
     let detents: DrawerDetents
     var onHeaderHeightChanged: (CGFloat) -> Void
     var onManualCollapse: () -> Void
-    @ViewBuilder var header: () -> Header
     @ViewBuilder var grid: () -> Grid
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
@@ -36,7 +35,6 @@ struct PhotoDrawer<Header: View, Grid: View>: View {
                 .accessibilityAdjustableAction { direction in
                     switch direction { case .increment: move(to: .expanded); case .decrement: move(to: .collapsed); @unknown default: break }
                 }
-                header().padding(.horizontal, 12).padding(.bottom, 8)
             }
             .contentShape(Rectangle())
             .onGeometryChange(for: CGFloat.self, of: { $0.size.height }, action: onHeaderHeightChanged)

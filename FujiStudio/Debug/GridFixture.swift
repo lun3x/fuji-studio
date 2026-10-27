@@ -23,9 +23,7 @@ struct GridFixtureEntry: View {
         VStack(spacing: 8) {
             Text("Generated 1,000 photo fixture").font(.headline)
             HStack {
-                Button(state.isSelecting ? "Done" : "Select") { state.reduce(state.isSelecting ? .done : .select) }
-                Button("All") { state.reduce(.all(accessibleEligibleSourceIDs: state.eligibleSourceIDs)) }
-                Button("None") { state.reduce(.none) }
+                Button(state.isSelecting ? "Cancel selection" : "Select") { state.reduce(state.isSelecting ? .done : .select) }
                 Button("Resize") {
                     compact.toggle()
                     if let id = state.viewedSourceID {

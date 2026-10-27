@@ -17,7 +17,6 @@ actor CorrectionLibrary: PhotoLibraryReading {
     func setRAW(_ id: SourceID, bytes: Data) { rawBytes[id] = bytes }
     func requestAccess() async -> LibraryAccess { await base.requestAccess() }
     func sources() async -> AsyncThrowingStream<[PhotoSource], Error> { await base.sources() }
-    func allEligibleSources() async throws -> [PhotoSource] { try await base.allEligibleSources() }
     func source(id: SourceID) async throws -> PhotoSource { try await base.source(id: id) }
     func resources(assetID: String) async throws -> [ResourceToken] { try await base.resources(assetID: assetID) }
     func changes() async -> AsyncStream<LibraryChange> { await base.changes() }

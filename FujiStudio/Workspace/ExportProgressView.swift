@@ -98,7 +98,7 @@ struct AppWorkspaceView: View {
                             Divider()
                         }
                         Button("Reload Photos") { Task { await model.reloadLibrary() } }
-                        if model.isLoadingLibrary || model.isSelectingAll { ProgressView(model.isSelectingAll ? "Selecting all eligible photos…" : "Reading Photos…") }
+                        if model.isLoadingLibrary { ProgressView("Reading Photos…") }
                     }.padding()
                 }.navigationTitle("Fuji Studio status")
                     .toolbar { Button("Done") { statusPresented = false } }
@@ -135,7 +135,6 @@ struct AppWorkspaceView: View {
         }
     }
     private var statusLabel: String {
-        if model.isSelectingAll { return "Selecting all photos…" }
         if model.isLoadingLibrary { return "Reading Photos…" }
         if let event = model.exportEvent { return "\(event.recipeLabel) · \(event.summary.completed) saved · \(ExportProgressView.status(event))" }
         if model.message != nil { return "Action needed" }

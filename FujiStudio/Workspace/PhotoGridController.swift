@@ -228,8 +228,9 @@ private extension CGPoint {
 @MainActor
 private final class PhotoGridCell: UICollectionViewCell {
     private let image = UIImageView()
+    private let selectionShade = UIView()
     private let type = UILabel()
-    private let mark = UILabel()
+    private let mark = UIImageView()
     private var provider: (any GridThumbnailProviding)?
     private var token: UUID?
     private var generation = UUID()
@@ -248,18 +249,22 @@ private final class PhotoGridCell: UICollectionViewCell {
         type.textColor = .white; type.backgroundColor = .black.withAlphaComponent(0.65)
         type.numberOfLines = 1; type.lineBreakMode = .byTruncatingTail
         type.layer.cornerRadius = 3; type.clipsToBounds = true
-        mark.textColor = .white; mark.font = .systemFont(ofSize: 24, weight: .bold)
-        for child in [image, type, mark] { child.isAccessibilityElement = false; contentView.addSubview(child) }
+        selectionShade.backgroundColor = UIColor.systemGray.withAlphaComponent(0.45)
+        selectionShade.isUserInteractionEnabled = false
+        let colors = UIImage.SymbolConfiguration(paletteColors: [.white, .systemBlue])
+        mark.image = UIImage(systemName: "checkmark.circle.fill", withConfiguration: colors)
+        mark.contentMode = .scaleAspectFit
+        for child in [image, selectionShade, type, mark] { child.isAccessibilityElement = false; contentView.addSubview(child) }
         isAccessibilityElement = true
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override func layoutSubviews() {
-        super.layoutSubviews(); image.frame = contentView.bounds
+        super.layoutSubviews(); image.frame = contentView.bounds; selectionShade.frame = contentView.bounds
         let badge = type.sizeThatFits(CGSize(width: max(1, bounds.width - 16), height: 44))
         let badgeHeight = min(max(0, bounds.height - 8), ceil(badge.height) + 4)
         type.frame = CGRect(x: 4, y: bounds.height - badgeHeight - 4,
                             width: min(max(0, bounds.width - 8), ceil(badge.width) + 8), height: badgeHeight)
-        mark.frame = CGRect(x: bounds.width - 34, y: 4, width: 30, height: 30)
+        mark.frame = CGRect(x: bounds.width - 30, y: bounds.height - 30, width: 24, height: 24)
     }
     func configure(source: PhotoSource, selecting: Bool, checked: Bool, viewed: Bool, thumbnails: any GridThumbnailProviding, pixelSize: CGSize, onTap: @escaping () -> Void) {
         cancelThumbnail(); sourceID = source.id; provider = thumbnails; tap = onTap
@@ -279,11 +284,14 @@ private final class PhotoGridCell: UICollectionViewCell {
         }
     }
     func membership(selecting: Bool, checked: Bool, viewed: Bool) {
-        mark.text = selecting ? (checked ? "☑" : "☐") : nil
+        let selected = selecting && checked
+        selectionShade.isHidden = !selected
+        mark.isHidden = !selected
+        isSelected = selected
         accessibilityValue = selecting ? (checked ? "Checked" : "Unchecked") : (viewed ? "Viewed" : "")
         accessibilityTraits = checked && selecting ? [.button, .selected] : [.button]
         accessibilityCustomActions = selecting ? [UIAccessibilityCustomAction(name: "Toggle selection", target: self, selector: #selector(activate))] : nil
-        contentView.layer.borderWidth = viewed ? 2 : 0; contentView.layer.borderColor = UIColor.systemYellow.cgColor
+        contentView.layer.borderWidth = viewed && !selecting ? 2 : 0; contentView.layer.borderColor = UIColor.systemYellow.cgColor
     }
     @objc private func activate() -> Bool { tap(); return true }
     override func accessibilityActivate() -> Bool { activate() }

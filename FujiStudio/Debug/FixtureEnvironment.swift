@@ -84,7 +84,6 @@ actor FixtureLibrary: PhotoLibraryReading {
     private var access: LibraryAccess
     private let image: DisplayFileLease, root: URL
     private var outputs: [String: ResourceToken] = [:]
-    private var allBarrier: FixtureBarrier?
     private var resourcesBarrier: FixtureBarrier?
     private var discoveryBarrier: FixtureBarrier?
     private var materializeBarriers: [String: FixtureBarrier] = [:]
@@ -92,7 +91,7 @@ actor FixtureLibrary: PhotoLibraryReading {
     private var revisionBytes: [String: Data] = [:]
     private(set) var materializations = 0
     private var observers: [AsyncStream<LibraryChange>.Continuation] = []
-    private(set) var rawReads = 0, changeSubscriptions = 0
+    private(set) var rawReads = 0, changeSubscriptions = 0, discoveryRequests = 0
     init(sources: [PhotoSource], image: DisplayFileLease, root: URL, access: LibraryAccess) {
         index = sources; self.image = image; self.root = root; self.access = access
     }
@@ -114,8 +113,8 @@ actor FixtureLibrary: PhotoLibraryReading {
         return bytes
     }
     func removeOutput(_ id: String, notify: Bool = true) { outputs[id] = nil; if notify { observers.forEach { $0.yield(LibraryChange(changedIDs: [], removedIDs: [id], accessScopeChanged: false)) } } }
-    func holdAll(_ barrier: FixtureBarrier) { allBarrier = barrier }
     func sources() -> AsyncThrowingStream<[PhotoSource], Error> {
+        discoveryRequests += 1
         let values = Array(index.prefix(discoveryLimit ?? index.count)), barrier = discoveryBarrier
         return AsyncThrowingStream { c in
             let task = Task {
@@ -127,10 +126,6 @@ actor FixtureLibrary: PhotoLibraryReading {
             }
             c.onTermination = { _ in task.cancel() }
         }
-    }
-    func allEligibleSources() async throws -> [PhotoSource] {
-        if let allBarrier { await allBarrier.wait() }
-        try Task.checkCancellation(); return index
     }
     func source(id: SourceID) throws -> PhotoSource {
         guard access == .full || access == .limited else { throw ResourceError.authorization(access) }

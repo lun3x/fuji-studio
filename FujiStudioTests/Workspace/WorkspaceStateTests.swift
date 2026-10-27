@@ -41,14 +41,12 @@ struct WorkspaceStateTests {
         #expect(state.checkedSourceIDs == ["viewed"])
     }
 
-    @Test func noneOnlyEmptiesBatchAndDoneRestoresViewedSingleton() throws {
+    @Test func emptySelectionDisablesExportAndCancelRestoresViewedSingleton() throws {
         let f = try WorkspaceFixture()
         var state = f.state()
         state.reduce(.sourceTapped("viewed"))
-        state.reduce(.none)
-        #expect(state.effectiveSourceIDs == ["viewed"])
         state.reduce(.select)
-        state.reduce(.none)
+        state.reduce(.checkedSourcesReplaced([]))
         #expect(state.isSelecting)
         #expect(state.effectiveSourceIDs.isEmpty)
         #expect(state.exportDisabledReason == .noSources)
@@ -59,15 +57,16 @@ struct WorkspaceStateTests {
         #expect(state.canExport)
     }
 
-    @Test func allUsesOffscreenIndexAndFiltersInaccessibleAndKnownIncompatible() throws {
+    @Test func rangeSelectionPrunesInaccessibleAndBlocksIncompatibleExport() throws {
         let f = try WorkspaceFixture()
         var state = f.state(sources: [f.source("viewed"), f.source("offscreen"), f.source("bad", compatibility: .incompatible(model: "X-T4"))])
         state.reduce(.sourceTapped("viewed"))
-        state.reduce(.all(accessibleEligibleSourceIDs: ["viewed", "offscreen", "bad", "missing"]))
+        state.reduce(.select)
+        state.reduce(.checkedSourcesReplaced(["viewed", "offscreen", "bad", "missing"]))
         #expect(state.isSelecting)
-        #expect(state.checkedSourceIDs == ["viewed", "offscreen"])
-        #expect(state.effectiveSourceIDs == ["offscreen", "viewed"])
-        #expect(state.canExport) // Unknown compatibility can be materialized later.
+        #expect(state.checkedSourceIDs == ["viewed", "offscreen", "bad"])
+        #expect(state.effectiveSourceIDs == ["bad", "offscreen", "viewed"])
+        #expect(state.exportDisabledReason == .incompatibleSource(sourceID: "bad", model: "X-T4"))
     }
 
     @Test func tappingPhotoNeverCollapsesExpandedDrawerInEitherMode() throws {
@@ -220,7 +219,7 @@ struct WorkspaceStateTests {
         let f = try WorkspaceFixture()
         var state = f.state()
         state.reduce(.sourceTapped("viewed"))
-        state.reduce(.all(accessibleEligibleSourceIDs: ["viewed", "next"]))
+        state.reduce(.select); state.reduce(.checkedSourcesReplaced(["viewed", "next"]))
         let frozen = ExportJob(id: UUID(), submittedAt: Date(), recipeSnapshot: f.recipes[2],
             items: state.effectiveSources.map { ExportItem(source: $0, operationID: UUID()) }, state: .queued)
         state.reduce(.libraryUpdated(sources: [f.source("next")], access: .limited))
@@ -410,11 +409,11 @@ struct WorkspaceStateTests {
         #expect(state.displayedVersion == .preview(f.key(request)))
     }
 
-    @Test func accessDeniedAtInitializationRejectsInaccessibleTapAndAll() throws {
+    @Test func accessDeniedAtInitializationRejectsInaccessibleTapAndSelection() throws {
         let f = try WorkspaceFixture()
         var state = WorkspaceState(sources: [f.source("viewed")], access: .denied)
         #expect(state.reduce(.sourceTapped("viewed")).isEmpty)
-        state.reduce(.all(accessibleEligibleSourceIDs: ["viewed"]))
+        state.reduce(.select); state.reduce(.checkedSourcesReplaced(["viewed"]))
         #expect(state.viewedSourceID == nil)
         #expect(state.displayedVersion == nil)
         #expect(state.effectiveSourceIDs.isEmpty)
@@ -425,7 +424,7 @@ struct WorkspaceStateTests {
         let f = try WorkspaceFixture()
         var state = f.state(sources: [f.source("z", date: nil), f.source("b", date: 20),
             f.source("a", date: 20), f.source("old", date: 10), f.source("y", date: nil)])
-        state.reduce(.all(accessibleEligibleSourceIDs: ["z", "b", "a", "old", "y"]))
+        state.reduce(.select); state.reduce(.checkedSourcesReplaced(["z", "b", "a", "old", "y"]))
         #expect(state.effectiveSourceIDs == ["a", "b", "old", "y", "z"])
         #expect(state.effectiveSources.map(\.id) == ["a", "b", "old", "y", "z"])
     }

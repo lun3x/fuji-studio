@@ -28,6 +28,13 @@ import XCTest
         let bounds = XCTAttachment(string: "Status \(app.buttons["app.status"].frame); Connect \(app.buttons["app.connect"].frame); Recipe \(app.buttons["recipe.control"].frame); Export \(app.buttons["workspace.export"].frame); Grid \(app.collectionViews["photoGrid"].frame)")
         bounds.name = name + " bounds"; bounds.lifetime = .keepAlways; add(bounds)
     }
+    private func selectFirstRow(_ app: XCUIApplication) {
+        app.buttons["workspace.select"].tap()
+        app.cells["grid.source-0"].tap() // Clear the viewed seed before an additive sweep.
+        let start = app.cells["grid.source-0"].coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.65))
+        let end = app.cells["grid.source-2"].coordinate(withNormalizedOffset: CGVector(dx: 0.75, dy: 0.65))
+        start.press(forDuration: 0.05, thenDragTo: end)
+    }
     func testInjectedFlowOpensRealWorkspaceWithoutSystemPermissions() {
         let app = launch()
         XCTAssertTrue(app.buttons["app.connect"].exists)
@@ -102,18 +109,30 @@ import XCTest
         XCTAssertFalse(app.buttons["workspace.export"].isEnabled)
         shot(app, "Floating versions and photo without bottom controls")
     }
-    func testAllDirectlyFromBrowseEntersSelectWithCompleteMembership() {
+    func testFloatingSelectionEntersAndCancelsWithoutMovingPhotos() {
         let app = launch()
-        XCTAssertEqual(app.buttons["workspace.select"].label, "Select")
-        XCTAssertFalse(app.buttons["workspace.none"].isEnabled)
-        XCTAssertTrue(app.buttons["workspace.all"].isEnabled)
-        app.buttons["workspace.all"].tap()
-        wait { app.staticTexts["workspace.count"].label == "3 selected" }
-        XCTAssertEqual(app.buttons["workspace.select"].label, "Done")
-        XCTAssertTrue(app.buttons["workspace.none"].isEnabled)
-        for id in ["source-0", "source-1", "source-2"] {
-            XCTAssertTrue(app.cells["grid.\(id)"].isSelected)
-        }
+        let select = app.buttons["workspace.select"], grid = app.collectionViews["photoGrid"]
+        XCTAssertFalse(app.buttons["workspace.all"].exists)
+        XCTAssertFalse(app.buttons["workspace.none"].exists)
+        XCTAssertEqual(select.label, "Select")
+        XCTAssertGreaterThanOrEqual(select.frame.minY, grid.frame.minY)
+        XCTAssertEqual(select.frame.maxX, grid.frame.maxX - 12, accuracy: 1)
+        app.cells["grid.source-0"].tap()
+        let frame = app.cells["grid.source-0"].frame
+        select.tap()
+        XCTAssertEqual(select.label, "Cancel selection")
+        XCTAssertEqual(app.cells["grid.source-0"].frame, frame)
+        XCTAssertTrue(app.cells["grid.source-0"].isSelected)
+        app.cells["grid.source-1"].tap()
+        XCTAssertEqual(app.staticTexts["workspace.count"].label, "2 selected")
+        shot(app, "Photos-style floating cancel and checked photos")
+        select.tap()
+        XCTAssertEqual(select.label, "Select")
+        XCTAssertEqual(app.cells["grid.source-0"].frame, frame)
+        XCTAssertFalse(app.cells["grid.source-0"].isSelected)
+        XCTAssertFalse(app.cells["grid.source-1"].isSelected)
+        XCTAssertEqual(app.staticTexts["workspace.count"].label, "1 photo")
+        shot(app, "Photos-style floating Select in browse")
     }
     func testLargestTextVersionMenuScrollsToFullSavedLabel() {
         let app = launch(["--fixture-accessibility"])
@@ -220,7 +239,7 @@ import XCTest
         wait { app.buttons["app.status"].label.contains("Camera ready") }
         recipe(3, in: app)
         version("version.preview", in: app).tap()
-        app.buttons["workspace.select"].tap(); app.buttons["workspace.all"].tap()
+        selectFirstRow(app)
         wait { app.staticTexts["workspace.count"].label == "3 selected" }
         app.buttons["workspace.export"].tap()
         wait { app.buttons["app.status"].label.contains("Saving to Photos") }
@@ -276,7 +295,7 @@ import XCTest
         app.cells["grid.source-0"].tap(); app.buttons["app.connect"].tap()
         wait { app.buttons["app.status"].label.contains("Camera ready") }
         recipe(3, in: app); version("version.preview", in: app).tap()
-        app.buttons["workspace.select"].tap(); app.buttons["workspace.all"].tap()
+        selectFirstRow(app)
         wait { app.staticTexts["workspace.count"].label == "3 selected" }
         app.buttons["workspace.export"].tap()
         wait { app.buttons["app.status"].label.contains("Saving to Photos") }
