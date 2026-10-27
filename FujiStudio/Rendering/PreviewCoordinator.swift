@@ -14,11 +14,13 @@ struct PreviewEvent: Sendable, Equatable {
     let workspaceRequest: WorkspacePreviewRequest?
     let state: PreviewState
     var displayFile: DisplayFileLease? = nil
+    var jpeg: CameraJPEG? = nil
+    var displayIntent: UInt64? = nil
 }
 
 actor PreviewCoordinator {
     /// Resolves existing paired JPEG/saved versions; RAW is always handled through the shared pool.
-    typealias StoredDisplay = @Sendable (PhotoSource, VersionID) async throws -> URL
+    typealias StoredDisplay = @Sendable (PhotoSource, VersionID) async throws -> DisplayFileLease
     private let pool: OriginalResourcePool
     private let camera: any CameraServing
     private let scheduler: any CameraWorkScheduling
@@ -26,6 +28,8 @@ actor PreviewCoordinator {
     private let rawRenderer: RawDisplayRenderer
     private let storedDisplay: StoredDisplay
     private var currentDisplayFile: DisplayFileLease?
+    private var currentJPEG: CameraJPEG?
+    private var displayIntent: UInt64?
     private var generation: UInt64 = 0
     private var source: PhotoSource?
     private var observers: [UUID: AsyncStream<PreviewEvent>.Continuation] = [:]
@@ -47,7 +51,7 @@ actor PreviewCoordinator {
     private func emit(_ state: PreviewState, source: PhotoSource, generation: UInt64, version: VersionID?, request: WorkspacePreviewRequest?) {
         let file: DisplayFileLease? = if case .ready = state { currentDisplayFile } else { nil }
         let event = PreviewEvent(generation: generation, sourceID: source.id, version: version,
-            workspaceRequest: request, state: state, displayFile: file)
+            workspaceRequest: request, state: state, displayFile: file, jpeg: file == nil ? nil : currentJPEG, displayIntent: displayIntent)
         observers.values.forEach { $0.yield(event) }
     }
 
@@ -55,6 +59,8 @@ actor PreviewCoordinator {
     /// obsolete requests are rejected after scheduler admission, before downloading an original.
     func request(source: PhotoSource, recipe: RecipeSnapshot?, workspaceRequest: WorkspacePreviewRequest? = nil) async {
         generation &+= 1
+        displayIntent = nil
+        currentJPEG = nil
         let intent = generation
         if self.source?.id != source.id || self.source?.resourceRevision != source.resourceRevision { displayedVersion = nil }
         self.source = source
@@ -106,6 +112,7 @@ actor PreviewCoordinator {
                 let file = try await cache.copyForDisplay(jpeg.key)
                 guard generation == intent else { return }
                 currentDisplayFile = file
+                currentJPEG = jpeg
                 displayedVersion = .preview(jpeg.key)
                 emit(.ready(file.fileURL), source: source, generation: intent, version: displayedVersion, request: workspaceRequest)
             } else {
@@ -117,8 +124,10 @@ actor PreviewCoordinator {
         }
     }
 
-    func selectStoredVersion(_ version: VersionID) async {
-        guard let source else { return }
+    func selectStoredVersion(_ version: VersionID, source: PhotoSource, displayIntent: UInt64? = nil) async {
+        self.source = source
+        self.displayIntent = displayIntent
+        currentJPEG = nil
         generation &+= 1
         let intent = generation
         emit(.loading, source: source, generation: intent, version: version, request: nil)
@@ -141,13 +150,22 @@ actor PreviewCoordinator {
             guard key.sourceID == source.id, key.sourceRevision == source.resourceRevision else { throw RenderCacheError.missing }
             file = try await cache.copyForDisplay(key)
         case .cameraJPEG, .saved:
-            let url = try await storedDisplay(source, version)
-            file = try DisplayFileLease.copy(from: url, geometry: try? ImageGeometry.read(url))
+            try requireCurrent(intent)
+            file = try await storedDisplay(source, version)
         }
         guard generation == intent else { return }
         currentDisplayFile = file
         displayedVersion = version
         emit(.ready(file.fileURL), source: source, generation: intent, version: version, request: nil)
+    }
+
+    func invalidate() {
+        generation &+= 1
+        source = nil
+        displayedVersion = nil
+        currentDisplayFile = nil
+        currentJPEG = nil
+        displayIntent = nil
     }
 
     private func requireCurrent(_ intent: UInt64) throws {

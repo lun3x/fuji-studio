@@ -12,6 +12,7 @@ struct WorkspaceView: View {
     var imageStatus: String? = nil
     var savedVersions: [SavedVersion] = []
     var preview: CameraJPEG? = nil
+    var exportPending = false
     var onAction: (WorkspaceAction) -> Void
     var onRefreshRecipes: () -> Void
     var onExport: () -> Void
@@ -121,10 +122,10 @@ struct WorkspaceView: View {
             if compact { Image(systemName: "square.and.arrow.up").frame(minWidth: 44, minHeight: 44) }
             else { Label("Export", systemImage: "square.and.arrow.up").frame(minHeight: 44) }
         }
-            .buttonStyle(.glassProminent).disabled(!state.canExport)
+            .buttonStyle(.glassProminent).disabled(!state.canExport || exportPending)
             .accessibilityLabel("Export").accessibilityIdentifier("workspace.export")
             .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named("workspace")) }) { exportFrame = $0 }
-            .accessibilityHint(state.exportDisabledReason?.message ?? "Export \(state.effectiveSources.count) photos using the selected recipe")
+            .accessibilityHint(exportPending ? "Preparing export submission" : state.exportDisabledReason?.message ?? "Export \(state.effectiveSources.count) photos using the selected recipe")
     }
     private func versionList(source: PhotoSource) -> VersionList {
         VersionList(source: source, saved: savedVersions, preview: preview, selected: state.displayedVersion,

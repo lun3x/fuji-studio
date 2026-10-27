@@ -65,7 +65,7 @@ private struct WorkspaceFixtureView: View {
 }
 
 @MainActor
-private final class WorkspaceFixture {
+final class WorkspaceFixture {
     let sources: [PhotoSource]
     let file: DisplayFileLease
     let geometry = ImageGeometry(encoded: PixelSize(width: 1800, height: 1200), orientation: 1)
@@ -118,7 +118,7 @@ private final class WorkspaceFixture {
 }
 
 @MainActor
-private final class WorkspaceFixtureThumbnails: GridThumbnailProviding {
+final class WorkspaceFixtureThumbnails: GridThumbnailProviding {
     func request(sourceID: SourceID, pixelSize: CGSize, completion: @escaping @MainActor (UIImage?) -> Void) -> UUID {
         let index = Int(sourceID.replacingOccurrences(of: "source-", with: "")) ?? 0
         completion(UIGraphicsImageRenderer(size: CGSize(width: 128, height: 128)).image { renderer in

@@ -59,6 +59,16 @@ struct PhotoResourceDescriptor: Sendable {
 final class ResourceFileTransfer: @unchecked Sendable {
     typealias Start = (@escaping @Sendable (Data) -> Void, @escaping @Sendable (Error?) -> Void) -> (@Sendable () -> Void)
     let fileURL: URL
+    private static let directory: URL = {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("FujiStudioOriginalTransfers", isDirectory: true)
+        // Initialized once per process, before the first transfer. Only this dedicated transient
+        // root is reclaimed; no render pins, camera journals or legacy/private files live here.
+        try? FileManager.default.removeItem(at: directory)
+        return directory
+    }()
+    static func prepareDirectory() throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
     private let token: ResourceToken
     private let lock = NSLock()
     private var handle: FileHandle?
@@ -70,8 +80,9 @@ final class ResourceFileTransfer: @unchecked Sendable {
 
     init(token: ResourceToken) throws {
         self.token = token
+        try Self.prepareDirectory()
         let suffix = token.format == .raf ? "RAF" : token.format == .jpeg ? "JPG" : "resource"
-        fileURL = FileManager.default.temporaryDirectory.appendingPathComponent("FujiStudio-\(UUID().uuidString).\(suffix)")
+        fileURL = Self.directory.appendingPathComponent("\(UUID().uuidString).\(suffix)")
         guard FileManager.default.createFile(atPath: fileURL.path, contents: nil) else {
             throw ResourceError.insufficientStorage
         }

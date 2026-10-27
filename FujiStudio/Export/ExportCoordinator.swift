@@ -16,6 +16,7 @@ struct ExportEvent: Sendable, Equatable {
     let currentItem: SourceID?
     let summary: ExportSummary
     let pauseReason: ExportPauseReason?
+    var failures: [ExportFailure] = []
     /// The current run has stopped, including a pause; the frozen job remains resumable.
     let terminal: Bool
     let stopRequested: Bool
@@ -31,6 +32,9 @@ actor ExportCoordinator {
     private let cache: FileRenderCache
     private let scheduler: any CameraWorkScheduling
     private var occupied = false
+    private var suspended = false
+    private var admissionEpoch: UInt64 = 0
+    private var recovering = false
     private var activeID: UUID?
     private var lastKnownJob: ExportJob?
     private var worker: Task<Void, Never>?
@@ -53,16 +57,18 @@ actor ExportCoordinator {
     private func removeObserver(_ id: UUID) { observers[id] = nil }
 
     func start(sources: [PhotoSource], recipe: RecipeSnapshot) async throws -> UUID {
+        guard !suspended else { throw ExportCoordinatorError.stopped }
         try reserve()
+        let epoch = admissionEpoch
         do {
             guard !sources.isEmpty, Set(sources.map(\.id)).count == sources.count else { throw ExportCoordinatorError.invalidSubmission }
             try recipe.requireRenderable()
             try await validateCamera(recipe)
-            for source in sources { try await validateSource(source) }
+            for source in sources { try await validateSource(source); try checkStop(); guard epoch == admissionEpoch else { throw ExportCoordinatorError.stopped } }
             let job = ExportJob(id: UUID(), submittedAt: Date(), recipeSnapshot: recipe,
                 items: sources.map { ExportItem(source: $0, operationID: UUID()) }, state: .queued)
             try await catalog.saveJob(job)
-            launch(job)
+            launch(job, epoch: epoch)
             return job.id
         } catch { occupied = false; throw error }
     }
@@ -95,19 +101,47 @@ actor ExportCoordinator {
         if let job = try? await catalog.job(id: jobID) { emit(job, reason: .lifecycle) }
         await running?.value
     }
+    /// Revokes admission even while start/reopen awaits validation or persistence. It never
+    /// cancels a submitted Photos transaction. The current worker classifies its actual result.
+    func suspend() async {
+        admissionEpoch &+= 1
+        suspended = true
+        if activeID != nil { stop = .pause }
+        let running = worker
+        if let job = lastKnownJob { emit(job, reason: .lifecycle) }
+        await running?.value
+    }
+    func allowForegroundWork() { suspended = false }
+    func pauseActiveWork() async {
+        admissionEpoch &+= 1
+        guard occupied else { return }
+        stop = .pause
+        let running = worker
+        if let job = lastKnownJob { emit(job, reason: .lifecycle) }
+        await running?.value
+    }
+
     func resume(jobID: UUID) async throws { try await reopen(jobID, retryFailures: false) }
     func retry(jobID: UUID) async throws { try await reopen(jobID, retryFailures: true) }
 
     private func reserve() throws {
         guard !occupied else { throw ExportCoordinatorError.alreadyActive }
-        occupied = true
+        occupied = true; stop = nil
     }
-    private func launch(_ job: ExportJob) {
+    private func launch(_ job: ExportJob, epoch: UInt64) {
+        if suspended || stop != nil || epoch != admissionEpoch {
+            occupied = false
+            emit(job, reason: .lifecycle, terminal: true)
+            stop = nil
+            return
+        }
         activeID = job.id; lastKnownJob = job; stop = nil
         worker = Task { await self.run(job.id) }
     }
     private func reopen(_ id: UUID, retryFailures: Bool) async throws {
+        guard !suspended else { throw ExportCoordinatorError.stopped }
         try reserve()
+        let epoch = admissionEpoch
         do {
             try await reconcile(id)
             var job = try await catalog.job(id: id)
@@ -120,14 +154,15 @@ actor ExportCoordinator {
                 }
             }
             try await catalog.saveJob(job)
-            launch(job)
+            launch(job, epoch: epoch)
         } catch { occupied = false; throw error }
     }
 
     /// Rechecks exact operation identity only. Call on library changes or explicit foreground recovery.
     /// This method never starts a PhotoKit transaction or camera conversion.
     func recover() async throws {
-        try reserve(); defer { occupied = false }
+        try reserve(); recovering = true
+        defer { occupied = false; recovering = false }
         for job in try await catalog.unfinishedJobs() {
             try await reconcile(job.id, releaseFiles: false)
             emit(try await catalog.job(id: job.id), terminal: true)
@@ -147,7 +182,7 @@ actor ExportCoordinator {
             try await scheduler.beginExport(jobID: id)
             var job = try await catalog.job(id: id)
             for index in job.items.indices {
-                if stop != nil { break }
+                if stop != nil || suspended { break }
                 job = try await catalog.job(id: id)
                 do { try await process(job, index) }
                 catch {
@@ -174,7 +209,7 @@ actor ExportCoordinator {
             if stop == .cancel {
                 try await cancelRemaining(id)
             } else {
-                if stop == .pause { reason = .lifecycle }
+                if stop == .pause || suspended { reason = .lifecycle }
                 if Self.hasUnresolved(final), reason == nil { reason = .unresolvedSave }
                 final.state = Self.hasUnresolved(final) ? .unresolved : Self.allSaved(final) ? .saved : reason != nil ? .paused : Self.finalState(final)
                 try await catalog.saveJob(final)
@@ -251,6 +286,7 @@ actor ExportCoordinator {
         }
         try checkStop()
         try await setState(jobID, index, .converting, stage: .converting)
+        try checkStop()
         let jpeg = try await camera.render(raw: raw, recipe: recipe, policy: .fullSizeFineRecordedGeometry)
         guard jpeg.key == key else {
             try? FileManager.default.removeItem(at: jpeg.fileURL)
@@ -269,6 +305,15 @@ actor ExportCoordinator {
         guard await cache.lookup(pending.jpeg.key) == pending.jpeg else { throw RenderCacheError.pinConflict }
         pending.submission = .submitted(at: Date())
         try await setState(id, index, .pendingSave(pending), stage: .pendingSave)
+        if suspended || stop != nil {
+            // We own the only writer invocation and have not called it. Persist that proof
+            // before making this intent resumable; a crash between writes remains a rejection.
+            pending.submission = .definitivelyRejected(at: pending.submission.attemptedAt!, reason: "Stopped before invoking Photos")
+            try await setState(id, index, .pendingSave(pending), stage: .paused)
+            pending.submission = .notSubmitted
+            try await setState(id, index, .pendingSave(pending), stage: .paused)
+            throw ExportCoordinatorError.stopped
+        }
         let stream = AsyncStream<String>.makeStream()
         let placeholders = Task {
             for await assetID in stream.stream { try await self.recordPlaceholder(id, index, assetID) }
@@ -355,7 +400,7 @@ actor ExportCoordinator {
         job.items[index].state = state; job.state = stage
         try await catalog.saveJob(job); emit(job, current: job.items[index].source.id)
     }
-    private func checkStop() throws { if stop != nil { throw ExportCoordinatorError.stopped } }
+    private func checkStop() throws { if stop != nil || suspended { throw ExportCoordinatorError.stopped } }
     private func admit(_ source: PhotoSource) async throws { try checkStop(); try await validateSource(source); try checkStop() }
     private func validateSource(_ source: PhotoSource) async throws {
         let token = source.originalResources.raf
@@ -431,9 +476,12 @@ actor ExportCoordinator {
             default: unprocessed += 1
             }
         }
+        let failures = job.items.compactMap { item -> ExportFailure? in
+            if case .failed(let failure) = item.state { return failure }; return nil
+        }.reduce(into: [ExportFailure]()) { if !$0.contains($1) { $0.append($1) } }
         let event = ExportEvent(jobID: job.id, recipeLabel: job.recipeSnapshot.name, stage: job.state, currentItem: current,
             summary: .init(completed: completed, failed: failed, skipped: skipped, unprocessed: unprocessed, unresolved: unresolved),
-            pauseReason: reason, terminal: terminal, stopRequested: stop != nil)
+            pauseReason: reason, failures: failures, terminal: terminal || recovering, stopRequested: stop != nil)
         observers.values.forEach { $0.yield(event) }
     }
 }

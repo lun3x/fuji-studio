@@ -288,7 +288,7 @@ private actor FaultCatalog: CatalogStoring {
     func setAvailability(assetID: String, availability: AssetAvailability) async throws { try await base.setAvailability(assetID: assetID, availability: availability) }
 }
 
-private struct ExportBatchFixture {
+struct ExportBatchFixture {
     let render: RenderFixture, reader: BatchReader, camera: BatchCamera, cache: FileRenderCache
     let catalog: SwiftDataCatalog, scheduler = CameraWorkScheduler()
     var storeURL: URL { render.root.appendingPathComponent("catalog.store") }
@@ -316,7 +316,7 @@ private struct ExportBatchFixture {
     }
 }
 
-private actor BatchReader: PhotoLibraryReading {
+actor BatchReader: PhotoLibraryReading {
     let fixture: RenderFixture
     var live: [PhotoSource], files: [URL] = []
     var maxLiveFiles = 0
@@ -353,7 +353,7 @@ private actor BatchReader: PhotoLibraryReading {
     }
 }
 
-private actor BatchCamera: CameraServing {
+actor BatchCamera: CameraServing {
     let fixture: RenderFixture
     var sources: [SourceID] = [], recipes: [UUID] = []
     var firstError: CameraServiceError?

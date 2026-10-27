@@ -36,6 +36,7 @@ enum WorkspaceAction: Sendable {
     case cameraChanged(CameraState, context: CameraExecutionContext?)
     case activeJobChanged(UUID?)
     case drawerMoved(DrawerDetent)
+    case previewInterrupted
     case previewCompleted(request: WorkspacePreviewRequest, key: RenderKey)
 }
 
@@ -76,6 +77,7 @@ struct WorkspaceState: Sendable {
     private var pendingPreview: WorkspacePreviewRequest?
     private var wantsRecipePreview = false
     private var previewSatisfied = false
+    private var previewRequiresUserIntent = false
 
     init(sources: [PhotoSource] = [], access: LibraryAccess = .notDetermined) {
         libraryAccess = access
@@ -133,6 +135,7 @@ struct WorkspaceState: Sendable {
                 if !checkedSourceIDs.insert(id).inserted { checkedSourceIDs.remove(id) }
             }
             viewedSourceID = id
+            previewRequiresUserIntent = false
             displayedVersion = originalVersion
             wantsRecipePreview = selectedRecipe != nil
             return requestPreview()
@@ -167,6 +170,7 @@ struct WorkspaceState: Sendable {
             displayedVersion = version
 
         case .recipeSelected(let slot):
+            previewRequiresUserIntent = false
             if let slot {
                 guard let recipe = recipes.first(where: { $0.slot == slot }) else { return [] }
                 selectedRecipe = recipe
@@ -187,6 +191,7 @@ struct WorkspaceState: Sendable {
             recipeRefreshState = .fresh
             if let slot = selectedRecipe?.slot {
                 selectedRecipe = recipes.first { $0.slot == slot }
+                guard !previewRequiresUserIntent else { return [] }
                 displayedVersion = originalVersion
                 wantsRecipePreview = true
                 return requestPreview()
@@ -228,6 +233,11 @@ struct WorkspaceState: Sendable {
             drawerDetent = detent
             if detent == .collapsed, let id = viewedSourceID { return [.scrollToVisible(sourceID: id)] }
 
+        case .previewInterrupted:
+            invalidatePreview()
+            previewRequiresUserIntent = true
+            wantsRecipePreview = false
+
         case .previewCompleted(let request, let key):
             guard pendingPreview == request, request.generation == displayGeneration,
                   wantsRecipePreview, request.sourceID == viewedSourceID,
@@ -241,6 +251,8 @@ struct WorkspaceState: Sendable {
         }
         return []
     }
+
+    func acceptsPreview(_ request: WorkspacePreviewRequest) -> Bool { pendingPreview == request }
 
     private var originalVersion: VersionID? {
         guard let id = viewedSourceID, let source = sources[id] else { return nil }

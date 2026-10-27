@@ -5,23 +5,99 @@ struct FujiStudioApp: App {
     var body: some Scene {
         WindowGroup {
             #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("--workspace-fixture") {
-                WorkspaceFixtureEntry()
-            } else if ProcessInfo.processInfo.arguments.contains("--grid-fixture") {
-                GridFixtureEntry()
-            } else if ProcessInfo.processInfo.arguments.contains("--viewer-fixture") {
-                ViewerFixtureEntry()
-            } else {
-                LiveEntryView()
+            switch FixtureEnvironment.route(arguments: ProcessInfo.processInfo.arguments,
+                unitHost: ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil || NSClassFromString("XCTestCase") != nil) {
+            case .unitHost: Color.clear
+            case .flow: AppEntryView(fixture: true)
+            case .workspace: WorkspaceFixtureEntry()
+            case .grid: GridFixtureEntry()
+            case .viewer: ViewerFixtureEntry()
+            case .probe: ProbeEntryView()
+            case .invalid: Text("Fixture and probe launch modes cannot be combined.")
+            case .live: AppEntryView()
             }
             #else
-            LiveEntryView()
+            AppEntryView()
             #endif
         }
     }
 }
 
-private struct LiveEntryView: View {
+private struct AppEntryView: View {
+    @State private var model: AppModel?
+    @State private var error: String?
+    @Environment(\.scenePhase) private var phase
+    @State private var latestScenePhase: ScenePhase = .inactive
+    @Environment(\.dynamicTypeSize) private var nativeDynamicTypeSize
+    #if DEBUG
+    var fixture = false
+    @State private var fixtureSaveBarrier: FixtureBarrier?
+    @State private var fixtureStartBarrier: FixtureBarrier?
+    #endif
+    var body: some View {
+        Group {
+            if let model {
+                VStack(spacing: 0) {
+                    AppWorkspaceView(model: model)
+                    #if DEBUG
+                    if let barrier = fixtureStartBarrier {
+                        Button("Finish fixture start") { Task { await barrier.release(); fixtureStartBarrier = nil } }
+                            .accessibilityIdentifier("fixture.finishStart").accessibilityValue(String(describing: latestScenePhase))
+                    }
+                    if fixture && ProcessInfo.processInfo.arguments.contains("--fixture-scene-controls") {
+                        HStack {
+                            Button("Inject background") { Task { await model.sceneChanged(.background) } }.accessibilityIdentifier("fixture.background")
+                            Button("Inject foreground") { Task { await model.sceneChanged(.active) } }.accessibilityIdentifier("fixture.foreground")
+                        }.font(.caption).buttonStyle(.bordered)
+                    }
+                    if let barrier = fixtureSaveBarrier {
+                        Button("Finish fixture save") { Task { await barrier.release(); fixtureSaveBarrier = nil } }
+                            .accessibilityIdentifier("fixture.finishSave").accessibilityValue(model.environment.platform.idleTimerDisabled ? "Awake" : "Idle timer restored").buttonStyle(.bordered)
+                    }
+                    #endif
+                }
+            }
+            else if let error { ContentUnavailableView("Fuji Studio could not open", systemImage: "externaldrive.badge.exclamationmark", description: Text(error)) }
+            else { ProgressView("Opening Fuji Studio…") }
+        }.task {
+            guard model == nil, error == nil else { return }
+            do {
+                let environment: AppEnvironment
+                #if DEBUG
+                if fixture {
+                    let flags = ProcessInfo.processInfo.arguments
+                    let bundle = try await FixtureEnvironment.make(access: flags.contains("--fixture-denied") ? .denied : flags.contains("--fixture-limited") ? .limited : .full, uncertain: flags.contains("--fixture-unknown-save"))
+                    environment = bundle.environment
+                    if flags.contains("--fixture-held-start") {
+                        let barrier = FixtureBarrier(); fixtureStartBarrier = barrier
+                        await bundle.reader.holdDiscovery(barrier)
+                    }
+                    if flags.contains("--fixture-held-save") {
+                        let barrier = FixtureBarrier(); fixtureSaveBarrier = barrier
+                        await bundle.writer.holdSave(barrier)
+                    }
+                } else { environment = try await AppEnvironment.live() }
+                #else
+                environment = try await AppEnvironment.live()
+                #endif
+                let owner = AppModel(environment: environment)
+                model = owner
+                await owner.start()
+                await owner.sceneChanged(latestScenePhase)
+            } catch { self.error = AppModel.explain(error) }
+        }.onChange(of: phase, initial: true) { _, value in
+            latestScenePhase = value
+            Task { await model?.sceneChanged(value) }
+        }
+        #if DEBUG
+        .environment(\.dynamicTypeSize, fixture && ProcessInfo.processInfo.arguments.contains("--fixture-accessibility") ? .accessibility5 : nativeDynamicTypeSize)
+        .preferredColorScheme(fixture && ProcessInfo.processInfo.arguments.contains("--fixture-dark") ? .dark : nil)
+        #endif
+    }
+}
+
+#if DEBUG
+private struct ProbeEntryView: View {
     #if DEBUG
     @State private var protocolProbe = XT5ProbeLaunchRunner()
     @State private var reconnectProbe = CameraReconnectLaunchRunner()
@@ -69,3 +145,5 @@ private struct LiveEntryView: View {
         #endif
     }
 }
+
+#endif
