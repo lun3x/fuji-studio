@@ -1,0 +1,81 @@
+import SwiftUI
+
+/// Explicit catalog associations only. A recipe selection is never an instruction to alter an
+/// existing version; selecting a row emits exactly its stored VersionID.
+struct VersionList: View {
+    struct Entry: Identifiable {
+        let id: VersionID
+        let label: String
+        let accessibilityIdentifier: String
+        var subtitle: String? = nil
+        var accessibilityLabel: String { subtitle.map { label + ", " + $0 } ?? label }
+    }
+    let source: PhotoSource
+    let saved: [SavedVersion]
+    let preview: CameraJPEG?
+    var selected: VersionID? = nil
+    var timeZone: TimeZone = .current
+    var onVersionSelected: (VersionID) -> Void = { _ in }
+
+    var entries: [Entry] {
+        var result = [Entry(id: .raw, label: "RAW", accessibilityIdentifier: "version.raw")]
+        if let jpeg = source.originalResources.jpeg, jpeg.assetID == source.id,
+           jpeg.role != .adjusted, jpeg.format == .jpeg {
+            result.append(Entry(id: .cameraJPEG, label: "Original camera JPEG", accessibilityIdentifier: "version.cameraJPEG"))
+        }
+        let own = saved.filter { $0.sourceID == source.id }.sorted {
+            $0.exportedAt == $1.exportedAt ? $0.id.uuidString < $1.id.uuidString : $0.exportedAt < $1.exportedAt
+        }
+        let format = DateFormatter()
+        format.locale = Locale(identifier: "en_US_POSIX")
+        format.calendar = Calendar(identifier: .gregorian)
+        format.timeZone = timeZone
+        format.dateFormat = "dd/MM/yy HH:mm"
+        let labels = own.map { "C\($0.recipeSnapshot.slot) \($0.recipeSnapshot.name)" }
+        let timestamps = own.map { format.string(from: $0.exportedAt) }
+        for (index, version) in own.enumerated() {
+            let base = labels[index]
+            // Minute precision can group distinct exports. Retain stable ordinal disambiguation.
+            let peers = labels.indices.filter { labels[$0] == base && timestamps[$0] == timestamps[index] }
+            let ordinal = peers.count > 1 ? " · Export \((peers.firstIndex(of: index) ?? 0) + 1)" : ""
+            let availability = version.availability == .available ? "" : " · unavailable (\(version.availability.rawValue))"
+            result.append(Entry(id: .saved(version.id), label: base,
+                accessibilityIdentifier: "version.saved.\(version.id.uuidString)",
+                subtitle: timestamps[index] + ordinal + availability))
+        }
+        if let preview, preview.sourceID == source.id, preview.sourceRevision == source.resourceRevision,
+           preview.key.sourceID == source.id, preview.key.sourceRevision == source.resourceRevision {
+            result.append(Entry(id: .preview(preview.key), label: "Temporary preview", accessibilityIdentifier: "version.preview"))
+        }
+        return result
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Image versions").font(.headline).padding()
+                ForEach(entries) { entry in
+                    Button { onVersionSelected(entry.id) } label: {
+                        HStack(alignment: .firstTextBaseline) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(entry.label)
+                                if let subtitle = entry.subtitle {
+                                    Text(subtitle).font(.caption).foregroundStyle(.secondary)
+                                }
+                            }.fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 8)
+                            if selected == entry.id { Image(systemName: "checkmark").accessibilityHidden(true) }
+                        }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            .padding(.horizontal).padding(.vertical, 8).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(entry.accessibilityLabel)
+                    .accessibilityIdentifier(entry.accessibilityIdentifier)
+                    .accessibilityAddTraits(selected == entry.id ? .isSelected : [])
+                }
+            }
+        }
+        .accessibilityIdentifier("version.options")
+        .frame(idealWidth: 320, maxHeight: 520)
+    }
+}

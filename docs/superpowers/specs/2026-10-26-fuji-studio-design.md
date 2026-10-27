@@ -32,7 +32,7 @@ The initial hardware target is the user's Fujifilm X-T5 and iPhone 15 Pro.
 - Create a separate Photos asset for each exported result, preserving the source
   photo's capture date and time.
 - Use a vertically scrolling grid of square thumbnails in a draggable bottom
-  drawer, with a two-row collapsed position and an expanded position covering
+  drawer, with a collapsed position showing one full row and the top of the next and an expanded position covering
   most of the main image.
 - Keep the drawer open when a photo is tapped, in both browsing and Select modes.
 - Support pinch zoom in the main photo viewer.
@@ -86,8 +86,14 @@ version, or batch selection. Selecting a photo does not collapse the drawer.
 
 ### Main viewer and recipe control
 
-The photo occupies the main content area. A single floating control near its top
-right displays the selected slot, for example `C3`. With no recipe selected it
+A single top row contains the status pill, Export and Connect, in that order.
+There is no main-screen Fuji Studio title or second toolbar row. At large text
+sizes the controls may use icons while retaining full accessible labels and
+44-point touch targets. Status details remain available by tapping the pill.
+
+The photo occupies the main content area. Letterboxing is white in light mode
+and black in dark mode, and follows theme changes without resetting zoom. A single floating control near its top
+left displays the selected slot, for example `C3`. With no recipe selected it
 shows a neutral unset symbol with an accessible “No recipe selected” label.
 
 Tapping the control opens a menu over the viewer. The menu lists No recipe and
@@ -104,22 +110,30 @@ photo drawer expanded, without covering its Export or selection controls.
 ### Photo drawer
 
 The bottom drawer contains a grabber, Select/Done, All, None, the effective
-selection count, Export, and the vertically scrolling thumbnail grid.
+selection count and the vertically scrolling thumbnail grid. Export remains in
+the single top header.
 
-- Collapsed: the grid viewport fits two complete rows, including its padding and
-  row gap. Derive the detent from actual thumbnail geometry and safe areas.
+- Collapsed: show one full square row and the partial top of the next row as a
+  cue that more photos are below. The grid reaches the bottom edge, with no
+  reserved band covering that partial row. Derive the detent from actual
+  thumbnail geometry and safe areas.
 - Expanded: the drawer overlays most of the viewer and provides room for more
   rows. It does not resize or reframe the photo behind it while moving.
 - Dragging the grabber moves the drawer continuously and snaps to either detent.
-  A tap on the grabber and accessible Expand/Collapse actions are alternatives.
+  The grabber is the only visible expansion cue; there is no Expand/Collapse
+  text. A tap and accessible Expand/Collapse actions are alternatives. Release
+  uses the drag velocity to finish opening or closing without a position reset.
 - Tapping a photo updates the viewed source. With a recipe selected, its camera
   preview is requested behind the drawer. The drawer stays at its current detent.
 - After a manual collapse, scroll the grid just enough to keep the viewed source
-  fully visible within the two-row viewport. Retain other selected photos.
+  fully visible within the one-row viewport. Retain other selected photos.
 - Thumbnail size, columns, spacing, and scroll direction remain the same when
   entering or leaving Select mode. Expansion adds visible rows, not a new layout.
 - Orientation changes may recompute columns and detent heights. Preserve the
   viewed source, selections, and a sensible scroll anchor without overlaps.
+- Both positions extend the grid to the bottom edge, with scrolling content
+  padding to reach the final photos above the Home area. Neither position has
+  a strip covering thumbnails.
 
 Use one thumbnail for a paired RAW+JPEG asset. Give paired and standalone items a
 small, readable type indicator. Exported JPEGs belong in Versions, not as duplicate
@@ -146,9 +160,25 @@ drag the drawer; drawer resizing starts on its grabber/header drag region.
 
 ### Zoom and comparison
 
+The versions row is replaced by a floating glass button at the top-right of the
+main photo, opposite the recipe control. It opens a vertically scrolling menu
+over the image with full version labels and a checkmark on the current version.
+Saved exports show only the slot and recipe name on the first line, for example
+`C3 Contrast Chrome`, with a smaller secondary-grey local timestamp beneath it
+in `dd/MM/yy HH:mm` format, for example `27/10/26 13:39`. Repeated exports with
+the same visible recipe and minute retain ordinal disambiguation; unavailable
+status also belongs in the secondary text. Spoken labels include both lines.
+Choosing an entry closes the menu and displays that stored version; dismissing
+the menu leaves the selection unchanged. Original RAW, paired camera JPEG,
+tracked exports and a matching temporary preview retain their existing identity
+and availability rules. The button remains available for an unavailable image
+so another version can be chosen. No version strip reserves space below the photo.
+
 Pinching zooms the main photo around the gesture's focal point. The user can pan
 a zoomed image within its bounds and return to fit. The initial recommended zoom
 range is fit through 8 times fit; provide a double-tap fit/2-times-fit shortcut.
+There are no visible Zoom out, Fit or Zoom in buttons below the photo. Native
+VoiceOver adjustment, fit and inspection actions remain on the image itself.
 
 Keep zoom and the inspected region when switching versions or recipes on the same
 source where their geometry matches. Reset to fit when viewing a different source.

@@ -1,0 +1,53 @@
+name: FujiStudio
+options:
+  minimumXcodeGenVersion: 2.46.0
+  deploymentTarget:
+    iOS: '27.0'
+configFiles:
+  Debug: Config/Base.xcconfig
+  Release: Config/Base.xcconfig
+settings:
+  base:
+    SWIFT_VERSION: '6.0'
+    GENERATE_INFOPLIST_FILE: YES
+    MARKETING_VERSION: '0.1'
+    CURRENT_PROJECT_VERSION: 1
+targets:
+  FujiStudio:
+    type: application
+    platform: iOS
+    sources: [FujiStudio]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.lun3x.FujiStudio
+        INFOPLIST_KEY_CFBundleDisplayName: Fuji Studio
+        INFOPLIST_KEY_NSPhotoLibraryUsageDescription: Fuji Studio reads original RAF and JPEG photos so you can view and convert them with your Fujifilm camera.
+        INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription: Fuji Studio saves the full-size JPEG photos you explicitly export to your photo library.
+        INFOPLIST_KEY_NSCameraUsageDescription: Fuji Studio controls your connected Fujifilm camera to read its recipes and convert original RAF photos.
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+  FujiStudioTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [FujiStudioTests]
+    dependencies:
+      - target: FujiStudio
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.lun3x.FujiStudioTests
+  FujiStudioUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [FujiStudioUITests]
+    dependencies:
+      - target: FujiStudio
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.lun3x.FujiStudioUITests
+schemes:
+  FujiStudio:
+    build:
+      targets:
+        FujiStudio: all
+    test:
+      targets: [FujiStudioTests, FujiStudioUITests]

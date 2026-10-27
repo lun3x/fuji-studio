@@ -1,0 +1,500 @@
+# Fuji Studio acceptance record
+
+Recorded 2026-10-27. **The full pre-merge simulator gate at `99ad471e` passes;
+full device acceptance is incomplete.** The original physical
+preview/export/reopen and later human
+interaction evidence belongs to `75fbd61b`. A later ordinary-app two-source C3
+mixed batch and a C4 Home interruption/recovery passed on `86eacb7a`. The latter
+required a human camera power cycle followed by explicit same-job Resume.
+These bounded results do not establish complete product
+acceptance.
+
+The accepted app composition entered Task13 at `fd94d301`. Earlier paired local
+RAW and production C7 A–B–A observations used reviewed `88996b74`. The recorded
+live run used independently reviewed `75fbd61b`, which the controller built,
+signed, verified, installed and launched. Exact run identities, signing records,
+source values and artifacts remain in ignored private evidence.
+
+## Environment and software evidence
+
+- Xcode 27.1, build 27A9275; XcodeGen 2.46.0; Swift 6; deployment target iOS 27.0.
+- Observed simulator: iPhone Duo, iOS 27.1.
+- Physical target: iPhone 15 Pro, iOS 27.0.1; Fujifilm X-T5 firmware 4.31.
+- Camera mode: USB RAW CONV./BACKUP RESTORE, direct USB data cable. Processing is foreground only.
+- Full Photos Access and Camera Allow were already granted. All physical actions were controller-owned; implementation workers did not operate devices or write to Photos.
+
+Reproducible commands, selecting an available simulator on the local machine:
+
+```sh
+FUJI_STUDIO_DESTINATION='platform=iOS Simulator,id=YOUR_SIMULATOR_UUID' Scripts/test-ios.sh
+xcodebuild -project FujiStudio.xcodeproj -scheme FujiStudio -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
+```
+
+### Pre-merge verification (`99ad471e`)
+
+The complete simulator suite passed on the implementation PR's final runtime
+and tests: **442 passed, 3 established native-gate skips, 0 failures**, exit 0 /
+TEST SUCCEEDED. This comprises 396 Swift functions in 50 suites, 14 native
+XCTest cases and 35 UI cases (32 passed, 3 skipped). It includes the compact
+saved-version row follow-up. Ignored evidence: `.build/pr-merge-full.log` and
+`.build/TestResults/pr-merge-full.xcresult`.
+
+Only README and this acceptance record changed after that gate, to record the
+result and remove stale integration-status wording. No runtime or test changes
+followed it. [PR #1](https://github.com/lun3x/fuji-studio/pull/1) collects the
+implementation and its validation. The physical acceptance limits below remain.
+
+### Compact saved-version rows (`5594f110`)
+
+Saved exports display only their slot and recipe name as primary text, with a
+smaller secondary-grey timestamp underneath in local `dd/MM/yy HH:mm` format.
+Explicit Gregorian/POSIX formatting retains 24-hour time. Exports sharing the
+same displayed recipe and minute retain ordinal disambiguation in the subtitle;
+unavailable status also remains there. Rows and the selected-version button
+share a spoken label containing both lines. Selection and version IDs are unchanged.
+
+Focused verification passed **five Swift functions and two UI cases**, exit 0 /
+TEST SUCCEEDED. It covers same-minute exports, explicit UTC/offset formatting,
+unavailable records, normal tracked export/version selection and the largest-text
+scrolling/selection flow. Normal and AX screenshots were inspected: the primary
+recipe and smaller grey date are separate and readable. Universal arm64/x86_64
+Release and signed phone builds passed, as did strict signature verification,
+all exit 0. Fresh scoped review found no Critical, Important or Minor issues.
+The earlier 442-pass complete gate below remains attributed to `2e45055b`;
+this small presentation follow-up did not repeat it.
+
+Ignored evidence: `.build/version-row-focused2.log`,
+`.build/TestResults/version-row-focused2.xcresult`, `version-row-release.log`,
+`version-row-device.log` and `version-row-attachments`. The signed update was
+installed and launched normally on the iPhone, both exit 0. This follow-up does
+not add a physical menu/gesture pass to the earlier human confirmation. No new
+camera operation, Photos write, permission or system appearance change was made.
+
+### Floating versions and gesture zoom (`2e45055b`)
+
+A glass versions button at the photo's top-right opens a vertical popover with
+full labels and a current-selection checkmark. Existing original/saved/preview
+identities and availability rules remain intact. Both selectors float over the
+photo in every layout. The inline versions strip, zoom toolbar and their reserved
+height are removed; only actual image-status messages retain bottom space.
+Pinch/pan, double-tap fit, native VoiceOver adjustment/inspection and matching
+source/geometry inspection retention remain on the photo.
+
+Complete simulator gate: **442 passed, 3 established skips, 0 failures**, exit 0
+/ TEST SUCCEEDED: 396 Swift functions in 50 suites, 14 native XCTest cases and
+35 UI cases (32 passed, 3 skipped). Universal arm64/x86_64 Release and signed
+Debug phone builds passed, as did strict code-signature verification, all exit 0.
+Fresh scoped review found no Critical, Important or Minor implementation issues;
+its outstanding software validation conditions are satisfied by the final gate.
+No runtime changes followed these gates.
+
+The new layout test observed RED on the old workspace: all three zoom controls
+were present, the photo stopped about 81 points above the tray, and the normal
+layout had no floating versions trigger. Focused checks pass for menu selection
+and dismissal, unavailable RAW returning to JPEG, same-source zoom/pan retention,
+new-source fit, 8x detail and viewport resizing, actionable image status, and
+compact/AX layouts. The final largest-text app-flow check creates a tracked saved
+version through injected services, scrolls its full wrapped label into the menu
+viewport, selects it and verifies dismissal and the displayed version. This also
+passes in the complete suite. Intermediate harness failures are retained in the
+ignored task ledger and are not counted as passes.
+
+Ignored evidence: `.build/floating-versions-full.log`,
+`.build/TestResults/floating-versions-full.xcresult`,
+`floating-versions-final-release.log`, `floating-versions-final-device.log`,
+`floating-versions-focused-attachments` and `floating-versions-labels-flow2-attachments`.
+Full/Release logs have zero unsafe SQLite unlink/API-violation/open-fd pattern
+matches; existing SDK notices remain. The signed update was installed and
+launched normally on the iPhone, both exit 0. The live library loaded; a Device
+Hub thumbnail tap produced no visible selection. The user subsequently confirmed
+photo selection, opening the top-right layers menu, choosing another version and
+pinch-to-zoom on installed `2e45055b`, with no zoom buttons or versions row below
+the photo. This is human on-device confirmation, separate from the controller's
+remote-tap observation and simulator measurements. No camera operation, Photos
+write, permission or system appearance change was made for this UI follow-up.
+
+### Single workspace header (`b0620450`)
+
+Status, Export and Connect share one measured row. The main Fuji Studio title
+and former outer status row are removed, reclaiming their height for the image.
+Caller-owned actions and the status sheet are retained through typed view-builder
+slots. Idle status text uses Ready/Disconnected while retaining the full spoken
+label. Large-text mode uses icons with accessible labels and 44-point targets.
+
+Complete simulator gate: **440 passed, 3 established skips, 0 failures**, exit 0
+/ TEST SUCCEEDED: 396 Swift functions in 50 suites, 14 native XCTest cases and
+33 UI cases (30 passed, 3 skipped). Universal arm64/x86_64 Release and signed
+Debug phone builds passed, as did strict code-signature verification, all exit 0.
+The focused gate passed 4 native and 4 UI cases after observing the old two-row
+layout fail the new checks. Tests verify same-row ordering, hit sizes, no title
+or reserved photo gap, status/Connect actions, compact resizing and largest-text
+recipe Refresh. Viewer/grid identity, zoom, drawer motion and the partial-row
+cue remain covered. Fresh scoped review found no Critical, Important or Minor
+issues. No runtime changes followed these gates.
+
+Ignored evidence: `.build/single-header-full.log`,
+`.build/TestResults/single-header-full.xcresult`, `single-header-release.log`,
+`single-header-device.log` and `single-header-final-attachments`. Full and Release
+logs have zero unsafe SQLite unlink/API-violation/open-fd pattern matches;
+existing SDK notices remain.
+
+The signed update was installed and launched normally on the iPhone, both exit
+0. The controller observed the loaded library, Status/Export/Connect on one row,
+no main title, and the retained partial second row without a bottom band. A
+Device Hub thumbnail click produced no visible selection, so this observation
+does not claim a physical viewer-spacing or interaction pass; those checks
+passed in the simulator. No camera operation, Photos write, permission or system
+appearance change was made. Earlier native/human evidence retains its revision.
+
+### Collapsed-tray scrolling cue (`0c008f73`)
+
+The user clarified that the collapsed tray should show the top of the next row
+as a cue that more photos are below. This supersedes the exact-one-row/no-fragment
+criterion recorded for the preceding UI patch. The follow-up removes external
+bottom padding while keeping the overall collapsed height unchanged. The grid
+now reaches the bottom edge in both positions; scrolling content inset retains
+Home-area clearance for the final row and viewed-photo reveal.
+
+Complete simulator gate: **439 passed, 3 established skips, 0 failures**, exit 0
+/ TEST SUCCEEDED: 396 Swift functions in 50 suites, 14 native XCTest cases and
+32 UI cases (29 passed, 3 skipped). Universal arm64/x86_64 Release and signed
+Debug phone builds passed, as did strict code-signature verification, all exit 0.
+The focused RED→GREEN gate covered 3 geometry functions, 13 native cases and 5 UI
+cases. Native measurements and the screenshot show a 120-point full row and
+31 points of the next row in a 154-point viewport, with unchanged tray/viewer
+frames. Selection, minimum reveal, final-row clearance, and flick/partial-release
+regressions pass. Fresh scoped review found no Critical, Important or Minor
+issues. No runtime changes followed the gates.
+
+Ignored evidence: `.build/photo-peek-full.log`,
+`.build/TestResults/photo-peek-full.xcresult`, `photo-peek-release.log`,
+`photo-peek-device.log` and `photo-peek-attachments`. Current full and Release
+logs have zero unsafe SQLite unlink/API-violation/open-fd pattern matches;
+existing SDK notices remain.
+
+The signed update was installed and launched normally on the iPhone, both exit
+0. The controller directly observed the loaded library with a visible partial
+second row and no covering bottom band. A separate Device Hub Zoom Controls help
+bubble was dismissed to inspect the mirrored screen clearly. This observation
+is visual verification; physical gesture feel was not retested for this follow-up.
+No camera operation, Photos write, permission or system appearance change was
+made. Earlier human/native evidence retains its original revision and limits.
+
+### Viewer and tray correction (`f823a1d3`)
+
+The 2026-10-27 UI correction passed the complete simulator gate: **439 passed,
+3 established skips, 0 failures**, exit 0 / TEST SUCCEEDED. This comprises
+396 Swift Testing functions in 50 suites, 14 native XCTest cases and 32 UI cases
+(29 passed, 3 skipped). The skips remain native Home, rotation and hardware
+Escape delivery. The unsigned Release build passed for arm64 and x86_64; the
+signed phone build and code-signature verification also passed, all exit 0.
+No runtime changes followed these gates.
+
+The native viewer follows light/dark backgrounds without replacing the view or
+resetting its 2x inspection. The tray has only a visual grabber, with retained
+spoken state/tap/adjustable actions. Actual native-frame traces cover full
+expansion, slow partial return and short fast throws in both directions. The
+fix removes both an automatic drag-offset reset and a duplicate tap after drag.
+
+Independent review caught a next-row fragment in the first one-row attempt.
+One correction pass added strict square-height and actual next-row visibility
+regressions, observed RED then GREEN. Workspace grids have no vertical section
+padding. Collapsed content is exactly one square row above the Home area, whose
+background matches the grid. Expanded content reaches the bottom edge and uses
+scroll padding so the last row and viewed item can clear the Home area. Light
+and dark screenshots and native window measurements were inspected. The final
+focused correction passed 3 geometry functions, 13 native cases and 5 UI cases;
+the subsequent complete gate above is authoritative.
+
+Current ignored evidence: `.build/ui-polish-corrected-full.log`,
+`.build/TestResults/ui-polish-corrected-full.xcresult`,
+`ui-polish-corrected-release.log`, `ui-polish-corrected-device.log`,
+`ui-polish-corrected-attachments` and `ui-polish-final-dark-attachments`.
+Earlier REDs and interrupted runs remain recorded in the patch ledger and are
+not passing evidence. Both complete/Release logs have zero unsafe SQLite
+unlink/API-violation/open-fd pattern matches; known SDK notices remain.
+
+The exact signed update was installed and launched normally on the iPhone, exit
+0. Its live library loaded with one square row, a grabber-only header and no
+overlapping bottom material strip. The user subsequently confirmed white
+light-mode portrait margins, smooth tray flicks up/down and one-row collapse on
+the installed `f823a1d3` build. This is human on-device confirmation, separate
+from the simulator frame traces; physical dark-mode interaction remains unrun.
+No new Photos writes, camera operations, permissions or system appearance
+changes were made for this UI correction. The earlier native conversion/recovery evidence below retains
+its original revision and limits.
+
+### Production integration gate and review clearance (`86eacb7a`)
+
+The final runtime revision `86eacb7a43b3e11087dc11a0afdcb4db86324560` passed
+one complete simulator gate after all five integration corrections: **433 passed,
+3 established skips, 0 failures**. This comprises 396 Swift Testing functions in
+50 suites, 11 native XCTest cases and 29 UI cases (26 passed, 3 skipped). Exit 0 /
+TEST SUCCEEDED. The skips remain native Home/background, device rotation and
+hardware Escape delivery; none counts as physical proof. The subsequent unsigned
+Release simulator build passed, exit 0 / BUILD SUCCEEDED, with universal arm64
+and x86_64 output. No runtime changes followed these gates.
+
+The single scoped re-review of the correction package closed all five findings:
+
+| Corrected integration seam | Verified behavior |
+| --- | --- |
+| Restart-visible retryable jobs | Failed/cancelled/unprocessed items remain discoverable; explicit Retry or Resume processes only remaining items, retaining frozen identity and confirmed saves. |
+| Labelled preview fallback and error | The matching source/revision/version/file lease remains visible, or the current source's original resolves without a camera retry; the full actionable error is accessible alongside the image. |
+| All directly from Browse | The actual enabled All control enters Select with complete eligible membership. |
+| Detected RAW incompatibility | Shared revision-scoped knowledge reaches reload, All and export admission without eager RAW downloads or frozen-job mutation; a changed revision is reassessed. |
+| Cancellable preparation and progress | Obsolete PhotoKit preparation cancels and cleans up before ownership is released; current progress is visible, and admitted native camera work remains owned and awaited through completion. |
+
+The verdict was **APPROVED: I1–I5 addressed; 0 Critical, 0 Important, 0 Minor new
+findings**. Software review was clear for integration; at that checkpoint the
+branch was unmerged and main was at `b53723cd`. This is not release acceptance. Exact commands,
+RED→GREEN history and the full review remain in ignored `final-fix-report.md`
+and `final-fix-review.md`. Current raw evidence is
+`.build/TestResults/final-fix-full.log`, `final-fix-full.xcresult` and
+`final-fix-release.log`. Review found zero unsafe SQLite unlink/API-violation/
+open-fd pattern matches in both current logs. Known AppIntents/SDK/simulator
+notices are not claimed absent.
+
+The controller subsequently signed exact `86eacb7a`, verified its code signature
+(exit 0), and installed it successfully on the physical phone. Normal launch
+while the phone was locked timed out after 20 seconds (exit 2). The user then
+reported the phone unlocked and Fuji Studio open. The controller then directly
+observed the exact installed build in the normal Photos route: light theme, live
+photo thumbnails with RAF and RAW+JPEG badges, camera disconnected, Browse with
+selection count 0, All enabled and None disabled. This confirms **launch and
+library UI loading only**. Device Hub remote clicks on All and a paired thumbnail
+produced no visible state transition; they establish no current physical
+selection/version-interaction pass, and no cause is assigned. No additional
+Photos writes or native conversions were performed during that launch check. The earlier physical
+interaction and native evidence below retains its original revision and limits.
+
+### Earlier software chronology
+
+The earlier complete software gate passed **419 tests, 3 explicitly skipped**:
+384 Swift Testing cases in 49 suites, 11 native XCTest unit cases, and 27 UI cases (24
+passed, 3 skipped: native Home, rotation and hardware keyboard). Exit 0 / TEST
+SUCCEEDED; all three unsafe SQLite unlink/API-violation/open-fd counts were zero.
+The equivalent final complete invocation used the wrapper's scheme/settings
+with `-collect-test-diagnostics never` and no selectors. Its exact destination
+and command are retained in the ignored Task13 report. The first wrapper run
+exposed a stale historical recipe-support expectation; test-only owner triage
+preserved unknown-film rejection. That failed run and its interrupted automatic
+diagnostic collector remain recorded.
+
+Release initially exposed a missing direct PhotosUI import. That compiler-only
+import was added after the complete runtime gate; the Release command then
+passed for arm64 and x86_64, with the DEBUG route/driver/private-directory strings
+and FixtureEnvironment name absent from the binary. These are the software-phase
+results at `56410f7d`, not fresh whole-suite/Release runs after later fixes.
+
+Two independently reviewed DEBUG validation corrections followed:
+
+| Revision | Correction | Targeted result |
+| --- | --- | --- |
+| `a5023386` | Authoritative camera-service close outcome and uninterrupted foreground completion; an already-satisfied wait cannot bypass suspension. | 42 test functions in 3 suites passed, exit 0. |
+| `75fbd61b` | Respect standalone A's actual historical schema; require paired B's recorded descriptors; capture separate LIVE descriptors and recheck source equality before/after materialization. | 17 test functions in 3 suites passed, exit 0. |
+
+Both fixes have observed runtime RED→GREEN evidence. The second reproduced the
+actual first device-run failure. Full-suite/UI/Release reruns were not performed
+for these scoped DEBUG corrections. The controller subsequently signed and built
+the exact reviewed second revision for the successful physical run.
+
+Earlier M3–M7 triage passed 54 Swift Testing cases plus 12 UI passes and two native
+skips. Catalog-bearing test roots now survive the test process for OS cleanup,
+preserving real disk/reopen assertions without unlinking live SwiftData stores.
+Required finite viewer metrics, literal drawer detents, blank-padding menu taps
+and actual held-preparation scope narrowing replace the deferred weak tests.
+
+Logs and result bundles are ignored: `task13-full-simulator-final`,
+`task13-release-simulator-final`, `task13-release-debug-exclusion`,
+`task13-fix1-green` and `task13-fix2-green` under `.build`. Full commands, failures,
+counts and diagnostic classifications remain in the Task13 report. Known
+AppIntents/SDK/simulator notices and deliberate invalid-RAW decoder diagnostics
+are not claimed absent. Final complete and targeted logs contain zero unsafe
+SQLite warning patterns.
+
+## Current native mixed batch and interruption
+
+The ordinary physical app at `86eacb7a` completed one C3 export job containing
+the known standalone RAW and RAW+JPEG sources: **2 saved, 0 failed, 0 cancelled,
+0 remaining, 0 unconfirmed**. Both visible status and human report agree with
+the copied catalog's one new job and two distinct saved associations. Native
+records bind the frozen recipe, exact retained source hashes, full FINE geometry,
+candidate readbacks and owned-output cleanup. One source used its cached preview;
+this is not a two-fresh-conversion performance run. Original resource descriptors
+and the previous saved job/version remain unchanged.
+
+A separately deliberate C4 job was interrupted with physical Home and reopened:
+**0 saved, 2 remaining**, with an uncertain timed-out camera operation and confirmed
+native close. The app retained the existing job, blocked Resume until camera
+readiness, and created no additional saved version. Connect alone failed; after
+the user power-cycled the camera and connected, fresh-session empty-output
+reconciliation restored readiness without replaying the old operation. The
+frozen job and all saved associations remained unchanged, and all seven fresh
+recipe imports matched. Explicit Resume then completed the same C4 job with
+**2 saved and 0 remaining**, retaining the original source/recipe/Photos-operation
+identities and adding exactly two saved versions through two fresh native camera
+attempts. Earlier saved jobs/versions and native records were unchanged. No item
+had saved before interruption, so physical remaining-only skipping of an already
+saved item remains open.
+
+A normal process restart after completion retained all three jobs, five saved
+versions, 42 recipe snapshots and 79 unchanged native journal files, with no new
+camera operation or saved association. Camera power cycling was needed; no
+seamless-recovery claim follows. The paired C4 saved version then opened through
+the normal PhotoKit resolver without a camera. An independently hashed copy of
+its held full-size viewer JPEG exactly matches its recorded native output; full
+decoding and FINE geometry passed. Viewing changed no job/version/native record.
+Only that one new saved original received this separate bytes check. These are
+camera-uncertainty checks, not an observed uncertain PhotoKit transaction.
+See the [native validation record](native-batch-recovery.md)
+for the exact scope and remaining proof.
+
+## Original `75fbd61b` live run and evidence boundaries
+
+The first explicit run stopped on a missing `rafDiscriminator` field in the
+historical standalone manifest. Its durable claim remained consumed;
+`exportArmed=false`, no job ID, zero previews and no camera/export actions were
+recorded. The historical capture had never contained that field. The reviewed
+correction preserved its identity/revision/role/name/hash/geometry proof and
+captured the current descriptor separately, without rewriting retained evidence.
+Only after this unarmed failure was verified did the controller deliberately
+choose a new run. There was no automatic retry or replacement save.
+
+The second run completed on `75fbd61b` through the one real AppEnvironment,
+AppModel, preview/export coordinators and catalog:
+
+- Original defaults: genuine standalone A RAW display and paired B original JPEG; A's retained display independently decodes to upright 1366 × 2048, orientation 1.
+- Seven sequential A previews: the native Photos asset identity set stayed unchanged. Every current C1–C7 name/imported-name bytes and all 23 raw settings matched the retained banks before and after.
+- One viewed-source export: Browse mode, without Select, exported the actual paired-B C7 preview as one distinct new Photos asset. Its complete camera JPEG is FINE 7728 × 5152, orientation 8, 26,127,706 bytes. The actual preview lease/CameraJPEG was retained through byte comparison.
+- On-device verification: materialized saved original JPEG bytes matched that preview; source capture date matched; original A/B RAF and B JPEG hashes/descriptors remained unchanged; operation, saved version and source association matched; authoritative native close succeeded.
+- Location: both source locations were absent. This verifies **absence preservation only**, not a real nonnil GPS-coordinate case. No GPS tags were present in the retained B output.
+- Same-run reopen: the controller terminated and relaunched with the same UUID. Read-only verification reopened the exact saved association without resaving. Receipt, job and version remained identical; all 40 files in eight camera-operation journals were byte-identical, with zero new camera operations/files.
+
+**Total actual Photos exports across both attempts: one.** No user Photos asset
+was deleted. The failed first run remains preserved and consumed.
+
+Independent offline verification passed **156 assertions**. It recomputed all
+eight retained output hashes, source/bank/key/profile bindings, candidate/readback
+identity and native operation cleanup evidence. Each of the seven new same-A
+previews matched its Mac slot reference in all exposed tags (25–27 per slot,
+zero mismatches) and all five coding/table segments; each ranked its own slot
+nearest spatially. C2/C7 residuals closely match their measured vendor repeats.
+C5 has no own-slot repeat; no pixel-perfect or universal fidelity claim follows.
+See [protocol provenance](protocol-provenance.md#task13--current-production-seven-slot-comparison)
+for the current measurements and limits.
+
+The asset-set check, exact saved PhotoKit bytes, capture date, absent location,
+unchanged originals and native closure are reviewed **on-device coded
+observations**. The temporary saved-asset materialization was removed after its
+comparison; no separately retained Photos original exists for a second offline
+hash assertion. Offline inspection verifies the retained preview and saved
+records, not a new PhotoKit query. Export time is not substituted for capture date.
+
+The controller also viewed the physical phone through Device Hub screenshots:
+an upright B image, RAW/original-JPEG/saved-C7 labels, a two-row drawer and the
+read-only reopen status. The validation route disables workspace controls, so
+these are visual observations, **not manual gesture, menu or accessibility proof**.
+
+### Later ordinary-app interaction observations on `75fbd61b`
+
+After the recorded reopen interval, the controller launched normally with no
+validation flag. Actual coordinate taps worked; the earlier remote-input blocker
+was not reproduced, and its cause is unknown. The controller directly viewed the
+returned phone images; no new local screenshot file is claimed for these checks.
+
+- Paired B showed its original JPEG and own saved C7 version. Select added checkboxes with a visually unchanged two-row square grid. All selected 761 eligible sources; None returned the count to zero. This was selection only, not a 761-source export or performance run.
+- Expand showed four rows over most of the viewer. Done returned to Browse; tapping standalone A kept the drawer expanded. Manual Collapse kept A's tile visible. A showed its genuine RAW image.
+- Zoom+, Fit and double-tap visibly zoomed/reset the image. Pinch, pan and precise image-region/detail preservation were not proved by these actions.
+- The floating picker displayed seven slots, including one legitimately unnamed slot. Selecting C3 and connecting normally reached Camera Ready with a visible color Temporary Preview and Export enabled for one viewed source outside Select. Manually choosing RAW changed the image while C3 and Export stayed selected/enabled; returning to Temporary Preview worked. No Recipe cleared C3, restored RAW and disabled Export while the camera remained ready.
+
+No Export was tapped during these ordinary checks: total Photos exports remain
+one. Two remote drag attempts across/between rows selected only an endpoint, and
+one wheel attempt produced no scrolling. The user subsequently performed a real
+finger sweep across thumbnails and the next row on the installed reviewed build
+and confirmed: “All crossed photos become checked.” This supplies a bounded
+**human-observed range-selection pass**, separate from the remote drag attempts.
+The user then answered “Both work” when asked to confirm pinch zoom/pan of the
+main photo and vertical scrolling of the expanded grid on the installed
+`75fbd` build. This adds bounded human-observed pinch/pan and vertical-scroll
+passes. It is not a physical check of the later final-correction code, a precise
+region/detail measurement, or performance, rotation or VoiceOver evidence. No
+cause is assigned to the earlier remote-input result.
+
+These later interactions are outside the fixed 156-assertion audit snapshot.
+Normal Connect/C3 preview may involve native or cached work; the earlier identical
+journal tree proves zero new camera work only across the recorded read-only
+reopen interval, not across all later interaction.
+
+Private evidence includes `task13-live-run2-root-record.json`,
+`task13-live2-first-complete-evidence.json`, `task13-live2-reopened-evidence.json`,
+selected run/journal copies and `task13-live2-verification` under ignored `.build`.
+The ignored independent verification report names the exact files and commands.
+Committed documentation omits run/source/asset identifiers, personal filenames,
+full hashes, profile values and media.
+
+## A01–A24 traceability
+
+“Software covered” does not replace physical proof. A bounded pass below applies
+only to the observed inputs/context on the recorded revisions. Physical rows
+refer to earlier evidence unless they explicitly identify the current-code C3
+batch or C4 interruption. Unrelated variants remain open.
+
+| Check | Software evidence | Physical status and remaining proof |
+| --- | --- | --- |
+| A01 paired RAF retrieval | Original-role selection/discovery/transfer tests keep a pair one source. | **Partial:** actual paired original roles/revisions/hashes verified, including the live conversion. Limited/cloud variants remain unrun. |
+| A02 mixed standalone/pair batch | Frozen mixed-source tests; shared original pool. | **Bounded pass:** ordinary current-code C3 job saved the two known standalone/paired sources; one fresh render and one cached preview. Larger and broader batches remain open. |
+| A03 seven recipes, unchanged banks | Atomic import/catalog and fresh-session assertions. | **Bounded pass:** current live C1–C7 imports/previews; all seven names and 23 fields preserved. Broader settings remain unproved. |
+| A04 original default/clear, zero preview saves | Reducer/AppModel/preview tests; no-recipe Export disabled. | **Bounded pass:** original defaults and seven no-save previews passed; ordinary No Recipe restored RAW and disabled Export while camera-ready. |
+| A05 late render/navigation safety | Generation/revision/manual-version regressions. | **Not run:** fast physical interaction with real camera/library. |
+| A06 independent version choices/labels | Resolver, viewer and AppFlow tests. | **Partial:** original C7 labels and RAW↔Temporary Preview switching; current paired C4 saved version opens after restart without camera, with exact full JPEG bytes verified. Broader independent version cases remain open. |
+| A07 restart associations/equal dates | Disk reopen/equal-date identity and recovery tests. | **Partial:** original same-UUID reopen; current normal restart retains 3 jobs/5 versions and paired C4 reopens with matching PhotoKit-origin bytes. No new saved association/camera operation; real equal-date cases remain open. |
+| A08 viewed source without Select | Browse export/effective-selection tests. | **Bounded pass:** one deliberate viewed paired-B export through the actual model in Browse. |
+| A09 Select/Done/All/None/sweeps | Reducer, metadata All and grid/sweep tests. | **Bounded pass:** ordinary Select/Done, All (761), None (0); user confirmed all crossed thumbnails became checked during a real finger sweep across the next row. Remote endpoint-only drags remain separate observations. |
+| A10 unchanged thumbnail geometry | Native geometry assertions across selection modes. | **Partial:** two-row square grid looked unchanged when Select added checkboxes. Precise physical geometry measurement remains unrun. |
+| A11 square vertical rows/two collapsed rows | Measured native layout/long synthetic grid tests. | **Partial:** two collapsed/four expanded rows observed. User confirmed expanded-grid vertical scrolling on installed `75fbd`; the earlier wheel attempt did not scroll. Precise layout/performance measurement remains unrun. |
+| A12 drawer overlay/framing | Native hosting/viewport/literal-detent tests. | **Partial:** ordinary expansion overlaid most of the viewer and manual collapse worked. Drag/accessibility paths remain unrun. |
+| A13 no automatic collapse/viewed reveal | Browse/Select and manual-collapse visibility tests. | **Bounded pass:** Done/source navigation kept the drawer expanded; manual collapse kept the viewed A tile visible. Broader navigation remains open. |
+| A14 detail/zoom/version region/reset | UIKit viewer finite-metric/detail/reset tests. | **Partial:** upright RAW/B display plus actual Zoom+, Fit and double-tap zoom/reset observed. User confirmed real pinch zoom/pan on installed `75fbd`; exact region/detail comparison remains unrun. |
+| A15 floating recipe menu | Native selection/clear/dismissal/padding/size tests. | **Partial:** actual floating seven-slot menu, C3 selection and No Recipe clear observed. Hardware Escape/accessibility remain unverified; simulator key synthesis did not deliver Escape or an independent control key. |
+| A16 frozen original-RAF job | Mixed-job/cache/revision/immutable snapshot tests. | **Bounded pass:** current-code two-source C3 job retained exact source hashes and one frozen recipe through both saved associations. Physical recipe changes during active export remain open. |
+| A17 full FINE geometry/orientation/fidelity | Strict profile/JPEG validation. | **Partial:** eight actual live FINE outputs and all-seven same-A Mac comparison passed. No Mac B reference or broader formats/firmware/lens proof. |
+| A18 new asset/source preserved/date/location | Writer/journal/original-resource tests. | **Partial:** original single export verified exact bytes/date/unchanged originals and absent location. Current paired C4 saved original independently matches its native JPEG bytes after restart; no new date/location query. Nonnil GPS remains unrun. |
+| A19 Date Captured chronology | Writer preserves effective Photos capture date. | **Partial:** exact date equality passed on device; Photos chronological UI/tie ordering remain unobserved. |
+| A20 cancel/retry/uncertain save | Crash-window/exact-lookup/pin/no-replay tests. | **Partial:** saved-run reopen and current C4 camera-uncertainty reconciliation/explicit same-job Resume passed. Active cancellation/Retry, skipping a previously saved item and uncertain PhotoKit completion remain unrun. |
+| A21 actionable failure states | Authorization/cloud/storage/transport fixtures. | **Partial:** historical transport/reconnect and incompatible-model refusal, plus explicit unarmed validation failure. Current app limited/cloud/wrong-mode/disconnect matrix remains unrun. |
+| A22 suspension preserves truthful outcome | Injected-scene/admission/held-save/recovery tests; authoritative-close regression. | **Bounded pass:** physical Home during C4 conversion retained 0 saved/2 remaining and camera uncertainty/confirmed close; human camera power cycle plus fresh empty-output reconciliation enabled explicit same-job Resume to 2 saved. Active disconnect and uncertain-Photos windows remain open. |
+| A23 orientation/accessibility controls | Largest-text/dark/compact native tests. | **Not run:** native rotation, VoiceOver, Reduce Motion/Transparency, contrast and hardware-keyboard physical checks. Screenshot/resize is not interaction evidence. |
+| A24 bounded operation/scrolling/zero saves | Shared pool/scheduler/cache and sequential-export tests. | **Partial:** seven physical previews produced no Photos assets. Mixed-50-source Instruments memory/cache/latency/concurrency/scrolling measurements remain unrun. |
+
+## Support boundary and remaining validation
+
+The observed context is two retained lossless-compressed 14-bit, 3:2,
+orientation-8 sources on X-T5 firmware 4.31 in the measured lens/profile class.
+Requested LMO ON produced effective OFF with the adjustment reported on all
+eight outputs. Broader firmware, lens, aspect and compression support remains
+unproved. No Mac B reference exists; B has identity/geometry/FINE/effective
+metadata/save proof, without same-source Mac visual-fidelity proof. Opaque
+uploaded-RAW buffer lifetime remains unknown despite owned-output cleanup.
+
+Earlier diagnostic seven-slot and production C7 A–B–A evidence remains historical,
+separate from the recorded `75fbd61b` live run. It is not relabeled as additional
+Photos exports. Full acceptance still requires the open physical rows above and
+Instruments on at least 50 mixed sources: peak resident memory, one-item RAW
+temporary size, JPEG cache size, first/cached preview latency, per-stage export
+times and scrolling behavior. No numeric performance promise or inferred pass
+is made. The whole-branch review and its final scoped correction review are
+complete; software review is clear. Implementation integration is tracked in
+[PR #1](https://github.com/lun3x/fuji-studio/pull/1).
+
+## Controlled validation route
+
+The DEBUG `--live-acceptance-run <explicit UUID>` route rejects mixed modes and
+uses the one displayed live composition. It durably claims the run before any
+export intent. Reusing a UUID never invokes export/conversion, including after a
+death before job-ID recording. Known jobs can reconcile/verify read-only;
+unknown outcomes stop without replacement. Preserve the private run and catalog;
+never erase them or substitute a fresh UUID as an automatic retry. Any additional
+physical write must be a separately deliberate controller action after review.
+This route does not perform the remaining interruption, chronology, accessibility
+or 50-source performance acceptance.
