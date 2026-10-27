@@ -51,7 +51,7 @@ struct RecipeMenu: View {
             VStack(alignment: .leading, spacing: 0) {
                 Text("Camera recipes").font(.headline).padding()
                 if case .stale(let message) = refreshState {
-                    Label("Cached recipes · \(message)", systemImage: "exclamationmark.arrow.trianglehead.2.clockwise.rotate.90")
+                    Label(message, systemImage: "exclamationmark.arrow.trianglehead.2.clockwise.rotate.90")
                         .font(.callout).padding(.horizontal).padding(.bottom, 8)
                         .accessibilityIdentifier("recipe.stale")
                 }

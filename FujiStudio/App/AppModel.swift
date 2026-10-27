@@ -84,7 +84,7 @@ import Observation
         ]
         do {
             let recipes = try await environment.catalog.latestRecipes()
-            if !recipes.isEmpty { reduce(.recipesRefreshed(recipes)); reduce(.recipeRefreshFailed("Cached recipes. Connect the camera to refresh.")) }
+            if !recipes.isEmpty { reduce(.recipesRefreshed(recipes)) }
         } catch { message = Self.explain(error) }
         await reloadLibrary()
         await recoverWhenIdle()
