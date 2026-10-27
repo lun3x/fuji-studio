@@ -5,8 +5,9 @@ selection tray: remove All and None, float Select at the tray's top right,
 replace Select with an X that cancels selection, and dim selected photos with
 a small blue checkmark at the bottom right.
 
-Use the existing SwiftUI tray and UIKit collection view. Keep the selected
-count, individual taps, range sweeps, scrolling, and the existing viewed-photo
+Use the existing SwiftUI tray and UIKit collection view. Show the floating count
+only in Select mode, as requested in the phone follow-up; hide it in ordinary
+single-photo browsing. Keep individual taps, range sweeps, scrolling and viewed-photo
 behavior. Entering Select still includes the viewed photo; X clears batch
 membership and returns to browsing that photo. Selection must not start a
 Photos discovery pass.

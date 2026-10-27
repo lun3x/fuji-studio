@@ -114,6 +114,7 @@ import XCTest
         let select = app.buttons["workspace.select"], grid = app.collectionViews["photoGrid"]
         XCTAssertFalse(app.buttons["workspace.all"].exists)
         XCTAssertFalse(app.buttons["workspace.none"].exists)
+        XCTAssertFalse(app.staticTexts["workspace.count"].exists)
         XCTAssertEqual(select.label, "Select")
         XCTAssertGreaterThanOrEqual(select.frame.minY, grid.frame.minY)
         XCTAssertEqual(select.frame.maxX, grid.frame.maxX - 12, accuracy: 1)
@@ -131,7 +132,7 @@ import XCTest
         XCTAssertEqual(app.cells["grid.source-0"].frame, frame)
         XCTAssertFalse(app.cells["grid.source-0"].isSelected)
         XCTAssertFalse(app.cells["grid.source-1"].isSelected)
-        XCTAssertEqual(app.staticTexts["workspace.count"].label, "1 photo")
+        XCTAssertFalse(app.staticTexts["workspace.count"].exists)
         shot(app, "Photos-style floating Select in browse")
     }
     func testLargestTextVersionMenuScrollsToFullSavedLabel() {

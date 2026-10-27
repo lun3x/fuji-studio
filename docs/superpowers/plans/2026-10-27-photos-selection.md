@@ -31,9 +31,15 @@
 
 **Interfaces:** Keep `PhotoGrid` and range membership callbacks unchanged. `WorkspaceAction.select` and `.done` remain the enter/cancel transitions; remove `.all` and `.none`.
 
-- [ ] Update the existing app-flow selection test to require absent All/None, floating Select, an accessible Cancel selection X, stable cells and cleared checks on cancel.
-- [ ] Run that UI test against the current implementation and confirm the expected failure.
-- [ ] Implement the overlay, cell styling and removal of the select-all path; migrate existing test setup to taps/range membership.
-- [ ] Run focused app, library, reducer, grid and layout checks; inspect simulator screenshots in browse and selection states, light/dark and large text.
+- [x] Update the existing app-flow selection test to require absent All/None, floating Select, an accessible Cancel selection X, stable cells and cleared checks on cancel.
+- [x] Run that UI test against the current implementation and confirm the expected failure.
+- [x] Implement the overlay, cell styling and removal of the select-all path; migrate existing test setup to taps/range membership.
+- [x] Run focused app, library, reducer, grid and layout checks; inspect simulator screenshots in browse and selection states, light/dark and large text.
 - [ ] Run the complete simulator test gate and a Release simulator build, then obtain one fresh code review.
 - [ ] Record validation, checkpoint with Jujutsu, and push `codex/photos-style-selection`.
+
+### Phone follow-up: Show the count only in Select mode
+
+- [x] Render the count only while selecting, using checked membership directly.
+- [x] Update existing selection/cancellation and layout snapshots for absent browse count.
+- [x] Verify the selection flow, large-text layout and manual collapse, build Release and phone packages, then install the updated phone package.

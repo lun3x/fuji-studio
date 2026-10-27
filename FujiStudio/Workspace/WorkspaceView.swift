@@ -131,9 +131,11 @@ struct WorkspaceView<StatusControl: View, ConnectionControl: View>: View {
     private var selectionControls: some View {
         GlassEffectContainer(spacing: 12) {
             HStack(alignment: .top) {
-                count.padding(.horizontal, 12).frame(minHeight: 44)
-                    .glassEffect(.regular, in: .capsule)
-                    .allowsHitTesting(false)
+                if state.isSelecting {
+                    count.padding(.horizontal, 12).frame(minHeight: 44)
+                        .glassEffect(.regular, in: .capsule)
+                        .allowsHitTesting(false)
+                }
                 Spacer(minLength: 12)
                 selectionButton
             }
@@ -155,13 +157,9 @@ struct WorkspaceView<StatusControl: View, ConnectionControl: View>: View {
             .accessibilityIdentifier("workspace.select")
     }
     private var count: some View {
-        ZStack {
-            // Reserve the complete index count before entering Select or choosing All.
-            Label("\(sources.count)", systemImage: "checkmark.circle").hidden()
-            Label("\(sources.count)", systemImage: "photo").hidden()
-            Label("\(state.effectiveSources.count)", systemImage: state.isSelecting ? "checkmark.circle" : "photo")
-                .accessibilityLabel(state.isSelecting ? "\(state.effectiveSources.count) selected" : "\(state.effectiveSources.count) photo")
-                .accessibilityIdentifier("workspace.count")
-        }.font(.caption).monospacedDigit().lineLimit(1).fixedSize()
+        Label("\(state.checkedSourceIDs.count)", systemImage: "checkmark.circle")
+            .accessibilityLabel("\(state.checkedSourceIDs.count) selected")
+            .accessibilityIdentifier("workspace.count")
+            .font(.caption).monospacedDigit().lineLimit(1).fixedSize()
     }
 }

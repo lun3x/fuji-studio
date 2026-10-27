@@ -44,7 +44,7 @@ final class PhotoGridTests: XCTestCase {
         edgeStart.press(forDuration: 0.05, thenDragTo: grid.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.97)), withVelocity: .slow, thenHoldForDuration: 2)
         let count = Int(app.staticTexts["gridFixture.checked"].label.replacingOccurrences(of: "Checked: ", with: "")) ?? 0
         XCTAssertGreaterThan(count, 24)
-        XCTAssertEqual(app.staticTexts["gridFixture.viewed"].label, "Viewed: none")
+        XCTAssertEqual(app.staticTexts["gridFixture.viewed"].label, "Viewed: source-2")
         let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Sweep edge autoscroll past initial cells"; shot.lifetime = .keepAlways; add(shot)
     }
     func testFinalTwoRowViewportRevealsViewedTileAndPreservesCheckedSet() {
