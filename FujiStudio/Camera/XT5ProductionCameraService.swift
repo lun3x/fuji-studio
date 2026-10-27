@@ -60,6 +60,9 @@ actor XT5CameraService: CameraServing {
         if context != nil && !stopRequested { try await validateCurrent();return }
         stopRequested=false
         await startMonitor()
+        // Subscription can suspend while disconnect revokes this admission. No native open yet.
+        try Task.checkCancellation()
+        guard epoch == admissionEpoch,!stopRequested else { throw CameraServiceError.cancelled }
         publish(.opening);needsClose=true
         do {
             try await session.connect();nativeSession=try await session.currentSession()

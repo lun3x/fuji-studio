@@ -87,6 +87,26 @@ struct XT5ProductionCameraServiceTests {
             #expect(try journal.unresolved().count == 1)
         }
     }
+    @Test func disconnectDuringStateSubscriptionPreventsNativeOpen() async throws {
+        let f=try ProductionOperationFixture();defer { f.remove() }
+        let wire=ProductionSession(fixture:f,holdStates:true)
+        let journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"))
+        let gate=SerialCameraGate(),service=makeService(wire,journal,gate:gate)
+        let connecting=Task { try await service.connect() }
+        await wire.waitUntilHeld()
+        let disconnecting=Task { await service.disconnect() }
+        // Queuing proves disconnect has set its stop flag and advanced the admission epoch.
+        while await gate.queuedOperationCount == 0 { await Task.yield() }
+        await wire.release()
+        await #expect(throws:CameraServiceError.cancelled) { try await connecting.value }
+        await disconnecting.value
+        #expect(await wire.connects == 0)
+        #expect(await wire.closes == 0)
+        #expect(await wire.commands.isEmpty)
+        #expect(await gate.queuedOperationCount == 0)
+        var states=await service.states().makeAsyncIterator()
+        #expect(await states.next() == .disconnected)
+    }
     @Test func queuedCancellationDoesNotCloseActiveOwnerAndDisconnectStopsNewCommands() async throws {
         let f=try ProductionOperationFixture();defer { f.remove() }
         let wire=ProductionSession(fixture:f,holdOpcode:0x900D),journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"))
@@ -176,16 +196,19 @@ struct XT5ProductionCameraServiceTests {
 actor ProductionSession: CameraSessionTransport {
     enum Mode { case normal,preexisting,profileRejected,readbackMismatch,wrongStorage,replacedHandle,payloadChanged,deleteRejected,nonemptyAfterDelete,staleAfterTrigger,triggerRejected,closeFails }
     let fixture:ProductionOperationFixture,holdOpcode:UInt16?
+    let holdStates:Bool
     var mode:Mode
     var selected:UInt16=1,outputPresent=false
     var commands:[PTPCommand]=[],deletes:[UInt32]=[],uploadHashes:[String]=[]
-    var closes=0,triggers=0,generation:UInt64=1,connected=false
+    var connects=0,closes=0,triggers=0,generation:UInt64=1,connected=false
     var profile:Data?,deleted=false,downloadCount=0,views=0
     var held:CheckedContinuation<Void,Never>?,heldWaiters:[CheckedContinuation<Void,Never>]=[]
     var subscribers:[AsyncStream<CameraState>.Continuation]=[]
-    init(fixture:ProductionOperationFixture,mode:Mode = .normal,holdOpcode:UInt16?=nil) { self.fixture=fixture;self.mode=mode;self.holdOpcode=holdOpcode }
-    func states()->AsyncStream<CameraState> { let pair=AsyncStream<CameraState>.makeStream();subscribers.append(pair.continuation);return pair.stream }
-    func connect() throws { if mode == .closeFails && closes > 0 { throw PTPError.sessionClosing };connected=true;emit(.sessionOpen(snapshot())) }
+    init(fixture:ProductionOperationFixture,mode:Mode = .normal,holdOpcode:UInt16?=nil,holdStates:Bool=false) { self.fixture=fixture;self.mode=mode;self.holdOpcode=holdOpcode;self.holdStates=holdStates }
+    func states() async ->AsyncStream<CameraState> {
+        if holdStates { await withCheckedContinuation { held=$0;heldWaiters.forEach { $0.resume() };heldWaiters=[] } }
+        let pair=AsyncStream<CameraState>.makeStream();subscribers.append(pair.continuation);return pair.stream }
+    func connect() throws { connects += 1;if mode == .closeFails && closes > 0 { throw PTPError.sessionClosing };connected=true;emit(.sessionOpen(snapshot())) }
     func currentSession() throws -> CameraSession { guard connected else { throw PTPError.notConnected };return snapshot() }
     func close() throws { closes += 1;connected=false;emit(.disconnected);if mode == .closeFails { throw PTPError.timeout } }
     func snapshot()->CameraSession { .init(generation:generation,connection:.init(name:"Synthetic",usbVendorID:0x04cb,usbProductID:0x2fc)) }
