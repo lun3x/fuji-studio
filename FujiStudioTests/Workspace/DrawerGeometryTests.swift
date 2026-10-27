@@ -4,12 +4,12 @@ import SwiftUI
 
 struct DrawerGeometryTests {
     // Omitting the header/safe area or using a prototype drawer height breaks the actual one-row viewport.
-    @Test func collapsedViewportContainsOnlyOneRowAboveHomeArea() {
+    @Test func collapsedViewportExposesNextRowCueWithoutChangingTrayHeight() {
         let grid = DrawerGeometry.gridMetrics(width: 390, availableGridHeight: 500)
         let result = DrawerGeometry.detents(container: CGSize(width: 390, height: 844),
             safeArea: EdgeInsets(top: 59, leading: 0, bottom: 34, trailing: 0), headerHeight: 88,
             grid: grid, recipeControlFrame: CGRect(x: 16, y: 120, width: 70, height: 44))
-        #expect(abs(result.collapsedGridHeight - 122.6666666667) < 0.001)
+        #expect(abs(result.collapsedGridHeight - 156.6666666667) < 0.001)
         #expect(abs(result.collapsedHeight - 244.6666666667) < 0.001)
         #expect(result.expandedTop == 172)
         #expect(result.expandedHeight == 672)
@@ -59,7 +59,7 @@ final class WorkspaceHostingTests: XCTestCase {
         let grid = try XCTUnwrap(descendants(host).compactMap { $0 as? PhotoGridController }.first)
         let tile = try XCTUnwrap(grid.collectionView.layoutAttributesForItem(at: IndexPath(item: 0, section: 0)))
         let side = tile.frame.width
-        XCTAssertEqual(grid.collectionView.bounds.height, side, accuracy: 0.5)
+        XCTAssertEqual(grid.collectionView.bounds.height, side + grid.collectionView.contentInset.bottom, accuracy: 0.5)
         XCTAssertGreaterThanOrEqual(side, 44)
         let initialSize = grid.collectionView.bounds.size
         store.state.reduce(.select)
@@ -96,14 +96,14 @@ final class WorkspaceHostingTests: XCTestCase {
         let viewer = try XCTUnwrap(views(host.view).first { $0.accessibilityIdentifier == "viewer.image" } as? UIScrollView)
         let frame = viewer.convert(viewer.bounds, to: host.view), side = grid.metrics.tileWidth
         XCTAssertGreaterThanOrEqual(side, 44)
-        XCTAssertEqual(grid.collectionView.bounds.height, side, accuracy: 0.5)
+        XCTAssertEqual(grid.collectionView.bounds.height, side + grid.collectionView.contentInset.bottom, accuracy: 0.5)
         for action: WorkspaceAction in [.select, .drawerMoved(.expanded), .drawerMoved(.collapsed), .done] {
             model.send(action); try await settle(host)
             XCTAssertTrue(descendants(host).contains { $0 === grid })
             XCTAssertTrue(views(host.view).contains { $0 === viewer })
             XCTAssertEqual(viewer.convert(viewer.bounds, to: host.view), frame)
             XCTAssertEqual(grid.metrics.tileWidth, side, accuracy: 0.01)
-            if model.state.drawerDetent == .collapsed { XCTAssertEqual(grid.collectionView.bounds.height, side, accuracy: 0.5) }
+            if model.state.drawerDetent == .collapsed { XCTAssertEqual(grid.collectionView.bounds.height, side + grid.collectionView.contentInset.bottom, accuracy: 0.5) }
         }
         let writes = await f.writer.requests
         XCTAssertTrue(writes.isEmpty)
@@ -132,7 +132,7 @@ final class WorkspaceHostingTests: XCTestCase {
         assertBackground(viewer, white: 1)
         XCTAssertEqual(viewer.zoomScale / viewer.minimumZoomScale, 2, accuracy: 0.01)
     }
-    func testOnlyOneCollapsedRowAndExpandedGridClearHomeArea() async throws {
+    func testCollapsedPeekAndExpandedGridReachBottomWithHomeClearance() async throws {
         let store = WorkspaceHostingStore(), host = UIHostingController(rootView: WorkspaceHostingHarness(store: store))
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let prior = scene.windows.first(where: \.isKeyWindow)
@@ -142,11 +142,14 @@ final class WorkspaceHostingTests: XCTestCase {
         let grid = try XCTUnwrap(descendants(host).compactMap { $0 as? PhotoGridController }.first)
         let collection = grid.collectionView
         XCTAssertGreaterThan(window.safeAreaInsets.bottom, 0)
-        XCTAssertEqual(collection.bounds.height, grid.metrics.tileWidth, accuracy: 0.5)
-        XCTAssertEqual(collection.convert(collection.bounds, to: window).maxY, window.bounds.maxY - window.safeAreaInsets.bottom, accuracy: 0.5)
-        XCTAssertEqual(collection.contentInset.bottom, 0)
+        XCTAssertEqual(collection.bounds.height, grid.metrics.tileWidth + window.safeAreaInsets.bottom, accuracy: 0.5)
+        XCTAssertEqual(collection.convert(collection.bounds, to: window).maxY, window.bounds.maxY, accuracy: 0.5)
+        XCTAssertEqual(collection.contentInset.bottom, window.safeAreaInsets.bottom, accuracy: 0.5)
         let nextRow = try XCTUnwrap(collection.layoutAttributesForItem(at: IndexPath(item: grid.metrics.columns, section: 0)))
-        XCTAssertFalse(nextRow.frame.intersects(collection.bounds), "A second-row fragment must not peek into the collapsed viewport")
+        let peek = nextRow.frame.intersection(collection.bounds)
+        XCTAssertGreaterThan(peek.height, 0, "The next row must be visible as a scrolling cue")
+        XCTAssertLessThan(peek.height, grid.metrics.tileWidth)
+        XCTAssertEqual(peek.height, window.safeAreaInsets.bottom - 3, accuracy: 0.5)
         store.state.reduce(.drawerMoved(.expanded)); try await settle(host)
         XCTAssertEqual(collection.convert(collection.bounds, to: window).maxY, window.bounds.maxY, accuracy: 0.5)
         XCTAssertEqual(collection.contentInset.bottom, window.safeAreaInsets.bottom, accuracy: 0.5)

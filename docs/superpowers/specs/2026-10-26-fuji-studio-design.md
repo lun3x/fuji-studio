@@ -32,7 +32,7 @@ The initial hardware target is the user's Fujifilm X-T5 and iPhone 15 Pro.
 - Create a separate Photos asset for each exported result, preserving the source
   photo's capture date and time.
 - Use a vertically scrolling grid of square thumbnails in a draggable bottom
-  drawer, with a one-row collapsed position and an expanded position covering
+  drawer, with a collapsed position showing one full row and the top of the next and an expanded position covering
   most of the main image.
 - Keep the drawer open when a photo is tapped, in both browsing and Select modes.
 - Support pinch zoom in the main photo viewer.
@@ -107,9 +107,10 @@ photo drawer expanded, without covering its Export or selection controls.
 The bottom drawer contains a grabber, Select/Done, All, None, the effective
 selection count, Export, and the vertically scrolling thumbnail grid.
 
-- Collapsed: the grid viewport is exactly one square row, without a fragment of the
-  next row. Place Home-area clearance below the viewport with the matching grid
-  background. Derive the detent from actual thumbnail geometry and safe areas.
+- Collapsed: show one full square row and the partial top of the next row as a
+  cue that more photos are below. The grid reaches the bottom edge, with no
+  reserved band covering that partial row. Derive the detent from actual
+  thumbnail geometry and safe areas.
 - Expanded: the drawer overlays most of the viewer and provides room for more
   rows. It does not resize or reframe the photo behind it while moving.
 - Dragging the grabber moves the drawer continuously and snaps to either detent.
@@ -124,9 +125,9 @@ selection count, Export, and the vertically scrolling thumbnail grid.
   entering or leaving Select mode. Expansion adds visible rows, not a new layout.
 - Orientation changes may recompute columns and detent heights. Preserve the
   viewed source, selections, and a sensible scroll anchor without overlaps.
-- The expanded grid extends to the bottom edge, with scrolling content padding
-  to reach the final photos above the Home area. Neither position has a material
-  strip covering thumbnails.
+- Both positions extend the grid to the bottom edge, with scrolling content
+  padding to reach the final photos above the Home area. Neither position has
+  a strip covering thumbnails.
 
 Use one thumbnail for a paired RAW+JPEG asset. Give paired and standalone items a
 small, readable type indicator. Exported JPEGs belong in Versions, not as duplicate

@@ -17,8 +17,8 @@ enum DrawerGeometry {
     static let controlClearance: CGFloat = 8
     static func detents(container: CGSize, safeArea: EdgeInsets, headerHeight: CGFloat,
                         grid: GridMetrics, recipeControlFrame: CGRect) -> DrawerDetents {
-        let collapsedGrid = grid.height(rows: 1)
-        let collapsed = headerHeight + collapsedGrid + safeArea.bottom
+        let collapsedGrid = grid.height(rows: 1) + safeArea.bottom
+        let collapsed = headerHeight + collapsedGrid
         let top = max(safeArea.top, recipeControlFrame.maxY + controlClearance)
         return DrawerDetents(containerHeight: container.height, collapsedHeight: collapsed,
             expandedHeight: max(collapsed, container.height - top), collapsedGridHeight: collapsedGrid)

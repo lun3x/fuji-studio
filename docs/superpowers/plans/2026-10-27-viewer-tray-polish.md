@@ -31,3 +31,14 @@
 - [x] Run the complete simulator suite and universal Release build; inspect light/dark screenshots.
 - [x] Commit and push using jj; obtain one fresh review of this change range and address substantive findings.
 - [x] Install the reviewed build on the paired phone when reachable and record exactly what was verified.
+
+## Follow-up: collapsed scrolling cue
+
+The user clarified that the collapsed tray should show the top of the next row.
+This supersedes the exact-one-row/no-fragment criterion above. Keep the overall
+collapsed height; remove external bottom padding, put Home clearance inside the
+scrolling content in both positions, and preserve viewed-item reveal.
+
+- [x] Update native/window/next-row visibility expectations and observe RED.
+- [x] Remove reserved band; verify visible partial row, final-row clearance and unchanged motion/theme behavior.
+- [ ] Run the full software gate, inspect the screenshot, commit/push and install the signed update.

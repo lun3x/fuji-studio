@@ -4,7 +4,6 @@ import SwiftUI
 struct PhotoDrawer<Header: View, Grid: View>: View {
     @Binding var detent: DrawerDetent
     let detents: DrawerDetents
-    let bottomInset: CGFloat
     var onHeaderHeightChanged: (CGFloat) -> Void
     var onManualCollapse: () -> Void
     @ViewBuilder var header: () -> Header
@@ -56,9 +55,6 @@ struct PhotoDrawer<Header: View, Grid: View>: View {
                          velocity: -value.velocity.height)
                 })
             grid().frame(maxWidth: .infinity, maxHeight: .infinity)
-                // Collapsed content is exactly one row. The Home area is layout clearance,
-                // with the grid background extending behind it, never a material overlay.
-                .padding(.bottom, detent == .collapsed ? bottomInset : 0)
                 .background(Color(uiColor: .systemBackground))
         }
         .frame(height: height)

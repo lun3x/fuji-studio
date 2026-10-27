@@ -64,7 +64,7 @@ struct WorkspaceView: View {
                 VStack(spacing: 0) {
                     Spacer(minLength: 0)
                     PhotoDrawer(detent: Binding(get: { state.drawerDetent }, set: { onAction(.drawerMoved($0)) }),
-                        detents: detents, bottomInset: safe.bottom,
+                        detents: detents,
                         onHeaderHeightChanged: { drawerHeaderHeight = $0 },
                         onManualCollapse: {
                             if let id = state.viewedSourceID {
@@ -74,7 +74,7 @@ struct WorkspaceView: View {
                         }, header: { selectionHeader }, grid: {
                             PhotoGrid(sources: sources, checkedSourceIDs: state.checkedSourceIDs, isSelecting: state.isSelecting,
                                 viewedSourceID: state.viewedSourceID, thumbnails: thumbnails, scrollRequest: scrollRequest,
-                                gridMetrics: gridMetrics, bottomInset: state.drawerDetent == .expanded ? safe.bottom : 0,
+                                gridMetrics: gridMetrics, bottomInset: safe.bottom,
                                 onSourceTapped: { onAction(.sourceTapped($0)) },
                                 onCheckedChanged: { onAction(.checkedSourcesReplaced($0)) }, onViewportChanged: onViewportChanged)
                         })

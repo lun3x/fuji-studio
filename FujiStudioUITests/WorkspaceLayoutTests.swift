@@ -41,7 +41,7 @@ final class WorkspaceLayoutTests: XCTestCase {
                 return abs(app.buttons["drawer.toggle"].frame.minY - bottom - 8) <= 1
             }
             let side = app.cells.allElementsBoundByIndex.first!.frame.width
-            return abs(grid.frame.height - side) <= 1
+            return grid.frame.height > side && grid.frame.height < side * 2
         }
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: nil)], timeout: 5), .completed, file: file, line: line)
     }
@@ -75,13 +75,16 @@ final class WorkspaceLayoutTests: XCTestCase {
         let app = launch(), grid = app.collectionViews["photoGrid"]
         let side = tile(app, 0).frame.width, viewer = app.scrollViews["viewer.image"]
         XCTAssertTrue(viewer.waitForExistence(timeout: 10))
-        XCTAssertEqual(grid.frame.height, side, accuracy: 0.5)
+        XCTAssertGreaterThan(grid.frame.height, side)
+        XCTAssertLessThan(grid.frame.height, side * 2)
         XCTAssertEqual(viewer.frame.width, grid.frame.width, accuracy: 0.5)
         XCTAssertEqual(tile(app, 0).frame.width, tile(app, 0).frame.height, accuracy: 0.5)
         let base = viewer.frame
         let nextRow = tile(app, 3)
-        XCTAssertFalse(nextRow.isHittable)
-        if nextRow.exists { XCTAssertFalse(nextRow.frame.intersects(grid.frame)) }
+        XCTAssertTrue(nextRow.exists)
+        let peek = nextRow.frame.intersection(grid.frame)
+        XCTAssertGreaterThan(peek.height, 0)
+        XCTAssertLessThan(peek.height, side)
         shot(app, "Workspace light collapsed")
         app.buttons["drawer.toggle"].tap()
         XCTAssertEqual(app.buttons["drawer.toggle"].value as? String, "Expanded")
@@ -195,7 +198,8 @@ final class WorkspaceLayoutTests: XCTestCase {
         let app = launch(["--fixture-accessibility", "--fixture-stale"])
         let grid = app.collectionViews["photoGrid"]
         let side = tile(app, 0).frame.width
-        XCTAssertEqual(grid.frame.height, side, accuracy: 0.5)
+        XCTAssertGreaterThan(grid.frame.height, side)
+        XCTAssertLessThan(grid.frame.height, side * 2)
         XCTAssertTrue(app.buttons["workspace.select"].isHittable)
         XCTAssertTrue(app.buttons["workspace.export"].isHittable)
         app.buttons["drawer.toggle"].tap()
@@ -331,7 +335,8 @@ final class WorkspaceLayoutTests: XCTestCase {
         app.buttons["fixture.resize"].tap()
         XCTAssertNotEqual(grid.frame, original)
         let side = tile(app, 0).frame.width
-        XCTAssertEqual(grid.frame.height, side, accuracy: 0.5)
+        XCTAssertGreaterThan(grid.frame.height, side)
+        XCTAssertLessThan(grid.frame.height, side * 2)
         app.buttons["drawer.toggle"].tap()
         XCTAssertEqual(app.buttons["drawer.toggle"].value as? String, "Expanded")
         waitForDetent(app, expanded: true)
