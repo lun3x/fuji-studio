@@ -23,6 +23,21 @@ actor XT5CameraService: CameraServing {
         self.session=session;self.journal=journal;self.gate=gate;self.pollWait=pollWait;self.settle=settle;self.validateJPEG=validateJPEG
     }
     deinit { monitor?.cancel() }
+    func executionContext() async throws -> CameraExecutionContext {
+        let epoch = admissionEpoch
+        do { return try await gate.withExclusiveAccess { try await self.readExecutionContext(epoch: epoch) } }
+        catch { throw Self.failure(error) }
+    }
+    private func readExecutionContext(epoch: UInt64) async throws -> CameraExecutionContext {
+        try Task.checkCancellation()
+        guard epoch == admissionEpoch, !stopRequested, let expected = context, let nativeSession else { throw CameraServiceError.notReady }
+        let current = try await session.currentSession()
+        try Task.checkCancellation()
+        guard epoch == admissionEpoch, !stopRequested, context == expected,
+              self.nativeSession == nativeSession else { throw CameraServiceError.cancelled }
+        guard current.generation == expected.generation, current.generation == nativeSession.generation else { throw CameraServiceError.unsupportedContext }
+        return expected
+    }
     func states() -> AsyncStream<CameraState> {
         let id=UUID(),pair=AsyncStream<CameraState>.makeStream(bufferingPolicy:.bufferingNewest(32))
         observers[id]=pair.continuation;pair.continuation.yield(state)

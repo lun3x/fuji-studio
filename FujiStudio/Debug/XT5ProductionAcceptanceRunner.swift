@@ -18,9 +18,9 @@ enum RetainedProductionAcceptanceInputs {
     private struct ProtocolManifest: Decodable { let sourceSHA256:String }
     static func prepare(documents:URL,destination:URL) async throws -> XT5ProductionAcceptanceInputs {
         let task=Task.detached { () throws -> XT5ProductionAcceptanceInputs in
-            let a=try loadSource(root:documents.appendingPathComponent("xt5-raw-baseline-private"),paired:false)
+            let a=try loadSource(root:documents.appendingPathComponent("xt5-raw-baseline-private"),paired:false).raw
             try Task.checkCancellation()
-            let b=try loadSource(root:documents.appendingPathComponent("xt5-paired-baseline-private"),paired:true)
+            let b=try loadSource(root:documents.appendingPathComponent("xt5-paired-baseline-private"),paired:true).raw
             guard a.sha256 != b.sha256,a.sourceID != b.sourceID else { throw CameraServiceError.sourceChanged }
             let bytes=try bounded(documents.appendingPathComponent("xt5-bank-import-private.json"),limit:1_048_576)
             let decoder=JSONDecoder();decoder.dateDecodingStrategy = .iso8601
@@ -36,7 +36,7 @@ enum RetainedProductionAcceptanceInputs {
         }
         return try await withTaskCancellationHandler { try await task.value } onCancel:{ task.cancel() }
     }
-    private static func loadSource(root:URL,paired:Bool) throws -> PreparedRAW {
+    static func loadSource(root:URL,paired:Bool) throws -> RetainedRAWSource {
         let entries=try FileManager.default.contentsOfDirectory(at:root,includingPropertiesForKeys:nil)
         let candidates=entries.filter { UUID(uuidString:$0.lastPathComponent) != nil && FileManager.default.fileExists(atPath:$0.appendingPathComponent("source.RAF").path) && FileManager.default.fileExists(atPath:$0.appendingPathComponent("source-manifest.json").path) }
         guard candidates.count == 1,let run=candidates.first else { throw CameraServiceError.sourceChanged }
@@ -56,7 +56,7 @@ enum RetainedProductionAcceptanceInputs {
               m.recordedAspect == PixelSize(width:manifest.aspectWidth,height:manifest.aspectHeight),
               m.cropTop == manifest.cropTop,m.cropLeft == manifest.cropLeft,m.orientation == manifest.orientation else { throw CameraServiceError.sourceChanged }
         try XT5WorkingProfile.validateSource(m)
-        return raw
+        return RetainedRAWSource(raw:raw,rafRole:role,jpegRole:manifest.jpegResourceRole.flatMap(ResourceRole.init(rawValue:)),originalFilename:manifest.originalFilename,manifestURL:run.appendingPathComponent("source-manifest.json"),protocolURL:run.appendingPathComponent("protocol-manifest.json"))
     }
     private static func bounded(_ url:URL,limit:Int) throws -> Data {
         guard let size=try url.resourceValues(forKeys:[.fileSizeKey]).fileSize,size > 0,size <= limit else { throw CameraServiceError.sourceChanged }

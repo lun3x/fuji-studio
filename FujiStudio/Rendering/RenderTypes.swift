@@ -60,3 +60,14 @@ struct EffectiveRecipeReport: Sendable, Codable, Equatable {
     let lensOptimizerAdjusted: Bool
     let evidence: String
 }
+
+extension CameraJPEG {
+    /// Relocation preserves the original render's provenance, even for a renamed frozen job recipe.
+    func relocated(to url: URL) -> CameraJPEG {
+        CameraJPEG(fileURL: url, sourceID: sourceID, sourceRevision: sourceRevision, sourceSHA256: sourceSHA256,
+                   recipeSnapshotID: recipeSnapshotID, settingsDigest: settingsDigest, cameraContext: cameraContext,
+                   operationID: operationID, width: width, height: height, orientation: orientation, quality: quality,
+                   effectiveRecipe: effectiveRecipe, baselineSHA256: baselineSHA256, candidateSHA256: candidateSHA256,
+                   outputSHA256: outputSHA256, key: key)
+    }
+}
