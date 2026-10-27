@@ -122,22 +122,28 @@ import Observation
         // Supersede intent in the coordinator; an already-active camera operation must drain.
         isLoadingPreview = request != nil
         displayRequest = request; displayFailure = nil
-        if let availableDisplay, request != nil,
-           availableDisplay.sourceID == state.viewedSourceID, availableDisplay.revision == state.viewedSourceRevision {
+        if let availableDisplay,
+           availableDisplay.sourceID == state.viewedSourceID, availableDisplay.revision == state.viewedSourceRevision,
+           request != nil || availableDisplay.version == state.displayedVersion {
             displayFile = availableDisplay.file
-            state.reduce(.previewFallback(availableDisplay.version))
+            if request != nil { state.reduce(.previewFallback(availableDisplay.version)) }
         } else {
             displayFile = nil; availableDisplay = nil
         }
         imageStatus = "Loading image…"
         imageLoading = .loading
         if preview?.sourceID != state.viewedSourceID || preview?.sourceRevision != state.viewedSourceRevision { preview = nil }
-        guard !isSuspended, let source = sources.first(where: { $0.id == state.viewedSourceID }), let version = state.displayedVersion else {
+        guard let source = sources.first(where: { $0.id == state.viewedSourceID }), let version = state.displayedVersion else {
             savedVersions = []; imageStatus = nil; imageLoading = nil
             let coordinator = environment.preview
             displayTask = Task { await coordinator.invalidate() }; return
         }
         let coordinator = environment.preview
+        // Foreground recovery reloads Photos before reopening work. A selected image is
+        // still pending during that interval; an empty viewer must keep its loading state.
+        guard !isSuspended else {
+            displayTask = Task { await coordinator.invalidate() }; return
+        }
         displayTask = Task { [weak self] in
             guard !Task.isCancelled else { return }
             await coordinator.invalidate()
@@ -408,7 +414,7 @@ import Observation
             foreground = false; isSuspended = true; restoreIdle()
             displayIntent &+= 1
             displayTask?.cancel(); displayRequest = nil
-            imageLoading = nil
+            imageLoading = displayFile == nil && imageLoading != nil ? .loading : nil
         }
         let preceding = sceneTask
         let task = Task { [weak self] in
