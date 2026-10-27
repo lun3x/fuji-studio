@@ -43,13 +43,16 @@ sets out the hardware feasibility gates, native app tasks, and acceptance checks
 
 The native workspace composes the real Photos reader/writer, X-T5 camera
 service, preview/export coordinators and durable local catalog. The current code
-at `b0620450` passed the complete simulator gate: **440 passed, 3 established
+at `2e45055b` passed the complete simulator gate: **442 passed, 3 established
 native-gate skips, 0 failures**, exit 0. Its unsigned Release simulator build
 passed for arm64 and x86_64, exit 0. The UI correction makes letterboxing follow
 the light/dark theme, removes the visible expansion label, shows one full row
 plus the top of the next when collapsed, fixes release/tap arbitration and motion,
 and removes the bottom material overlay. Status, Export and Connect now share
 one measured top row, with the title removed to give space back to the photo.
+Version selection is a floating top-right glass menu, and the zoom buttons and
+inline versions strip are removed. Pinch/pan, double-tap fit and native
+accessibility inspection remain available on the photo itself.
 The production integration review at
 `86eacb7a` approved these five earlier corrections:
 
@@ -63,11 +66,13 @@ The production integration review at
 - Obsolete original preparation is cancelled and reports progress, while admitted
   native camera work retains ownership until completion and cleanup.
 
-The single-header follow-up was reviewed with no findings; the branch remains
+The floating-versions follow-up was reviewed with no findings; the branch remains
 unmerged. The controller signed, verified, installed and normally launched
-`b0620450` on the phone, then observed the single action row, absent title and
-retained partial second row without a covering band. Simulator tests verify
-photo spacing and the status/Connect actions at normal and large text sizes.
+`2e45055b` on the phone. Simulator tests verify reclaimed photo space, menu
+selection/dismissal, unavailable RAW recovery, wrapped saved-version labels at
+the largest text size, and zoom/pan retention across version changes.
+The earlier `b0620450` phone observation verified the single action row, absent
+title and retained partial second row without a covering band.
 The preceding `0c008f73` phone observation also verified the scrolling cue with
 unchanged overall collapsed height. The user
 previously confirmed white light-mode portrait margins and smooth tray flicks on

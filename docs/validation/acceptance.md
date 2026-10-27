@@ -1,6 +1,6 @@
 # Fuji Studio acceptance record
 
-Recorded 2026-10-27. **The latest UI correction at `b0620450` passes its software
+Recorded 2026-10-27. **The latest UI correction at `2e45055b` passes its software
 gates; full device acceptance is incomplete.** The original physical
 preview/export/reopen and later human
 interaction evidence belongs to `75fbd61b`. A later ordinary-app two-source C3
@@ -29,6 +29,48 @@ Reproducible commands, selecting an available simulator on the local machine:
 FUJI_STUDIO_DESTINATION='platform=iOS Simulator,id=YOUR_SIMULATOR_UUID' Scripts/test-ios.sh
 xcodebuild -project FujiStudio.xcodeproj -scheme FujiStudio -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
 ```
+
+### Floating versions and gesture zoom (`2e45055b`)
+
+A glass versions button at the photo's top-right opens a vertical popover with
+full labels and a current-selection checkmark. Existing original/saved/preview
+identities and availability rules remain intact. Both selectors float over the
+photo in every layout. The inline versions strip, zoom toolbar and their reserved
+height are removed; only actual image-status messages retain bottom space.
+Pinch/pan, double-tap fit, native VoiceOver adjustment/inspection and matching
+source/geometry inspection retention remain on the photo.
+
+Complete simulator gate: **442 passed, 3 established skips, 0 failures**, exit 0
+/ TEST SUCCEEDED: 396 Swift functions in 50 suites, 14 native XCTest cases and
+35 UI cases (32 passed, 3 skipped). Universal arm64/x86_64 Release and signed
+Debug phone builds passed, as did strict code-signature verification, all exit 0.
+Fresh scoped review found no Critical, Important or Minor implementation issues;
+its outstanding software validation conditions are satisfied by the final gate.
+No runtime changes followed these gates.
+
+The new layout test observed RED on the old workspace: all three zoom controls
+were present, the photo stopped about 81 points above the tray, and the normal
+layout had no floating versions trigger. Focused checks pass for menu selection
+and dismissal, unavailable RAW returning to JPEG, same-source zoom/pan retention,
+new-source fit, 8x detail and viewport resizing, actionable image status, and
+compact/AX layouts. The final largest-text app-flow check creates a tracked saved
+version through injected services, scrolls its full wrapped label into the menu
+viewport, selects it and verifies dismissal and the displayed version. This also
+passes in the complete suite. Intermediate harness failures are retained in the
+ignored task ledger and are not counted as passes.
+
+Ignored evidence: `.build/floating-versions-full.log`,
+`.build/TestResults/floating-versions-full.xcresult`,
+`floating-versions-final-release.log`, `floating-versions-final-device.log`,
+`floating-versions-focused-attachments` and `floating-versions-labels-flow2-attachments`.
+Full/Release logs have zero unsafe SQLite unlink/API-violation/open-fd pattern
+matches; existing SDK notices remain. The signed update was installed and
+launched normally on the iPhone, both exit 0. The live library loaded; a Device
+Hub thumbnail tap produced no visible selection, so physical photo/menu/pinch
+interaction is not claimed. A human finger check was requested and remains
+pending; the simulator results above establish the software behavior. No camera
+operation, Photos write, permission or system appearance change was made for this
+UI follow-up.
 
 ### Single workspace header (`b0620450`)
 

@@ -81,4 +81,8 @@ photo bounds and above the expanded drawer; no reserved bottom control rows.
 - [x] Verify menu selection/dismissal, pinch/pan/fit, status details, compact/AX
   layout and persistent image/grid behavior; adapt existing button-driven tests.
 - [x] Complete simulator/Release/signed builds and one fresh scoped review.
-- [ ] Commit and push using jj; install and record bounded phone verification.
+- [x] Commit and push using jj; install and record bounded phone verification.
+
+Phone launch and live library loading are confirmed. Device Hub's remote tap did
+not select a source; the human photo/menu/pinch check is pending and is not
+included in the software gate above.
