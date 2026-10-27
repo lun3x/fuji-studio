@@ -176,7 +176,8 @@ struct WorkspaceView: View {
             Button("All") { onAction(.all(accessibleEligibleSourceIDs: state.eligibleSourceIDs)) }
                 .accessibilityIdentifier("workspace.all")
             Button("None") { onAction(.none) }.accessibilityIdentifier("workspace.none")
-        }.buttonStyle(.bordered).disabled(!state.isSelecting)
+                .disabled(!state.isSelecting)
+        }.buttonStyle(.bordered)
     }
     private var count: some View {
         ZStack {

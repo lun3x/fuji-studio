@@ -38,6 +38,19 @@ import XCTest
         XCTAssertFalse(app.buttons["workspace.export"].isEnabled)
         shot(app, "Offline paired original")
     }
+    func testAllDirectlyFromBrowseEntersSelectWithCompleteMembership() {
+        let app = launch()
+        XCTAssertEqual(app.buttons["workspace.select"].label, "Select")
+        XCTAssertFalse(app.buttons["workspace.none"].isEnabled)
+        XCTAssertTrue(app.buttons["workspace.all"].isEnabled)
+        app.buttons["workspace.all"].tap()
+        wait { app.staticTexts["workspace.count"].label == "3 selected" }
+        XCTAssertEqual(app.buttons["workspace.select"].label, "Done")
+        XCTAssertTrue(app.buttons["workspace.none"].isEnabled)
+        for id in ["source-0", "source-1", "source-2"] {
+            XCTAssertTrue(app.cells["grid.\(id)"].isSelected)
+        }
+    }
     func testPairedC3PreviewSingleExportAndTrackedVersion() {
         let app = launch()
         app.cells["grid.source-0"].tap()
