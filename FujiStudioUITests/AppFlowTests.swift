@@ -45,6 +45,30 @@ import XCTest
         XCTAssertFalse(app.buttons["workspace.export"].isEnabled)
         shot(app, "Offline paired original")
     }
+    func testDisconnectedRecipeMenuSelectsNoneAndDisablesCachedRecipesAndRefresh() {
+        let app = launch()
+        tap(app.buttons["recipe.control"], in: app)
+        let none = app.buttons["recipe.none"]
+        XCTAssertTrue(none.waitForExistence(timeout: 5))
+        XCTAssertTrue(none.isSelected)
+        XCTAssertTrue(none.isEnabled)
+        for slot in 1...7 {
+            let option = app.buttons["recipe.slot.\(slot)"]
+            XCTAssertTrue(option.exists)
+            XCTAssertFalse(option.isEnabled)
+            XCTAssertFalse(option.isSelected)
+        }
+        XCTAssertFalse(app.buttons["recipe.refresh"].isEnabled)
+        shot(app, "Disconnected recipes are greyed out with No recipe selected")
+        tap(none, in: app)
+        app.buttons["app.connect"].tap()
+        wait { app.buttons["app.status"].label.contains("Camera ready") }
+        tap(app.buttons["recipe.control"], in: app)
+        XCTAssertTrue(none.waitForExistence(timeout: 5))
+        XCTAssertTrue(none.isSelected)
+        for slot in 1...7 { XCTAssertTrue(app.buttons["recipe.slot.\(slot)"].isEnabled) }
+        XCTAssertTrue(app.buttons["recipe.refresh"].isEnabled)
+    }
     private func assertSingleHeaderRow(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
         let status = app.buttons["app.status"], export = app.buttons["workspace.export"], connect = app.buttons["app.connect"]
         for control in [status, export, connect] {
@@ -169,33 +193,26 @@ import XCTest
         XCTAssertFalse(saved.exists)
         XCTAssertTrue(app.scrollViews["viewer.image"].exists)
     }
-    func testFailedPreviewKeepsLabelledImageAndMeasuredAccessibleError() {
+    func testPreviewDisconnectClearsRecipeAndDisablesMenuAtLargestText() {
         let app = launch(["--fixture-preview-failure", "--fixture-accessibility"])
         app.cells["grid.source-0"].tap()
         XCTAssertTrue(app.scrollViews["viewer.image"].waitForExistence(timeout: 5))
         app.buttons["app.connect"].tap()
         wait { app.buttons["app.status"].label.contains("Camera ready") }
         recipe(1, in: app)
-        let status = app.buttons["viewer.status"]
-        XCTAssertTrue(status.waitForExistence(timeout: 5))
-        wait { status.label.contains("Reconnect") }
+        wait { app.buttons["recipe.control"].label == "No recipe selected" }
         XCTAssertTrue(app.scrollViews["viewer.image"].exists)
         XCTAssertGreaterThan(app.scrollViews["viewer.image"].frame.height, 40)
         XCTAssertEqual(app.buttons["workspace.versions"].value as? String, "Original camera JPEG")
-        XCTAssertTrue(app.buttons["recipe.control"].label.contains("C1"))
-        shot(app, "Labelled original and actionable preview error at AX5")
-        let bounds = XCTAttachment(string: "Status: \(status.frame); Viewer: \(app.scrollViews["viewer.image"].frame)")
-        bounds.name = "Preview error measured reservation"; bounds.lifetime = .keepAlways; add(bounds)
-        for id in ["recipe.control", "workspace.versions", "workspace.export"] {
-            XCTAssertFalse(status.frame.intersects(app.buttons[id].frame), id)
-        }
-        XCTAssertTrue(status.isHittable)
-        let fullMessage = status.label
-        status.tap()
-        XCTAssertTrue(app.staticTexts["viewer.status.details"].waitForExistence(timeout: 5))
-        XCTAssertEqual(app.staticTexts["viewer.status.details"].label, fullMessage)
-        XCTAssertTrue(fullMessage.contains("Reconnect to reconcile before starting more work"))
-        app.buttons["viewer.status.done"].tap()
+        XCTAssertFalse(app.buttons["workspace.export"].isEnabled)
+        tap(app.buttons["recipe.control"], in: app)
+        XCTAssertTrue(app.buttons["recipe.none"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["recipe.none"].isSelected)
+        XCTAssertTrue(app.buttons["recipe.none"].isEnabled)
+        for slot in 1...7 { XCTAssertFalse(app.buttons["recipe.slot.\(slot)"].isEnabled) }
+        XCTAssertFalse(app.buttons["recipe.refresh"].isEnabled)
+        shot(app, "Disconnected recipe reset and disabled choices at AX5")
+        tap(app.buttons["recipe.none"], in: app)
         XCTAssertTrue(app.scrollViews["viewer.image"].isHittable)
         for id in ["viewer.zoomOut", "viewer.fit", "viewer.zoomIn"] { XCTAssertFalse(app.buttons[id].exists) }
         let grid = app.collectionViews["photoGrid"], side = app.cells["grid.source-0"].frame.width

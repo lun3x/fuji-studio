@@ -89,8 +89,9 @@ private struct ViewerFixture {
         saved = SavedVersion(id: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!, sourceID: self.source.id, outputAssetID: "generated-output",
             recipeSnapshot: recipe, operationID: UUID(), exportedAt: Date(timeIntervalSince1970: 1_700_000_000), jpeg: preview, availability: .available)
         var state = WorkspaceState(sources: [self.source, otherSource], access: .full)
-        state.reduce(.recipesRefreshed(recipes)); state.reduce(.recipeSelected(slot: 3))
+        state.reduce(.recipesRefreshed(recipes))
         state.reduce(.cameraChanged(.ready(CameraSession(generation: 1, connection: .init(name: "Generated fixture", usbVendorID: 0, usbProductID: 0))), context: camera))
+        state.reduce(.recipeSelected(slot: 3))
         let effects = state.reduce(.sourceTapped(self.source.id))
         guard case .requestPreview(let request) = effects.first else { throw ViewerError.invalidVersion }
         self.request = request

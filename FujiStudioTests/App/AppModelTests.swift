@@ -62,6 +62,7 @@ import Testing
     @Test func scopeNarrowingAfterCompletedExportRetainsSavedVersion() async throws {
         let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment)
         await model.start(); await model.connect()
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
         model.send(.sourceTapped("source-0")); model.send(.recipeSelected(slot: 3))
         await eventually { model.preview != nil }
         await model.export()
@@ -79,6 +80,7 @@ import Testing
         let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment), barrier = FixtureBarrier()
         defer { Task { await barrier.release() } }
         await model.start(); await model.connect()
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
         model.send(.sourceTapped("source-0")); model.send(.recipeSelected(slot: 3))
         await eventually { model.preview != nil }
         model.send(.select); model.send(.checkedSourcesReplaced(["source-0", "source-2"]))
@@ -106,6 +108,7 @@ import Testing
         f.platform.idleTimerDisabled = true
         let model = AppModel(environment: f.environment)
         await model.start(); await model.connect()
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
         model.send(.sourceTapped("source-0")); model.send(.recipeSelected(slot: 3))
         await eventually { model.preview != nil }
         model.send(.select); model.send(.checkedSourcesReplaced(["source-0", "source-1", "source-2"]))
@@ -185,6 +188,7 @@ import Testing
     @Test func unknownSaveAndDeletedOutputNeverBecomeAllSavedOrResubmitted() async throws {
         let f = try await FixtureEnvironment.make(uncertain: true), model = AppModel(environment: f.environment)
         await model.start(); await model.connect()
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
         model.send(.sourceTapped("source-0")); model.send(.recipeSelected(slot: 3))
         await eventually { model.preview != nil }
         await model.export(); await eventually { model.exportEvent?.terminal == true }
@@ -200,6 +204,7 @@ import Testing
     @Test func scopeNarrowingWhileSaveIsInFlightClassifiesOnlyActualCompletion() async throws {
         let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment), barrier = FixtureBarrier()
         await model.start(); await model.connect()
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
         model.send(.sourceTapped("source-0")); model.send(.recipeSelected(slot: 3))
         await eventually { model.preview != nil }
         model.send(.select); model.send(.checkedSourcesReplaced(["source-0", "source-1", "source-2"]))
@@ -228,6 +233,7 @@ import Testing
     @Test func manualVersionSupersedesIntentWithoutCancellingActiveCameraOperation() async throws {
         let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment), barrier = FixtureBarrier()
         await model.start(); await model.connect()
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
         await f.camera.holdRender(barrier)
         model.send(.sourceTapped("source-0")); model.send(.recipeSelected(slot: 3))
         await barrier.entered()
@@ -245,6 +251,7 @@ import Testing
     @Test func deletedOutputIsMarkedUnavailableWithoutRemovingItsVersionRecord() async throws {
         let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment)
         await model.start(); await model.connect()
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
         model.send(.sourceTapped("source-0")); model.send(.recipeSelected(slot: 3))
         await eventually { model.preview != nil }
         await model.export(); await eventually { model.savedVersions.count == 1 }
@@ -280,6 +287,7 @@ import Testing
     @Test func recoveryKeepsEveryUnfinishedFrozenJobActionableWithoutResubmitting() async throws {
         let f = try await FixtureEnvironment.make(uncertain: true), model = AppModel(environment: f.environment)
         await model.start(); await model.connect()
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
         model.send(.sourceTapped("source-0")); model.send(.recipeSelected(slot: 3))
         await eventually { model.preview != nil }
         await model.export(); await eventually { model.exportEvent?.terminal == true }
@@ -299,6 +307,7 @@ import Testing
     @Test func savedOutputMissingBeforeObservationIsStillMarkedUnavailableOnSelection() async throws {
         let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment)
         await model.start(); await model.connect()
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
         model.send(.sourceTapped("source-0")); model.send(.recipeSelected(slot: 3))
         await eventually { model.preview != nil }
         await model.export(); await eventually { model.savedVersions.count == 1 }
@@ -313,6 +322,7 @@ import Testing
     @Test func inactiveSystemPresentationRestoresIdleWithoutPausingTheExport() async throws {
         let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment), barrier = FixtureBarrier()
         await model.start(); await model.connect()
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
         model.send(.sourceTapped("source-0")); model.send(.recipeSelected(slot: 3))
         await eventually { model.preview != nil }
         let rawReads = await f.reader.rawReads
@@ -359,6 +369,7 @@ import Testing
         let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment), barrier = FixtureBarrier()
         defer { Task { await barrier.release() } }
         await model.start(); await model.connect()
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
         model.send(.sourceTapped("source-0")); model.send(.recipeSelected(slot: 3))
         await eventually { model.preview != nil }
         await model.export(); await eventually { model.savedVersions.count == 1 && model.exportEvent?.terminal == true }
@@ -399,6 +410,7 @@ import Testing
         defer { Task { await barrier.release() } }
         let model = model(f.environment, catalog: catalog)
         await model.start(); await model.connect()
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
         model.send(.sourceTapped("source-0")); model.send(.recipeSelected(slot: 3))
         await eventually { model.preview != nil }
         // Hold the stream consumer's final version-list read after the unresolved terminal event.
@@ -427,6 +439,7 @@ import Testing
         defer { Task { await barrier.release() } }
         let model = model(f.environment, catalog: catalog)
         await model.start(); await model.connect()
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
         model.send(.sourceTapped("source-0")); model.send(.recipeSelected(slot: 3))
         await eventually { model.preview != nil }
         await model.export(); await eventually { model.savedVersions.count == 1 && model.exportEvent?.terminal == true }

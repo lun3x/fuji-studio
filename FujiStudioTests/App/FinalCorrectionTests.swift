@@ -61,30 +61,29 @@ import Testing
         #expect(try await reopened.unfinishedJobs().isEmpty)
     }
 
-    @Test(arguments: [false, true]) func failedPreviewRetainsMatchingOriginalOrPriorPreview(_ priorPreview: Bool) async throws {
+    @Test(arguments: [false, true]) func previewDisconnectClearsRecipeAndReturnsToOriginalWithoutReplaying(_ priorPreview: Bool) async throws {
         let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment)
         await model.start(); await model.connect()
         await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
         model.send(.sourceTapped("source-0"))
         await eventually { model.displayFile != nil }
+        let original = try Data(contentsOf: #require(model.displayFile).fileURL)
         if priorPreview {
             model.send(.recipeSelected(slot: 1))
             await eventually { model.preview != nil }
         }
-        let file = try #require(model.displayFile), version = try #require(model.state.displayedVersion)
         let before = await f.camera.renderCount
         await f.environment.cache.invalidate(sourceID: "source-0")
         await f.camera.failRender()
         model.send(.recipeSelected(slot: 3))
-        let selected = model.state.selectedRecipe
-        await eventually { model.imageStatus?.contains("Reconnect") == true }
-        #expect(model.displayFile === file)
-        #expect(model.state.displayedVersion == version)
-        #expect(model.state.selectedRecipe == selected)
-        #expect(FileManager.default.fileExists(atPath: file.fileURL.path))
+        await eventually { model.state.cameraState == .disconnected && model.displayFile != nil && model.imageStatus == nil }
+        #expect(model.state.displayedVersion == .cameraJPEG)
+        #expect(model.state.selectedRecipe == nil)
+        #expect(try Data(contentsOf: #require(model.displayFile).fileURL) == original)
         #expect(await f.camera.renderCount == before + 1)
         await model.connect()
         await eventually { !model.isRefreshing && model.state.currentCameraExecutionContext != nil }
+        #expect(model.state.selectedRecipe == nil)
         #expect(await f.camera.renderCount == before + 1)
     }
 
@@ -94,12 +93,12 @@ import Testing
         await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
         model.send(.sourceTapped("source-0")); model.send(.recipeSelected(slot: 3))
         await eventually { model.preview != nil }
-        let old = model.displayFile, selected = model.state.selectedRecipe
+        let old = model.displayFile
         await f.camera.failRender(); model.send(.sourceTapped("source-2"))
-        await eventually { model.imageStatus?.contains("Reconnect") == true && model.displayFile != nil }
+        await eventually { model.state.cameraState == .disconnected && model.displayFile != nil && model.imageStatus == nil }
         #expect(model.displayFile !== old)
         #expect(model.state.viewedSourceID == "source-2" && model.state.displayedVersion == .cameraJPEG)
-        #expect(model.state.selectedRecipe == selected)
+        #expect(model.state.selectedRecipe == nil)
         #expect(await f.camera.renderCount == 2)
     }
 

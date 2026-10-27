@@ -3,6 +3,35 @@ import Testing
 @testable import FujiStudio
 
 struct WorkspaceStateTests {
+    @Test func disconnectedCameraCannotSelectCachedRecipes() throws {
+        let f = try WorkspaceFixture()
+        var state = WorkspaceState(sources: [f.source("viewed")], access: .full)
+        state.reduce(.sourceTapped("viewed"))
+        state.reduce(.recipesRefreshed(f.recipes))
+        for slot in 1...7 {
+            #expect(state.reduce(.recipeSelected(slot: slot)).isEmpty)
+            #expect(state.selectedRecipe == nil)
+            #expect(state.displayedVersion == .cameraJPEG)
+        }
+        #expect(state.recipes == f.recipes)
+    }
+
+    @Test func disconnectClearsRecipeAndCompletedPreviewWithoutRestoringItOnReconnect() throws {
+        let f = try WorkspaceFixture()
+        for sourceID in ["viewed", "next"] {
+            var state = f.state()
+            let request = try #require(preview(in: state.reduce(.sourceTapped(sourceID))))
+            state.reduce(.previewCompleted(request: request, key: f.key(request)))
+            #expect(state.displayedVersion == .preview(f.key(request)))
+            #expect(state.reduce(.cameraChanged(.disconnected, context: nil)).isEmpty)
+            #expect(state.selectedRecipe == nil)
+            #expect(state.displayedVersion == (sourceID == "viewed" ? .cameraJPEG : .raw))
+            #expect(state.recipes == f.recipes)
+            #expect(state.reduce(.cameraChanged(.ready(f.session), context: f.context)).isEmpty)
+            #expect(state.selectedRecipe == nil)
+        }
+    }
+
     @Test func rangeReplacementOnlyChangesMembershipAndPrunesInaccessibleIDs() throws {
         let f = try WorkspaceFixture()
         var state = f.state()
@@ -174,8 +203,9 @@ struct WorkspaceStateTests {
         #expect(state.exportDisabledReason == .noRecipe)
         state.reduce(.recipeSelected(slot: 3))
         state.reduce(.cameraChanged(.disconnected, context: nil))
-        #expect(state.exportDisabledReason == .cameraNotReady)
+        #expect(state.exportDisabledReason == .noRecipe)
         state.reduce(.cameraChanged(.ready(f.session), context: nil))
+        state.reduce(.recipeSelected(slot: 3))
         #expect(state.exportDisabledReason == .cameraContextUnavailable)
         state.reduce(.cameraChanged(.ready(f.session), context: f.context))
         #expect(state.canExport)
@@ -250,16 +280,17 @@ struct WorkspaceStateTests {
         var state = f.state()
         let old = try #require(preview(in: state.reduce(.sourceTapped("viewed"))))
         state.reduce(.cameraChanged(.disconnected, context: nil))
+        #expect(state.selectedRecipe == nil)
         state.reduce(.previewCompleted(request: old, key: f.key(old)))
         #expect(state.displayedVersion == .cameraJPEG)
         let saved = VersionID.saved(UUID())
         state.reduce(.versionSelected(saved))
         #expect(state.reduce(.cameraChanged(.ready(f.session), context: f.context)).isEmpty)
         #expect(state.displayedVersion == saved)
-        #expect(state.canExport)
+        #expect(state.exportDisabledReason == .noRecipe)
     }
 
-    @Test func compatibleReconnectUsesRetainedRecipeAfterFailedRefreshAndRejectsOldContext() throws {
+    @Test func compatibleReconnectRequiresExplicitRecipeSelectionAfterFailedRefreshAndRejectsOldContext() throws {
         let f = try WorkspaceFixture()
         var state = f.state()
         let old = try #require(preview(in: state.reduce(.sourceTapped("viewed"))))
@@ -269,11 +300,13 @@ struct WorkspaceStateTests {
             sessionIdentity: UUID(), generation: 2)
         let session = CameraSession(generation: 2, connection: f.session.connection)
         state.reduce(.recipeRefreshFailed("Synthetic refresh failure"))
-        let effects = state.reduce(.cameraChanged(.ready(session), context: reconnected))
-        #expect(state.canExport)
-        #expect(state.selectedRecipe == f.recipes[2])
+        #expect(state.reduce(.cameraChanged(.ready(session), context: reconnected)).isEmpty)
+        #expect(state.exportDisabledReason == .noRecipe)
+        #expect(state.selectedRecipe == nil)
         #expect(state.recipes == f.recipes)
         #expect(state.recipeRefreshState == .stale("Synthetic refresh failure"))
+        let effects = state.reduce(.recipeSelected(slot: 3))
+        #expect(state.canExport)
         let latest = try #require(preview(in: effects))
         #expect(latest.cameraContext == reconnected)
         #expect(latest.recipe.cameraContext == old.recipe.cameraContext)
@@ -459,8 +492,8 @@ private struct WorkspaceFixture {
     func state(sources: [PhotoSource]? = nil) -> WorkspaceState {
         var state = WorkspaceState(sources: sources ?? [source("viewed"), source("next")], access: .full)
         state.reduce(.recipesRefreshed(recipes))
-        state.reduce(.recipeSelected(slot: 3))
         state.reduce(.cameraChanged(.ready(session), context: context))
+        state.reduce(.recipeSelected(slot: 3))
         return state
     }
     func copy(_ recipe: RecipeSnapshot, settings: [ImportedRecipeProperty]? = nil, digest: String? = nil) -> RecipeSnapshot {

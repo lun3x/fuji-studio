@@ -86,6 +86,13 @@ struct WorkspaceState: Sendable {
 
     var viewedSourceRevision: String? { viewedSourceID.flatMap { sources[$0]?.resourceRevision } }
 
+    var isCameraConnected: Bool {
+        switch cameraState {
+        case .sessionOpen, .ready, .busy: true
+        default: false
+        }
+    }
+
     var effectiveSources: [PhotoSource] {
         let ids = isSelecting ? checkedSourceIDs : Set(viewedSourceID.map { [$0] } ?? [])
         return ids.compactMap { sources[$0] }.sorted { lhs, rhs in
@@ -165,6 +172,7 @@ struct WorkspaceState: Sendable {
             displayedVersion = version
 
         case .recipeSelected(let slot):
+            guard slot == nil || isCameraConnected else { return [] }
             previewRequiresUserIntent = false
             if let slot {
                 guard let recipe = recipes.first(where: { $0.slot == slot }) else { return [] }
@@ -217,6 +225,9 @@ struct WorkspaceState: Sendable {
                 belongsToExecution(cameraState, context: context) && belongsToExecution(state, context: context)
             cameraState = state
             currentCameraExecutionContext = context
+            if !isCameraConnected, selectedRecipe != nil {
+                return reduce(.recipeSelected(slot: nil))
+            }
             // Render admission/completion publishes busy/ready for the same verified execution.
             // Preserve its pending or satisfied preview; disconnects and context changes supersede it.
             if !continuesExecution { invalidatePreview() }
