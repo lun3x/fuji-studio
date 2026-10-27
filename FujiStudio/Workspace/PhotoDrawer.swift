@@ -1,12 +1,12 @@
 import SwiftUI
 
-/// One persistent grid. Only the header recognizes the drawer drag; grid scroll/sweep stays native.
+/// One persistent grid. Header drags and pulls past the grid's top share the same drawer motion.
 struct PhotoDrawer<Grid: View>: View {
     @Binding var detent: DrawerDetent
     let detents: DrawerDetents
     var onHeaderHeightChanged: (CGFloat) -> Void
     var onManualCollapse: () -> Void
-    @ViewBuilder var grid: () -> Grid
+    @ViewBuilder var grid: (@escaping (DrawerScrollDrag) -> Void) -> Grid
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @GestureState private var isDragging = false
@@ -41,18 +41,12 @@ struct PhotoDrawer<Grid: View>: View {
             .highPriorityGesture(DragGesture(minimumDistance: 8, coordinateSpace: .named("workspace"))
                 .updating($isDragging) { _, state, _ in state = true }
                 .onChanged { value in
-                    let origin = drag?.startHeight ?? detents.height(for: detent)
-                    var transaction = Transaction(); transaction.disablesAnimations = true
-                    withTransaction(transaction) {
-                        drag = DrawerDrag(startHeight: origin, height: detents.clampedHeight(origin - value.translation.height))
-                    }
+                    updateDrag(translation: value.translation.height)
                 }
                 .onEnded { value in
-                    let origin = drag?.startHeight ?? detents.height(for: detent)
-                    move(to: detents.destination(height: origin, predictedTranslation: value.predictedEndTranslation.height),
-                         velocity: -value.velocity.height)
+                    finishDrag(predictedTranslation: value.predictedEndTranslation.height, velocity: value.velocity.height)
                 })
-            grid().frame(maxWidth: .infinity, maxHeight: .infinity)
+            grid(handleGridDrag).frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color(uiColor: .systemBackground))
         }
         .frame(height: height)
@@ -64,6 +58,25 @@ struct PhotoDrawer<Grid: View>: View {
         .onChange(of: isDragging) { _, active in
             // Gesture cancellation has no onEnded. Its reset must not reset the visible height.
             if !active, drag != nil { move(to: detent, notifyCollapse: false) }
+        }
+    }
+    private func updateDrag(translation: CGFloat) {
+        let origin = drag?.startHeight ?? detents.height(for: detent)
+        var transaction = Transaction(); transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            drag = DrawerDrag(startHeight: origin, height: detents.clampedHeight(origin - translation))
+        }
+    }
+    private func finishDrag(predictedTranslation: CGFloat, velocity: CGFloat) {
+        let origin = drag?.startHeight ?? detents.height(for: detent)
+        move(to: detents.destination(height: origin, predictedTranslation: predictedTranslation), velocity: -velocity)
+    }
+    private func handleGridDrag(_ event: DrawerScrollDrag) {
+        switch event {
+        case .changed(let translation): updateDrag(translation: translation)
+        case .ended(let translation, let velocity):
+            finishDrag(predictedTranslation: translation + velocity * 0.2, velocity: velocity)
+        case .cancelled: move(to: detent, notifyCollapse: false)
         }
     }
     private func move(to next: DrawerDetent, velocity: CGFloat = 0, notifyCollapse: Bool = true) {

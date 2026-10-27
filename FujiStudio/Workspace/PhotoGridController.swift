@@ -23,10 +23,14 @@ final class PhotoGridController: UIViewController, UICollectionViewDelegate, UIC
     private var lastViewport: GridViewport?
     private var suppliedMetrics: GridMetrics?
     private var layoutSize: CGSize = .zero
+    private var allowsDrawerCollapse = false
+    private var drawerPanOrigin: CGFloat?
+    private var pullingDrawer = false
     private lazy var sweepGesture = UIPanGestureRecognizer(target: self, action: #selector(sweepChanged))
     var onSourceTapped: (SourceID) -> Void = { _ in }
     var onCheckedChanged: (Set<SourceID>) -> Void = { _ in }
     var onViewportChanged: (GridViewport) -> Void = { _ in }
+    var onDrawerDrag: (DrawerScrollDrag) -> Void = { _ in }
 
     init(thumbnails: any GridThumbnailProviding) { self.thumbnails = thumbnails; super.init(nibName: nil, bundle: nil) }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -46,10 +50,12 @@ final class PhotoGridController: UIViewController, UICollectionViewDelegate, UIC
         sweepGesture.maximumNumberOfTouches = 1
         collectionView.addGestureRecognizer(sweepGesture)
         collectionView.panGestureRecognizer.require(toFail: sweepGesture)
+        collectionView.panGestureRecognizer.addTarget(self, action: #selector(scrollPanChanged))
     }
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         let size = collectionView.bounds.size
+        if layoutSize != .zero && layoutSize.width != size.width { cancelDrawerPan() }
         if layoutSize != .zero && layoutSize != size { finishSweep(cancelled: true) }
         layoutSize = size
         let next = suppliedMetrics ?? GridGeometry.metrics(width: size.width)
@@ -75,12 +81,14 @@ final class PhotoGridController: UIViewController, UICollectionViewDelegate, UIC
         }
         publishViewport(); cacheVisible()
     }
-    func update(sources: [PhotoSource], checked: Set<SourceID>, selecting: Bool, viewed: SourceID?, scrollRequest: GridScrollRequest?, gridMetrics: GridMetrics? = nil, bottomInset: CGFloat = 0) {
+    func update(sources: [PhotoSource], checked: Set<SourceID>, selecting: Bool, viewed: SourceID?, scrollRequest: GridScrollRequest?, gridMetrics: GridMetrics? = nil, bottomInset: CGFloat = 0, allowsDrawerCollapse: Bool = false) {
         loadViewIfNeeded()
         suppliedMetrics = gridMetrics
         collectionView.contentInset.bottom = max(0, bottomInset)
         collectionView.verticalScrollIndicatorInsets.bottom = max(0, bottomInset)
         let idsChanged = self.sources.map(\.id) != sources.map(\.id)
+        if idsChanged || !allowsDrawerCollapse { cancelDrawerPan() }
+        self.allowsDrawerCollapse = allowsDrawerCollapse
         let metadataChanged = self.sources != sources
         if sweeping && (idsChanged || !selecting) { finishSweep(cancelled: true) }
         let anchor = idsChanged ? captureAnchor() : nil
@@ -136,7 +144,69 @@ final class PhotoGridController: UIViewController, UICollectionViewDelegate, UIC
             visibleSourceIDs: collectionView.indexPathsForVisibleItems.sorted().compactMap { dataSource.itemIdentifier(for: $0) })
         if viewport != lastViewport { lastViewport = viewport; onViewportChanged(viewport) }
     }
-    func scrollViewDidScroll(_ scrollView: UIScrollView) { publishViewport(); cacheVisible() }
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        pinGridDuringDrawerPull()
+        publishViewport(); cacheVisible()
+    }
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        handleScrollPan(state: .began, translation: scrollView.panGestureRecognizer.translation(in: view.window))
+    }
+    func scrollViewWillEndDragging(_ scrollView: UIScrollView, withVelocity velocity: CGPoint, targetContentOffset: UnsafeMutablePointer<CGPoint>) {
+        if pullingDrawer { targetContentOffset.pointee.y = -scrollView.adjustedContentInset.top }
+    }
+    @objc private func scrollPanChanged(_ gesture: UIPanGestureRecognizer) {
+        // The grid's origin moves with the drawer. Window coordinates keep this translation
+        // independent of the resize, so finger movement is consumed exactly once.
+        if gesture.state != .began {
+            handleScrollPan(state: gesture.state, translation: gesture.translation(in: view.window), velocity: gesture.velocity(in: view.window))
+        }
+    }
+    func handleScrollPan(state: UIGestureRecognizer.State, translation: CGPoint, velocity: CGPoint = .zero) {
+        switch state {
+        case .began:
+            cancelDrawerPan()
+            guard allowsDrawerCollapse, !sweeping else { return }
+            drawerPanOrigin = translation.y + max(0, collectionView.contentOffset.y + collectionView.adjustedContentInset.top)
+        case .changed, .ended:
+            guard let origin = drawerPanOrigin else { return }
+            let excess = translation.y - origin
+            if !pullingDrawer && excess > 0 && collectionView.contentOffset.y <= -collectionView.adjustedContentInset.top + 0.5 {
+                pullingDrawer = true
+            }
+            guard pullingDrawer else {
+                if state == .ended { drawerPanOrigin = nil }
+                return
+            }
+            if excess < 0 {
+                // The tray is fully expanded again. Consume the remaining upward movement
+                // in the grid, then let UIKit own further scrolling and its momentum.
+                pullingDrawer = false
+                collectionView.contentOffset.y = -collectionView.adjustedContentInset.top - excess
+                onDrawerDrag(.changed(translation: 0))
+                onDrawerDrag(.ended(translation: 0, velocity: 0))
+                if state == .ended { drawerPanOrigin = nil }
+                return
+            }
+            pinGridDuringDrawerPull()
+            if state == .ended {
+                drawerPanOrigin = nil; pullingDrawer = false
+                onDrawerDrag(.ended(translation: excess, velocity: velocity.y))
+            } else { onDrawerDrag(.changed(translation: excess)) }
+        case .cancelled, .failed: cancelDrawerPan()
+        default: break
+        }
+    }
+    private func pinGridDuringDrawerPull() {
+        let top = -collectionView.adjustedContentInset.top
+        if pullingDrawer && collectionView.contentOffset.y != top {
+            collectionView.contentOffset.y = top
+        }
+    }
+    private func cancelDrawerPan() {
+        let wasPulling = pullingDrawer
+        drawerPanOrigin = nil; pullingDrawer = false
+        if wasPulling { onDrawerDrag(.cancelled) }
+    }
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
         if let id = dataSource.itemIdentifier(for: indexPath) { onSourceTapped(id) }
     }
@@ -210,6 +280,7 @@ final class PhotoGridController: UIViewController, UICollectionViewDelegate, UIC
         sweeping = false
     }
     func stop() {
+        cancelDrawerPan()
         finishSweep(cancelled: true)
         for case let cell as PhotoGridCell in collectionView.visibleCells { cell.cancelThumbnail() }
         thumbnails.cache(sourceIDs: [], pixelSize: pixelSize)

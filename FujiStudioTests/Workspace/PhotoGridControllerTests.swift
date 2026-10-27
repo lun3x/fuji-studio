@@ -15,6 +15,86 @@ final class PhotoGridControllerTests: XCTestCase {
         controller.view.frame = window.bounds; controller.view.setNeedsLayout(); controller.view.layoutIfNeeded()
         return window
     }
+    func testScrollHandsOnlyDistancePastTopToDrawerAndReversesBeforeRelease() {
+        let controller = PhotoGridController(thumbnails: GridThumbnailSpy())
+        controller.update(sources: (0..<120).map { source("source-\($0)") }, checked: ["source-1"],
+            selecting: true, viewed: "source-1", scrollRequest: nil, allowsDrawerCollapse: true)
+        let window = host(controller); defer { controller.stop(); window.isHidden = true }
+        var events: [DrawerScrollDrag] = [], checks: [Set<SourceID>] = [], taps: [SourceID] = []
+        controller.onDrawerDrag = { events.append($0) }
+        controller.onCheckedChanged = { checks.append($0) }; controller.onSourceTapped = { taps.append($0) }
+        let collection = controller.collectionView
+        collection.contentOffset.y = 120
+        controller.handleScrollPan(state: .began, translation: CGPoint(x: 0, y: 8))
+        collection.contentOffset.y = 20
+        controller.handleScrollPan(state: .changed, translation: CGPoint(x: 0, y: 108))
+        XCTAssertTrue(events.isEmpty, "Scroll the remaining photos before moving the drawer")
+        collection.contentOffset.y = -8
+        controller.handleScrollPan(state: .changed, translation: CGPoint(x: 0, y: 168))
+        XCTAssertEqual(events, [.changed(translation: 40)])
+        XCTAssertEqual(collection.contentOffset.y, 0)
+        controller.handleScrollPan(state: .changed, translation: CGPoint(x: 0, y: 148))
+        XCTAssertEqual(events.last, .changed(translation: 20))
+        var target = CGPoint(x: 0, y: -200)
+        controller.scrollViewWillEndDragging(collection, withVelocity: CGPoint(x: 0, y: -1), targetContentOffset: &target)
+        XCTAssertEqual(target.y, 0, "Drawer pulls must not leave the grid bouncing or decelerating")
+        controller.handleScrollPan(state: .ended, translation: CGPoint(x: 0, y: 148), velocity: CGPoint(x: 0, y: 700))
+        XCTAssertEqual(events.last, .ended(translation: 20, velocity: 700))
+        XCTAssertTrue(checks.isEmpty); XCTAssertTrue(taps.isEmpty)
+        XCTAssertEqual(collection.cellForItem(at: IndexPath(item: 1, section: 0))?.accessibilityValue, "Checked")
+    }
+    func testCollapsedScrollingAndUntrackedBounceDoNotDragDrawer() {
+        let controller = PhotoGridController(thumbnails: GridThumbnailSpy())
+        let sources = (0..<120).map { source("source-\($0)") }
+        controller.update(sources: sources, checked: [], selecting: false, viewed: nil, scrollRequest: nil)
+        let window = host(controller); defer { controller.stop(); window.isHidden = true }
+        var events: [DrawerScrollDrag] = []; controller.onDrawerDrag = { events.append($0) }
+        controller.handleScrollPan(state: .began, translation: .zero)
+        controller.collectionView.contentOffset.y = -30
+        controller.handleScrollPan(state: .changed, translation: CGPoint(x: 0, y: 80))
+        controller.handleScrollPan(state: .ended, translation: CGPoint(x: 0, y: 80))
+        controller.update(sources: sources, checked: [], selecting: false, viewed: nil, scrollRequest: nil, allowsDrawerCollapse: true)
+        controller.collectionView.contentOffset.y = -40
+        controller.scrollViewDidScroll(controller.collectionView)
+        controller.handleScrollPan(state: .changed, translation: CGPoint(x: 0, y: 200))
+        XCTAssertTrue(events.isEmpty, "Neither collapsed pans nor inertial/programmatic bounce may collapse the tray")
+    }
+    func testDrawerPullCancellationResetsTrackingAndReleasesGrid() {
+        let controller = PhotoGridController(thumbnails: GridThumbnailSpy())
+        controller.update(sources: (0..<120).map { source("source-\($0)") }, checked: [],
+            selecting: false, viewed: nil, scrollRequest: nil, allowsDrawerCollapse: true)
+        let window = host(controller); defer { controller.stop(); window.isHidden = true }
+        var events: [DrawerScrollDrag] = []; controller.onDrawerDrag = { events.append($0) }
+        controller.handleScrollPan(state: .began, translation: .zero)
+        controller.handleScrollPan(state: .changed, translation: CGPoint(x: 0, y: 60))
+        controller.handleScrollPan(state: .cancelled, translation: CGPoint(x: 0, y: 60))
+        XCTAssertEqual(events, [.changed(translation: 60), .cancelled])
+        controller.handleScrollPan(state: .changed, translation: CGPoint(x: 0, y: 90))
+        controller.collectionView.contentOffset.y = 100
+        XCTAssertEqual(events.count, 2)
+        XCTAssertEqual(controller.collectionView.contentOffset.y, 100)
+    }
+    func testReversingPastExpandedTrayResumesScrollingPhotosInSamePan() {
+        let controller = PhotoGridController(thumbnails: GridThumbnailSpy())
+        controller.update(sources: (0..<120).map { source("source-\($0)") }, checked: [],
+            selecting: false, viewed: nil, scrollRequest: nil, allowsDrawerCollapse: true)
+        let window = host(controller); defer { controller.stop(); window.isHidden = true }
+        var events: [DrawerScrollDrag] = []; controller.onDrawerDrag = { events.append($0) }
+        controller.handleScrollPan(state: .began, translation: .zero)
+        controller.handleScrollPan(state: .changed, translation: CGPoint(x: 0, y: 60))
+        controller.handleScrollPan(state: .changed, translation: CGPoint(x: 0, y: -80))
+        XCTAssertEqual(events.suffix(2), [.changed(translation: 0), .ended(translation: 0, velocity: 0)])
+        XCTAssertEqual(controller.collectionView.contentOffset.y, 80, accuracy: 0.01)
+        var target = CGPoint(x: 0, y: 250)
+        controller.scrollViewWillEndDragging(controller.collectionView, withVelocity: CGPoint(x: 0, y: 1), targetContentOffset: &target)
+        XCTAssertEqual(target.y, 250, "Once the drawer is fully expanded, scrolling momentum belongs to the photos again")
+        let count = events.count
+        controller.collectionView.contentOffset.y = 140
+        controller.handleScrollPan(state: .changed, translation: CGPoint(x: 0, y: -140))
+        controller.handleScrollPan(state: .ended, translation: CGPoint(x: 0, y: -140), velocity: CGPoint(x: 0, y: 700))
+        XCTAssertEqual(events.count, count, "Releasing a scroll inside the photos must not send momentum back to the drawer")
+        XCTAssertEqual(controller.collectionView.contentOffset.y, 140, accuracy: 0.01)
+    }
     func testRecognizerStatePathReversesAndCancelsWithoutChangingViewedSource() {
         let provider = GridThumbnailSpy(), controller = PhotoGridController(thumbnails: provider)
         let sources = (0..<1000).map { source("source-\($0)") }

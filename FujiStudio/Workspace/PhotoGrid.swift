@@ -17,6 +17,12 @@ struct GridViewport: Equatable {
     let visibleSourceIDs: [SourceID]
 }
 
+enum DrawerScrollDrag: Equatable {
+    case changed(translation: CGFloat)
+    case ended(translation: CGFloat, velocity: CGFloat)
+    case cancelled
+}
+
 /// Read-side thumbnails only. Full detail images are supplied separately to PhotoViewer.
 struct PhotoGrid: UIViewControllerRepresentable {
     let sources: [PhotoSource]
@@ -27,16 +33,20 @@ struct PhotoGrid: UIViewControllerRepresentable {
     var scrollRequest: GridScrollRequest? = nil
     var gridMetrics: GridMetrics? = nil
     var bottomInset: CGFloat = 0
+    var allowsDrawerCollapse = false
     var onSourceTapped: (SourceID) -> Void
     var onCheckedChanged: (Set<SourceID>) -> Void
     var onViewportChanged: (GridViewport) -> Void = { _ in }
+    var onDrawerDrag: (DrawerScrollDrag) -> Void = { _ in }
 
     func makeUIViewController(context: Context) -> PhotoGridController { PhotoGridController(thumbnails: thumbnails) }
     func updateUIViewController(_ controller: PhotoGridController, context: Context) {
         controller.onSourceTapped = onSourceTapped; controller.onCheckedChanged = onCheckedChanged
         controller.onViewportChanged = onViewportChanged
+        controller.onDrawerDrag = onDrawerDrag
         controller.update(sources: sources, checked: checkedSourceIDs, selecting: isSelecting,
-                          viewed: viewedSourceID, scrollRequest: scrollRequest, gridMetrics: gridMetrics, bottomInset: bottomInset)
+                          viewed: viewedSourceID, scrollRequest: scrollRequest, gridMetrics: gridMetrics,
+                          bottomInset: bottomInset, allowsDrawerCollapse: allowsDrawerCollapse)
     }
     static func dismantleUIViewController(_ controller: PhotoGridController, coordinator: ()) { controller.stop() }
 }

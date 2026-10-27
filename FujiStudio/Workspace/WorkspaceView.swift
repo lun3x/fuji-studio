@@ -60,12 +60,13 @@ struct WorkspaceView<StatusControl: View, ConnectionControl: View>: View {
                                 // Fresh request waits for actual final GRID bounds, including after animated resize.
                                 scrollRequest = GridScrollRequest(sourceID: id, afterViewportHeight: detents.collapsedGridHeight)
                             }
-                        }, grid: {
+                        }, grid: { onDrawerDrag in
                             PhotoGrid(sources: sources, checkedSourceIDs: state.checkedSourceIDs, isSelecting: state.isSelecting,
                                 viewedSourceID: state.viewedSourceID, thumbnails: thumbnails, scrollRequest: scrollRequest,
-                                gridMetrics: gridMetrics, bottomInset: safe.bottom,
+                                gridMetrics: gridMetrics, bottomInset: safe.bottom, allowsDrawerCollapse: state.drawerDetent == .expanded,
                                 onSourceTapped: { onAction(.sourceTapped($0)) },
-                                onCheckedChanged: { onAction(.checkedSourcesReplaced($0)) }, onViewportChanged: onViewportChanged)
+                                onCheckedChanged: { onAction(.checkedSourcesReplaced($0)) }, onViewportChanged: onViewportChanged,
+                                onDrawerDrag: onDrawerDrag)
                                 .overlay(alignment: .top) { selectionControls.padding(12) }
                         })
                         .frame(width: width)
