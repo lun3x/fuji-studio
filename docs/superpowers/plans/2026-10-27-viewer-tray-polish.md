@@ -99,4 +99,4 @@ presentation change; inspect the rendered smaller grey subtitle.
 
 - [x] Observe the existing saved-version label assertion fail before the change.
 - [x] Verify compact dates, duplicate-minute identities, timezone and menu actions.
-- [ ] Inspect normal/AX presentation; review, build, commit/push and install.
+- [x] Inspect normal/AX presentation; review, build, commit/push and install.

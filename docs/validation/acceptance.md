@@ -1,7 +1,7 @@
 # Fuji Studio acceptance record
 
-Recorded 2026-10-27. **The latest UI correction at `2e45055b` passes its software
-gates; full device acceptance is incomplete.** The original physical
+Recorded 2026-10-27. **The latest version-row follow-up at `5594f110` passes its
+focused software checks; full device acceptance is incomplete.** The original physical
 preview/export/reopen and later human
 interaction evidence belongs to `75fbd61b`. A later ordinary-app two-source C3
 mixed batch and a C4 Home interruption/recovery passed on `86eacb7a`. The latter
@@ -29,6 +29,32 @@ Reproducible commands, selecting an available simulator on the local machine:
 FUJI_STUDIO_DESTINATION='platform=iOS Simulator,id=YOUR_SIMULATOR_UUID' Scripts/test-ios.sh
 xcodebuild -project FujiStudio.xcodeproj -scheme FujiStudio -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
 ```
+
+### Compact saved-version rows (`5594f110`)
+
+Saved exports display only their slot and recipe name as primary text, with a
+smaller secondary-grey timestamp underneath in local `dd/MM/yy HH:mm` format.
+Explicit Gregorian/POSIX formatting retains 24-hour time. Exports sharing the
+same displayed recipe and minute retain ordinal disambiguation in the subtitle;
+unavailable status also remains there. Rows and the selected-version button
+share a spoken label containing both lines. Selection and version IDs are unchanged.
+
+Focused verification passed **five Swift functions and two UI cases**, exit 0 /
+TEST SUCCEEDED. It covers same-minute exports, explicit UTC/offset formatting,
+unavailable records, normal tracked export/version selection and the largest-text
+scrolling/selection flow. Normal and AX screenshots were inspected: the primary
+recipe and smaller grey date are separate and readable. Universal arm64/x86_64
+Release and signed phone builds passed, as did strict signature verification,
+all exit 0. Fresh scoped review found no Critical, Important or Minor issues.
+The earlier 442-pass complete gate below remains attributed to `2e45055b`;
+this small presentation follow-up did not repeat it.
+
+Ignored evidence: `.build/version-row-focused2.log`,
+`.build/TestResults/version-row-focused2.xcresult`, `version-row-release.log`,
+`version-row-device.log` and `version-row-attachments`. The signed update was
+installed and launched normally on the iPhone, both exit 0. This follow-up does
+not add a physical menu/gesture pass to the earlier human confirmation. No new
+camera operation, Photos write, permission or system appearance change was made.
 
 ### Floating versions and gesture zoom (`2e45055b`)
 

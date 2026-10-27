@@ -42,7 +42,7 @@ sets out the hardware feasibility gates, native app tasks, and acceptance checks
 ## Status
 
 The native workspace composes the real Photos reader/writer, X-T5 camera
-service, preview/export coordinators and durable local catalog. The current code
+service, preview/export coordinators and durable local catalog. The workspace layout
 at `2e45055b` passed the complete simulator gate: **442 passed, 3 established
 native-gate skips, 0 failures**, exit 0. Its unsigned Release simulator build
 passed for arm64 and x86_64, exit 0. The UI correction makes letterboxing follow
@@ -53,6 +53,11 @@ one measured top row, with the title removed to give space back to the photo.
 Version selection is a floating top-right glass menu, and the zoom buttons and
 inline versions strip are removed. Pinch/pan, double-tap fit and native
 accessibility inspection remain available on the photo itself.
+Saved-version rows now put the recipe name above a smaller grey local timestamp
+in `dd/MM/yy HH:mm` format. This presentation follow-up at `5594f110` passed five
+focused unit functions and two normal/AX app-flow cases, plus Release and signed
+phone builds; normal and large-text screenshots were inspected. The full-suite
+count above belongs to the preceding layout revision.
 The production integration review at
 `86eacb7a` approved these five earlier corrections:
 
