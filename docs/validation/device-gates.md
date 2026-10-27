@@ -1,5 +1,15 @@
 # Device validation gates
 
+Current status (2026-10-27): the entries below retain investigation chronology.
+Later evidence supersedes early availability/firmware statements. The observed
+phone is iPhone 15 Pro on iOS 27.0.1; the camera is X-T5 firmware 4.31. Reviewed
+`88996b74` supplied genuine paired RAW display and production C7 A–B–A proof,
+with no Photos writes. The native app composition was subsequently accepted in
+software through `fd94d301`; its physical export/reopen/interruption acceptance
+is still pending. See [acceptance.md](acceptance.md) for the current A01–A24
+matrix. Earlier “pending input” statements describe their historical stage,
+not the availability of the later retained paired production output.
+
 ## Gate 1 — actual Photos originals: PENDING
 
 The controller observed successful original-byte retrieval on the installed `4246325e66e8ec06e8d7d249e1583c280ec52bec` build under full Photos access, including an X-T5 pair and standalone RAF. Limited-access, iCloud and cancellation experiments remain pending, so the full gate is not passed. Simulator tests are software evidence only.
@@ -162,3 +172,37 @@ The final focused simulator run passed **15 tests in 1 suite**, exit0: `.build/t
 `SavedAsset.photosGeometry` is optional observed current Photos pixel geometry. Confirmed creation returns no observation; lookup can report Photos dimensions, including edited or oriented presentation dimensions. The pending `CameraJPEG` remains authoritative for encoded output dimensions and orientation; no EXIF orientation or source relationship is guessed from Photos dimensions, dates, or filenames.
 
 This is software evidence only: the worker performed no Photos write, device installation, camera operation, permission request or privacy change. **Physical Gate5 remains pending** an authoritative paired-source production `CameraJPEG` from the next camera-available run. No probe was added because that exact input/provenance contract is not yet available. Historical standalone diagnostic JPEGs cannot stand in for paired production output. The controller must agree the exact frozen source, production output and deliberate export operation before a reviewed one-save probe is implemented/executed. Required physical observations still include source pair/resource hashes unchanged; output resource byte identity and dimensions/orientation/date/location; capture chronology/Recently Added; reopened catalog Versions association; exact-operation recovery and actual full/limited/revoked access behavior. Photos' equal-time tie ordering must be observed without claiming app control. Previously authorized Full Access/camera permission must not be requested again. See the Task5 report for test process evidence, the narrow geometry API clarification and the exact next-probe inputs.
+
+## Task13 software phase — latest controller evidence and open device gates
+
+The controller's installed reviewed `88996b74` local RAW probe verified the exact
+paired B asset's alternate RAF and primary JPEG roles, identity/revision/names
+and RAF hash. Genuine CIRAW produced an upright 1366 × 2048 display from the
+recorded 7728 × 5152 / orientation 8 original. The controller visually inspected
+the upright result. No camera operation or Photos write was made by this probe.
+
+The following production acceptance run completed three frozen C7 conversions
+A–B–A through the real camera service: full FINE 7728 × 5152 / orientation 8,
+with output sizes 26,369,498 / 26,130,950 / 26,371,588 bytes. A's render key was
+stable, B's distinct; requested LMO ON was effective OFF with adjustment reported.
+All seven bank names and 23 raw settings stayed unchanged and matched the frozen
+capture. Exact owned outputs were deleted with empty-view acknowledgement;
+native close was confirmed once. Complete JPEG decoding/Exif supplied geometry;
+PTP ObjectInfo's zero dimensions were not treated as proof. No Photos writes
+occurred. An independent private offline verification passed 91 assertions.
+
+For the same A input, the production C7 result matched all 26 exposed tags and
+five code tables and was spatially closest to C7's retained Mac reference.
+Residuals were consistent with Fujifilm repeat-render variation. Paired B has
+no Mac B reference, so its geometry, identity and effective metadata were checked
+without a visual-fidelity claim. The earlier seven-slot diagnostic comparison
+remains separate evidence for its exact input/context. General source support
+and opaque uploaded-RAW buffer lifetime remain unproven.
+
+Task13's guarded DEBUG live validation driver is software instrumentation only
+until the controller installs the independently reviewed checkpoint and records
+its actual run. Physical Gate5 (new asset, exact bytes/date/location, reopened
+Versions and observed Photos chronology), Gate6 (real interruption/uncertain
+save/recovery), limited/cloud cases, native accessibility/rotation and the
+mixed-50-source Instruments measurements remain open. No worker operated the
+phone/camera or wrote to Photos during the software phase.

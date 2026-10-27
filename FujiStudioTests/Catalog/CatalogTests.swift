@@ -6,7 +6,6 @@ struct CatalogTests {
     // Catches timestamp-based association, lost journal identity, and acknowledged-but-unsaved writes.
     @Test func restartPreservesDistinctSourcesWithEqualCaptureDates() async throws {
         let disk = try CatalogTestDisk()
-        defer { disk.remove() }
         let f = try CatalogFixture()
         let originalOperationID = UUID()
         var job = f.job(operationID: originalOperationID)
@@ -31,7 +30,7 @@ struct CatalogTests {
 
     // Catches replacing the visible collection with a partial, duplicate-slot or mixed-session refresh.
     @Test func partialRecipeRefreshCannotReplaceCollection() async throws {
-        let disk = try CatalogTestDisk(); defer { disk.remove() }
+        let disk = try CatalogTestDisk()
         let f = try CatalogFixture()
         let previous = f.recipes()
         do {
@@ -55,7 +54,7 @@ struct CatalogTests {
     // Catches refreshing mutable slots in place, rejection of unsupported but lossless imports,
     // and matching a different session/generation when returning camera-specific recipes.
     @Test func successfulRefreshRetainsFrozenHistoryAndOfflineCollection() async throws {
-        let disk = try CatalogTestDisk(); defer { disk.remove() }
+        let disk = try CatalogTestDisk()
         let f = try CatalogFixture()
         let previous = f.recipes()
         var job = f.job(recipe: previous[0])
@@ -91,7 +90,7 @@ struct CatalogTests {
 
     // Catches a failed write leaking staged snapshots or an updated active collection.
     @Test func failedRefreshRollsBackEveryStagedSnapshot() async throws {
-        let disk = try CatalogTestDisk(); defer { disk.remove() }
+        let disk = try CatalogTestDisk()
         let f = try CatalogFixture()
         let previous = f.recipes()
         var candidate = f.recipes()
@@ -116,7 +115,7 @@ struct CatalogTests {
 
     // Catches lost uncertainty/placeholder information or conflating a render attempt with a save.
     @Test func pendingSavePhasesAndOrderedSubmissionSurviveRestart() async throws {
-        let disk = try CatalogTestDisk(); defer { disk.remove() }
+        let disk = try CatalogTestDisk()
         let f = try CatalogFixture()
         let phases: [SaveSubmission] = [.notSubmitted, .submitted(at: f.exportTime),
             .unknown(at: f.exportTime), .definitivelyRejected(at: f.exportTime, reason: "synthetic denial")]
@@ -152,7 +151,7 @@ struct CatalogTests {
 
     // Catches duplicate records for retries and accidental deduplication of deliberate exports.
     @Test func confirmationIsIdempotentButDeliberateRepeatCreatesAnotherVersion() async throws {
-        let disk = try CatalogTestDisk(); defer { disk.remove() }
+        let disk = try CatalogTestDisk()
         let f = try CatalogFixture()
         let catalog = try SwiftDataCatalog(storeURL: disk.url)
         var expected: Set<UUID> = []
@@ -177,7 +176,7 @@ struct CatalogTests {
 
     // Catches overwriting the operation's canonical output or acknowledging half a confirmation.
     @Test func conflictingConfirmationLeavesVersionAndJournalUnchanged() async throws {
-        let disk = try CatalogTestDisk(); defer { disk.remove() }
+        let disk = try CatalogTestDisk()
         let f = try CatalogFixture()
         let catalog = try SwiftDataCatalog(storeURL: disk.url)
         var job = f.job()
@@ -205,7 +204,7 @@ struct CatalogTests {
     @Test func firstConfirmationMustMatchKnownPlaceholderAfterRestart() async throws {
         let f = try CatalogFixture()
         for submission in [SaveSubmission.submitted(at: f.exportTime), .unknown(at: f.exportTime)] {
-            let disk = try CatalogTestDisk(); defer { disk.remove() }
+            let disk = try CatalogTestDisk()
             var job = f.job()
             let operation = job.items[0].operationID
             let pending = PendingSave(operationID: operation, jpeg: f.jpeg(),
@@ -236,7 +235,7 @@ struct CatalogTests {
 
     // Catches treating an unsubmitted/rejected item as a source/output conflict or a saved asset.
     @Test func confirmationRequiresDurableSubmittedAttempt() async throws {
-        let disk = try CatalogTestDisk(); defer { disk.remove() }
+        let disk = try CatalogTestDisk()
         let f = try CatalogFixture()
         let catalog = try SwiftDataCatalog(storeURL: disk.url)
         for submission: SaveSubmission? in [nil, .notSubmitted, .definitivelyRejected(at: f.exportTime, reason: "synthetic")] {
@@ -261,7 +260,7 @@ struct CatalogTests {
     // Catches mutation of submitted identity, save states bypassing atomic confirmation,
     // and reuse of one Photos operation across jobs.
     @Test func journalRejectsChangedSubmissionAndReusedOperations() async throws {
-        let disk = try CatalogTestDisk(); defer { disk.remove() }
+        let disk = try CatalogTestDisk()
         let f = try CatalogFixture()
         let catalog = try SwiftDataCatalog(storeURL: disk.url)
         let job = f.job()
@@ -282,7 +281,7 @@ struct CatalogTests {
 
     // Catches a restart/retry discarding an uncertain system transaction and permitting duplicate saves.
     @Test func uncertainSaveKeepsPinnedAttemptUntilDefinitiveRejection() async throws {
-        let disk = try CatalogTestDisk(); defer { disk.remove() }
+        let disk = try CatalogTestDisk()
         let f = try CatalogFixture()
         var job = f.job()
         let operation = job.items[0].operationID
@@ -334,7 +333,7 @@ struct CatalogTests {
 
     // Catches destructive reconciliation and a stale idempotent confirmation restoring availability.
     @Test func inaccessibleAndDeletedAssetsRetainDurableHistory() async throws {
-        let disk = try CatalogTestDisk(); defer { disk.remove() }
+        let disk = try CatalogTestDisk()
         let f = try CatalogFixture()
         var job = f.job()
         let operation = job.items[0].operationID
@@ -365,7 +364,8 @@ private struct CatalogTestDisk {
         directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     }
-    func remove() { try? FileManager.default.removeItem(at: directory) }
+    // Retain this real disk store for test-process/OS cleanup. Reopened SwiftData
+    // containers can still own open file descriptors when the test body returns.
 }
 
 private struct CatalogFixture {

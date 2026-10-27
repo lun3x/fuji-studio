@@ -9,6 +9,7 @@ struct FujiStudioApp: App {
                 unitHost: ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil || NSClassFromString("XCTestCase") != nil) {
             case .unitHost: Color.clear
             case .flow: AppEntryView(fixture: true)
+            case .liveAcceptance(let id): AppEntryView(acceptanceID: id)
             case .workspace: WorkspaceFixtureEntry()
             case .grid: GridFixtureEntry()
             case .viewer: ViewerFixtureEntry()
@@ -31,6 +32,8 @@ private struct AppEntryView: View {
     @Environment(\.dynamicTypeSize) private var nativeDynamicTypeSize
     #if DEBUG
     var fixture = false
+    var acceptanceID: UUID?
+    @State private var acceptance = LiveAcceptanceRunner()
     @State private var fixtureSaveBarrier: FixtureBarrier?
     @State private var fixtureStartBarrier: FixtureBarrier?
     #endif
@@ -39,7 +42,11 @@ private struct AppEntryView: View {
             if let model {
                 VStack(spacing: 0) {
                     AppWorkspaceView(model: model)
+                        #if DEBUG
+                        .disabled(acceptanceID != nil)
+                        #endif
                     #if DEBUG
+                    if acceptanceID != nil { Text(acceptance.status).font(.caption).accessibilityIdentifier("acceptance.status") }
                     if let barrier = fixtureStartBarrier {
                         Button("Finish fixture start") { Task { await barrier.release(); fixtureStartBarrier = nil } }
                             .accessibilityIdentifier("fixture.finishStart").accessibilityValue(String(describing: latestScenePhase))
@@ -84,6 +91,9 @@ private struct AppEntryView: View {
                 model = owner
                 await owner.start()
                 await owner.sceneChanged(latestScenePhase)
+                #if DEBUG
+                if let acceptanceID { await acceptance.run(model: owner, id: acceptanceID) }
+                #endif
             } catch { self.error = AppModel.explain(error) }
         }.onChange(of: phase, initial: true) { _, value in
             latestScenePhase = value

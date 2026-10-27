@@ -58,7 +58,7 @@ import Testing
         #expect(await f.camera.connectCount == 0)
     }
 
-    @Test func scopeNarrowingDuringPreparationPreservesCompletedOutputs() async throws {
+    @Test func scopeNarrowingAfterCompletedExportRetainsSavedVersion() async throws {
         let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment)
         await model.start(); await model.connect()
         model.send(.sourceTapped("source-0")); model.send(.recipeSelected(slot: 3))
@@ -71,6 +71,32 @@ import Testing
         #expect(Set(model.sources.map(\.id)) == ["source-1"])
         #expect(model.state.viewedSourceID == nil)
         #expect(try await f.environment.catalog.versions(sourceID: "source-0").count == 1)
+        #expect(await f.writer.requests.count == 1)
+    }
+
+    @Test func scopeNarrowingDuringHeldOriginalPreparationRetainsOnlyCompletedOutput() async throws {
+        let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment), barrier = FixtureBarrier()
+        defer { Task { await barrier.release() } }
+        await model.start(); await model.connect()
+        model.send(.sourceTapped("source-0")); model.send(.recipeSelected(slot: 3))
+        await eventually { model.preview != nil }
+        model.send(.select); model.send(.checkedSourcesReplaced(["source-0", "source-2"]))
+        await eventually { model.preview?.sourceID == "source-0" }
+        #expect(model.state.checkedSourceIDs == ["source-0", "source-2"])
+        await f.reader.holdMaterialize("source-2", barrier: barrier)
+        await model.export(); await barrier.entered()
+        await eventually { model.exportEvent?.summary.completed == 1 }
+        let id = try #require(model.exportEvent?.jobID)
+        let preparing = try await f.environment.catalog.job(id: id)
+        #expect(preparing.items.first(where: { $0.source.id == "source-2" })?.state == .preparing)
+        await f.reader.restrictTo(["source-1"])
+        let reload = Task { await model.reloadLibrary() }
+        await eventually { model.sources.count == 1 && model.exportEvent?.stopRequested == true }
+        await barrier.release(); await reload.value
+        await eventually { model.exportEvent?.terminal == true }
+        #expect(model.exportEvent?.summary.completed == 1)
+        #expect(try await f.environment.catalog.versions(sourceID: "source-0").count == 1)
+        #expect(try await f.environment.catalog.versions(sourceID: "source-2").isEmpty)
         #expect(await f.writer.requests.count == 1)
     }
 

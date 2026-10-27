@@ -41,10 +41,20 @@ sets out the hardware feasibility gates, native app tasks, and acceptance checks
 
 ## Status
 
-The design specification and interaction prototype are approved. Task 1 now
-supplies a runnable native app, Photos original-resource access, and a DEBUG
-hardware probe. Actual iPhone resource validation remains pending; this is not
-yet a conversion app.
+The native workspace now composes the real Photos reader/writer, X-T5 camera
+service, preview/export coordinators and durable local catalog. Hardware evidence
+includes original paired/standalone RAF access, genuine local RAW display, an
+all-seven diagnostic reference comparison, and a production C7 A–B–A conversion
+run on X-T5 firmware 4.31. These observations cover the specific retained inputs
+and settings; they do not establish broad RAW compatibility.
+
+The complete simulator gate passed **419 tests with 3 explicit native-gate skips**,
+and the unsigned Release simulator build passed. Final device acceptance is **incomplete**. The current live app's deliberate
+Photos export/reopen proof, real interruption recovery, native rotation and
+accessibility checks, and a measured mixed batch of at least 50 sources remain
+open. See [the acceptance record](docs/validation/acceptance.md) for individual
+checks and [device-gates.md](docs/validation/device-gates.md) for historical
+observations. A simulator fixture or the prototype does not close a camera gate.
 
 ## Development
 
@@ -53,7 +63,7 @@ project's `.venv` rather than a global Python environment.
 
 ## Build and test
 
-Requires Xcode 27+ and XcodeGen 2.46.0 (`brew install xcodegen`). No runtime packages are used.
+Requires Xcode 27.1 (verified toolchain 27A9275), iOS 27+, and XcodeGen 2.46.0 (`brew install xcodegen`). No runtime packages are used.
 
 ```sh
 Scripts/test-ios.sh
@@ -66,6 +76,21 @@ The script generates the ignored `FujiStudio.xcodeproj` and shared `FujiStudio` 
 FUJI_STUDIO_DESTINATION='platform=iOS Simulator,id=YOUR_SIMULATOR_UUID' Scripts/test-ios.sh
 ```
 
+For an unsigned Release simulator build:
+
+```sh
+xcodegen generate
+xcodebuild -project FujiStudio.xcodeproj -scheme FujiStudio -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
+```
+
+The test wrapper accepts one optional selector. For several suites, use direct
+`xcodebuild test` with a separate `-only-testing:` argument for each. Native
+Home, hardware-keyboard and rotation tests are explicit, unverified opt-ins;
+the shell must forward `TEST_RUNNER_FUJI_STUDIO_NATIVE_LIFECYCLE=1`,
+`TEST_RUNNER_FUJI_STUDIO_NATIVE_KEYBOARD=1` or
+`TEST_RUNNER_FUJI_STUDIO_NATIVE_ROTATION=1` to the XCTest runner. Default skips
+are reported, never counted as device passes.
+
 For a physical device, supply a locally authorized development team in ignored `Config/Signing.local.xcconfig` (`DEVELOPMENT_TEAM = YOUR_TEAM_ID`) and use Xcode's local signing workflow. Physical destinations do not disable signing. The bundle ID is `com.lun3x.FujiStudio`; no account or provisioning changes are performed by the test script.
 
 ## Original-resource boundary
@@ -76,10 +101,47 @@ Only primary/alternate original roles qualify; content types distinguish RAF, JP
 
 `RAFMetadataReader` verifies the file hash, RAF framing, X-T5 model, embedded JPEG model/orientation, and recorded RAF geometry without RAW pixel decoding. It keeps sensor/container dimensions separate from recorded crop dimensions and aspect. Synthetic metadata fixtures test parser branches; actual compression and geometry support require the pending device gate.
 
+## Camera and foreground operation
+
+Connect the X-T5 by USB data cable and select **USB RAW CONV./BACKUP RESTORE**
+on the camera. The observed support context is X-T5 firmware **4.31**. Import
+reads the existing C1–C7 names/settings; the app has no saved-bank editor.
+Conversion fails closed outside the measured supported profile/source class.
+The observed full-size 3:2 outputs are FINE **7728 × 5152**, encoded orientation 8.
+The retained standalone input is lossless-compressed 14-bit. Other compression,
+aspect, firmware and lens classes need separate evidence. Requested lens
+modulation optimization was source-adjusted to effective OFF in the observed
+runs; there is no universal ON guarantee.
+
+Keep the app foreground and the phone/camera connected during USB work. Exports
+freeze the submitted sources and recipe, then process sequentially. Background
+or disconnect can pause work; confirmed outputs remain, and unconfirmed saves
+must reconcile before any replacement. Real interruption acceptance is still
+pending. Previews do not invoke Photos saving. Export creates separate JPEG
+assets with the original effective Photos capture date and available location;
+Photos controls equal-time tie order.
+
 ## Hardware probe
 
-A DEBUG launch exposes **Hardware probe**. It requests Photos access only when its explicit button is tapped; app launch requests no camera access. Request full or limited Photos access, choose an eligible source to list descriptors, then tap **Retrieve and inspect selected originals**. Descriptors alone cause no download. The probe retrieves original RAF and JPEG sequentially, reports byte counts/checksums and metadata, and removes successful temporary files after inspection. **Cancel retrieval** exercises cancellable cloud requests. A known Photos local ID can also be inspected directly, including JPEG-only exports. Limited access has a system management action; tap the discovery button again after changing the allowed set.
+Normal launch opens the live workspace. DEBUG-only fixture/probe routes are
+explicit launch modes, isolated from normal and Release launch. Use only the
+reviewed probe appropriate to its recorded gate; several historical diagnostics
+perform bounded camera operations. No real source IDs, profiles or images belong
+in version control.
 
-Probe output stays in the current session and is selectable. Record only redacted observations in [device-gates.md](docs/validation/device-gates.md). Keep real RAFs, personal captures and their identifiers in ignored `Tests/Fixtures/Private/`; never commit them.
+Task13 adds the explicit `--live-acceptance-run <UUID>` route for the controller's
+reviewed physical validation. It uses the same live environment/model and real
+coordinators, binds the unique retained standalone A and paired B manifests,
+checks current C1–C7 imports, makes seven temporary A previews, then makes one
+deliberate C7 export of viewed B. A durable UUID claim is written before export.
+Reusing that UUID can only reconcile/verify; missing or ambiguous job identity
+stops without another save. Keep the run directories and catalog intact. Never
+use a new UUID as an automatic retry. Release excludes this route and driver.
+
+Private evidence stays in the app's `Documents/live-acceptance-private` and
+ignored local `.build`/`.superpowers` artifacts. Public summaries contain only
+counts, booleans and dimensions. Independent software review must precede the
+controller's live run. This route does not measure the 50-source performance
+corpus or establish native Home, rotation, VoiceOver, or Photos chronology UI.
 
 API references: [XcodeGen project specification](https://github.com/yonaskolb/XcodeGen/blob/master/Docs/ProjectSpec.md), [Apple ImageCaptureCore authorization requirements](https://developer.apple.com/documentation/imagecapturecore), and the installed iOS 27.1 Photos/PhotosUI headers. RAF tag/layout research was checked against [ExifTool's FujiFilm parser](https://github.com/exiftool/exiftool/blob/master/lib/Image/ExifTool/FujiFilm.pm); no third-party code or runtime dependency is included.

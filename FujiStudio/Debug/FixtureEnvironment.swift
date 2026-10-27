@@ -5,9 +5,16 @@ import Observation
 
 /// All deterministic UI routes are decided before ANY live service or probe is constructed.
 @MainActor enum FixtureEnvironment {
-    enum Route { case unitHost, flow, workspace, grid, viewer, probe, live, invalid }
+    enum Route: Equatable { case unitHost, flow, workspace, grid, viewer, probe, live, liveAcceptance(UUID), invalid }
     static func route(arguments: [String], unitHost: Bool) -> Route {
         if unitHost { return .unitHost }
+        if arguments.contains("--live-acceptance-run") {
+            guard arguments.filter({ $0 == "--live-acceptance-run" }).count == 1,
+                  let index = arguments.firstIndex(of: "--live-acceptance-run"), index + 1 < arguments.count,
+                  let id = UUID(uuidString: arguments[index + 1]),
+                  !arguments.contains(where: { $0 != "--live-acceptance-run" && ($0.hasSuffix("-probe") || $0.contains("fixture")) }) else { return .invalid }
+            return .liveAcceptance(id)
+        }
         let fixtures = arguments.filter { ["--ui-fixtures", "--workspace-fixture", "--grid-fixture", "--viewer-fixture"].contains($0) }
         let probe = arguments.contains { $0.hasPrefix("--") && $0.hasSuffix("-probe") }
         guard fixtures.count <= 1, !(probe && !fixtures.isEmpty) else { return .invalid }

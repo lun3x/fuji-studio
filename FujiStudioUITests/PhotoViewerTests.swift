@@ -16,22 +16,32 @@ final class PhotoViewerTests: XCTestCase {
     }
     private func image(_ app: XCUIApplication) -> XCUIElement { app.descendants(matching: .any)["viewer.image"] }
 
-    func testZoomPersistsAcrossMatchingVersionsAndResetsForNewSource() {
+    func testZoomPersistsAcrossMatchingVersionsAndResetsForNewSource() throws {
         let app = launch(), viewer = image(app)
         XCTAssertTrue(viewer.waitForExistence(timeout: 10))
         guard viewer.exists else { return }
         viewer.pinch(withScale: 2.5, velocity: 1)
         viewer.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.55))
             .press(forDuration: 0.05, thenDragTo: viewer.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.4)))
-        let before = values(app)
+        let before = try requiredValues(app)
         XCTAssertEqual(before.count, 3)
         app.buttons["version.saved.11111111-1111-1111-1111-111111111111"].tap()
-        let after = values(app)
-        guard before.count == 3, after.count == 3 else { return }
+        let after = try requiredValues(app)
         XCTAssertGreaterThan(before[0], 1.1)
         for i in 0..<3 { XCTAssertEqual(after[i], before[i], accuracy: 0.01) }
         app.buttons["fixture.nextSource"].tap()
-        XCTAssertEqual(values(app).first ?? 0, 1, accuracy: 0.01)
+        let reset = try requiredValues(app)
+        XCTAssertEqual(reset[0], 1, accuracy: 0.01)
+    }
+
+    private func requiredValues(_ app: XCUIApplication) throws -> [Double] {
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            let measured = self.metrics(app)
+            return measured.count == 5 && measured.allSatisfy(\.isFinite)
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed, "Viewer must publish all finite metrics after version/source changes")
+        let measured = metrics(app)
+        return try XCTUnwrap(measured.count == 5 && measured.allSatisfy(\.isFinite) ? Array(measured.prefix(3)) : nil, "Missing or malformed viewer metrics")
     }
 
     func testDoubleTapMaximumZoomPanViewportResizeAndAccessibleAlternatives() {

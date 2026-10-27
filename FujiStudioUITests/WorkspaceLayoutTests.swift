@@ -45,6 +45,19 @@ final class WorkspaceLayoutTests: XCTestCase {
         }
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: nil)], timeout: 5), .completed, file: file, line: line)
     }
+    func testRecipeRowsRespondToBlankPadding() {
+        let app = launch()
+        openRecipeMenu(app)
+        // Trailing padding is measured from the popover, outside the row text and checkmark.
+        app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: app.scrollViews["recipe.options"].frame.maxX - 6, dy: app.buttons["recipe.slot.2"].frame.midY)).tap()
+        XCTAssertTrue(app.buttons["recipe.none"].waitForNonExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["recipe.control"].label.contains("C2"))
+        openRecipeMenu(app)
+        app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: app.scrollViews["recipe.options"].frame.maxX - 6, dy: app.buttons["recipe.none"].frame.midY)).tap()
+        XCTAssertTrue(app.buttons["recipe.none"].waitForNonExistence(timeout: 3))
+        XCTAssertEqual(app.buttons["recipe.control"].label, "No recipe selected")
+        XCTAssertFalse(app.buttons["workspace.export"].isEnabled)
+    }
     func testNativeHardwareEscapeDismissal() throws {
         guard ProcessInfo.processInfo.environment["FUJI_STUDIO_NATIVE_KEYBOARD"] == "1" else {
             throw XCTSkip("NOT VERIFIED: Duo physical-key synthesis reached neither native Escape nor independent k UIKeyCommand/pressesBegan, despite attached first responder/canPerformAction/target success. See task11-key-delivery-diagnostic.xcresult. Enable FUJI_STUDIO_NATIVE_KEYBOARD=1 on a validated keyboard destination.")
@@ -68,7 +81,8 @@ final class WorkspaceLayoutTests: XCTestCase {
         let base = viewer.frame
         shot(app, "Workspace light collapsed")
         app.buttons["drawer.toggle"].tap()
-        waitForDetent(app, expanded: app.buttons["drawer.toggle"].value as? String == "Expanded")
+        XCTAssertEqual(app.buttons["drawer.toggle"].value as? String, "Expanded")
+        waitForDetent(app, expanded: true)
         XCTAssertEqual(app.buttons["drawer.toggle"].value as? String, "Expanded")
         XCTAssertGreaterThan(grid.frame.height, side * 2 + 19)
         XCTAssertGreaterThanOrEqual(app.buttons["drawer.toggle"].frame.minY, app.buttons["recipe.control"].frame.maxY)
@@ -82,7 +96,8 @@ final class WorkspaceLayoutTests: XCTestCase {
     func testSelectTapManualCollapseRevealsViewedAndRetainsChecks() {
         let app = launch(), grid = app.collectionViews["photoGrid"]
         app.buttons["drawer.toggle"].tap()
-        waitForDetent(app, expanded: app.buttons["drawer.toggle"].value as? String == "Expanded")
+        XCTAssertEqual(app.buttons["drawer.toggle"].value as? String, "Expanded")
+        waitForDetent(app, expanded: true)
         let frame = tile(app, 0).frame
         app.buttons["workspace.select"].tap()
         XCTAssertEqual(tile(app, 0).frame, frame)
@@ -96,7 +111,8 @@ final class WorkspaceLayoutTests: XCTestCase {
         viewed.tap()
         XCTAssertEqual(app.staticTexts["workspace.count"].label, "3 selected")
         app.buttons["drawer.toggle"].tap()
-        waitForDetent(app, expanded: app.buttons["drawer.toggle"].value as? String == "Expanded")
+        XCTAssertEqual(app.buttons["drawer.toggle"].value as? String, "Collapsed")
+        waitForDetent(app, expanded: false)
         let final = app.cells[id]
         XCTAssertGreaterThanOrEqual(final.frame.minY, grid.frame.minY - 0.5)
         XCTAssertLessThanOrEqual(final.frame.maxY, grid.frame.maxY + 0.5)
@@ -161,13 +177,15 @@ final class WorkspaceLayoutTests: XCTestCase {
     func testDarkExpandedAndAccessibleHeaderAlternatives() {
         let app = launch(["--fixture-dark"])
         app.buttons["drawer.toggle"].tap()
-        waitForDetent(app, expanded: app.buttons["drawer.toggle"].value as? String == "Expanded")
+        XCTAssertEqual(app.buttons["drawer.toggle"].value as? String, "Expanded")
+        waitForDetent(app, expanded: true)
         app.buttons["workspace.select"].tap()
         XCTAssertTrue(app.buttons["drawer.toggle"].isHittable)
         assertRecipeControlUsable(app)
         shot(app, "Workspace dark expanded Select")
         app.buttons["drawer.toggle"].tap()
-        waitForDetent(app, expanded: app.buttons["drawer.toggle"].value as? String == "Expanded")
+        XCTAssertEqual(app.buttons["drawer.toggle"].value as? String, "Collapsed")
+        waitForDetent(app, expanded: false)
         shot(app, "Workspace dark collapsed Select")
     }
     func testLargestTextDoesNotOverlap() {
@@ -178,7 +196,8 @@ final class WorkspaceLayoutTests: XCTestCase {
         XCTAssertTrue(app.buttons["workspace.select"].isHittable)
         XCTAssertTrue(app.buttons["workspace.export"].isHittable)
         app.buttons["drawer.toggle"].tap()
-        waitForDetent(app, expanded: app.buttons["drawer.toggle"].value as? String == "Expanded")
+        XCTAssertEqual(app.buttons["drawer.toggle"].value as? String, "Expanded")
+        waitForDetent(app, expanded: true)
         XCTAssertGreaterThanOrEqual(app.buttons["drawer.toggle"].frame.minY, app.buttons["recipe.control"].frame.maxY)
         assertRecipeControlUsable(app)
         shot(app, "Workspace AX5 expanded")
@@ -257,7 +276,8 @@ final class WorkspaceLayoutTests: XCTestCase {
         let side = tile(app, 0).frame.width
         XCTAssertEqual(grid.frame.height, side * 2 + 19, accuracy: 0.5)
         app.buttons["drawer.toggle"].tap()
-        waitForDetent(app, expanded: app.buttons["drawer.toggle"].value as? String == "Expanded")
+        XCTAssertEqual(app.buttons["drawer.toggle"].value as? String, "Expanded")
+        waitForDetent(app, expanded: true)
         assertRecipeControlUsable(app)
         XCTAssertTrue(app.buttons["workspace.export"].isHittable)
         XCTAssertTrue(app.buttons["workspace.versions"].exists)

@@ -2,9 +2,11 @@ import Foundation
 import Testing
 @testable import FujiStudio
 
+// These unique roots contain live SwiftData stores. Retain them for test-process/OS
+// cleanup: no public all-container close barrier makes in-test recursive unlink safe.
 struct ExportCoordinatorTests {
     @Test func renamedCacheUsesChosenSnapshotAndDistinctPhotosOperation() async throws {
-        let f = try RenderFixture(); defer { f.remove() }
+        let f = try RenderFixture()
         let catalog = try SwiftDataCatalog(storeURL: f.root.appendingPathComponent("catalog.store"))
         let cache = try f.cache(), reader = RenderLibrary(f), writer = ExportWriter(), camera = RenderCamera(f)
         let jpeg = try f.jpeg(); try await cache.store(jpeg, key: jpeg.key)
@@ -25,7 +27,7 @@ struct ExportCoordinatorTests {
     }
 
     @Test func uncertainEmptyLookupNeverResubmitsAcrossReopen() async throws {
-        let f = try RenderFixture(); defer { f.remove() }
+        let f = try RenderFixture()
         let url = f.root.appendingPathComponent("catalog.store"), cache = try f.cache(), reader = RenderLibrary(f)
         let writer = ExportWriter(uncertain: true), catalog = try SwiftDataCatalog(storeURL: url)
         let engine = ExportCoordinator(reader: reader, camera: RenderCamera(f), catalog: catalog, writer: writer,
@@ -79,7 +81,7 @@ actor ExportWriter: PhotoLibraryWriting {
 
 extension ExportCoordinatorTests {
     @Test func cancellationDrainsSubmittedPhotosAndStartsNoNextItem() async throws {
-        let f = try ExportBatchFixture(); defer { f.render.remove() }
+        let f = try ExportBatchFixture()
         let latch = RenderLatch(), writer = ExportWriter(latch: latch), engine = f.engine(writer: writer)
         var events = await engine.events().makeAsyncIterator()
         let id = try await engine.start(sources: f.sources, recipe: f.render.recipe)
@@ -101,7 +103,7 @@ extension ExportCoordinatorTests {
     }
 
     @Test func lifecyclePausePreservesQueuedItemsAndResumeUsesFrozenRecipe() async throws {
-        let f = try ExportBatchFixture(); defer { f.render.remove() }
+        let f = try ExportBatchFixture()
         let latch = RenderLatch(), writer = ExportWriter(latch: latch), engine = f.engine(writer: writer)
         var events = await engine.events().makeAsyncIterator()
         let id = try await engine.start(sources: f.sources, recipe: f.render.recipe)
@@ -126,7 +128,7 @@ extension ExportCoordinatorTests {
 
     @Test func badRAFContinuesButDisconnectPausesAndResumeReattemptsFrozenItem() async throws {
         for sessionFailure in [false, true] {
-            let f = try ExportBatchFixture(); defer { f.render.remove() }
+            let f = try ExportBatchFixture()
             await f.camera.failFirst(sessionFailure ? .notReady : .unsupportedSource)
             let writer = ExportWriter(), engine = f.engine(writer: writer)
             var events = await engine.events().makeAsyncIterator()
@@ -148,7 +150,7 @@ extension ExportCoordinatorTests {
     }
 
     @Test func changedResourcesAreItemFailureAndNeverSilentlyRetargeted() async throws {
-        let f = try ExportBatchFixture(); defer { f.render.remove() }
+        let f = try ExportBatchFixture()
         let latch = RenderLatch(), writer = ExportWriter(latch: latch), engine = f.engine(writer: writer)
         var events = await engine.events().makeAsyncIterator()
         let id = try await engine.start(sources: f.sources, recipe: f.render.recipe)
@@ -161,7 +163,7 @@ extension ExportCoordinatorTests {
     }
 
     @Test func admissionIsReservedBeforeValidationAwaitAndInvalidSourcesNeverCreateJob() async throws {
-        let f = try ExportBatchFixture(); defer { f.render.remove() }
+        let f = try ExportBatchFixture()
         let latch = RenderLatch(); await f.reader.holdValidation(latch)
         let engine = f.engine(writer: ExportWriter())
         let starting = Task { try await engine.start(sources: f.sources, recipe: f.render.recipe) }
@@ -181,7 +183,7 @@ extension ExportCoordinatorTests {
 
     @Test(arguments: [CrashBoundary.beforeIntent, .afterPlaceholder, .afterSuccess, .afterConfirmation])
     func recoveryUsesDurableKnowledgeAcrossEverySaveBoundary(_ boundary: CrashBoundary) async throws {
-        let f = try ExportBatchFixture(); defer { f.render.remove() }
+        let f = try ExportBatchFixture()
         let fault = FaultCatalog(base: f.catalog, boundary: boundary)
         let writer = ExportWriter(uncertain: boundary == .afterPlaceholder)
         let engine = f.engine(writer: writer, catalog: fault)
@@ -214,7 +216,7 @@ extension ExportCoordinatorTests {
     }
 
     @Test func anotherSuccessfulJobCannotUnpinUnknownJobsSharedPixels() async throws {
-        let f = try ExportBatchFixture(); defer { f.render.remove() }
+        let f = try ExportBatchFixture()
         let writer = ExportWriter(uncertain: true), engine = f.engine(writer: writer)
         var events = await engine.events().makeAsyncIterator()
         let first = try await engine.start(sources: [f.sources[0]], recipe: f.render.recipe)
@@ -378,7 +380,7 @@ actor BatchCamera: CameraServing {
 
 extension ExportCoordinatorTests {
     @Test func cancelPausedJobClassifiesRemainingItemsWithoutSaving() async throws {
-        let f = try ExportBatchFixture(); defer { f.render.remove() }
+        let f = try ExportBatchFixture()
         await f.camera.failFirst(.notReady)
         let writer = ExportWriter(), engine = f.engine(writer: writer)
         var events = await engine.events().makeAsyncIterator()
@@ -391,7 +393,7 @@ extension ExportCoordinatorTests {
     }
 
     @Test func crashAfterIntentBeforeCallIsConservativelyUnknown() async throws {
-        let f = try ExportBatchFixture(); defer { f.render.remove() }
+        let f = try ExportBatchFixture()
         let fault = FaultCatalog(base: f.catalog, boundary: .afterIntent), writer = ExportWriter()
         let engine = f.engine(writer: writer, catalog: fault)
         var events = await engine.events().makeAsyncIterator()
@@ -410,7 +412,7 @@ extension ExportCoordinatorTests {
     }
 
     @Test func protectedPinConflictDoesNotDeleteAnotherJobsRecoveryFile() async throws {
-        let f = try ExportBatchFixture(); defer { f.render.remove() }
+        let f = try ExportBatchFixture()
         let writer = ExportWriter(uncertain: true), engine = f.engine(writer: writer)
         var events = await engine.events().makeAsyncIterator()
         let first = try await engine.start(sources: [f.sources[0]], recipe: f.render.recipe)
@@ -426,7 +428,7 @@ extension ExportCoordinatorTests {
     }
 
     @Test func definitiveNativeRejectionAllowsOnlyExplicitRetry() async throws {
-        let f = try ExportBatchFixture(); defer { f.render.remove() }
+        let f = try ExportBatchFixture()
         let writer = ExportWriter(), engine = f.engine(writer: writer)
         await writer.rejectNext()
         var events = await engine.events().makeAsyncIterator()
@@ -445,7 +447,7 @@ extension ExportCoordinatorTests {
 
 extension ExportCoordinatorTests {
     @Test func retrySkipsUnknownButStillProcessesRemainingQueuedItem() async throws {
-        let f = try ExportBatchFixture(); defer { f.render.remove() }
+        let f = try ExportBatchFixture()
         let writer = ExportWriter(uncertain: true), engine = f.engine(writer: writer)
         var events = await engine.events().makeAsyncIterator()
         let id = try await engine.start(sources: f.sources, recipe: f.render.recipe)
@@ -463,7 +465,7 @@ extension ExportCoordinatorTests {
 
 extension ExportCoordinatorTests {
     @Test func recoveryReclaimsConfirmedOrphanButPreservesUnindexedReservations() async throws {
-        let f = try ExportBatchFixture(); defer { f.render.remove() }
+        let f = try ExportBatchFixture()
         let fault = FaultCatalog(base: f.catalog, boundary: .afterConfirmation), writer = ExportWriter()
         let engine = f.engine(writer: writer, catalog: fault)
         var events = await engine.events().makeAsyncIterator()
@@ -487,7 +489,7 @@ extension ExportCoordinatorTests {
 
 extension ExportCoordinatorTests {
     @Test func cancellationDrainsCameraWithoutSubmittingPhotosOrNextRAW() async throws {
-        let f = try ExportBatchFixture(); defer { f.render.remove() }
+        let f = try ExportBatchFixture()
         let latch = RenderLatch(); await f.camera.hold(latch)
         let writer = ExportWriter(), engine = f.engine(writer: writer)
         var events = await engine.events().makeAsyncIterator()
@@ -504,7 +506,7 @@ extension ExportCoordinatorTests {
     }
 
     @Test func nativeStorageRejectionRetainsActionableFailureType() async throws {
-        let f = try ExportBatchFixture(); defer { f.render.remove() }
+        let f = try ExportBatchFixture()
         let writer = ExportWriter(), engine = f.engine(writer: writer)
         await writer.rejectStorage()
         var events = await engine.events().makeAsyncIterator()
@@ -517,7 +519,7 @@ extension ExportCoordinatorTests {
 
 extension ExportCoordinatorTests {
     @Test func failedCompleteReferenceEnumerationReleasesNoPins() async throws {
-        let f = try ExportBatchFixture(); defer { f.render.remove() }
+        let f = try ExportBatchFixture()
         let writer = ExportWriter(uncertain: true), engine = f.engine(writer: writer)
         var events = await engine.events().makeAsyncIterator()
         let id = try await engine.start(sources: [f.sources[0]], recipe: f.render.recipe)
@@ -536,7 +538,7 @@ extension ExportCoordinatorTests {
 
 extension ExportCoordinatorTests {
     @Test func unreadableJournalStillEmitsTerminalPersistenceFailureAndReleasesPriority() async throws {
-        let f = try ExportBatchFixture(); defer { f.render.remove() }
+        let f = try ExportBatchFixture()
         let fault = FaultCatalog(base: f.catalog, boundary: .readsUnavailable), writer = ExportWriter()
         let engine = f.engine(writer: writer, catalog: fault)
         let events = await engine.events()

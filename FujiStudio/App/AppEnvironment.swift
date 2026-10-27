@@ -1,5 +1,6 @@
 import SwiftUI
 import Photos
+import PhotosUI
 import UIKit
 
 @MainActor protocol AppPlatform: AnyObject {

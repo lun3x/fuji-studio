@@ -66,7 +66,7 @@ struct RecipeMenu: View {
                             }
                             Spacer(minLength: 8)
                             if current?.slot == slot { Image(systemName: "checkmark").accessibilityHidden(true) }
-                        }.frame(maxWidth: .infinity, alignment: .leading).padding()
+                        }.frame(maxWidth: .infinity, alignment: .leading).padding().contentShape(Rectangle())
                     }
                     .buttonStyle(.plain).disabled(recipe == nil)
                     .accessibilityIdentifier("recipe.slot.\(slot)")
@@ -85,7 +85,7 @@ struct RecipeMenu: View {
     private func row(title: String, selected: Bool, identifier: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack { Text(title); Spacer(minLength: 8); if selected { Image(systemName: "checkmark").accessibilityHidden(true) } }
-                .frame(maxWidth: .infinity, alignment: .leading).padding()
+                .frame(maxWidth: .infinity, alignment: .leading).padding().contentShape(Rectangle())
         }.buttonStyle(.plain).accessibilityIdentifier(identifier).accessibilityAddTraits(selected ? .isSelected : [])
     }
 }

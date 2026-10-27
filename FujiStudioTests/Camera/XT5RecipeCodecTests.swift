@@ -69,16 +69,18 @@ struct XT5RecipeCodecTests {
 
 struct XT5ImportedRecipeTests {
     private let context = RecipeCameraContext(model: "X-T5", firmware: "4.31", capability: "X-T5_0200", sessionIdentity: UUID(), sessionGeneration: 7)
-    @Test func snapshotPreservesAllUnknownBytesAndRejectsUnvalidatedRendering() throws {
+    @Test func snapshotPreservesImportHistoryWhileCurrentSupportRevalidatesMeasuredBytes() throws {
         let snapshot = try XT5RecipeCodec.recipe(slot: 3, nameData: ProtocolProbeFixtures.string("Café"), properties: BankImportFixtures.properties, context: context, importedAt: Date())
         #expect(snapshot.slot == 3)
         #expect(snapshot.name == "Café")
         #expect(snapshot.importedSettings.count == 23)
         #expect(snapshot.importedSettings.first { $0.code == 0xD18E }?.raw == Data([7,0]))
         #expect(snapshot.renderingIssues.contains(.unmappedProperty(0xD18E)))
-        #expect(snapshot.renderingIssues.contains(.unsupportedValue(0xD195))) // Actual observed 7 is outside pinned table.
+        #expect(snapshot.renderingIssues.contains(.unsupportedValue(0xD195))) // Preserved observation from the earlier import table.
         #expect(snapshot.renderingIssues.contains(.conversionProfileUnvalidated))
-        #expect(throws: (any Error).self) { try snapshot.requireRenderable() }
+        // Historical import observations are lossless history, not the current executable support cache.
+        #expect(try snapshot.normalizedSettings.grain == .offLarge)
+        try snapshot.requireRenderable()
     }
     @Test func settingsDigestExcludesNamesSlotsDatesIDsAndIncludesUnknownFields() throws {
         let one = try XT5RecipeCodec.recipe(slot: 1, nameData: ProtocolProbeFixtures.string("One"), properties: BankImportFixtures.properties, context: context, importedAt: Date(timeIntervalSince1970: 1))
@@ -94,6 +96,7 @@ struct XT5ImportedRecipeTests {
         let snapshot = try XT5RecipeCodec.recipe(slot: 1, nameData: ProtocolProbeFixtures.string("Synthetic"), properties: values, context: context, importedAt: Date())
         #expect(snapshot.renderingIssues.contains(.unsupportedValue(0xD192)))
         #expect(snapshot.importedSettings.first { $0.code == 0xD192 }?.raw == Data([255,127]))
+        #expect(throws: (any Error).self) { try snapshot.requireRenderable() }
     }
     @Test func incompleteMalformedOrExtraFieldsNeverBecomeImportedRecipes() {
         var missing = BankImportFixtures.properties; missing[0xD1A4] = nil
