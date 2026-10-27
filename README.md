@@ -42,29 +42,53 @@ sets out the hardware feasibility gates, native app tasks, and acceptance checks
 ## Status
 
 The native workspace composes the real Photos reader/writer, X-T5 camera
-service, preview/export coordinators and durable local catalog. On reviewed
-`75fbd61b`, the controller completed seven temporary same-source recipe previews
+service, preview/export coordinators and durable local catalog. The current code
+at `86eacb7a` passed the complete simulator gate: **433 passed, 3 established
+native-gate skips, 0 failures**, exit 0. Its unsigned Release simulator build
+passed for arm64 and x86_64, exit 0. The final scoped review approved all five
+integration corrections with no new findings:
+
+- Persisted failed, cancelled and unprocessed jobs remain visible after restart
+  for explicit remaining-only Retry or Resume, preserving confirmed saves.
+- Preview failures keep the matching image and version label with an actionable,
+  accessible error, or resolve the current source's original without a camera retry.
+- All works directly from Browse and selects the complete eligible membership.
+- Detected incompatible RAW models affect selection and export admission across
+  same-revision reloads; changed originals are reassessed without eager downloads.
+- Obsolete original preparation is cancelled and reports progress, while admitted
+  native camera work retains ownership until completion and cleanup.
+
+Software review is clear; the branch remains unmerged. The controller signed,
+verified and installed exact `86eacb7a` on the phone. A normal launch attempt
+while locked timed out; the user later reported the phone unlocked and Fuji
+Studio open. That report does not establish a current-code conversion/export or
+complete device acceptance.
+
+The earlier physical preview/export/reopen evidence belongs to reviewed
+`75fbd61b`. The controller completed seven temporary same-source recipe previews
 without new Photos assets, then one deliberate C7 export of the viewed paired
 source. On-device checks verified a distinct asset, exact preview bytes, source
 capture date, absent location preserved, unchanged originals/banks and native
-closure. Terminating and relaunching with the same run ID reopened the exact
-saved version without another export. Independent offline verification passed
-156 assertions; all seven new standalone previews matched their own Mac recipe
+closure. Relaunching with the same run ID reopened the exact saved version
+without another export. Independent offline verification passed **156
+assertions**; all seven new standalone previews matched their own Mac recipe
 reference in exposed metadata/coding tables and ranked it nearest spatially.
 
-The complete simulator gate passed **419 tests with 3 explicit native-gate skips**,
-and the unsigned Release simulator build passed before two reviewed DEBUG-only
-validation corrections. Their targeted gates passed 42 and 17 test functions.
-Final device acceptance remains **incomplete**: real interruption recovery,
-Photos chronology UI, nonnil GPS preservation, physical scrolling/pinch/pan,
-rotation and accessibility, broader RAW/camera support, and a measured mixed batch of at least
-50 sources remain open. These observations cover two retained inputs on X-T5
-firmware 4.31; they do not establish general compatibility or pixel equality.
-Later ordinary-app taps also exercised selection, drawer expand/collapse,
+The earlier software chronology remains a 419-pass complete gate with 3 skips,
+followed by reviewed DEBUG corrections with 42 and 17 targeted test functions;
+these are separate from the current complete gate above. Later ordinary-app
+checks on `75fbd61b` exercised selection, drawer expand/collapse,
 Zoom+/Fit/double-tap, recipe preview/manual RAW switching and No Recipe clear,
-without another export. The user subsequently confirmed that all crossed photos
-became checked during a real finger sweep across thumbnails and the next row.
-Remote drag/wheel attempts did not establish scrolling. See [the acceptance record](docs/validation/acceptance.md) for the evidence
+without another export. The user confirmed real finger range selection, main
+photo pinch zoom/pan and expanded-grid vertical scrolling on that revision.
+
+Final device acceptance remains **incomplete**: current-code physical validation,
+real interruption recovery, limited/nonlocal Photos, Photos chronology UI, nonnil
+GPS preservation, precise image-region/detail preservation, rotation and
+accessibility, broader RAW/camera support, and a measured mixed batch of at least
+50 sources remain open. The retained native observations cover two inputs on
+X-T5 firmware 4.31; they do not establish general compatibility or pixel equality.
+See [the acceptance record](docs/validation/acceptance.md) for the evidence
 boundaries and [device-gates.md](docs/validation/device-gates.md) for chronology.
 
 ## Development

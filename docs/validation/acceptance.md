@@ -1,11 +1,13 @@
 # Fuji Studio acceptance record
 
-Recorded 2026-10-27. **Device acceptance is incomplete**, with a bounded live
-preview/export/reopen pass on the target hardware. The remaining matrix below
-prevents that result from being mistaken for complete product acceptance.
+Recorded 2026-10-27. **Software review is clear at `86eacb7a`; device acceptance
+is incomplete.** The bounded physical preview/export/reopen and later human
+interaction evidence belongs to `75fbd61b`. The remaining matrix below prevents
+that earlier result from being mistaken for current-code or complete product
+acceptance.
 
 The accepted app composition entered Task13 at `fd94d301`. Earlier paired local
-RAW and production C7 A–B–A observations used reviewed `88996b74`. The current
+RAW and production C7 A–B–A observations used reviewed `88996b74`. The recorded
 live run used independently reviewed `75fbd61b`, which the controller built,
 signed, verified, installed and launched. Exact run identities, signing records,
 source values and artifacts remain in ignored private evidence.
@@ -25,8 +27,48 @@ FUJI_STUDIO_DESTINATION='platform=iOS Simulator,id=YOUR_SIMULATOR_UUID' Scripts/
 xcodebuild -project FujiStudio.xcodeproj -scheme FujiStudio -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
 ```
 
-The complete software gate passed **419 tests, 3 explicitly skipped**: 384 Swift
-Testing cases in 49 suites, 11 native XCTest unit cases, and 27 UI cases (24
+### Current code gate and review clearance
+
+The final runtime revision `86eacb7a43b3e11087dc11a0afdcb4db86324560` passed
+one complete simulator gate after all five integration corrections: **433 passed,
+3 established skips, 0 failures**. This comprises 396 Swift Testing functions in
+50 suites, 11 native XCTest cases and 29 UI cases (26 passed, 3 skipped). Exit 0 /
+TEST SUCCEEDED. The skips remain native Home/background, device rotation and
+hardware Escape delivery; none counts as physical proof. The subsequent unsigned
+Release simulator build passed, exit 0 / BUILD SUCCEEDED, with universal arm64
+and x86_64 output. No runtime changes followed these gates.
+
+The single scoped re-review of the correction package closed all five findings:
+
+| Corrected integration seam | Verified behavior |
+| --- | --- |
+| Restart-visible retryable jobs | Failed/cancelled/unprocessed items remain discoverable; explicit Retry or Resume processes only remaining items, retaining frozen identity and confirmed saves. |
+| Labelled preview fallback and error | The matching source/revision/version/file lease remains visible, or the current source's original resolves without a camera retry; the full actionable error is accessible alongside the image. |
+| All directly from Browse | The actual enabled All control enters Select with complete eligible membership. |
+| Detected RAW incompatibility | Shared revision-scoped knowledge reaches reload, All and export admission without eager RAW downloads or frozen-job mutation; a changed revision is reassessed. |
+| Cancellable preparation and progress | Obsolete PhotoKit preparation cancels and cleans up before ownership is released; current progress is visible, and admitted native camera work remains owned and awaited through completion. |
+
+The verdict was **APPROVED: I1–I5 addressed; 0 Critical, 0 Important, 0 Minor new
+findings**. Software review is clear for integration; the branch remains unmerged
+and main remains at `b53723cd`. This is not release acceptance. Exact commands,
+RED→GREEN history and the full review remain in ignored `final-fix-report.md`
+and `final-fix-review.md`. Current raw evidence is
+`.build/TestResults/final-fix-full.log`, `final-fix-full.xcresult` and
+`final-fix-release.log`. Review found zero unsafe SQLite unlink/API-violation/
+open-fd pattern matches in both current logs. Known AppIntents/SDK/simulator
+notices are not claimed absent.
+
+The controller subsequently signed exact `86eacb7a`, verified its code signature
+(exit 0), and installed it successfully on the physical phone. Normal launch
+while the phone was locked timed out after 20 seconds (exit 2). The user then
+reported the phone unlocked and Fuji Studio open. No independent current-code UI
+smoke result, native conversion or Photos export is established by this record;
+the earlier physical evidence below retains its original revision and limits.
+
+### Earlier software chronology
+
+The earlier complete software gate passed **419 tests, 3 explicitly skipped**:
+384 Swift Testing cases in 49 suites, 11 native XCTest unit cases, and 27 UI cases (24
 passed, 3 skipped: native Home, rotation and hardware keyboard). Exit 0 / TEST
 SUCCEEDED; all three unsafe SQLite unlink/API-violation/open-fd counts were zero.
 The equivalent final complete invocation used the wrapper's scheme/settings
@@ -68,7 +110,7 @@ AppIntents/SDK/simulator notices and deliberate invalid-RAW decoder diagnostics
 are not claimed absent. Final complete and targeted logs contain zero unsafe
 SQLite warning patterns.
 
-## Actual live run and evidence boundaries
+## Original `75fbd61b` live run and evidence boundaries
 
 The first explicit run stopped on a missing `rafDiscriminator` field in the
 historical standalone manifest. Its durable claim remained consumed;
@@ -114,7 +156,7 @@ an upright B image, RAW/original-JPEG/saved-C7 labels, a two-row drawer and the
 read-only reopen status. The validation route disables workspace controls, so
 these are visual observations, **not manual gesture, menu or accessibility proof**.
 
-### Later ordinary-app interaction observations
+### Later ordinary-app interaction observations on `75fbd61b`
 
 After the recorded reopen interval, the controller launched normally with no
 validation flag. Actual coordinate taps worked; the earlier remote-input blocker
@@ -154,7 +196,9 @@ full hashes, profile values and media.
 ## A01–A24 traceability
 
 “Software covered” does not replace physical proof. A bounded pass below applies
-only to the observed inputs/context; unrelated variants remain open.
+only to the observed inputs/context on the recorded original revisions; these
+physical rows do not establish a pass for corrected `86eacb7a`. Unrelated
+variants remain open.
 
 | Check | Software evidence | Physical status and remaining proof |
 | --- | --- | --- |
@@ -194,12 +238,14 @@ metadata/save proof, without same-source Mac visual-fidelity proof. Opaque
 uploaded-RAW buffer lifetime remains unknown despite owned-output cleanup.
 
 Earlier diagnostic seven-slot and production C7 A–B–A evidence remains historical,
-separate from this current live run. It is not relabeled as additional Photos
-exports. Full acceptance still requires the open physical rows above and
+separate from the recorded `75fbd61b` live run. It is not relabeled as additional
+Photos exports. Full acceptance still requires the open physical rows above and
 Instruments on at least 50 mixed sources: peak resident memory, one-item RAW
 temporary size, JPEG cache size, first/cached preview latency, per-stage export
 times and scrolling behavior. No numeric performance promise or inferred pass
-is made. Whole-branch review and final integration also remain pending.
+is made. The whole-branch review and its final scoped correction review are
+complete; software review is clear. Final integration remains pending, and the
+branch is unmerged.
 
 ## Controlled validation route
 
