@@ -65,7 +65,8 @@ The UI patch was reviewed and its one-row visibility finding corrected and
 verified; the branch remains unmerged. The controller signed, verified, installed
 and normally launched `f823a1d3` on the phone, observing the loaded one-row library
 and grabber-only header. Current gesture trajectories and live theme changes
-were verified in the simulator; physical gesture feel remains a separate check.
+were verified in the simulator. The user then confirmed white light-mode portrait
+margins, smooth tray flicks up/down and one-row collapse on the iPhone.
 No camera conversion or Photos export was performed for this UI correction.
 
 Earlier ordinary-app checks on `86eacb7a` completed a two-source C3 mixed

@@ -66,10 +66,12 @@ unlink/API-violation/open-fd pattern matches; known SDK notices remain.
 
 The exact signed update was installed and launched normally on the iPhone, exit
 0. Its live library loaded with one square row, a grabber-only header and no
-overlapping bottom material strip. Physical gesture feel and physical dark-mode
-interaction are not inferred from simulator results. No new Photos writes,
-camera operations, permissions or system appearance changes were made for this
-UI correction. The earlier native conversion/recovery evidence below retains
+overlapping bottom material strip. The user subsequently confirmed white
+light-mode portrait margins, smooth tray flicks up/down and one-row collapse on
+the installed `f823a1d3` build. This is human on-device confirmation, separate
+from the simulator frame traces; physical dark-mode interaction remains unrun.
+No new Photos writes, camera operations, permissions or system appearance
+changes were made for this UI correction. The earlier native conversion/recovery evidence below retains
 its original revision and limits.
 
 ### Production integration gate and review clearance (`86eacb7a`)
