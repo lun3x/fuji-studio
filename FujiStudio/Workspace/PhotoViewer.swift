@@ -165,6 +165,20 @@ actor JPEGDetailRenderer {
     }
 }
 
+enum ImageLoadingState: Equatable {
+    case loading, downloading(Double)
+
+    init?(_ state: PreviewState) {
+        switch state {
+        case .loading: self = .loading
+        case .progress(let value):
+            // Download completion does not mean camera conversion is complete.
+            self = value.isFinite && value < 1 ? .downloading(max(0, value)) : .loading
+        case .ready, .failed: return nil
+        }
+    }
+}
+
 struct PhotoViewer: View {
     let sourceID: SourceID
     let version: VersionID
@@ -172,6 +186,7 @@ struct PhotoViewer: View {
     let geometry: ImageGeometry?
     var displayFile: DisplayFileLease? = nil
     var detail: ZoomPhotoView.DetailProvider? = nil
+    var loading: ImageLoadingState? = nil
     var status: String? = nil
     var statusIsFailure = false
     var statusVisible = true
@@ -179,6 +194,23 @@ struct PhotoViewer: View {
     @State private var control = ZoomControl()
     @State private var statusPresented = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    private var loadingOverlay: some View {
+        ZStack {
+            Color(uiColor: .systemBackground).opacity(0.35)
+            VStack(spacing: 8) {
+                ProgressView().controlSize(.large).tint(.primary)
+                    .accessibilityLabel("Loading preview")
+                if case .downloading(let progress) = loading {
+                    Text(progress, format: .percent.precision(.fractionLength(0)))
+                        .font(.caption.monospacedDigit())
+                        .accessibilityLabel("Downloading original")
+                        .accessibilityValue(Text(progress, format: .percent.precision(.fractionLength(0))))
+                        .accessibilityIdentifier("viewer.loading.progress")
+                }
+            }.accessibilityElement(children: .contain).accessibilityIdentifier("viewer.loading")
+        }.allowsHitTesting(false)
+    }
 
     private var imageStatus: some View {
         Group {
@@ -205,10 +237,14 @@ struct PhotoViewer: View {
             if let imageURL, let geometry, geometry.isValid {
                 ZoomPhotoView(sourceID: sourceID, version: version, imageURL: imageURL, geometry: geometry,
                     displayFile: displayFile, detail: detail, control: control)
-                if status != nil {
+                    .saturation(loading == nil ? 1 : 0)
+                    .overlay { if loading != nil { loadingOverlay } }
+                if status != nil && loading == nil {
                     if statusVisible { imageStatus }
                     else { imageStatus.hidden() }
                 }
+            } else if loading != nil {
+                loadingOverlay
             } else {
                 ContentUnavailableView {
                     Label(version == .raw ? "RAW display unavailable" : "Image unavailable", systemImage: "photo")

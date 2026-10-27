@@ -21,6 +21,7 @@ private struct ViewerFixtureView: View {
     let fixture: ViewerFixture
     @State private var state: WorkspaceState
     @State private var compactViewport = false
+    @State private var loadingStep = 0
     init(fixture: ViewerFixture) {
         self.fixture = fixture
         _state = State(initialValue: fixture.state)
@@ -32,7 +33,9 @@ private struct ViewerFixtureView: View {
         VStack {
             Text("Generated detail fixture").font(.headline)
             PhotoViewer(sourceID: source.id, version: version, imageURL: version == .raw ? nil : file.fileURL,
-                geometry: fixture.geometry, displayFile: file)
+                geometry: fixture.geometry, displayFile: file,
+                loading: loadingStep == 0 ? nil : loadingStep == 2 ? .downloading(0.25) : .loading,
+                status: loadingStep == 0 ? nil : loadingStep == 2 ? "Downloading image… 25%" : "Loading image…")
                 .frame(height: compactViewport ? 210 : nil)
                 .overlay(alignment: .topTrailing) {
                     VersionMenu(source: source, saved: [fixture.saved], selected: version,
@@ -49,6 +52,10 @@ private struct ViewerFixtureView: View {
                 Button("Deliver late preview") { state.reduce(.previewCompleted(request: fixture.request, key: fixture.preview.key)) }
                     .accessibilityIdentifier("fixture.latePreview")
             }.buttonStyle(.bordered)
+            if ProcessInfo.processInfo.arguments.contains("--viewer-loading-controls") {
+                Button("Advance loading") { loadingStep = (loadingStep + 1) % 4 }
+                    .accessibilityIdentifier("fixture.loading")
+            }
         }.padding(.vertical, 8)
     }
 }
