@@ -2,10 +2,10 @@ import Foundation
 
 typealias SourceID = String
 
-enum ResourceRole: String, Sendable, Hashable { case primaryOriginal, alternateOriginal, adjusted }
-enum ResourceFormat: String, Sendable, Hashable { case raf, jpeg, other }
+enum ResourceRole: String, Sendable, Hashable, Codable { case primaryOriginal, alternateOriginal, adjusted }
+enum ResourceFormat: String, Sendable, Hashable, Codable { case raf, jpeg, other }
 
-struct ResourceToken: Sendable, Hashable {
+struct ResourceToken: Sendable, Hashable, Codable {
     let assetID: SourceID
     let role: ResourceRole
     let contentTypeIdentifier: String
@@ -16,20 +16,20 @@ struct ResourceToken: Sendable, Hashable {
     var byteCount: Int64? = nil
 }
 
-struct OriginalResources: Sendable, Equatable {
+struct OriginalResources: Sendable, Equatable, Codable {
     let raf: ResourceToken
     let jpeg: ResourceToken?
 }
 
-struct PhotoLocation: Sendable, Equatable {
+struct PhotoLocation: Sendable, Equatable, Codable {
     let latitude: Double
     let longitude: Double
     let altitude: Double
 }
 
-enum RAWCompatibility: Sendable, Equatable { case unknown, xt5, incompatible(model: String) }
+enum RAWCompatibility: Sendable, Equatable, Codable { case unknown, xt5, incompatible(model: String) }
 
-struct PhotoSource: Sendable, Equatable, Identifiable {
+struct PhotoSource: Sendable, Equatable, Identifiable, Codable {
     let id: SourceID
     let originalResources: OriginalResources
     let captureDate: Date?
