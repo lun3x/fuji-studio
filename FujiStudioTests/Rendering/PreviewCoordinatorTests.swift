@@ -172,3 +172,34 @@ extension PreviewCoordinatorTests {
         #expect(await reader.files.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) })
     }
 }
+
+extension PreviewCoordinatorTests {
+    @Test func readyOwnsSeparateFileAcrossExportAndReleasesStaleBufferedDisplays() async throws {
+        let f = try RenderFixture(); defer { f.remove() }
+        let cache = try f.cache(), reader = RenderLibrary(f), camera = RenderCamera(f)
+        let coordinator = PreviewCoordinator(pool: reader.pool(), camera: camera, scheduler: ImmediateCameraScheduler(), cache: cache,
+            rawRenderer: try RawDisplayRenderer(directory: f.root.appendingPathComponent("display")), storedDisplay: { _,_ in f.raw.fileURL })
+        var events = await coordinator.events().makeAsyncIterator()
+        let request = WorkspacePreviewRequest(generation: 77, sourceID: f.source.id, sourceRevision: f.source.resourceRevision, recipe: f.recipe, cameraContext: f.context)
+        await coordinator.request(source: f.source, recipe: f.recipe, workspaceRequest: request)
+        _ = await events.next()
+        var ready = await events.next()
+        let url = try #require(ready?.displayFile?.fileURL)
+        #expect(ready?.state == .ready(url))
+        #expect(ready?.workspaceRequest == request)
+        #expect(ready?.displayFile?.geometry == ImageGeometry(encoded: PixelSize(width: f.key().width, height: f.key().height), orientation: f.key().orientation))
+        _ = try await cache.pin(f.key()); await cache.unpin(f.key())
+        #expect(FileManager.default.fileExists(atPath: url.path))
+        await coordinator.selectStoredVersion(.cameraJPEG)
+        #expect(FileManager.default.fileExists(atPath: url.path)) // The consumer still owns it.
+        ready = nil
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+        _ = await events.next()
+        var second = await events.next()
+        let secondURL = try #require(second?.displayFile?.fileURL)
+        second = nil
+        // Do not drain: only the latest loading/ready pair may retain a display.
+        for _ in 0..<5 { await coordinator.selectStoredVersion(.cameraJPEG) }
+        #expect(!FileManager.default.fileExists(atPath: secondURL.path))
+    }
+}

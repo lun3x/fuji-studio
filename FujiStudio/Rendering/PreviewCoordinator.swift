@@ -13,6 +13,7 @@ struct PreviewEvent: Sendable, Equatable {
     let version: VersionID?
     let workspaceRequest: WorkspacePreviewRequest?
     let state: PreviewState
+    var displayFile: DisplayFileLease? = nil
 }
 
 actor PreviewCoordinator {
@@ -24,6 +25,7 @@ actor PreviewCoordinator {
     private let cache: FileRenderCache
     private let rawRenderer: RawDisplayRenderer
     private let storedDisplay: StoredDisplay
+    private var currentDisplayFile: DisplayFileLease?
     private var generation: UInt64 = 0
     private var source: PhotoSource?
     private var observers: [UUID: AsyncStream<PreviewEvent>.Continuation] = [:]
@@ -36,14 +38,16 @@ actor PreviewCoordinator {
     }
 
     func events() -> AsyncStream<PreviewEvent> {
-        let id = UUID(), pair = AsyncStream<PreviewEvent>.makeStream(bufferingPolicy: .bufferingNewest(32))
+        let id = UUID(), pair = AsyncStream<PreviewEvent>.makeStream(bufferingPolicy: .bufferingNewest(2))
         observers[id] = pair.continuation
         pair.continuation.onTermination = { [weak self] _ in Task { await self?.removeObserver(id) } }
         return pair.stream
     }
     private func removeObserver(_ id: UUID) { observers[id] = nil }
     private func emit(_ state: PreviewState, source: PhotoSource, generation: UInt64, version: VersionID?, request: WorkspacePreviewRequest?) {
-        let event = PreviewEvent(generation: generation, sourceID: source.id, version: version, workspaceRequest: request, state: state)
+        let file: DisplayFileLease? = if case .ready = state { currentDisplayFile } else { nil }
+        let event = PreviewEvent(generation: generation, sourceID: source.id, version: version,
+            workspaceRequest: request, state: state, displayFile: file)
         observers.values.forEach { $0.yield(event) }
     }
 
@@ -99,8 +103,11 @@ actor PreviewCoordinator {
                 let current = try await camera.executionContext()
                 guard generation == intent, current == jpeg.cameraContext,
                       workspaceRequest.map({ $0.cameraContext == current }) ?? true else { throw CameraServiceError.unsupportedContext }
+                let file = try await cache.copyForDisplay(jpeg.key)
+                guard generation == intent else { return }
+                currentDisplayFile = file
                 displayedVersion = .preview(jpeg.key)
-                emit(.ready(jpeg.fileURL), source: source, generation: intent, version: displayedVersion, request: workspaceRequest)
+                emit(.ready(file.fileURL), source: source, generation: intent, version: displayedVersion, request: workspaceRequest)
             } else {
                 try await showStored(.raw, source: source, intent: intent)
             }
@@ -123,23 +130,24 @@ actor PreviewCoordinator {
     }
 
     private func showStored(_ version: VersionID, source: PhotoSource, intent: UInt64) async throws {
-        let url: URL
+        let file: DisplayFileLease
         switch version {
         case .raw:
-            url = try await pool.withPreparedRAW(source: source, beforeMaterialize: { try await self.requireCurrent(intent) }) { raw in
+            file = try await pool.withPreparedRAW(source: source, beforeMaterialize: { try await self.requireCurrent(intent) }) { raw in
                 try await self.requireCurrent(intent)
-                return try await self.rawRenderer.render(raw)
+                return try DisplayFileLease.copy(from: await self.rawRenderer.render(raw), geometry: ImageGeometry.raw(raw.metadata))
             }
         case .preview(let key):
-            guard key.sourceID == source.id, key.sourceRevision == source.resourceRevision,
-                  let jpeg = await cache.lookup(key) else { throw RenderCacheError.missing }
-            url = jpeg.fileURL
+            guard key.sourceID == source.id, key.sourceRevision == source.resourceRevision else { throw RenderCacheError.missing }
+            file = try await cache.copyForDisplay(key)
         case .cameraJPEG, .saved:
-            url = try await storedDisplay(source, version)
+            let url = try await storedDisplay(source, version)
+            file = try DisplayFileLease.copy(from: url, geometry: try? ImageGeometry.read(url))
         }
         guard generation == intent else { return }
+        currentDisplayFile = file
         displayedVersion = version
-        emit(.ready(url), source: source, generation: intent, version: version, request: nil)
+        emit(.ready(file.fileURL), source: source, generation: intent, version: version, request: nil)
     }
 
     private func requireCurrent(_ intent: UInt64) throws {

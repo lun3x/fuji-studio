@@ -71,6 +71,16 @@ actor FileRenderCache {
         return entry.jpeg
     }
 
+    /// Validation and copy run without suspension on the cache actor: pin moves, eviction and
+    /// journal recovery cannot invalidate the source between lookup and display ownership.
+    func copyForDisplay(_ key: RenderKey) throws -> DisplayFileLease {
+        try Task.checkCancellation()
+        guard let entry = entries[key] else { throw RenderCacheError.missing }
+        _ = try Self.validate(entry.jpeg, key: key, validateJPEG: validateJPEG)
+        let geometry = ImageGeometry(encoded: PixelSize(width: key.width, height: key.height), orientation: key.orientation)
+        return try DisplayFileLease.copy(from: entry.jpeg.fileURL, geometry: geometry)
+    }
+
     func store(_ jpeg: CameraJPEG, key: RenderKey) async throws {
         let size = try Self.validate(jpeg, key: key, validateJPEG: validateJPEG)
         if hasPinReservation(try Self.identifier(key)) {

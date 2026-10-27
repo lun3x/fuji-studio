@@ -25,6 +25,7 @@ targets:
         INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription: Fuji Studio saves the full-size JPEG photos you explicitly export to your photo library.
         INFOPLIST_KEY_NSCameraUsageDescription: Fuji Studio controls your connected Fujifilm camera to read its recipes and convert original RAF photos.
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
   FujiStudioTests:
     type: bundle.unit-test
     platform: iOS
