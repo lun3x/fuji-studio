@@ -60,12 +60,13 @@ struct WorkspaceView<StatusControl: View, ConnectionControl: View>: View {
                                 // Fresh request waits for actual final GRID bounds, including after animated resize.
                                 scrollRequest = GridScrollRequest(sourceID: id, afterViewportHeight: detents.collapsedGridHeight)
                             }
-                        }, header: { selectionHeader }, grid: {
+                        }, grid: {
                             PhotoGrid(sources: sources, checkedSourceIDs: state.checkedSourceIDs, isSelecting: state.isSelecting,
                                 viewedSourceID: state.viewedSourceID, thumbnails: thumbnails, scrollRequest: scrollRequest,
                                 gridMetrics: gridMetrics, bottomInset: safe.bottom,
                                 onSourceTapped: { onAction(.sourceTapped($0)) },
                                 onCheckedChanged: { onAction(.checkedSourcesReplaced($0)) }, onViewportChanged: onViewportChanged)
+                                .overlay(alignment: .top) { selectionControls.padding(12) }
                         })
                         .frame(width: width)
                 }.frame(width: width, height: size.height).offset(x: safe.leading)
@@ -127,39 +128,38 @@ struct WorkspaceView<StatusControl: View, ConnectionControl: View>: View {
                 onVersionSelected: { onAction(.versionSelected($0)) }, onControlFrameChanged: { versionFrame = $0 })
         }
     }
-    private var selectionHeader: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 12) { selectionButton; count; Spacer(minLength: 0); membershipButtons }
-            VStack(spacing: 8) {
-                HStack { selectionButton; Spacer(minLength: 8); count }
-                HStack { Spacer(minLength: 0); membershipButtons; Spacer(minLength: 0) }
+    private var selectionControls: some View {
+        GlassEffectContainer(spacing: 12) {
+            HStack(alignment: .top) {
+                if state.isSelecting {
+                    count.padding(.horizontal, 12).frame(minHeight: 44)
+                        .glassEffect(.regular, in: .capsule)
+                        .allowsHitTesting(false)
+                }
+                Spacer(minLength: 12)
+                selectionButton
             }
-        }.font(dynamicTypeSize.isAccessibilitySize ? .caption : .callout)
+        }
     }
     private var selectionButton: some View {
         Button { onAction(state.isSelecting ? .done : .select) } label: {
-            ZStack {
-                Text("Select").fixedSize().hidden(); Text("Done").fixedSize().hidden()
-                Text(state.isSelecting ? "Done" : "Select").fixedSize()
+            Group {
+                if state.isSelecting {
+                    Image(systemName: "xmark").frame(width: 44, height: 44)
+                } else {
+                    Text("Select").fixedSize().padding(.horizontal, 16).frame(minHeight: 44)
+                }
             }
-        }.buttonStyle(.bordered).accessibilityIdentifier("workspace.select")
-    }
-    private var membershipButtons: some View {
-        HStack(spacing: 8) {
-            Button("All") { onAction(.all(accessibleEligibleSourceIDs: state.eligibleSourceIDs)) }
-                .accessibilityIdentifier("workspace.all")
-            Button("None") { onAction(.none) }.accessibilityIdentifier("workspace.none")
-                .disabled(!state.isSelecting)
-        }.buttonStyle(.bordered)
+            .font(.callout.weight(.semibold)).contentShape(.capsule)
+        }.buttonStyle(.plain)
+            .glassEffect(.regular.interactive(), in: .capsule)
+            .accessibilityLabel(state.isSelecting ? "Cancel selection" : "Select")
+            .accessibilityIdentifier("workspace.select")
     }
     private var count: some View {
-        ZStack {
-            // Reserve the complete index count before entering Select or choosing All.
-            Label("\(sources.count)", systemImage: "checkmark.circle").hidden()
-            Label("\(sources.count)", systemImage: "photo").hidden()
-            Label("\(state.effectiveSources.count)", systemImage: state.isSelecting ? "checkmark.circle" : "photo")
-                .accessibilityLabel(state.isSelecting ? "\(state.effectiveSources.count) selected" : "\(state.effectiveSources.count) photo")
-                .accessibilityIdentifier("workspace.count")
-        }.font(.caption).monospacedDigit().lineLimit(1).fixedSize()
+        Label("\(state.checkedSourceIDs.count)", systemImage: "checkmark.circle")
+            .accessibilityLabel("\(state.checkedSourceIDs.count) selected")
+            .accessibilityIdentifier("workspace.count")
+            .font(.caption).monospacedDigit().lineLimit(1).fixedSize()
     }
 }

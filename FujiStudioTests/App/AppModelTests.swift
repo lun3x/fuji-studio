@@ -16,19 +16,20 @@ import Testing
         #expect(await f.writer.requests.isEmpty)
     }
 
-    @Test func lateAllCannotUndoNoneOrDone() async throws {
-        let f = try await FixtureEnvironment.make(), barrier = FixtureBarrier()
+    @Test func selectAndCancelPreserveViewedPhotoWithoutRediscovery() async throws {
+        let f = try await FixtureEnvironment.make()
         let model = AppModel(environment: f.environment)
         await model.start()
-        await f.reader.holdAll(barrier)
-        model.send(.select); model.send(.all(accessibleEligibleSourceIDs: []))
-        await barrier.entered()
-        #expect(model.isSelectingAll)
-        model.send(.none); model.send(.done)
-        await barrier.release()
-        await eventually { !model.isSelectingAll }
+        model.send(.sourceTapped("source-0"))
+        model.send(.select)
+        #expect(model.state.isSelecting)
+        #expect(model.state.checkedSourceIDs == ["source-0"])
+        model.send(.checkedSourcesReplaced(["source-0", "source-1"]))
+        model.send(.done)
         #expect(!model.state.isSelecting)
         #expect(model.state.checkedSourceIDs.isEmpty)
+        #expect(model.state.viewedSourceID == "source-0")
+        #expect(await f.reader.discoveryRequests == 1)
     }
 
     @Test func readyBusyReadyImportsSevenOnlyOnceAndRefreshFailureRetainsThem() async throws {
@@ -107,7 +108,7 @@ import Testing
         await model.start(); await model.connect()
         model.send(.sourceTapped("source-0")); model.send(.recipeSelected(slot: 3))
         await eventually { model.preview != nil }
-        model.send(.select); model.send(.all(accessibleEligibleSourceIDs: []))
+        model.send(.select); model.send(.checkedSourcesReplaced(["source-0", "source-1", "source-2"]))
         await eventually { model.state.checkedSourceIDs.count == 3 }
         await f.writer.holdSave(barrier)
         await model.export(); await barrier.entered()
@@ -146,7 +147,7 @@ import Testing
         #expect(await f.camera.renderCount == 2)
     }
 
-    @Test func incrementalDiscoveryDoesNotPruneViewedSourceAfterFirstBatchAndAllUsesCompleteIndex() async throws {
+    @Test func incrementalDiscoveryPrunesViewedSourceOnlyAfterCompletePass() async throws {
         let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment)
         await model.start(); model.send(.sourceTapped("source-2"))
         let barrier = FixtureBarrier(); await f.reader.holdDiscovery(barrier)
@@ -157,10 +158,10 @@ import Testing
         await barrier.release(); await reload.value
         await f.reader.limitDiscovery(1); await model.reloadLibrary()
         #expect(model.sources.count == 1)
-        model.send(.select); model.send(.all(accessibleEligibleSourceIDs: []))
-        await eventually { !model.isSelectingAll }
-        #expect(model.sources.count == 3)
-        #expect(model.state.checkedSourceIDs == ["source-0", "source-1", "source-2"])
+        #expect(model.state.viewedSourceID == nil)
+        model.send(.select); model.send(.checkedSourcesReplaced(["source-0", "source-1", "source-2"]))
+        #expect(model.sources.count == 1)
+        #expect(model.state.checkedSourceIDs == ["source-0"])
     }
 
     @Test func manualSourceSwitchRejectsLateStoredBytesAndRetainsLeaseDuringDetail() async throws {
@@ -201,7 +202,7 @@ import Testing
         await model.start(); await model.connect()
         model.send(.sourceTapped("source-0")); model.send(.recipeSelected(slot: 3))
         await eventually { model.preview != nil }
-        model.send(.select); model.send(.all(accessibleEligibleSourceIDs: []))
+        model.send(.select); model.send(.checkedSourcesReplaced(["source-0", "source-1", "source-2"]))
         await eventually { model.state.checkedSourceIDs.count == 3 }
         await f.writer.holdSave(barrier); await model.export(); await barrier.entered()
         await f.reader.restrictTo(["source-2"])

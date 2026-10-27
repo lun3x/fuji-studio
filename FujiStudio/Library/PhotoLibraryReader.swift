@@ -6,21 +6,10 @@ import CryptoKit
 protocol PhotoLibraryReading: Sendable {
     func requestAccess() async -> LibraryAccess
     func sources() async -> AsyncThrowingStream<[PhotoSource], Error>
-    func allEligibleSources() async throws -> [PhotoSource]
     func source(id: SourceID) async throws -> PhotoSource
     func resources(assetID: String) async throws -> [ResourceToken]
     func changes() async -> AsyncStream<LibraryChange>
     func materialize(_ resource: ResourceToken, progress: @escaping @Sendable (Double) -> Void) async throws -> LocalResource
-}
-
-extension PhotoLibraryReading {
-    func allEligibleSources() async throws -> [PhotoSource] {
-        try Task.checkCancellation()
-        var result: [PhotoSource] = []
-        for try await batch in await sources() { result.append(contentsOf: batch) }
-        try Task.checkCancellation()
-        return result
-    }
 }
 
 /// Value boundary for PhotoKit. Role and content type jointly identify originals.

@@ -41,6 +41,19 @@ sets out the hardware feasibility gates, native app tasks, and acceptance checks
 
 ## Status
 
+The photo tray now uses a floating glass Select button at the top right. Select
+becomes an X to cancel the batch; checked thumbnails are greyed with a blue
+checkmark at the bottom right. The floating count appears only in Select mode.
+All and None, including the full-library scan
+triggered by All, have been removed. Tap and range selection retain the existing
+viewed photo and scrolling behavior. See the
+[selection design](docs/superpowers/specs/2026-10-27-photos-selection-design.md).
+The selection implementation passed **439 tests, 3 established skips, 0
+failures**; the count-only follow-up passed three focused UI cases. Final
+Release and signed phone builds passed, and the refined build is installed on
+the phone. See the [selection validation](docs/validation/photos-selection.md)
+for the exact gate boundaries and screenshot evidence.
+
 The native workspace composes the real Photos reader/writer, X-T5 camera
 service, preview/export coordinators and durable local catalog. The workspace layout
 at `2e45055b` passed the complete simulator gate: **442 passed, 3 established
@@ -68,7 +81,8 @@ The production integration review at
   for explicit remaining-only Retry or Resume, preserving confirmed saves.
 - Preview failures keep the matching image and version label with an actionable,
   accessible error, or resolve the current source's original without a camera retry.
-- All works directly from Browse and selects the complete eligible membership.
+- The former All action worked directly from Browse; it has since been replaced
+  by the floating Select/X flow described above.
 - Detected incompatible RAW models affect selection and export admission across
   same-revision reloads; changed originals are reassessed without eager downloads.
 - Obsolete original preparation is cancelled and reports progress, while admitted
@@ -168,7 +182,7 @@ For a physical device, supply a locally authorized development team in ignored `
 
 ## Original-resource boundary
 
-`PhotoLibraryReading` passes Sendable records and local file URLs, never PhotoKit objects. Source discovery is metadata-only, ordered by effective Photos capture date descending and identifier ascending, and streams batches of up to 64 sources. `allEligibleSources()` completes that discovery without downloading originals. Each original RAF+JPEG pair remains one source. JPEG-only assets remain inspectable by ID for saved-version viewing, but do not enter source discovery.
+`PhotoLibraryReading` passes Sendable records and local file URLs, never PhotoKit objects. Source discovery is metadata-only, ordered by effective Photos capture date descending and identifier ascending, and streams batches of up to 64 sources. Selection uses the discovered index and never starts a new discovery pass. Each original RAF+JPEG pair remains one source. JPEG-only assets remain inspectable by ID for saved-version viewing, but do not enter source discovery.
 
 Only primary/alternate original roles qualify; content types distinguish RAF, JPEG and other RAW formats. A selected resource streams to a unique temporary file with iCloud progress, SHA-256 and cancellation/error cleanup. The caller owns and removes a successful local file. Missing originals and network failures remain preparation errors.
 

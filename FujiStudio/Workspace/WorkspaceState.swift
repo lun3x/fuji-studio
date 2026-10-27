@@ -22,11 +22,9 @@ enum WorkspaceEffect: Sendable, Equatable {
 
 enum WorkspaceAction: Sendable {
     case sourceTapped(SourceID)
-    case select, done, none
+    case select, done
     /// Range sweep membership only; never changes viewed source or preview intent.
     case checkedSourcesReplaced(Set<SourceID>)
-    /// The library index supplies the entire accessible eligible set, including offscreen sources.
-    case all(accessibleEligibleSourceIDs: Set<SourceID>)
     case versionSelected(VersionID)
     case recipeSelected(slot: Int?)
     case recipesRefreshed([RecipeSnapshot])
@@ -153,15 +151,8 @@ struct WorkspaceState: Sendable {
             isSelecting = false
             checkedSourceIDs.removeAll()
 
-        case .none:
-            if isSelecting { checkedSourceIDs.removeAll() }
-
         case .checkedSourcesReplaced(let ids):
             if isSelecting { checkedSourceIDs = ids.intersection(Set(sources.keys)) }
-
-        case .all(let ids):
-            isSelecting = true
-            checkedSourceIDs = ids.intersection(eligibleSourceIDs)
 
         case .versionSelected(let version):
             guard viewedSourceID != nil else { return [] }

@@ -149,8 +149,8 @@ import Testing
         await eventually { model.sources.first { $0.id == "source-0" }?.compatibility == .incompatible(model: "X-T4") }
         #expect(!model.state.eligibleSourceIDs.contains("source-0"))
         await model.reloadLibrary()
-        model.send(.all(accessibleEligibleSourceIDs: []))
-        await eventually { !model.isSelectingAll }
+        model.send(.select)
+        model.send(.checkedSourcesReplaced(["source-1", "source-2"]))
         #expect(model.state.checkedSourceIDs == ["source-1", "source-2"])
         #expect(model.sources.first { $0.id == "source-0" }?.compatibility == .incompatible(model: "X-T4"))
         model.send(.done); model.send(.sourceTapped("source-0")); model.send(.recipeSelected(slot: 1))

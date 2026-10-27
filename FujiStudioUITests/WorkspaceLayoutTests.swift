@@ -10,6 +10,10 @@ final class WorkspaceLayoutTests: XCTestCase {
         return app
     }
     private func tile(_ app: XCUIApplication, _ n: Int) -> XCUIElement { app.cells["grid.source-\(n)"] }
+    private func countLabel(_ app: XCUIApplication) -> String {
+        let count = app.staticTexts["workspace.count"]
+        return count.exists ? count.label : ""
+    }
     private func shot(_ app: XCUIApplication, _ name: String) {
         let metrics = XCTAttachment(string: "\(app.otherElements["fixture.nativeMetrics"].label)\nViewer \(app.scrollViews["viewer.image"].frame), value \(String(describing: app.scrollViews["viewer.image"].value)); Grid \(app.collectionViews["photoGrid"].frame); Export \(app.buttons["workspace.export"].frame); recipe \(app.buttons["recipe.control"].frame); drawer header \(app.buttons["drawer.toggle"].frame)")
         metrics.name = name + " native bounds"; metrics.lifetime = .keepAlways; add(metrics)
@@ -18,14 +22,14 @@ final class WorkspaceLayoutTests: XCTestCase {
     }
     private func assertRecipeControlUsable(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
         let control = app.buttons["recipe.control"], rect = control.frame
-        let before = [app.staticTexts["fixture.viewed"].label, app.staticTexts["workspace.count"].label, app.staticTexts["fixture.exportCount"].label, control.label]
+        let before = [app.staticTexts["fixture.viewed"].label, countLabel(app), app.staticTexts["fixture.exportCount"].label, control.label]
         app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: rect.midX, dy: rect.midY)).tap()
         XCTAssertTrue(app.buttons["recipe.slot.3"].waitForExistence(timeout: 5), file: file, line: line)
         // Tap above the popover in the measured Export region; native outside dismissal swallows it.
         let outside = app.buttons["workspace.export"].frame
         app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: outside.midX, dy: outside.midY)).tap()
         XCTAssertTrue(app.buttons["recipe.none"].waitForNonExistence(timeout: 3), file: file, line: line)
-        XCTAssertEqual([app.staticTexts["fixture.viewed"].label, app.staticTexts["workspace.count"].label, app.staticTexts["fixture.exportCount"].label, control.label], before, file: file, line: line)
+        XCTAssertEqual([app.staticTexts["fixture.viewed"].label, countLabel(app), app.staticTexts["fixture.exportCount"].label, control.label], before, file: file, line: line)
     }
     private func openRecipeMenu(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
         let rect = app.buttons["recipe.control"].frame
@@ -124,13 +128,10 @@ final class WorkspaceLayoutTests: XCTestCase {
         XCTAssertLessThanOrEqual(final.frame.maxY, grid.frame.maxY + 0.5)
         XCTAssertEqual(final.value as? String, "Checked")
         XCTAssertEqual(app.staticTexts["workspace.count"].label, "3 selected")
-        app.buttons["workspace.all"].tap()
-        XCTAssertEqual(app.staticTexts["workspace.count"].label, "120 selected")
-        app.buttons["workspace.none"].tap()
-        XCTAssertEqual(app.staticTexts["workspace.count"].label, "0 selected")
-        XCTAssertFalse(app.buttons["workspace.export"].isEnabled)
         app.buttons["workspace.select"].tap()
-        XCTAssertEqual(app.staticTexts["workspace.count"].label, "1 photo")
+        XCTAssertFalse(final.isSelected)
+        XCTAssertEqual(app.buttons["workspace.select"].label, "Select")
+        XCTAssertFalse(app.staticTexts["workspace.count"].exists)
         shot(app, "Workspace minimum reveal after collapse")
     }
     func testRecipePopoverSelectionDismissClearAndRefresh() {
@@ -236,7 +237,7 @@ final class WorkspaceLayoutTests: XCTestCase {
         let viewer = app.scrollViews["viewer.image"]
         XCTAssertGreaterThanOrEqual(app.buttons["workspace.versions"].frame.minY, viewer.frame.minY)
         XCTAssertLessThanOrEqual(app.buttons["workspace.versions"].frame.maxY, viewer.frame.maxY)
-        let beforeZoom = [app.staticTexts["fixture.viewed"].label, app.staticTexts["workspace.count"].label, app.staticTexts["fixture.exportCount"].label, app.buttons["recipe.control"].label]
+        let beforeZoom = [app.staticTexts["fixture.viewed"].label, countLabel(app), app.staticTexts["fixture.exportCount"].label, app.buttons["recipe.control"].label]
         viewer.pinch(withScale: 2.5, velocity: 1)
         let zoomed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             Double((app.scrollViews["viewer.image"].value as! String).split(separator: ",")[0])! > 1
@@ -250,7 +251,7 @@ final class WorkspaceLayoutTests: XCTestCase {
         }, object: nil)
         XCTAssertEqual(XCTWaiter.wait(for: [fitted], timeout: 5), .completed)
         XCTAssertEqual(Double((app.scrollViews["viewer.image"].value as! String).split(separator: ",")[0])!, 1, accuracy: 0.01)
-        XCTAssertEqual([app.staticTexts["fixture.viewed"].label, app.staticTexts["workspace.count"].label, app.staticTexts["fixture.exportCount"].label, app.buttons["recipe.control"].label], beforeZoom)
+        XCTAssertEqual([app.staticTexts["fixture.viewed"].label, countLabel(app), app.staticTexts["fixture.exportCount"].label, app.buttons["recipe.control"].label], beforeZoom)
         XCTAssertFalse(app.buttons["workspace.versions"].frame.intersects(app.buttons["recipe.control"].frame))
         XCTAssertFalse(app.buttons["workspace.export"].frame.intersects(app.buttons["recipe.control"].frame))
         app.buttons["workspace.versions"].tap()

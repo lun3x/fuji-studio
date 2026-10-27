@@ -16,32 +16,35 @@ final class PhotoGridTests: XCTestCase {
         XCTAssertFalse(tile(app, 0).isHittable)
         let visible = app.cells.allElementsBoundByIndex.first(where: \.isHittable)!
         let id = visible.identifier, frame = visible.frame
-        app.buttons["Done"].tap()
+        app.buttons["Cancel selection"].tap()
         XCTAssertEqual(app.cells[id].frame, frame)
         grid.swipeUp(); XCTAssertFalse(app.cells[id].isHittable)
         let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Vertical square grid"; shot.lifetime = .keepAlways; add(shot)
     }
-    func testAccessibleTapTogglesAndAllIncludesOffscreenUnknownSources() {
+    func testAccessibleTapTogglesSelectionAndCancelClearsChecks() {
         let app = launch()
         app.buttons["Select"].tap(); tile(app, 0).tap()
         XCTAssertEqual(app.staticTexts["gridFixture.checked"].label, "Checked: 1")
         XCTAssertEqual(tile(app, 0).value as? String, "Checked")
         tile(app, 0).tap(); XCTAssertEqual(app.staticTexts["gridFixture.checked"].label, "Checked: 0")
-        app.buttons["All"].tap(); XCTAssertEqual(app.staticTexts["gridFixture.checked"].label, "Checked: 1000")
+        tile(app, 1).tap()
+        app.buttons["Cancel selection"].tap()
+        XCTAssertEqual(app.staticTexts["gridFixture.checked"].label, "Checked: 0")
+        XCTAssertFalse(tile(app, 1).isSelected)
     }
     func testCheckedStartSweepRemovesAndEdgeScrollExtendsRange() {
         let app = launch(), grid = app.collectionViews["photoGrid"]
-        app.buttons["All"].tap()
+        app.buttons["Select"].tap()
+        for index in 0...2 { tile(app, index).tap() }
         let start = tile(app, 0).coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.5))
         let end = tile(app, 2).coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.5))
         start.press(forDuration: 0.05, thenDragTo: end)
-        XCTAssertEqual(app.staticTexts["gridFixture.checked"].label, "Checked: 997")
-        app.buttons["None"].tap()
+        XCTAssertEqual(app.staticTexts["gridFixture.checked"].label, "Checked: 0")
         let edgeStart = tile(app, 6).coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.5))
         edgeStart.press(forDuration: 0.05, thenDragTo: grid.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.97)), withVelocity: .slow, thenHoldForDuration: 2)
         let count = Int(app.staticTexts["gridFixture.checked"].label.replacingOccurrences(of: "Checked: ", with: "")) ?? 0
         XCTAssertGreaterThan(count, 24)
-        XCTAssertEqual(app.staticTexts["gridFixture.viewed"].label, "Viewed: none")
+        XCTAssertEqual(app.staticTexts["gridFixture.viewed"].label, "Viewed: source-2")
         let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "Sweep edge autoscroll past initial cells"; shot.lifetime = .keepAlways; add(shot)
     }
     func testFinalTwoRowViewportRevealsViewedTileAndPreservesCheckedSet() {
