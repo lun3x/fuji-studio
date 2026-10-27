@@ -212,7 +212,7 @@ final class WorkspaceLayoutTests: XCTestCase {
         assertRecipeControlUsable(app)
         shot(app, "Workspace AX5 expanded")
         openRecipeMenu(app)
-        XCTAssertTrue(app.staticTexts["recipe.stale"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["recipe.stale"].exists)
         let options = app.scrollViews["recipe.options"]
         for _ in 0..<16 {
             let refresh = app.buttons["recipe.refresh"].frame

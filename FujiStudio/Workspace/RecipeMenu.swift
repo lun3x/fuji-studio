@@ -5,7 +5,6 @@ import UIKit
 struct RecipeMenu: View {
     let current: RecipeSnapshot?
     let snapshots: [RecipeSnapshot]
-    let refreshState: RecipeRefreshState
     let isCameraConnected: Bool
     var onSelect: (Int?) -> Void
     var onRefresh: () -> Void
@@ -15,10 +14,10 @@ struct RecipeMenu: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.colorSchemeContrast) private var contrast
 
-    init(current: RecipeSnapshot?, snapshots: [RecipeSnapshot], refreshState: RecipeRefreshState, isCameraConnected: Bool,
+    init(current: RecipeSnapshot?, snapshots: [RecipeSnapshot], isCameraConnected: Bool,
          onSelect: @escaping (Int?) -> Void, onRefresh: @escaping () -> Void,
          onControlFrameChanged: @escaping (CGRect) -> Void = { _ in }, initiallyPresented: Bool = false) {
-        self.current = current; self.snapshots = snapshots; self.refreshState = refreshState
+        self.current = current; self.snapshots = snapshots
         self.isCameraConnected = isCameraConnected
         self.onSelect = onSelect; self.onRefresh = onRefresh; self.onControlFrameChanged = onControlFrameChanged
         _presented = State(initialValue: initiallyPresented)
@@ -50,11 +49,6 @@ struct RecipeMenu: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 Text("Camera recipes").font(.headline).padding()
-                if case .stale(let message) = refreshState {
-                    Label("Cached recipes · \(message)", systemImage: "exclamationmark.arrow.trianglehead.2.clockwise.rotate.90")
-                        .font(.callout).padding(.horizontal).padding(.bottom, 8)
-                        .accessibilityIdentifier("recipe.stale")
-                }
                 row(title: "No recipe", selected: current == nil, identifier: "recipe.none") { choose(nil) }
                 ForEach(1...7, id: \.self) { slot in
                     let recipe = snapshots.first { $0.slot == slot }
