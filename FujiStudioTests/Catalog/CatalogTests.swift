@@ -201,6 +201,39 @@ struct CatalogTests {
         #expect(try await reopened.job(id: job.id).items[0].state == .saved(version.id))
     }
 
+    // Catches first confirmation replacing an already known Photos asset with another output.
+    @Test func firstConfirmationMustMatchKnownPlaceholderAfterRestart() async throws {
+        let f = try CatalogFixture()
+        for submission in [SaveSubmission.submitted(at: f.exportTime), .unknown(at: f.exportTime)] {
+            let disk = try CatalogTestDisk(); defer { disk.remove() }
+            var job = f.job()
+            let operation = job.items[0].operationID
+            let pending = PendingSave(operationID: operation, jpeg: f.jpeg(),
+                placeholderID: "asset-A", submission: submission)
+            if case .unknown = submission { job.items[0].state = .unresolved(pending) }
+            else { job.items[0].state = .pendingSave(pending) }
+            do {
+                let catalog = try SwiftDataCatalog(storeURL: disk.url)
+                try await catalog.saveJob(job)
+            }
+            do {
+                let reopened = try SwiftDataCatalog(storeURL: disk.url)
+                let wrong = f.version(operationID: operation, outputAssetID: "asset-B")
+                await #expect(throws: CatalogError.conflictingOperation(operation)) {
+                    try await reopened.confirmSaved(jobID: job.id, operationID: operation, version: wrong)
+                }
+            }
+            let reopened = try SwiftDataCatalog(storeURL: disk.url)
+            #expect(try await reopened.job(id: job.id) == job)
+            #expect(try await reopened.versions(sourceID: "A").isEmpty)
+            let correct = f.version(operationID: operation, outputAssetID: "asset-A")
+            try await reopened.confirmSaved(jobID: job.id, operationID: operation, version: correct)
+            let confirmed = try SwiftDataCatalog(storeURL: disk.url)
+            #expect(try await confirmed.versions(sourceID: "A") == [correct])
+            #expect(try await confirmed.job(id: job.id).items[0].state == .saved(correct.id))
+        }
+    }
+
     // Catches treating an unsubmitted/rejected item as a source/output conflict or a saved asset.
     @Test func confirmationRequiresDurableSubmittedAttempt() async throws {
         let disk = try CatalogTestDisk(); defer { disk.remove() }

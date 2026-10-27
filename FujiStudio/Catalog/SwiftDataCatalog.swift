@@ -161,6 +161,7 @@ actor SwiftDataCatalog: ModelActor, CatalogStoring {
                 throw CatalogError.invalidState("An unsubmitted or rejected save cannot be confirmed")
             }
             guard pending.jpeg == version.jpeg, pending.operationID == operationID,
+                  pending.placeholderID == nil || pending.placeholderID == version.outputAssetID,
                   pending.submission.attemptedAt == version.exportedAt else {
                 throw CatalogError.conflictingOperation(operationID)
             }
