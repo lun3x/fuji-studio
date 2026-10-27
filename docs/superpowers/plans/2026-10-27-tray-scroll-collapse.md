@@ -34,12 +34,15 @@ reuse the divider's height, detents, spring and manual-collapse callback.
 - [x] Add the pan bridge and reuse the divider's drag and release handling.
 - [x] Cover boundary admission/cancellation in `PhotoGridControllerTests.swift`
   and short-pull/top-crossing behavior with UI tests.
-- [ ] Run focused tests, then `Scripts/test-ios.sh` on the task simulator;
+- [x] Run focused tests, then `Scripts/test-ios.sh` on the task simulator;
   inspect the result and gesture evidence.
-- [ ] Review the diff, commit with `jj`, push `codex/tray-scroll-collapse`,
+- [x] Review the diff, commit with `jj`, push `codex/tray-scroll-collapse`,
   and remove the task simulator.
 
 Review caught grid ownership persisting after reversing beyond the expanded
 height. The added reversal test failed at the expected offset and deceleration
 assertions, then passed with the ownership handoff fixed. All 13 controller
-tests pass. Final simulator validation is recorded separately when complete.
+tests pass. The full run recorded 451 passes, three established skips and one
+viewer test runner termination; the terminated test passed unchanged on rerun.
+See `docs/validation/tray-scroll-collapse.md` for the result boundaries and
+retained evidence. The task simulator was deleted after validation.
