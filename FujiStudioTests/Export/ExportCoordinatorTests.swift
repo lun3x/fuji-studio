@@ -175,7 +175,7 @@ extension ExportCoordinatorTests {
         await latch.release()
         let id = try await starting.value
         await engine.cancel(jobID: id)
-        #expect(try await f.catalog.unfinishedJobs().isEmpty)
+        #expect(try await f.catalog.unfinishedJobs().map(\.id) == [id])
         await #expect(throws: ExportCoordinatorError.invalidSubmission) {
             try await engine.start(sources: [], recipe: f.render.recipe)
         }
@@ -437,11 +437,13 @@ extension ExportCoordinatorTests {
         #expect(final?.summary.failed == 1)
         #expect(await writer.requests.count == 1)
         try await engine.recover()
+        _ = await terminal(&events, id) // Recovery now publishes this retryable terminal job.
         #expect(await writer.requests.count == 1)
         try await engine.retry(jobID: id); _ = await terminal(&events, id)
         #expect(await writer.requests.count == 2)
         #expect(try await f.catalog.versions(sourceID: "paired").count == 1)
-        #expect(await writer.requests[0].operationID == writer.requests[1].operationID)
+        let requests = await writer.requests
+        #expect(try #require(requests.first).operationID == #require(requests.last).operationID)
     }
 }
 

@@ -249,8 +249,10 @@ actor SwiftDataCatalog: ModelActor, CatalogStoring {
     private func isUnfinished(_ job: ExportJob) -> Bool {
         job.items.contains {
             switch $0.state {
-            case .queued, .preparing, .converting, .pendingSave, .unresolved: true
-            case .saved, .failed, .cancelled, .unprocessed: false
+            // Terminal failures/cancellations still need an explicit user retry after restart.
+            // Discovery never grants permission to execute or replace an uncertain save.
+            case .queued, .preparing, .converting, .pendingSave, .unresolved, .failed, .cancelled, .unprocessed: true
+            case .saved: false
             }
         }
     }
