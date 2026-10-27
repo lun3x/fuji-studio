@@ -228,7 +228,7 @@ final class RecipeMenuRoutingTests: XCTestCase {
         XCTAssertTrue(store.selections.isEmpty)
     }
     private func routePresentation(store: RecipeRoutingStore, scene: UIWindowScene, lateResponder: WeakRecipeResponder? = nil) async throws -> WeakRecipeResponder {
-        let menu = RecipeMenu(current: store.state.selectedRecipe, snapshots: store.state.recipes,
+        let menu = RecipeMenu(current: store.state.selectedRecipe, snapshots: store.state.recipes, refreshState: .fresh,
             isCameraConnected: store.state.isCameraConnected,
             onSelect: { store.selections.append($0); store.state.reduce(.recipeSelected(slot: $0)) }, onRefresh: {}, initiallyPresented: true)
         let host = UIHostingController(rootView: menu)

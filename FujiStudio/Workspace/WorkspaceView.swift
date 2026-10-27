@@ -109,7 +109,7 @@ struct WorkspaceView<StatusControl: View, ConnectionControl: View>: View {
         }
     }
     private var recipeControl: some View {
-        RecipeMenu(current: state.selectedRecipe, snapshots: state.recipes,
+        RecipeMenu(current: state.selectedRecipe, snapshots: state.recipes, refreshState: state.recipeRefreshState,
             isCameraConnected: state.isCameraConnected,
             onSelect: { onAction(.recipeSelected(slot: $0)) }, onRefresh: onRefreshRecipes,
             onControlFrameChanged: { recipeFrame = $0 })
