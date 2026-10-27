@@ -75,7 +75,7 @@ struct AppWorkspaceView: View {
             imageURL: model.displayFile?.fileURL, imageGeometry: model.displayFile?.geometry,
             displayFile: model.displayFile, detail: model.detail, imageStatus: model.imageStatus,
             imageStatusIsFailure: model.imageStatusIsFailure,
-            savedVersions: model.savedVersions, preview: model.preview, exportPending: model.isSubmitting,
+            savedVersions: model.savedVersions, exportPending: model.isSubmitting,
             onAction: model.send, onRefreshRecipes: { Task { await model.refreshRecipes() } },
             onExport: { Task { await model.export() } },
             statusControl: { statusButton }, connectionControl: { connectButton })

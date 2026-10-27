@@ -12,7 +12,6 @@ struct WorkspaceView<StatusControl: View, ConnectionControl: View>: View {
     var imageStatus: String? = nil
     var imageStatusIsFailure = false
     var savedVersions: [SavedVersion] = []
-    var preview: CameraJPEG? = nil
     var exportPending = false
     var onAction: (WorkspaceAction) -> Void
     var onRefreshRecipes: () -> Void
@@ -24,9 +23,8 @@ struct WorkspaceView<StatusControl: View, ConnectionControl: View>: View {
     @State private var statusHeight: CGFloat = 0
     @State private var toolbarHeight: CGFloat = 0
     @State private var recipeFrame: CGRect = .zero
-    @State private var versionFrame: CGRect = .zero
+    @State private var photoActionFrame: CGRect = .zero
     @State private var scrollRequest: GridScrollRequest?
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         GeometryReader { proxy in
@@ -35,10 +33,10 @@ struct WorkspaceView<StatusControl: View, ConnectionControl: View>: View {
             let width = max(1, size.width - safe.leading - safe.trailing)
             let toolbarTop = safe.top + 8
             let photoTop = toolbarTop + toolbarHeight + 8
-            let controlBottom = photoTop + max(44, recipeFrame.height, versionFrame.height)
+            let controlBottom = photoTop + max(44, recipeFrame.height, photoActionFrame.height)
             let controlFrame = CGRect(x: safe.leading + 16, y: toolbarTop, width: max(1, width - 32), height: controlBottom - toolbarTop)
             // Only a real image-status message reserves space below the image. The two
-            // selectors float over it in every layout; there are no version/zoom rows.
+            // photo controls float over it in every layout; there are no version/zoom rows.
             let statusReserve = imageGeometry != nil && imageStatus != nil ? statusHeight + 8 : 0
             let available = size.height - safe.bottom - drawerHeaderHeight - controlFrame.maxY - DrawerGeometry.controlClearance - statusReserve - 44
             let gridMetrics = DrawerGeometry.gridMetrics(width: width, availableGridHeight: available)
@@ -71,7 +69,7 @@ struct WorkspaceView<StatusControl: View, ConnectionControl: View>: View {
                         .frame(width: width)
                 }.frame(width: width, height: size.height).offset(x: safe.leading)
                 GlassEffectContainer(spacing: 8) {
-                    toolbar(compact: dynamicTypeSize.isAccessibilitySize)
+                    toolbar
                         .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { toolbarHeight = $0 }
                 }.padding(.horizontal, 12).frame(width: width)
                     .offset(x: safe.leading, y: toolbarTop).zIndex(10)
@@ -79,7 +77,7 @@ struct WorkspaceView<StatusControl: View, ConnectionControl: View>: View {
                     HStack(alignment: .top, spacing: 8) {
                         recipeControl
                         Spacer(minLength: 0)
-                        versionControl
+                        photoActionControl
                     }
                 }.padding(.horizontal, 16).frame(width: width, alignment: .leading)
                     .offset(x: safe.leading, y: photoTop).zIndex(10)
@@ -100,11 +98,10 @@ struct WorkspaceView<StatusControl: View, ConnectionControl: View>: View {
             ContentUnavailableView("Choose a photo", systemImage: "photo.on.rectangle")
         }
     }
-    private func toolbar(compact: Bool) -> some View {
+    private var toolbar: some View {
         HStack(alignment: .center, spacing: 8) {
             statusControl().buttonStyle(.bordered).frame(minWidth: 44).layoutPriority(-1)
             Spacer(minLength: 0)
-            exportButton(compact: compact).fixedSize(horizontal: true, vertical: true)
             connectionControl().buttonStyle(.bordered).fixedSize(horizontal: true, vertical: true)
         }
     }
@@ -114,20 +111,25 @@ struct WorkspaceView<StatusControl: View, ConnectionControl: View>: View {
             onSelect: { onAction(.recipeSelected(slot: $0)) }, onRefresh: onRefreshRecipes,
             onControlFrameChanged: { recipeFrame = $0 })
     }
-    private func exportButton(compact: Bool) -> some View {
+    private var exportButton: some View {
         Button(action: onExport) {
-            if compact { Image(systemName: "square.and.arrow.up").frame(minWidth: 44, minHeight: 44) }
-            else { Label("Export", systemImage: "square.and.arrow.up").frame(minHeight: 44) }
+            Image(systemName: "square.and.arrow.up").font(.headline)
+                .frame(minWidth: 44, minHeight: 44).contentShape(Capsule())
         }
             .buttonStyle(.glassProminent).disabled(!state.canExport || exportPending)
             .accessibilityLabel("Export").accessibilityIdentifier("workspace.export")
             .accessibilityHint(exportPending ? "Preparing export submission" : state.exportDisabledReason?.message ?? "Export \(state.effectiveSources.count) photos using the selected recipe")
     }
-    @ViewBuilder private var versionControl: some View {
-        if let source = sources.first(where: { $0.id == state.viewedSourceID }) {
-            VersionMenu(source: source, saved: savedVersions, preview: preview, selected: state.displayedVersion,
-                onVersionSelected: { onAction(.versionSelected($0)) }, onControlFrameChanged: { versionFrame = $0 })
+    private var photoActionControl: some View {
+        Group {
+            if state.selectedRecipe != nil {
+                exportButton
+            } else if let source = sources.first(where: { $0.id == state.viewedSourceID }) {
+                VersionMenu(source: source, saved: savedVersions, selected: state.displayedVersion,
+                    onVersionSelected: { onAction(.versionSelected($0)) })
+            }
         }
+        .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named("workspace")) }) { photoActionFrame = $0 }
     }
     private var selectionControls: some View {
         GlassEffectContainer(spacing: 12) {

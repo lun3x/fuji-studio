@@ -319,7 +319,7 @@ import Observation
         // already admitted native render remains independently owned by PreviewCoordinator.
         displayTask?.cancel(); displayIntent &+= 1; displayRequest = nil
         if previewInFlight { state.reduce(.previewInterrupted); previewInFlight = false }
-        imageStatus = displayFile == nil ? "Image loading stopped. Select a version to retry." : displayFailure
+        imageStatus = displayFile == nil ? "Image loading stopped. Select the recipe again to retry." : displayFailure
         await environment.preview.invalidate()
         let task = Task { try await engine.start(sources: sources, recipe: recipe) }
         submissionTask = task
