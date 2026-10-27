@@ -146,8 +146,13 @@ saved item remains open.
 A normal process restart after completion retained all three jobs, five saved
 versions, 42 recipe snapshots and 79 unchanged native journal files, with no new
 camera operation or saved association. Camera power cycling was needed; no
-seamless-recovery claim follows. These are camera-uncertainty checks, not an
-observed uncertain PhotoKit transaction. See the [native validation record](native-batch-recovery.md)
+seamless-recovery claim follows. The paired C4 saved version then opened through
+the normal PhotoKit resolver without a camera. An independently hashed copy of
+its held full-size viewer JPEG exactly matches its recorded native output; full
+decoding and FINE geometry passed. Viewing changed no job/version/native record.
+Only that one new saved original received this separate bytes check. These are
+camera-uncertainty checks, not an observed uncertain PhotoKit transaction.
+See the [native validation record](native-batch-recovery.md)
 for the exact scope and remaining proof.
 
 ## Original `75fbd61b` live run and evidence boundaries
@@ -247,8 +252,8 @@ batch or C4 interruption. Unrelated variants remain open.
 | A03 seven recipes, unchanged banks | Atomic import/catalog and fresh-session assertions. | **Bounded pass:** current live C1–C7 imports/previews; all seven names and 23 fields preserved. Broader settings remain unproved. |
 | A04 original default/clear, zero preview saves | Reducer/AppModel/preview tests; no-recipe Export disabled. | **Bounded pass:** original defaults and seven no-save previews passed; ordinary No Recipe restored RAW and disabled Export while camera-ready. |
 | A05 late render/navigation safety | Generation/revision/manual-version regressions. | **Not run:** fast physical interaction with real camera/library. |
-| A06 independent version choices/labels | Resolver, viewer and AppFlow tests. | **Partial:** saved C7 association/labels and ordinary RAW↔Temporary Preview switching observed without clearing C3/export eligibility. Broader independent version cases remain open. |
-| A07 restart associations/equal dates | Disk reopen/equal-date identity and recovery tests. | **Partial:** original same-UUID saved-version reopen; current normal process restart retains 3 jobs/5 versions with no new saved association or camera operation. Current saved-version selection and real equal-date cases remain open. |
+| A06 independent version choices/labels | Resolver, viewer and AppFlow tests. | **Partial:** original C7 labels and RAW↔Temporary Preview switching; current paired C4 saved version opens after restart without camera, with exact full JPEG bytes verified. Broader independent version cases remain open. |
+| A07 restart associations/equal dates | Disk reopen/equal-date identity and recovery tests. | **Partial:** original same-UUID reopen; current normal restart retains 3 jobs/5 versions and paired C4 reopens with matching PhotoKit-origin bytes. No new saved association/camera operation; real equal-date cases remain open. |
 | A08 viewed source without Select | Browse export/effective-selection tests. | **Bounded pass:** one deliberate viewed paired-B export through the actual model in Browse. |
 | A09 Select/Done/All/None/sweeps | Reducer, metadata All and grid/sweep tests. | **Bounded pass:** ordinary Select/Done, All (761), None (0); user confirmed all crossed thumbnails became checked during a real finger sweep across the next row. Remote endpoint-only drags remain separate observations. |
 | A10 unchanged thumbnail geometry | Native geometry assertions across selection modes. | **Partial:** two-row square grid looked unchanged when Select added checkboxes. Precise physical geometry measurement remains unrun. |
@@ -259,7 +264,7 @@ batch or C4 interruption. Unrelated variants remain open.
 | A15 floating recipe menu | Native selection/clear/dismissal/padding/size tests. | **Partial:** actual floating seven-slot menu, C3 selection and No Recipe clear observed. Hardware Escape/accessibility remain unverified; simulator key synthesis did not deliver Escape or an independent control key. |
 | A16 frozen original-RAF job | Mixed-job/cache/revision/immutable snapshot tests. | **Bounded pass:** current-code two-source C3 job retained exact source hashes and one frozen recipe through both saved associations. Physical recipe changes during active export remain open. |
 | A17 full FINE geometry/orientation/fidelity | Strict profile/JPEG validation. | **Partial:** eight actual live FINE outputs and all-seven same-A Mac comparison passed. No Mac B reference or broader formats/firmware/lens proof. |
-| A18 new asset/source preserved/date/location | Writer/journal/original-resource tests. | **Partial:** one new asset, exact bytes, original capture date and unchanged originals passed on device. Location absence preserved; nonnil GPS case remains unrun. |
+| A18 new asset/source preserved/date/location | Writer/journal/original-resource tests. | **Partial:** original single export verified exact bytes/date/unchanged originals and absent location. Current paired C4 saved original independently matches its native JPEG bytes after restart; no new date/location query. Nonnil GPS remains unrun. |
 | A19 Date Captured chronology | Writer preserves effective Photos capture date. | **Partial:** exact date equality passed on device; Photos chronological UI/tie ordering remain unobserved. |
 | A20 cancel/retry/uncertain save | Crash-window/exact-lookup/pin/no-replay tests. | **Partial:** saved-run reopen and current C4 camera-uncertainty reconciliation/explicit same-job Resume passed. Active cancellation/Retry, skipping a previously saved item and uncertain PhotoKit completion remain unrun. |
 | A21 actionable failure states | Authorization/cloud/storage/transport fixtures. | **Partial:** historical transport/reconnect and incompatible-model refusal, plus explicit unarmed validation failure. Current app limited/cloud/wrong-mode/disconnect matrix remains unrun. |

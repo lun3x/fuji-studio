@@ -70,7 +70,9 @@ conversion, retained 0 saved / 2 remaining, then completed the same job after a
 human camera power cycle, reconciliation and explicit Resume. Each job saved
 exactly two distinct versions with frozen source/recipe/save-operation identity.
 A normal restart preserved all three saved jobs and five versions, with no new
-camera operation or saved association. See the [native validation record](docs/validation/native-batch-recovery.md)
+camera operation or saved association. The paired C4 version reopened without a
+camera; its PhotoKit-origin JPEG bytes exactly matched the recorded native
+output. See the [native validation record](docs/validation/native-batch-recovery.md)
 for the power-cycle requirement, evidence bounds and remaining checks.
 
 The earlier physical preview/export/reopen evidence belongs to reviewed

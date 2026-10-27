@@ -104,8 +104,30 @@ and the native Photos workspace loaded. The reopened catalog retains the same
 three jobs, five saved versions and 42 imported recipe snapshots. All 79 native
 journal files are byte-identical, with zero new camera operation or saved
 association across this restart interval. This is a restart after completion,
-not termination during a PhotoKit transaction. Selecting a saved version after
-restart and separately hashing its PhotoKit original remain pending.
+not termination during a PhotoKit transaction.
+
+### Saved paired C4 image after restart
+
+The user selected the paired source's exported C4 version and confirmed that it
+opened. The controller observed the correct source, highlighted exported-C4
+version and upright image with the camera disconnected, no recipe selected and
+Export disabled. The normal saved-version resolver retrieves the saved asset's
+original JPEG through PhotoKit and copies it to the held viewer file without
+reencoding; it does not resolve a saved version from the render cache.
+
+The controller copied that held viewer file privately and independently hashed
+its complete bytes. Exactly one copied file matched the saved version's recorded
+native camera-output hash. Full JPEG decoding succeeded; Exif reports X-T5,
+FINE, 7728 × 5152 and orientation 8. The original padded FINE metadata value and
+the unmodified 22,699,525-byte image are retained in private evidence. A helper's
+initial literal-FINE assertion rejected its trailing spaces; the corrected
+assertion accepts only FINE plus padding, without changing image bytes.
+
+After this read-only view, the three jobs, five versions, 42 recipe snapshots and
+79 native journal files remain unchanged. This adds an independent bytes check
+for **one paired C4 saved original**, not all four newly saved outputs. No new
+capture-date/location query, Photos chronological UI comparison, broader visual
+fidelity or precise image-region measurement is claimed.
 
 ## Evidence and remaining scope
 
