@@ -75,7 +75,7 @@ struct ExportItem: Sendable, Codable, Equatable, Identifiable {
 }
 
 enum ExportJobState: String, Sendable, Codable, Equatable {
-    case queued, preparing, converting, pendingSave, saved, failed, cancelled, unprocessed, unresolved
+    case queued, preparing, converting, pendingSave, saved, failed, cancelled, unprocessed, unresolved, paused
 }
 
 /// Submission fields and ordered sources are frozen; only progress and outcomes change.

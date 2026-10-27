@@ -102,6 +102,17 @@ actor FileRenderCache {
         return durable.fileURL
     }
 
+    /// Journal recovery may reclaim only validated, indexed durable pins. Unindexed/corrupt
+    /// reservations are deliberately invisible here; ownership cannot be inferred from absence.
+    func pinnedKeys() -> [RenderKey] {
+        guard !Task.isCancelled else { return [] }
+        return entries.compactMap { key, entry in
+            guard entry.pinned,
+                  (try? Self.validate(entry.jpeg, key: key, validateJPEG: validateJPEG)) != nil else { return nil }
+            return key
+        }
+    }
+
     /// Call only once no submitted/unknown journal entry still references this pin.
     func unpin(_ key: RenderKey) async {
         guard let identifier = try? Self.identifier(key), hasPinReservation(identifier) else { return }
