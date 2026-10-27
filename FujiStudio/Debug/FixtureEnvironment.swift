@@ -64,7 +64,7 @@ import Observation
         let platform = FixturePlatform()
         // Cached recipes exercise useful disconnected browsing, without selecting a recipe.
         try await storage.0.replaceRecipes(images.state.recipes)
-        return Bundle(environment: AppEnvironment(reader: reader, camera: selectedCamera, catalog: storage.0, preview: preview,
+        return Bundle(environment: AppEnvironment(reader: reader, camera: selectedCamera, catalog: storage.0, originals: pool, preview: preview,
             resolver: resolver, exports: exports, cache: storage.1, thumbnails: images.thumbnails, platform: platform),
             reader: reader, camera: camera, writer: writer, platform: platform)
     }

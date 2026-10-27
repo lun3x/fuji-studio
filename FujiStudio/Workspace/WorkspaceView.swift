@@ -10,6 +10,7 @@ struct WorkspaceView: View {
     var displayFile: DisplayFileLease? = nil
     var detail: ZoomPhotoView.DetailProvider? = nil
     var imageStatus: String? = nil
+    var imageStatusIsFailure = false
     var savedVersions: [SavedVersion] = []
     var preview: CameraJPEG? = nil
     var exportPending = false
@@ -101,7 +102,7 @@ struct WorkspaceView: View {
             VStack(spacing: 4) {
                 PhotoViewer(sourceID: source.id, version: state.displayedVersion ?? .raw, imageURL: imageURL,
                     geometry: imageGeometry, onVersionSelected: { onAction(.versionSelected($0)) },
-                    displayFile: displayFile, detail: detail, status: imageStatus,
+                    displayFile: displayFile, detail: detail, status: imageStatus, statusIsFailure: imageStatusIsFailure,
                     inspectionAvailable: state.drawerDetent == .collapsed,
                     onInspectionHeightChanged: { inspectionHeight = $0 })
                 if !compactControls {

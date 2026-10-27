@@ -51,6 +51,42 @@ import XCTest
             XCTAssertTrue(app.cells["grid.\(id)"].isSelected)
         }
     }
+    func testFailedPreviewKeepsLabelledImageAndMeasuredAccessibleError() {
+        let app = launch(["--fixture-preview-failure", "--fixture-accessibility"])
+        app.cells["grid.source-0"].tap()
+        XCTAssertTrue(app.scrollViews["viewer.image"].waitForExistence(timeout: 5))
+        app.buttons["app.connect"].tap()
+        wait { app.buttons["app.status"].label.contains("Camera ready") }
+        recipe(1, in: app)
+        let status = app.buttons["viewer.status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 5))
+        wait { status.label.contains("Reconnect") }
+        XCTAssertTrue(app.scrollViews["viewer.image"].exists)
+        XCTAssertGreaterThan(app.scrollViews["viewer.image"].frame.height, 40)
+        XCTAssertEqual(app.buttons["workspace.versions"].value as? String, "Original camera JPEG")
+        XCTAssertTrue(app.buttons["recipe.control"].label.contains("C1"))
+        shot(app, "Labelled original and actionable preview error at AX5")
+        let bounds = XCTAttachment(string: "Status: \(status.frame); Viewer: \(app.scrollViews["viewer.image"].frame); Fit: \(app.buttons["viewer.fit"].frame)")
+        bounds.name = "Preview error measured reservation"; bounds.lifetime = .keepAlways; add(bounds)
+        for id in ["recipe.control", "workspace.versions", "workspace.export", "viewer.zoomIn", "viewer.fit"] {
+            XCTAssertFalse(status.frame.intersects(app.buttons[id].frame), id)
+        }
+        XCTAssertTrue(status.isHittable)
+        let fullMessage = status.label
+        status.tap()
+        XCTAssertTrue(app.staticTexts["viewer.status.details"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts["viewer.status.details"].label, fullMessage)
+        XCTAssertTrue(fullMessage.contains("Reconnect to reconcile before starting more work"))
+        app.buttons["viewer.status.done"].tap()
+        XCTAssertTrue(app.buttons["viewer.fit"].isHittable)
+        let grid = app.collectionViews["photoGrid"], side = app.cells["grid.source-0"].frame.width
+        XCTAssertEqual(grid.frame.height, side * 2 + 19, accuracy: 0.5)
+        let frame = app.scrollViews["viewer.image"].frame
+        app.buttons["drawer.toggle"].tap(); wait { app.buttons["drawer.toggle"].value as? String == "Expanded" }
+        XCTAssertFalse(app.buttons["viewer.zoomIn"].exists)
+        app.buttons["drawer.toggle"].tap(); wait { app.buttons["drawer.toggle"].value as? String == "Collapsed" }
+        XCTAssertEqual(app.scrollViews["viewer.image"].frame, frame)
+    }
     func testPairedC3PreviewSingleExportAndTrackedVersion() {
         let app = launch()
         app.cells["grid.source-0"].tap()

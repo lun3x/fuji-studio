@@ -32,6 +32,7 @@ import UIKit
     let reader: any PhotoLibraryReading
     let camera: any CameraServing
     let catalog: any CatalogStoring
+    let originals: OriginalResourcePool
     let preview: PreviewCoordinator
     let resolver: VersionImageResolver
     let exports: ExportCoordinator
@@ -67,7 +68,7 @@ import UIKit
         let preview = PreviewCoordinator(pool: pool, camera: camera, scheduler: scheduler, cache: storage.1, rawRenderer: storage.3,
             storedDisplay: { source, version in try await resolver.resolve(source: source, version: version).lease })
         let exports = ExportCoordinator(reader: reader, camera: camera, catalog: storage.0, writer: PhotoLibraryWriter(), pool: pool, cache: storage.1, scheduler: scheduler)
-        return AppEnvironment(reader: reader, camera: camera, catalog: storage.0, preview: preview, resolver: resolver,
+        return AppEnvironment(reader: reader, camera: camera, catalog: storage.0, originals: pool, preview: preview, resolver: resolver,
             exports: exports, cache: storage.1, thumbnails: ThumbnailProvider(), platform: NativeAppPlatform())
     }
 }

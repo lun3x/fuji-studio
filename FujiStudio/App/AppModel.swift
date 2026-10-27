@@ -44,6 +44,15 @@ import Observation
     @ObservationIgnored private var foreground = true
     @ObservationIgnored private var sceneRevision: UInt64 = 0
     @ObservationIgnored private var previewInFlight = false
+    @ObservationIgnored private var displayRequest: WorkspacePreviewRequest?
+    @ObservationIgnored private var displayFailure: String?
+    private struct AvailableDisplay {
+        let sourceID: SourceID, revision: String
+        let version: VersionID
+        let file: DisplayFileLease
+    }
+    @ObservationIgnored private var availableDisplay: AvailableDisplay?
+    @ObservationIgnored private var detectedCompatibility: [OriginalIdentity: RAWCompatibility] = [:]
 
     #if DEBUG
     /// Read-only lifecycle continuity for opt-in acceptance instrumentation.
@@ -51,6 +60,7 @@ import Observation
     #endif
 
     init(environment: AppEnvironment) { self.environment = environment }
+    var imageStatusIsFailure: Bool { displayFailure != nil }
     deinit {
         streams.forEach { $0.cancel() }; displayTask?.cancel(); allTask?.cancel(); contextTask?.cancel(); versionRefreshTask?.cancel()
     }
@@ -67,7 +77,9 @@ import Observation
         let camera = await environment.camera.states()
         let previews = await environment.preview.events()
         let exports = await environment.exports.events()
+        let compatibility = await environment.originals.compatibilityChanges()
         streams = [
+            Task { [weak self] in for await snapshot in compatibility { guard !Task.isCancelled else { break }; self?.compatibilityChanged(snapshot) } },
             Task { [weak self] in for await event in library { guard !Task.isCancelled else { break }; await self?.libraryChanged(event) } },
             Task { [weak self] in for await event in camera { guard !Task.isCancelled else { break }; self?.cameraChanged(event) } },
             Task { [weak self] in for await event in previews { guard !Task.isCancelled else { break }; self?.previewChanged(event) } },
@@ -115,7 +127,15 @@ import Observation
         let intent = displayIntent
         // Supersede intent in the coordinator; an already-active camera operation must drain.
         previewInFlight = request != nil
-        displayFile = nil; imageStatus = "Loading image…"
+        displayRequest = request; displayFailure = nil
+        if let availableDisplay, request != nil,
+           availableDisplay.sourceID == state.viewedSourceID, availableDisplay.revision == state.viewedSourceRevision {
+            displayFile = availableDisplay.file
+            state.reduce(.previewFallback(availableDisplay.version))
+        } else {
+            displayFile = nil; availableDisplay = nil
+        }
+        imageStatus = "Loading image…"
         if preview?.sourceID != state.viewedSourceID || preview?.sourceRevision != state.viewedSourceRevision { preview = nil }
         guard !isSuspended, let source = sources.first(where: { $0.id == state.viewedSourceID }), let version = state.displayedVersion else {
             savedVersions = []; imageStatus = nil
@@ -137,15 +157,17 @@ import Observation
     private func previewChanged(_ event: PreviewEvent) {
         guard !isSuspended, event.sourceID == state.viewedSourceID else { return }
         if let request = event.workspaceRequest {
-            guard state.acceptsPreview(request) else { return }
+            guard displayRequest == request, request.sourceRevision == state.viewedSourceRevision else { return }
             guard case .ready = event.state, let jpeg = event.jpeg, case .preview(let key) = event.version else {
                 if case .failed(let failure) = event.state, state.selectedRecipe == request.recipe {
-                    imageStatus = Self.previewMessage(failure)
+                    displayFailure = Self.previewMessage(failure); imageStatus = displayFailure
                     previewInFlight = false
                     state.reduce(.previewInterrupted)
+                    if displayFile == nil { resolveFallbackOriginal() }
                 }
                 return
             }
+            guard state.acceptsPreview(request) else { return }
             state.reduce(.previewCompleted(request: request, key: key))
             guard state.displayedVersion == .preview(key) else { return }
             preview = jpeg
@@ -155,10 +177,23 @@ import Observation
             if case .ready = event.state, event.version != state.displayedVersion { return }
         }
         switch event.state {
-        case .ready: displayFile = event.displayFile; imageStatus = nil
+        case .ready:
+            displayFile = event.displayFile; imageStatus = displayFailure
+            if let file = event.displayFile, let version = event.version, let revision = state.viewedSourceRevision {
+                availableDisplay = AvailableDisplay(sourceID: event.sourceID, revision: revision, version: version, file: file)
+            }
         case .loading, .progress: imageStatus = "Loading image…"
-        case .failed(let failure): imageStatus = Self.previewMessage(failure)
+        case .failed(let failure): displayFailure = Self.previewMessage(failure); imageStatus = displayFailure
         }
+    }
+
+    /// A fallback is stored content only. It must never retry the failed camera request.
+    private func resolveFallbackOriginal() {
+        guard let source = sources.first(where: { $0.id == state.viewedSourceID }) else { return }
+        let version: VersionID = source.originalResources.jpeg == nil ? .raw : .cameraJPEG
+        state.reduce(.previewFallback(version))
+        let coordinator = environment.preview, intent = displayIntent
+        displayTask = Task { await coordinator.selectStoredVersion(version, source: source, displayIntent: intent) }
     }
 
     var detail: ZoomPhotoView.DetailProvider? {
@@ -187,7 +222,7 @@ import Observation
         do {
             for try await batch in await environment.reader.sources() {
                 guard generation == libraryGeneration else { return }
-                for source in batch { discovered[source.id] = source }
+                for source in batch { discovered[source.id] = knownCompatibility(source) }
                 // Batches are additions. Keep the existing permitted index until the full pass ends.
                 var merged = Dictionary(uniqueKeysWithValues: sources.map { ($0.id, $0) })
                 merged.merge(discovered, uniquingKeysWith: { _, new in new })
@@ -196,7 +231,7 @@ import Observation
             }
             guard generation == libraryGeneration else { return }
             let removed = Set(sources.map(\.id)).subtracting(discovered.keys)
-            sources = Self.sorted(Array(discovered.values))
+            sources = Self.sorted(discovered.values.map(knownCompatibility))
             reduce(.libraryUpdated(sources: sources, access: access))
             if !removed.isEmpty { await environment.exports.pauseActiveWork() }
             try await environment.catalog.upsertSources(sources)
@@ -212,7 +247,7 @@ import Observation
             do {
                 let complete = try await reader.allEligibleSources()
                 guard !Task.isCancelled, let self, self.selectionIntent == intent, self.libraryGeneration == scope, !self.isSuspended else { return }
-                self.sources = Self.sorted(complete)
+                self.sources = Self.sorted(complete.map(self.knownCompatibility))
                 self.reduce(.libraryUpdated(sources: self.sources, access: self.state.libraryAccess))
                 self.state.reduce(.all(accessibleEligibleSourceIDs: Set(complete.map(\.id))))
                 self.isSelectingAll = false
@@ -222,6 +257,17 @@ import Observation
                 if !(error is CancellationError) { self.message = Self.explain(error) }
             }
         }
+    }
+
+    private func knownCompatibility(_ source: PhotoSource) -> PhotoSource {
+        var current = source
+        current.compatibility = detectedCompatibility[OriginalIdentity(source)] ?? source.compatibility
+        return current
+    }
+    private func compatibilityChanged(_ snapshot: [OriginalIdentity: RAWCompatibility]) {
+        detectedCompatibility = snapshot
+        sources = sources.map(knownCompatibility)
+        reduce(.libraryUpdated(sources: sources, access: state.libraryAccess))
     }
 
     private func libraryChanged(_ event: LibraryChange) async {

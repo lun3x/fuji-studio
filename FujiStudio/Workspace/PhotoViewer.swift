@@ -174,16 +174,34 @@ struct PhotoViewer: View {
     var displayFile: DisplayFileLease? = nil
     var detail: ZoomPhotoView.DetailProvider? = nil
     var status: String? = nil
+    var statusIsFailure = false
     var inspectionAvailable = true
     var onInspectionHeightChanged: (CGFloat) -> Void = { _ in }
     @State private var control = ZoomControl()
+    @State private var statusPresented = false
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private var inspectionControls: some View {
-        HStack {
-            Button("Zoom out", systemImage: "minus.magnifyingglass") { control.zoomOut?() }.accessibilityIdentifier("viewer.zoomOut")
-            Button("Fit") { control.fit?() }.accessibilityIdentifier("viewer.fit")
-            Button("Zoom in", systemImage: "plus.magnifyingglass") { control.zoomIn?() }.accessibilityIdentifier("viewer.zoomIn")
-        }.labelStyle(.iconOnly).buttonStyle(.bordered)
+        VStack(spacing: 8) {
+            if let status {
+                if dynamicTypeSize.isAccessibilitySize {
+                    Button { statusPresented = true } label: {
+                        Label("Image status", systemImage: statusIsFailure ? "exclamationmark.circle" : "info.circle")
+                            .font(.caption).lineLimit(1)
+                    }.buttonStyle(.bordered).accessibilityLabel(status)
+                        .accessibilityHint("Show the complete image status")
+                        .accessibilityIdentifier("viewer.status")
+                } else {
+                    Text(status).font(.caption).fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("viewer.status")
+                }
+            }
+            HStack {
+                Button("Zoom out", systemImage: "minus.magnifyingglass") { control.zoomOut?() }.accessibilityIdentifier("viewer.zoomOut")
+                Button("Fit") { control.fit?() }.accessibilityIdentifier("viewer.fit")
+                Button("Zoom in", systemImage: "plus.magnifyingglass") { control.zoomIn?() }.accessibilityIdentifier("viewer.zoomIn")
+            }.labelStyle(.iconOnly).buttonStyle(.bordered)
+        }.fixedSize(horizontal: false, vertical: true)
             .onGeometryChange(for: CGFloat.self, of: { $0.size.height }, action: onInspectionHeightChanged)
     }
 
@@ -202,5 +220,12 @@ struct PhotoViewer: View {
                 }.accessibilityElement(children: .combine).accessibilityIdentifier("viewer.unavailable")
             }
         }.onChange(of: sourceID) { _, source in control.forgetOtherSource(source) }
+            .sheet(isPresented: $statusPresented) {
+                NavigationStack {
+                    ScrollView { Text(status ?? "Image available.").padding().accessibilityIdentifier("viewer.status.details") }
+                        .navigationTitle("Image status")
+                        .toolbar { Button("Done") { statusPresented = false }.accessibilityIdentifier("viewer.status.done") }
+                }
+            }
     }
 }

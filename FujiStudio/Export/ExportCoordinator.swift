@@ -424,7 +424,7 @@ actor ExportCoordinator {
         let current = try await reader.source(id: source.id)
         guard current.id == source.id, current.resourceRevision == source.resourceRevision,
               current.originalResources == source.originalResources else { throw ResourceError.resourceChanged }
-        if case .incompatible(let model) = source.compatibility { throw ResourceError.incompatibleCamera(model) }
+        if case .incompatible(let model) = await pool.compatibility(for: source) { throw ResourceError.incompatibleCamera(model) }
     }
     @discardableResult private func validateCamera(_ recipe: RecipeSnapshot) async throws -> CameraExecutionContext {
         try recipe.requireRenderable()

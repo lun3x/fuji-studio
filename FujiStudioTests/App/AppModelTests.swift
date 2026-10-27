@@ -449,6 +449,7 @@ import Testing
 
     private func model(_ environment: AppEnvironment, catalog: any CatalogStoring) -> AppModel {
         AppModel(environment: AppEnvironment(reader: environment.reader, camera: environment.camera, catalog: catalog,
+            originals: environment.originals,
             preview: environment.preview, resolver: environment.resolver, exports: environment.exports,
             cache: environment.cache, thumbnails: environment.thumbnails, platform: environment.platform))
     }

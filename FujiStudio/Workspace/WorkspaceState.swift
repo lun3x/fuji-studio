@@ -37,6 +37,8 @@ enum WorkspaceAction: Sendable {
     case activeJobChanged(UUID?)
     case drawerMoved(DrawerDetent)
     case previewInterrupted
+    /// Publish the version matching a retained file without changing the requested recipe.
+    case previewFallback(VersionID)
     case previewCompleted(request: WorkspacePreviewRequest, key: RenderKey)
 }
 
@@ -212,7 +214,8 @@ struct WorkspaceState: Sendable {
                 displayedVersion = nil
                 wantsRecipePreview = false
                 invalidatePreview()
-            } else if let id = viewedSourceID, sources[id] != oldViewed {
+            } else if let id = viewedSourceID,
+                      sources[id]?.resourceRevision != oldViewed?.resourceRevision || sources[id]?.originalResources != oldViewed?.originalResources {
                 displayedVersion = originalVersion
                 return requestPreview()
             }
@@ -239,6 +242,13 @@ struct WorkspaceState: Sendable {
             invalidatePreview()
             previewRequiresUserIntent = true
             wantsRecipePreview = false
+
+        case .previewFallback(let version):
+            guard viewedSourceID != nil else { return [] }
+            if case .preview(let key) = version {
+                guard key.sourceID == viewedSourceID, key.sourceRevision == viewedSourceRevision else { return [] }
+            }
+            displayedVersion = version
 
         case .previewCompleted(let request, let key):
             guard pendingPreview == request, request.generation == displayGeneration,

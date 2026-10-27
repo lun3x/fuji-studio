@@ -75,6 +75,7 @@ private struct AppEntryView: View {
                     let flags = ProcessInfo.processInfo.arguments
                     let bundle = try await FixtureEnvironment.make(access: flags.contains("--fixture-denied") ? .denied : flags.contains("--fixture-limited") ? .limited : .full, uncertain: flags.contains("--fixture-unknown-save"))
                     environment = bundle.environment
+                    if flags.contains("--fixture-preview-failure") { await bundle.camera.failRender() }
                     if flags.contains("--fixture-held-start") {
                         let barrier = FixtureBarrier(); fixtureStartBarrier = barrier
                         await bundle.reader.holdDiscovery(barrier)
