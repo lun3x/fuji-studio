@@ -1,6 +1,6 @@
 # Fuji Studio acceptance record
 
-Recorded 2026-10-27. **The latest UI correction at `f823a1d3` passes its software
+Recorded 2026-10-27. **The latest UI correction at `0c008f73` passes its software
 gates; full device acceptance is incomplete.** The original physical
 preview/export/reopen and later human
 interaction evidence belongs to `75fbd61b`. A later ordinary-app two-source C3
@@ -29,6 +29,40 @@ Reproducible commands, selecting an available simulator on the local machine:
 FUJI_STUDIO_DESTINATION='platform=iOS Simulator,id=YOUR_SIMULATOR_UUID' Scripts/test-ios.sh
 xcodebuild -project FujiStudio.xcodeproj -scheme FujiStudio -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
 ```
+
+### Collapsed-tray scrolling cue (`0c008f73`)
+
+The user clarified that the collapsed tray should show the top of the next row
+as a cue that more photos are below. This supersedes the exact-one-row/no-fragment
+criterion recorded for the preceding UI patch. The follow-up removes external
+bottom padding while keeping the overall collapsed height unchanged. The grid
+now reaches the bottom edge in both positions; scrolling content inset retains
+Home-area clearance for the final row and viewed-photo reveal.
+
+Complete simulator gate: **439 passed, 3 established skips, 0 failures**, exit 0
+/ TEST SUCCEEDED: 396 Swift functions in 50 suites, 14 native XCTest cases and
+32 UI cases (29 passed, 3 skipped). Universal arm64/x86_64 Release and signed
+Debug phone builds passed, as did strict code-signature verification, all exit 0.
+The focused RED→GREEN gate covered 3 geometry functions, 13 native cases and 5 UI
+cases. Native measurements and the screenshot show a 120-point full row and
+31 points of the next row in a 154-point viewport, with unchanged tray/viewer
+frames. Selection, minimum reveal, final-row clearance, and flick/partial-release
+regressions pass. Fresh scoped review found no Critical, Important or Minor
+issues. No runtime changes followed the gates.
+
+Ignored evidence: `.build/photo-peek-full.log`,
+`.build/TestResults/photo-peek-full.xcresult`, `photo-peek-release.log`,
+`photo-peek-device.log` and `photo-peek-attachments`. Current full and Release
+logs have zero unsafe SQLite unlink/API-violation/open-fd pattern matches;
+existing SDK notices remain.
+
+The signed update was installed and launched normally on the iPhone, both exit
+0. The controller directly observed the loaded library with a visible partial
+second row and no covering bottom band. A separate Device Hub Zoom Controls help
+bubble was dismissed to inspect the mirrored screen clearly. This observation
+is visual verification; physical gesture feel was not retested for this follow-up.
+No camera operation, Photos write, permission or system appearance change was
+made. Earlier human/native evidence retains its original revision and limits.
 
 ### Viewer and tray correction (`f823a1d3`)
 

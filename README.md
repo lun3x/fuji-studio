@@ -43,11 +43,11 @@ sets out the hardware feasibility gates, native app tasks, and acceptance checks
 
 The native workspace composes the real Photos reader/writer, X-T5 camera
 service, preview/export coordinators and durable local catalog. The current code
-at `f823a1d3` passed the complete simulator gate: **439 passed, 3 established
+at `0c008f73` passed the complete simulator gate: **439 passed, 3 established
 native-gate skips, 0 failures**, exit 0. Its unsigned Release simulator build
 passed for arm64 and x86_64, exit 0. The UI correction makes letterboxing follow
-the light/dark theme, removes the visible expansion label, collapses to exactly
-one square row, fixes release/tap arbitration and velocity-based drawer motion,
+the light/dark theme, removes the visible expansion label, shows one full row
+plus the top of the next when collapsed, fixes release/tap arbitration and motion,
 and removes the bottom material overlay. The production integration review at
 `86eacb7a` approved these five earlier corrections:
 
@@ -61,13 +61,13 @@ and removes the bottom material overlay. The production integration review at
 - Obsolete original preparation is cancelled and reports progress, while admitted
   native camera work retains ownership until completion and cleanup.
 
-The UI patch was reviewed and its one-row visibility finding corrected and
-verified; the branch remains unmerged. The controller signed, verified, installed
-and normally launched `f823a1d3` on the phone, observing the loaded one-row library
-and grabber-only header. Current gesture trajectories and live theme changes
-were verified in the simulator. The user then confirmed white light-mode portrait
-margins, smooth tray flicks up/down and one-row collapse on the iPhone.
-No camera conversion or Photos export was performed for this UI correction.
+The latest collapsed-tray follow-up was reviewed with no findings; the branch
+remains unmerged. The controller signed, verified, installed and normally launched
+`0c008f73` on the phone, then observed the partial second row reaching the bottom
+without a covering band. The overall collapsed height is unchanged. The user
+previously confirmed white light-mode portrait margins and smooth tray flicks on
+`f823a1d3`; motion and theme regressions also pass on the current code. No camera
+conversion or Photos export was performed for these UI corrections.
 
 Earlier ordinary-app checks on `86eacb7a` completed a two-source C3 mixed
 RAW/RAW+JPEG batch. A separate C4 job was interrupted with physical Home during

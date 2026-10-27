@@ -41,4 +41,4 @@ scrolling content in both positions, and preserve viewed-item reveal.
 
 - [x] Update native/window/next-row visibility expectations and observe RED.
 - [x] Remove reserved band; verify visible partial row, final-row clearance and unchanged motion/theme behavior.
-- [ ] Run the full software gate, inspect the screenshot, commit/push and install the signed update.
+- [x] Run the full software gate, inspect the screenshot, commit/push and install the signed update.
