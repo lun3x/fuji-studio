@@ -131,3 +131,44 @@ extension PreviewCoordinatorTests {
         #expect(await cache.lookup(wrong) == nil)
     }
 }
+
+extension PreviewCoordinatorTests {
+    @Test func poolAdmissionSkipsSupersededPreviewBeforeDownloading() async throws {
+        let f = try RenderFixture(); defer { f.remove() }
+        let reader = RenderLibrary(f), gate = SerialCameraGate(), latch = RenderLatch()
+        let pool = reader.pool(gate: gate), camera = RenderCamera(f), cache = try f.cache()
+        let holder = Task { try await pool.withPreparedRAW(source: f.source) { _ in await latch.wait() } }
+        await latch.entered()
+        let coordinator = PreviewCoordinator(pool: pool, camera: camera, scheduler: ImmediateCameraScheduler(), cache: cache,
+            rawRenderer: try RawDisplayRenderer(directory: f.root.appendingPathComponent("display")), storedDisplay: { _,_ in f.raw.fileURL })
+        let obsolete = Task { await coordinator.request(source: f.source, recipe: f.recipe) }
+        while await gate.queuedOperationCount != 1 { await Task.yield() }
+        let latest = Task { await coordinator.request(source: f.source, recipe: f.recipe) }
+        while await gate.queuedOperationCount != 2 { await Task.yield() }
+        #expect(await reader.count == 1)
+        await latch.release(); try await holder.value
+        await obsolete.value; await latest.value
+        #expect(await reader.count == 2) // Held lease plus the latest request; obsolete never downloads.
+        #expect(await camera.calls == 1)
+        #expect(await coordinator.displayedVersion == .preview(f.key()))
+        #expect(await reader.files.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) })
+    }
+
+    @Test func manualSelectionSupersedesQueuedLocalRawBeforeDownloading() async throws {
+        let f = try RenderFixture(); defer { f.remove() }
+        let reader = RenderLibrary(f), gate = SerialCameraGate(), latch = RenderLatch()
+        let pool = reader.pool(gate: gate), camera = RenderCamera(f), cache = try f.cache()
+        let holder = Task { try await pool.withPreparedRAW(source: f.source) { _ in await latch.wait() } }
+        await latch.entered()
+        let coordinator = PreviewCoordinator(pool: pool, camera: camera, scheduler: ImmediateCameraScheduler(), cache: cache,
+            rawRenderer: try RawDisplayRenderer(directory: f.root.appendingPathComponent("display")), storedDisplay: { _,_ in f.raw.fileURL })
+        let raw = Task { await coordinator.request(source: f.source, recipe: nil) }
+        while await gate.queuedOperationCount != 1 { await Task.yield() }
+        await coordinator.selectStoredVersion(.cameraJPEG)
+        await latch.release(); try await holder.value; await raw.value
+        #expect(await reader.count == 1) // Manual JPEG selection needs no RAF; queued RAW is obsolete.
+        #expect(await camera.calls == 0)
+        #expect(await coordinator.displayedVersion == .cameraJPEG)
+        #expect(await reader.files.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) })
+    }
+}

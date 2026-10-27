@@ -73,3 +73,53 @@ extension FileRenderCacheTests {
         #expect(await cache.lookup(jpeg.key) != nil)
     }
 }
+
+extension FileRenderCacheTests {
+    @Test func invalidDurablePinsRemainReservedThroughLookupAndReopenUntilExplicitRelease() async throws {
+        // Exercise invalid indexed pixels, lookup dropping the index, and startup losing either
+        // pixel or manifest validation. Every occupied durable path still belongs to its journal.
+        for scenario in ["pixels-indexed", "pixels-lookup", "pixels-reopen", "manifest-reopen"] {
+            let f = try RenderFixture(); defer { f.remove() }
+            let cache = try f.cache(), a = try f.jpeg(), b = try f.jpeg(count: 41)
+            #expect(a.outputSHA256 != b.outputSHA256 && a.operationID != b.operationID)
+            try await cache.store(a, key: a.key)
+            let pinned = try await cache.pin(a.key), manifest = pinned.deletingLastPathComponent().appendingPathComponent("entry.json")
+            if scenario == "manifest-reopen" { try Data("invalid manifest".utf8).write(to: manifest) }
+            else { try Data("invalid pixels".utf8).write(to: pinned) }
+            let ownedPixels = try Data(contentsOf: pinned), ownedManifest = try Data(contentsOf: manifest)
+            if scenario == "pixels-lookup" { #expect(await cache.lookup(a.key) == nil) }
+            let recovering = scenario.hasSuffix("reopen") ? try f.cache() : cache
+            if scenario.hasSuffix("reopen") { #expect(await recovering.lookup(a.key) == nil) }
+            await recovering.invalidate(sourceID: a.sourceID)
+            await #expect(throws: RenderCacheError.pinConflict) { try await recovering.store(b, key: b.key) }
+            await #expect(throws: RenderCacheError.pinConflict) { try await recovering.pin(b.key) }
+            #expect(try Data(contentsOf: pinned) == ownedPixels)
+            #expect(try Data(contentsOf: manifest) == ownedManifest)
+            #expect(FileManager.default.fileExists(atPath: b.fileURL.path)) // Refusal transfers no ownership.
+
+            await recovering.unpin(a.key) // Journal owner explicitly releases the invalid reservation.
+            #expect(!FileManager.default.fileExists(atPath: pinned.deletingLastPathComponent().path))
+            let c = try f.jpeg(count: 42)
+            try await recovering.store(c, key: c.key)
+            let replacement = try await recovering.pin(c.key)
+            #expect(replacement == pinned)
+            #expect(try ResourceChecksum.sha256(replacement) == c.outputSHA256)
+            #expect(await recovering.lookup(c.key)?.operationID == c.operationID)
+        }
+    }
+
+    @Test func validDurablePinReuseKeepsOriginalBytesAndProvenance() async throws {
+        let f = try RenderFixture(); defer { f.remove() }
+        let cache = try f.cache(), a = try f.jpeg(), b = try f.jpeg(count: 41)
+        try await cache.store(a, key: a.key)
+        let pinned = try await cache.pin(a.key), manifest = pinned.deletingLastPathComponent().appendingPathComponent("entry.json")
+        let ownedPixels = try Data(contentsOf: pinned), ownedManifest = try Data(contentsOf: manifest)
+        let reopened = try f.cache()
+        try await reopened.store(b, key: b.key)
+        #expect(try await reopened.pin(b.key) == pinned)
+        #expect(try Data(contentsOf: pinned) == ownedPixels)
+        #expect(try Data(contentsOf: manifest) == ownedManifest)
+        #expect(await reopened.lookup(a.key)?.operationID == a.operationID)
+        #expect(!FileManager.default.fileExists(atPath: b.fileURL.path))
+    }
+}

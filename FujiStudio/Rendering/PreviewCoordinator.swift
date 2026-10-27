@@ -63,7 +63,7 @@ actor PreviewCoordinator {
             if let recipe {
                 let jpeg = try await scheduler.withPreview {
                     try await self.requireCurrent(intent)
-                    return try await self.pool.withPreparedRAW(source: source) { raw in
+                    return try await self.pool.withPreparedRAW(source: source, beforeMaterialize: { try await self.requireCurrent(intent) }) { raw in
                         try await self.requireCurrent(intent)
                         let context = try await self.camera.executionContext()
                         if let request = workspaceRequest, request.cameraContext != context { throw CameraServiceError.unsupportedContext }
@@ -126,7 +126,7 @@ actor PreviewCoordinator {
         let url: URL
         switch version {
         case .raw:
-            url = try await pool.withPreparedRAW(source: source) { raw in
+            url = try await pool.withPreparedRAW(source: source, beforeMaterialize: { try await self.requireCurrent(intent) }) { raw in
                 try await self.requireCurrent(intent)
                 return try await self.rawRenderer.render(raw)
             }

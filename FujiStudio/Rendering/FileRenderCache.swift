@@ -1,7 +1,7 @@
 import Foundation
 import CryptoKit
 
-enum RenderCacheError: Error, Sendable, Equatable { case invalidEntry, missing, storage }
+enum RenderCacheError: Error, Sendable, Equatable { case invalidEntry, missing, storage, pinConflict }
 
 /// Committed directories contain both provenance and the complete JPEG. Purgeable entries and
 /// durable pending-save pins live in separate roots. Callers must journal the URL returned by pin.
@@ -16,6 +16,9 @@ actor FileRenderCache {
     }
     private let directory: URL, pinnedDirectory: URL, budget: Int
     private var entries: [RenderKey: Entry]
+    // Durable directory names reserve journal-owned identities even when pixels/metadata cannot
+    // be validated or indexed. Only explicit unpin releases a reservation.
+    private var pinnedReservations: Set<String>
 
     init(directory: URL, pinnedDirectory: URL, unpinnedBudget: Int = 1_073_741_824,
          validateJPEG: @escaping JPEGValidation = FileRenderCache.validateCameraJPEG) throws {
@@ -24,10 +27,12 @@ actor FileRenderCache {
               directory.standardizedFileURL != pinnedDirectory.standardizedFileURL else { throw RenderCacheError.storage }
         self.directory = directory; self.pinnedDirectory = pinnedDirectory; budget = unpinnedBudget; self.validateJPEG = validateJPEG
         var loaded: [RenderKey: Entry] = [:]
+        var reservations = Set<String>()
         for (root, pinned) in [(directory, false), (pinnedDirectory, true)] {
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
             for folder in try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) {
                 if folder.pathExtension == "partial" { try? FileManager.default.removeItem(at: folder); continue }
+                if pinned { reservations.insert(folder.lastPathComponent) }
                 let manifest = folder.appendingPathComponent("entry.json")
                 guard let data = try? Data(contentsOf: manifest),
                       let original = try? JSONDecoder().decode(CameraJPEG.self, from: data),
@@ -45,7 +50,7 @@ actor FileRenderCache {
         for entry in loaded.values where entry.pinned {
             try? FileManager.default.removeItem(at: directory.appendingPathComponent(Self.identifier(entry.jpeg.key)))
         }
-        entries = loaded
+        entries = loaded; pinnedReservations = reservations
         var total = loaded.values.filter { !$0.pinned }.reduce(0) { $0 + $1.bytes }
         for entry in loaded.values.filter({ !$0.pinned }).sorted(by: { $0.accessed < $1.accessed }) where total > unpinnedBudget {
             try? FileManager.default.removeItem(at: entry.jpeg.fileURL.deletingLastPathComponent())
@@ -68,6 +73,11 @@ actor FileRenderCache {
 
     func store(_ jpeg: CameraJPEG, key: RenderKey) async throws {
         let size = try Self.validate(jpeg, key: key, validateJPEG: validateJPEG)
+        if hasPinReservation(try Self.identifier(key)) {
+            let existing = try validatedPin(key)
+            if jpeg.fileURL != existing.fileURL { try? FileManager.default.removeItem(at: jpeg.fileURL) }
+            return
+        }
         if let existing = entries[key], (try? Self.validate(existing.jpeg, key: key, validateJPEG: validateJPEG)) != nil {
             // Same pixels/settings retain the first render's provenance, never relabel with a new ID.
             if jpeg.fileURL != existing.jpeg.fileURL { try? FileManager.default.removeItem(at: jpeg.fileURL) }
@@ -81,10 +91,12 @@ actor FileRenderCache {
     }
 
     func pin(_ key: RenderKey) async throws -> URL {
+        let identifier = try Self.identifier(key)
+        if hasPinReservation(identifier) { return try validatedPin(key).fileURL }
         guard let entry = entries[key] else { throw RenderCacheError.missing }
         _ = try Self.validate(entry.jpeg, key: key, validateJPEG: validateJPEG)
-        if entry.pinned { return entry.jpeg.fileURL }
         let durable = try commit(entry.jpeg, to: pinnedDirectory)
+        pinnedReservations.insert(identifier)
         entries[key] = Entry(jpeg: durable, bytes: entry.bytes, pinned: true, accessed: entry.accessed)
         try? FileManager.default.removeItem(at: entry.jpeg.fileURL.deletingLastPathComponent())
         return durable.fileURL
@@ -92,9 +104,28 @@ actor FileRenderCache {
 
     /// Call only once no submitted/unknown journal entry still references this pin.
     func unpin(_ key: RenderKey) async {
-        guard let entry = entries[key], entry.pinned else { return }
-        try? FileManager.default.removeItem(at: entry.jpeg.fileURL.deletingLastPathComponent())
-        entries[key] = nil
+        guard let identifier = try? Self.identifier(key), hasPinReservation(identifier) else { return }
+        do { try FileManager.default.removeItem(at: pinnedDirectory.appendingPathComponent(identifier)) }
+        catch {
+            let failure = error as NSError
+            // A failed deletion must not authorize replacement of an occupied durable identity.
+            guard failure.domain == NSCocoaErrorDomain, failure.code == NSFileNoSuchFileError else { return }
+        }
+        pinnedReservations.remove(identifier)
+        if entries[key]?.pinned == true { entries[key] = nil }
+    }
+
+    private func hasPinReservation(_ identifier: String) -> Bool {
+        if FileManager.default.fileExists(atPath: pinnedDirectory.appendingPathComponent(identifier).path) {
+            pinnedReservations.insert(identifier)
+        }
+        return pinnedReservations.contains(identifier)
+    }
+
+    private func validatedPin(_ key: RenderKey) throws -> CameraJPEG {
+        guard let entry = entries[key], entry.pinned,
+              (try? Self.validate(entry.jpeg, key: key, validateJPEG: validateJPEG)) != nil else { throw RenderCacheError.pinConflict }
+        return entry.jpeg
     }
 
     func invalidate(sourceID: SourceID) async {
@@ -104,7 +135,10 @@ actor FileRenderCache {
     }
 
     private func commit(_ jpeg: CameraJPEG, to root: URL) throws -> CameraJPEG {
-        let destination = try root.appendingPathComponent(Self.identifier(jpeg.key))
+        let identifier = try Self.identifier(jpeg.key)
+        let destination = root.appendingPathComponent(identifier)
+        let durable = root == pinnedDirectory
+        if durable, hasPinReservation(identifier) { throw RenderCacheError.pinConflict }
         let partial = root.appendingPathComponent(UUID().uuidString + ".partial")
         defer { try? FileManager.default.removeItem(at: partial) }
         do {
@@ -114,11 +148,17 @@ actor FileRenderCache {
             _ = try Self.validate(jpeg.relocated(to: image), key: jpeg.key, validateJPEG: validateJPEG)
             let committed = jpeg.relocated(to: destination.appendingPathComponent("image.JPG"))
             try JSONEncoder().encode(committed).write(to: partial.appendingPathComponent("entry.json"), options: [.atomic, .completeFileProtection])
-            if FileManager.default.fileExists(atPath: destination.path) { try FileManager.default.removeItem(at: destination) }
+            if FileManager.default.fileExists(atPath: destination.path) {
+                guard !durable else { pinnedReservations.insert(identifier); throw RenderCacheError.pinConflict }
+                try FileManager.default.removeItem(at: destination)
+            }
             try FileManager.default.moveItem(at: partial, to: destination)
             return committed
         } catch let error as RenderCacheError { throw error }
-        catch { throw RenderCacheError.storage }
+        catch {
+            if durable, hasPinReservation(identifier) { throw RenderCacheError.pinConflict }
+            throw RenderCacheError.storage
+        }
     }
 
     private func evict() {

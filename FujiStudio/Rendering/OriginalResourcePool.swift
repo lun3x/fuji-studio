@@ -10,8 +10,11 @@ actor OriginalResourcePool {
     init(reader: any PhotoLibraryReading, gate: SerialCameraGate = SerialCameraGate(), prepare: @escaping Prepare = { try RAFMetadataReader().prepare($0) }) {
         self.reader = reader; self.gate = gate; self.prepare = prepare
     }
-    func withPreparedRAW<T: Sendable>(source: PhotoSource, operation: @Sendable (PreparedRAW) async throws -> T) async throws -> T {
+    /// Revalidate queued work only after the resource permit is acquired, before any download.
+    func withPreparedRAW<T: Sendable>(source: PhotoSource, beforeMaterialize: @Sendable () async throws -> Void = {}, operation: @Sendable (PreparedRAW) async throws -> T) async throws -> T {
         try await gate.withExclusiveAccess {
+            try Task.checkCancellation()
+            try await beforeMaterialize()
             try Task.checkCancellation()
             let token = source.originalResources.raf
             guard token.assetID == source.id, token.sourceRevision == source.resourceRevision,
