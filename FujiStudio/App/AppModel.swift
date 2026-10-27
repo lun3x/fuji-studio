@@ -32,6 +32,10 @@ import Observation
     @ObservationIgnored private var cameraEventGeneration: UInt64 = 0
     @ObservationIgnored private var importedSessions: Set<UUID> = []
     @ObservationIgnored private var contextTask: Task<Void, Never>?
+    @ObservationIgnored private var versionRefreshTask: Task<Void, Never>?
+    @ObservationIgnored private var versionRefreshSource: SourceID?
+    @ObservationIgnored private var versionRefreshWorker: UInt64 = 0
+    @ObservationIgnored private var versionRefreshGeneration: UInt64 = 0
     @ObservationIgnored private var recoverySequence: UInt64 = 0
     @ObservationIgnored private var recoveryNeeded = false
     @ObservationIgnored private var recovering = false
@@ -43,7 +47,7 @@ import Observation
 
     init(environment: AppEnvironment) { self.environment = environment }
     deinit {
-        streams.forEach { $0.cancel() }; displayTask?.cancel(); allTask?.cancel(); contextTask?.cancel()
+        streams.forEach { $0.cancel() }; displayTask?.cancel(); allTask?.cancel(); contextTask?.cancel(); versionRefreshTask?.cancel()
     }
 
     var progressEvents: [ExportEvent] {
@@ -346,6 +350,9 @@ import Observation
                 // summaries outside the durable unfinished set remain actionable.
                 for event in snapshot.jobs { applyProgress(event) }
                 reduce(.activeJobChanged(nil)); updateIdle()
+                // The watermark suppresses terminal events, including their refresh side effect.
+                // Install every job first, then coalesce one refresh without blocking recovery.
+                requestVersionRefresh()
             }
             catch { message = Self.explain(error) }
         } while recoveryNeeded && !isSubmitting && state.activeJobID == nil
@@ -408,10 +415,44 @@ import Observation
     }
     func managePhotos() { environment.platform.managePhotos() }
     func openSettings() { environment.platform.openSettings() }
-    private func refreshVersions() async {
+    private func refreshVersions() async { await requestVersionRefresh().value }
+
+    @discardableResult private func requestVersionRefresh() -> Task<Void, Never> {
+        versionRefreshGeneration &+= 1
+        let source = state.viewedSourceID
+        if let task = versionRefreshTask, versionRefreshSource == source { return task }
+        versionRefreshTask?.cancel()
+        versionRefreshSource = source
+        versionRefreshWorker &+= 1
+        let worker = versionRefreshWorker
+        let task = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self, self.versionRefreshWorker == worker else { return }
+                let generation = self.versionRefreshGeneration
+                await self.readVersions(generation: generation)
+                guard self.versionRefreshWorker == worker else { return }
+                if self.versionRefreshGeneration == generation {
+                    self.versionRefreshTask = nil
+                    return
+                }
+                // Same-source requests during an await are one follow-up pass. The stale pass
+                // cannot publish; a different source gets its own current worker immediately.
+            }
+        }
+        versionRefreshTask = task
+        return task
+    }
+
+    private func readVersions(generation: UInt64) async {
         guard let id = state.viewedSourceID else { savedVersions = []; return }
+        let revision = state.viewedSourceRevision, scope = libraryGeneration
+        func isCurrent() -> Bool {
+            !Task.isCancelled && versionRefreshGeneration == generation && state.viewedSourceID == id
+                && state.viewedSourceRevision == revision && libraryGeneration == scope
+        }
         do {
             let records = try await environment.catalog.versions(sourceID: id)
+            guard isCurrent() else { return }
             for record in records {
                 let availability: AssetAvailability
                 do {
@@ -421,12 +462,14 @@ import Observation
                 } catch ResourceError.inaccessibleAsset { availability = .inaccessible }
                 catch ResourceError.authorization { availability = .inaccessible }
                 catch { continue } // A transient lookup failure is not proof of deletion.
+                guard isCurrent() else { return }
                 if availability != record.availability {
                     try await environment.catalog.setAvailability(assetID: record.outputAssetID, availability: availability)
+                    guard isCurrent() else { return }
                 }
             }
             let versions = try await environment.catalog.versions(sourceID: id)
-            guard state.viewedSourceID == id else { return }
+            guard isCurrent() else { return }
             savedVersions = versions
             if case .saved(let selected) = state.displayedVersion,
                let version = versions.first(where: { $0.id == selected }), version.availability != .available {
@@ -435,7 +478,7 @@ import Observation
                 imageStatus = "This saved image is unavailable. Manage Photos access to include it."
                 await environment.preview.invalidate()
             }
-        } catch { if state.viewedSourceID == id { message = Self.explain(error) } }
+        } catch { if isCurrent() { message = Self.explain(error) } }
     }
     private static func sorted(_ values: [PhotoSource]) -> [PhotoSource] {
         values.sorted { ($0.captureDate ?? .distantPast) == ($1.captureDate ?? .distantPast) ? $0.id < $1.id : ($0.captureDate ?? .distantPast) > ($1.captureDate ?? .distantPast) }

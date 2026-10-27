@@ -367,6 +367,66 @@ import Testing
         #expect(await f.camera.renderCount == 1)
     }
 
+    @Test func canonicalFoundRecoveryRefreshesVisibleVersionsBeforeQueuedTerminalConsumption() async throws {
+        let f = try await FixtureEnvironment.make(uncertain: true), catalog = HeldVersionCatalog(base: f.environment.catalog), barrier = FixtureBarrier()
+        defer { Task { await barrier.release() } }
+        let model = model(f.environment, catalog: catalog)
+        await model.start(); await model.connect()
+        model.send(.sourceTapped("source-0")); model.send(.recipeSelected(slot: 3))
+        await eventually { model.preview != nil }
+        // Hold the stream consumer's final version-list read after the unresolved terminal event.
+        // The return value is captured BEFORE the barrier, so it cannot accidentally see recovery.
+        await catalog.holdFinalVersionRead(barrier)
+        await model.export(); await barrier.entered()
+        let pending = try #require(model.exportEvent)
+        #expect(pending.terminal && pending.summary.unresolved == 1)
+        let request = try #require(await f.writer.requests.first)
+        let asset = try await f.writer.makeSubmittedExportDiscoverable(request.operationID)
+        await model.reconcile()
+        #expect(model.exportEvent?.jobID == pending.jobID)
+        #expect(model.exportEvent?.summary.completed == 1)
+        #expect(model.exportEvent?.summary.unresolved == 0)
+        #expect(try await f.environment.catalog.versions(sourceID: "source-0").count == 1)
+        #expect(model.savedVersions.isEmpty)
+        // No new user action, library change or worker event follows the canonical handoff.
+        await barrier.release()
+        await eventually { model.savedVersions.contains { $0.outputAssetID == asset.assetID && $0.operationID == request.operationID && $0.availability == .available } }
+        #expect(await f.writer.requests.count == 1)
+        #expect(await f.camera.renderCount == 1)
+    }
+
+    @Test func delayedVersionRefreshCannotRollbackAfterReturningToSameSource() async throws {
+        let f = try await FixtureEnvironment.make(), catalog = HeldVersionCatalog(base: f.environment.catalog), barrier = FixtureBarrier()
+        defer { Task { await barrier.release() } }
+        let model = model(f.environment, catalog: catalog)
+        await model.start(); await model.connect()
+        model.send(.sourceTapped("source-0")); model.send(.recipeSelected(slot: 3))
+        await eventually { model.preview != nil }
+        await model.export(); await eventually { model.savedVersions.count == 1 && model.exportEvent?.terminal == true }
+        let saved = try #require(model.savedVersions.first)
+        model.send(.recipeSelected(slot: nil)); await eventually { model.displayFile != nil }
+        await catalog.holdFinalVersionRead(barrier)
+        let old = Task { await model.reloadLibrary() }
+        await barrier.entered()
+        model.send(.sourceTapped("source-2"))
+        await eventually { model.displayFile != nil && model.savedVersions.isEmpty }
+        await f.reader.removeOutput(saved.outputAssetID, notify: false)
+        model.send(.sourceTapped("source-0"))
+        await eventually { model.savedVersions.first?.availability == .inaccessible && model.displayFile != nil }
+        let current = model.displayFile
+        await barrier.release(); await old.value
+        #expect(model.savedVersions.first?.id == saved.id)
+        #expect(model.savedVersions.first?.availability == .inaccessible)
+        #expect(model.displayFile === current)
+        #expect(await f.writer.requests.count == 1)
+    }
+
+    private func model(_ environment: AppEnvironment, catalog: any CatalogStoring) -> AppModel {
+        AppModel(environment: AppEnvironment(reader: environment.reader, camera: environment.camera, catalog: catalog,
+            preview: environment.preview, resolver: environment.resolver, exports: environment.exports,
+            cache: environment.cache, thumbnails: environment.thumbnails, platform: environment.platform))
+    }
+
     private func eventually(_ condition: () async -> Bool) async {
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))
         var satisfied = false
@@ -376,4 +436,30 @@ import Testing
         }
         #expect(satisfied)
     }
+}
+
+/// Delegates to the same actual disk catalog; only the captured version-list return is delayed.
+private actor HeldVersionCatalog: CatalogStoring {
+    let base: any CatalogStoring
+    private var barrier: FixtureBarrier?
+    private var readsBeforeHold = 0
+    init(base: any CatalogStoring) { self.base = base }
+    func holdFinalVersionRead(_ barrier: FixtureBarrier) { self.barrier = barrier; readsBeforeHold = 1 }
+    func versions(sourceID: SourceID) async throws -> [SavedVersion] {
+        let result = try await base.versions(sourceID: sourceID)
+        if let barrier {
+            if readsBeforeHold > 0 { readsBeforeHold -= 1 }
+            else { self.barrier = nil; await barrier.wait() }
+        }
+        return result
+    }
+    func upsertSources(_ sources: [PhotoSource]) async throws { try await base.upsertSources(sources) }
+    func replaceRecipes(_ snapshots: [RecipeSnapshot]) async throws { try await base.replaceRecipes(snapshots) }
+    func recipes(camera: CameraExecutionContext) async throws -> [RecipeSnapshot] { try await base.recipes(camera: camera) }
+    func latestRecipes() async throws -> [RecipeSnapshot] { try await base.latestRecipes() }
+    func saveJob(_ job: ExportJob) async throws { try await base.saveJob(job) }
+    func job(id: UUID) async throws -> ExportJob { try await base.job(id: id) }
+    func unfinishedJobs() async throws -> [ExportJob] { try await base.unfinishedJobs() }
+    func confirmSaved(jobID: UUID, operationID: UUID, version: SavedVersion) async throws { try await base.confirmSaved(jobID: jobID, operationID: operationID, version: version) }
+    func setAvailability(assetID: String, availability: AssetAvailability) async throws { try await base.setAvailability(assetID: assetID, availability: availability) }
 }

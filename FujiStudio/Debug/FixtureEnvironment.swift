@@ -215,6 +215,7 @@ actor FixtureWriter: PhotoLibraryWriting {
     private var uncertain: Bool
     private var barrier: FixtureBarrier?
     private(set) var requests: [PhotoSaveRequest] = []
+    private var found: [UUID: SavedAsset] = [:]
     init(reader: FixtureLibrary, uncertain: Bool) { self.reader = reader; self.uncertain = uncertain }
     func holdSave(_ barrier: FixtureBarrier) { self.barrier = barrier }
     func saveJPEG(_ request: PhotoSaveRequest, onPlaceholder: @escaping @Sendable (String) -> Void) async throws -> SavedAsset {
@@ -225,7 +226,16 @@ actor FixtureWriter: PhotoLibraryWriting {
         await reader.addOutput(id)
         return SavedAsset(assetID: id, operationID: request.operationID, photosGeometry: nil)
     }
-    func findExport(operationID: UUID, knownAssetID: String?) -> SaveLookup { .notFound }
+    func makeSubmittedExportDiscoverable(_ operationID: UUID) async throws -> SavedAsset {
+        guard requests.contains(where: { $0.operationID == operationID }) else { throw ResourceError.inaccessibleAsset("unsubmitted") }
+        let asset = SavedAsset(assetID: "fixture-export-\(operationID.uuidString)", operationID: operationID, photosGeometry: nil)
+        await reader.addOutput(asset.assetID); found[operationID] = asset
+        return asset
+    }
+    func findExport(operationID: UUID, knownAssetID: String?) -> SaveLookup {
+        guard let asset = found[operationID], knownAssetID == nil || knownAssetID == asset.assetID else { return .notFound }
+        return .found(asset)
+    }
 }
 
 @MainActor @Observable final class FixturePlatform: AppPlatform {
