@@ -59,6 +59,55 @@ final class PhotoGridControllerTests: XCTestCase {
         let rect = controller.metrics.rect(index: narrowed.firstIndex { $0.id == "source-20" }!)
         XCTAssertEqual(controller.collectionView.contentOffset.y, rect.maxY - 200, accuracy: 0.01)
     }
+    func testViewportRelayoutCancelsSweepAndRestoresStartingChecks() {
+        let controller = PhotoGridController(thumbnails: GridThumbnailSpy())
+        let sources = (0..<120).map { source("source-\($0)") }
+        var changes: [Set<SourceID>] = []
+        controller.onCheckedChanged = { changes.append($0) }
+        controller.update(sources: sources, checked: ["source-8"], selecting: true, viewed: "source-8", scrollRequest: nil)
+        let window = host(controller); defer { controller.stop(); window.isHidden = true }
+        controller.handleSweep(state: .began, viewportLocation: CGPoint(x: 25, y: 25), translation: .zero)
+        XCTAssertEqual(changes.last, ["source-0", "source-8"])
+        controller.view.frame.size.height = 300; controller.view.setNeedsLayout(); controller.view.layoutIfNeeded()
+        XCTAssertEqual(changes.last, ["source-8"])
+        controller.handleSweep(state: .changed, viewportLocation: CGPoint(x: 300, y: 25), translation: .zero)
+        XCTAssertEqual(changes.last, ["source-8"])
+    }
+    func testOverriddenMetricsUseFinalViewportForMinimumRevealAndKeepChecks() {
+        let controller = PhotoGridController(thumbnails: GridThumbnailSpy())
+        let sources = (0..<120).map { source("source-\($0)") }
+        let small = GridMetrics(columns: 6, tileWidth: 59.8333333333, spacing: 3,
+            insets: .init(top: 8, left: 8, bottom: 8, right: 8))
+        controller.update(sources: sources, checked: ["source-0", "source-20"], selecting: true, viewed: "source-20", scrollRequest: nil, gridMetrics: small)
+        let window = host(controller); defer { controller.stop(); window.isHidden = true }
+        XCTAssertEqual(controller.metrics.columns, 6)
+        let request = GridScrollRequest(sourceID: "source-20", afterViewportHeight: 138.6666666666)
+        controller.update(sources: sources, checked: ["source-0", "source-20"], selecting: true, viewed: "source-20", scrollRequest: request, gridMetrics: small)
+        controller.view.setNeedsLayout(); controller.view.layoutIfNeeded()
+        XCTAssertEqual(controller.collectionView.contentOffset.y, 0)
+        controller.view.frame.size.height = 138.6666666666; controller.view.setNeedsLayout(); controller.view.layoutIfNeeded()
+        // Row 3 begins at 196.5; its bottom is 256.3333. Reveal by exactly 117.6667.
+        XCTAssertEqual(controller.collectionView.contentOffset.y, 117.6666666666, accuracy: 0.01)
+        XCTAssertEqual(controller.collectionView.cellForItem(at: IndexPath(item: 20, section: 0))?.accessibilityValue, "Checked")
+        controller.collectionView.contentOffset.y = 0; controller.view.layoutIfNeeded()
+        XCTAssertEqual(controller.collectionView.cellForItem(at: IndexPath(item: 0, section: 0))?.accessibilityValue, "Checked")
+    }
+    func testLargestNativeTextBadgeStaysInsideSquareAndKeepsSpokenKind() {
+        let controller = PhotoGridController(thumbnails: GridThumbnailSpy())
+        controller.traitOverrides.preferredContentSizeCategory = .accessibilityExtraExtraExtraLarge
+        let raw = source("badge")
+        let paired = PhotoSource(id: raw.id, originalResources: .init(raf: raw.originalResources.raf,
+            jpeg: .init(assetID: raw.id, role: .alternateOriginal, contentTypeIdentifier: "public.jpeg", format: .jpeg,
+                originalFilename: "GENERATED.JPG", discriminator: "jpeg")), captureDate: nil, location: nil, resourceRevision: "fixture")
+        controller.update(sources: [paired], checked: [], selecting: false, viewed: "badge", scrollRequest: nil)
+        let window = host(controller); defer { controller.stop(); window.isHidden = true }
+        let cell = controller.collectionView.cellForItem(at: IndexPath(item: 0, section: 0))!
+        cell.setNeedsLayout(); cell.layoutIfNeeded()
+        let badge = cell.contentView.subviews.compactMap { $0 as? UILabel }.first { $0.text == "RAW + JPEG" }!
+        XCTAssertTrue(cell.contentView.bounds.contains(badge.frame), "Decorative badge must not spill into another row")
+        XCTAssertTrue(cell.accessibilityLabel!.contains("RAW + JPEG"))
+        XCTAssertEqual(cell.bounds.width, cell.bounds.height, accuracy: 0.01)
+    }
     func testReuseCancelsAndLateCallbackCannotReplaceNewSourceImage() {
         let provider = GridThumbnailSpy(), controller = PhotoGridController(thumbnails: provider)
         controller.update(sources: [source("old")], checked: [], selecting: false, viewed: nil, scrollRequest: nil)

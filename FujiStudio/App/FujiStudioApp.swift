@@ -5,7 +5,9 @@ struct FujiStudioApp: App {
     var body: some Scene {
         WindowGroup {
             #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("--grid-fixture") {
+            if ProcessInfo.processInfo.arguments.contains("--workspace-fixture") {
+                WorkspaceFixtureEntry()
+            } else if ProcessInfo.processInfo.arguments.contains("--grid-fixture") {
                 GridFixtureEntry()
             } else if ProcessInfo.processInfo.arguments.contains("--viewer-fixture") {
                 ViewerFixtureEntry()

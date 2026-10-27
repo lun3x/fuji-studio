@@ -21,6 +21,8 @@ final class PhotoGridController: UIViewController, UICollectionViewDelegate, UIC
     private var pendingScroll: GridScrollRequest?
     private var lastScrollID: UUID?
     private var lastViewport: GridViewport?
+    private var suppliedMetrics: GridMetrics?
+    private var layoutSize: CGSize = .zero
     private lazy var sweepGesture = UIPanGestureRecognizer(target: self, action: #selector(sweepChanged))
     var onSourceTapped: (SourceID) -> Void = { _ in }
     var onCheckedChanged: (Set<SourceID>) -> Void = { _ in }
@@ -47,8 +49,12 @@ final class PhotoGridController: UIViewController, UICollectionViewDelegate, UIC
     }
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        let next = GridGeometry.metrics(width: collectionView.bounds.width)
+        let size = collectionView.bounds.size
+        if layoutSize != .zero && layoutSize != size { finishSweep(cancelled: true) }
+        layoutSize = size
+        let next = suppliedMetrics ?? GridGeometry.metrics(width: size.width)
         if next != metrics {
+            finishSweep(cancelled: true)
             let anchor = captureAnchor()
             metrics = next; layout.itemSize = CGSize(width: next.tileWidth, height: next.tileHeight)
             layout.minimumInteritemSpacing = next.spacing; layout.minimumLineSpacing = next.spacing
@@ -69,8 +75,9 @@ final class PhotoGridController: UIViewController, UICollectionViewDelegate, UIC
         }
         publishViewport(); cacheVisible()
     }
-    func update(sources: [PhotoSource], checked: Set<SourceID>, selecting: Bool, viewed: SourceID?, scrollRequest: GridScrollRequest?) {
+    func update(sources: [PhotoSource], checked: Set<SourceID>, selecting: Bool, viewed: SourceID?, scrollRequest: GridScrollRequest?, gridMetrics: GridMetrics? = nil) {
         loadViewIfNeeded()
+        suppliedMetrics = gridMetrics
         let idsChanged = self.sources.map(\.id) != sources.map(\.id)
         let metadataChanged = self.sources != sources
         if sweeping && (idsChanged || !selecting) { finishSweep(cancelled: true) }
@@ -229,9 +236,15 @@ private final class PhotoGridCell: UICollectionViewCell {
     override init(frame: CGRect) {
         super.init(frame: frame)
         contentView.backgroundColor = .secondarySystemBackground
+        contentView.clipsToBounds = true
         image.contentMode = .scaleAspectFill; image.clipsToBounds = true
-        type.font = .preferredFont(forTextStyle: .caption2); type.textColor = .white; type.backgroundColor = .black.withAlphaComponent(0.65)
-        type.numberOfLines = 3
+        // The decorative kind badge stays compact; the cell speaks its complete kind/status.
+        type.maximumContentSizeCategory = .extraExtraExtraLarge
+        type.font = .preferredFont(forTextStyle: .caption2, compatibleWith: type.traitCollection)
+        type.adjustsFontForContentSizeCategory = true
+        type.adjustsFontSizeToFitWidth = true; type.minimumScaleFactor = 0.7
+        type.textColor = .white; type.backgroundColor = .black.withAlphaComponent(0.65)
+        type.numberOfLines = 1; type.lineBreakMode = .byTruncatingTail
         type.layer.cornerRadius = 3; type.clipsToBounds = true
         mark.textColor = .white; mark.font = .systemFont(ofSize: 24, weight: .bold)
         for child in [image, type, mark] { child.isAccessibilityElement = false; contentView.addSubview(child) }
@@ -241,8 +254,9 @@ private final class PhotoGridCell: UICollectionViewCell {
     override func layoutSubviews() {
         super.layoutSubviews(); image.frame = contentView.bounds
         let badge = type.sizeThatFits(CGSize(width: max(1, bounds.width - 16), height: 44))
-        type.frame = CGRect(x: 4, y: bounds.height - badge.height - 8,
-                            width: min(bounds.width - 8, badge.width + 8), height: badge.height + 4)
+        let badgeHeight = min(max(0, bounds.height - 8), ceil(badge.height) + 4)
+        type.frame = CGRect(x: 4, y: bounds.height - badgeHeight - 4,
+                            width: min(max(0, bounds.width - 8), ceil(badge.width) + 8), height: badgeHeight)
         mark.frame = CGRect(x: bounds.width - 34, y: 4, width: 30, height: 30)
     }
     func configure(source: PhotoSource, selecting: Bool, checked: Bool, viewed: Bool, thumbnails: any GridThumbnailProviding, pixelSize: CGSize, onTap: @escaping () -> Void) {
