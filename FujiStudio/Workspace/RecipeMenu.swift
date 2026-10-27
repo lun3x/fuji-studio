@@ -6,6 +6,7 @@ struct RecipeMenu: View {
     let current: RecipeSnapshot?
     let snapshots: [RecipeSnapshot]
     let refreshState: RecipeRefreshState
+    let isCameraConnected: Bool
     var onSelect: (Int?) -> Void
     var onRefresh: () -> Void
     var onControlFrameChanged: (CGRect) -> Void = { _ in }
@@ -14,10 +15,11 @@ struct RecipeMenu: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.colorSchemeContrast) private var contrast
 
-    init(current: RecipeSnapshot?, snapshots: [RecipeSnapshot], refreshState: RecipeRefreshState,
+    init(current: RecipeSnapshot?, snapshots: [RecipeSnapshot], refreshState: RecipeRefreshState, isCameraConnected: Bool,
          onSelect: @escaping (Int?) -> Void, onRefresh: @escaping () -> Void,
          onControlFrameChanged: @escaping (CGRect) -> Void = { _ in }, initiallyPresented: Bool = false) {
         self.current = current; self.snapshots = snapshots; self.refreshState = refreshState
+        self.isCameraConnected = isCameraConnected
         self.onSelect = onSelect; self.onRefresh = onRefresh; self.onControlFrameChanged = onControlFrameChanged
         _presented = State(initialValue: initiallyPresented)
     }
@@ -35,7 +37,7 @@ struct RecipeMenu: View {
         }
         .overlay { if contrast == .increased { Capsule().stroke(.primary, lineWidth: 1).allowsHitTesting(false) } }
         .accessibilityLabel(current.map { "C\($0.slot) \($0.name)" } ?? "No recipe selected")
-        .accessibilityHint("Choose a cached camera recipe or import recipes")
+        .accessibilityHint(isCameraConnected ? "Choose a cached camera recipe or import recipes" : "Connect a camera to choose or import recipes")
         .accessibilityIdentifier("recipe.control")
         .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named("workspace")) }, action: onControlFrameChanged)
         .popover(isPresented: $presented, arrowEdge: .top) {
@@ -68,7 +70,8 @@ struct RecipeMenu: View {
                             if current?.slot == slot { Image(systemName: "checkmark").accessibilityHidden(true) }
                         }.frame(maxWidth: .infinity, alignment: .leading).padding().contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain).disabled(recipe == nil)
+                    .buttonStyle(.plain).disabled(!isCameraConnected || recipe == nil)
+                    .foregroundStyle(isCameraConnected && recipe != nil ? .primary : .tertiary)
                     .accessibilityIdentifier("recipe.slot.\(slot)")
                     .accessibilityAddTraits(current?.slot == slot ? .isSelected : [])
                 }
@@ -76,6 +79,8 @@ struct RecipeMenu: View {
                 row(title: snapshots.isEmpty ? "Import recipes" : "Refresh recipes", selected: false, identifier: "recipe.refresh") {
                     presented = false; onRefresh()
                 }
+                .disabled(!isCameraConnected)
+                .foregroundStyle(isCameraConnected ? .primary : .tertiary)
             }
         }
         .accessibilityIdentifier("recipe.options")

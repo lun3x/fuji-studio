@@ -96,6 +96,7 @@ import Observation
 
     private func reduce(_ action: WorkspaceAction) {
         let previousSource = state.viewedSourceID, previousVersion = state.displayedVersion
+        let previousRecipe = state.selectedRecipe
         let previousRevision = state.viewedSourceRevision
         let effects = state.reduce(action)
         let request = effects.compactMap { effect -> WorkspacePreviewRequest? in
@@ -103,6 +104,7 @@ import Observation
         }.first
         let explicitDisplay: Bool = switch action {
         case .sourceTapped, .versionSelected, .recipeSelected: true
+        case .cameraChanged: previousRecipe != nil && state.selectedRecipe == nil && displayRequest != nil
         default: false
         }
         if request != nil || explicitDisplay || previousSource != state.viewedSourceID || previousVersion != state.displayedVersion || previousRevision != state.viewedSourceRevision {
