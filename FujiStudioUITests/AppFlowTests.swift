@@ -73,6 +73,30 @@ import XCTest
         XCTAssertFalse(app.buttons["version.preview"].exists)
         shot(app, "Clearing recipe restores original and saved versions")
     }
+    func testExportStaysDisabledUntilPreviewFinishesDespiteCameraReadyUpdates() {
+        let app = launch(["--fixture-held-preview"])
+        app.cells["grid.source-0"].tap()
+        app.buttons["app.connect"].tap()
+        wait { app.buttons["app.status"].label.contains("Camera ready") }
+        recipe(3, in: app)
+        let export = app.buttons["workspace.export"]
+        XCTAssertTrue(export.waitForExistence(timeout: 5))
+        wait { app.buttons["fixture.finishPreview"].value as? String == "Loading preview" }
+        XCTAssertFalse(export.isEnabled, "Export starts grey while the preview is being prepared")
+        for _ in 0..<3 {
+            app.buttons["fixture.cycleCamera"].tap()
+            wait { app.buttons["app.status"].label.contains("Camera ready") }
+            XCTAssertFalse(export.isEnabled, "A ready camera must not enable export before the preview is loaded")
+        }
+        shot(app, "Export stays grey while preview is loading")
+        app.buttons["fixture.finishPreview"].tap()
+        wait { export.isEnabled }
+        XCTAssertTrue(app.scrollViews["viewer.image"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["viewer.status"].exists)
+        shot(app, "Export becomes blue when preview is ready")
+        tap(export, in: app)
+        wait { app.buttons["app.status"].label.contains("1 saved") }
+    }
     func testInjectedFlowOpensRealWorkspaceWithoutSystemPermissions() {
         let app = launch()
         XCTAssertTrue(app.buttons["app.connect"].exists)

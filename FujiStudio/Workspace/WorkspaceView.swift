@@ -13,6 +13,7 @@ struct WorkspaceView<StatusControl: View, ConnectionControl: View>: View {
     var imageStatusIsFailure = false
     var savedVersions: [SavedVersion] = []
     var exportPending = false
+    var previewLoading = false
     var onAction: (WorkspaceAction) -> Void
     var onRefreshRecipes: () -> Void
     var onExport: () -> Void
@@ -116,9 +117,9 @@ struct WorkspaceView<StatusControl: View, ConnectionControl: View>: View {
             Image(systemName: "square.and.arrow.up").font(.headline)
                 .frame(minWidth: 44, minHeight: 44).contentShape(Capsule())
         }
-            .buttonStyle(.glassProminent).disabled(!state.canExport || exportPending)
+            .buttonStyle(.glassProminent).disabled(!state.canExport || exportPending || previewLoading)
             .accessibilityLabel("Export").accessibilityIdentifier("workspace.export")
-            .accessibilityHint(exportPending ? "Preparing export submission" : state.exportDisabledReason?.message ?? "Export \(state.effectiveSources.count) photos using the selected recipe")
+            .accessibilityHint(exportPending ? "Preparing export submission" : previewLoading ? "Wait for the photo preview to finish loading" : state.exportDisabledReason?.message ?? "Export \(state.effectiveSources.count) photos using the selected recipe")
     }
     private var photoActionControl: some View {
         Group {

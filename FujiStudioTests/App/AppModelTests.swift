@@ -293,7 +293,7 @@ import Testing
         await model.export(); await eventually { model.exportEvent?.terminal == true }
         let first = try #require(model.exportEvent)
         model.send(.recipeSelected(slot: 2))
-        await eventually { model.displayFile != nil && model.state.displayedVersion == model.preview.map { .preview($0.key) } }
+        await eventually { !model.isLoadingPreview && model.state.canExport && model.displayFile != nil && model.state.displayedVersion == model.preview.map { .preview($0.key) } }
         await model.export(); await eventually { model.exportEvent?.terminal == true && model.exportEvent?.jobID != first.jobID }
         let second = try #require(model.exportEvent)
         await model.reconcile()

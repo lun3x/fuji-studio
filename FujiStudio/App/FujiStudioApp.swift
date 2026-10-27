@@ -36,6 +36,9 @@ private struct AppEntryView: View {
     @State private var acceptance = LiveAcceptanceRunner()
     @State private var fixtureSaveBarrier: FixtureBarrier?
     @State private var fixtureStartBarrier: FixtureBarrier?
+    @State private var fixturePreviewBarrier: FixtureBarrier?
+    @State private var fixturePreviewCamera: FixtureCamera?
+    @State private var fixturePreviewBlocked = false
     #endif
     var body: some View {
         Group {
@@ -61,6 +64,16 @@ private struct AppEntryView: View {
                         Button("Finish fixture save") { Task { await barrier.release(); fixtureSaveBarrier = nil } }
                             .accessibilityIdentifier("fixture.finishSave").accessibilityValue(model.environment.platform.idleTimerDisabled ? "Awake" : "Idle timer restored").buttonStyle(.bordered)
                     }
+                    if let barrier = fixturePreviewBarrier, let camera = fixturePreviewCamera {
+                        HStack {
+                            Button("Cycle camera status") { Task { await camera.cycleBusyReady() } }
+                                .accessibilityIdentifier("fixture.cycleCamera")
+                            Button("Finish fixture preview") { Task { await barrier.release(); fixturePreviewBarrier = nil } }
+                                .accessibilityIdentifier("fixture.finishPreview")
+                                .accessibilityValue(!fixturePreviewBlocked ? "Waiting for photo transfer" : model.isLoadingPreview ? "Loading preview" : "Not loading preview")
+                        }.font(.caption).buttonStyle(.bordered)
+                            .task { await barrier.entered(); fixturePreviewBlocked = true }
+                    }
                     #endif
                 }
             }
@@ -83,6 +96,10 @@ private struct AppEntryView: View {
                     if flags.contains("--fixture-held-save") {
                         let barrier = FixtureBarrier(); fixtureSaveBarrier = barrier
                         await bundle.writer.holdSave(barrier)
+                    }
+                    if flags.contains("--fixture-held-preview") {
+                        let barrier = FixtureBarrier(); fixturePreviewBarrier = barrier; fixturePreviewCamera = bundle.camera
+                        await bundle.reader.holdMaterialize("source-0", barrier: barrier)
                     }
                 } else { environment = try await AppEnvironment.live() }
                 #else
