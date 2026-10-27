@@ -41,20 +41,31 @@ sets out the hardware feasibility gates, native app tasks, and acceptance checks
 
 ## Status
 
-The native workspace now composes the real Photos reader/writer, X-T5 camera
-service, preview/export coordinators and durable local catalog. Hardware evidence
-includes original paired/standalone RAF access, genuine local RAW display, an
-all-seven diagnostic reference comparison, and a production C7 A–B–A conversion
-run on X-T5 firmware 4.31. These observations cover the specific retained inputs
-and settings; they do not establish broad RAW compatibility.
+The native workspace composes the real Photos reader/writer, X-T5 camera
+service, preview/export coordinators and durable local catalog. On reviewed
+`75fbd61b`, the controller completed seven temporary same-source recipe previews
+without new Photos assets, then one deliberate C7 export of the viewed paired
+source. On-device checks verified a distinct asset, exact preview bytes, source
+capture date, absent location preserved, unchanged originals/banks and native
+closure. Terminating and relaunching with the same run ID reopened the exact
+saved version without another export. Independent offline verification passed
+156 assertions; all seven new standalone previews matched their own Mac recipe
+reference in exposed metadata/coding tables and ranked it nearest spatially.
 
 The complete simulator gate passed **419 tests with 3 explicit native-gate skips**,
-and the unsigned Release simulator build passed. Final device acceptance is **incomplete**. The current live app's deliberate
-Photos export/reopen proof, real interruption recovery, native rotation and
-accessibility checks, and a measured mixed batch of at least 50 sources remain
-open. See [the acceptance record](docs/validation/acceptance.md) for individual
-checks and [device-gates.md](docs/validation/device-gates.md) for historical
-observations. A simulator fixture or the prototype does not close a camera gate.
+and the unsigned Release simulator build passed before two reviewed DEBUG-only
+validation corrections. Their targeted gates passed 42 and 17 test functions.
+Final device acceptance remains **incomplete**: real interruption recovery,
+Photos chronology UI, nonnil GPS preservation, physical scrolling/pinch/pan,
+rotation and accessibility, broader RAW/camera support, and a measured mixed batch of at least
+50 sources remain open. These observations cover two retained inputs on X-T5
+firmware 4.31; they do not establish general compatibility or pixel equality.
+Later ordinary-app taps also exercised selection, drawer expand/collapse,
+Zoom+/Fit/double-tap, recipe preview/manual RAW switching and No Recipe clear,
+without another export. The user subsequently confirmed that all crossed photos
+became checked during a real finger sweep across thumbnails and the next row.
+Remote drag/wheel attempts did not establish scrolling. See [the acceptance record](docs/validation/acceptance.md) for the evidence
+boundaries and [device-gates.md](docs/validation/device-gates.md) for chronology.
 
 ## Development
 
@@ -70,7 +81,7 @@ Scripts/test-ios.sh
 Scripts/test-ios.sh FujiStudioTests/RawResourceSelectorTests
 ```
 
-The script generates the ignored `FujiStudio.xcodeproj` and shared `FujiStudio` scheme, uses `.build/DerivedData` and timestamped `.build/TestResults/*.xcresult`, and disables signing for simulator destinations. Its default simulator was inspected locally: iPhone Duo, iOS 27.1, UUID `5277B203-F40D-4AEF-98E9-164D7C653887`. Override it on other machines:
+The script generates the ignored `FujiStudio.xcodeproj` and shared `FujiStudio` scheme, uses `.build/DerivedData` and timestamped `.build/TestResults/*.xcresult`, and disables signing for simulator destinations. The observed simulator was iPhone Duo, iOS 27.1. Select an available destination on your machine:
 
 ```sh
 FUJI_STUDIO_DESTINATION='platform=iOS Simulator,id=YOUR_SIMULATOR_UUID' Scripts/test-ios.sh
@@ -99,7 +110,7 @@ For a physical device, supply a locally authorized development team in ignored `
 
 Only primary/alternate original roles qualify; content types distinguish RAF, JPEG and other RAW formats. A selected resource streams to a unique temporary file with iCloud progress, SHA-256 and cancellation/error cleanup. The caller owns and removes a successful local file. Missing originals and network failures remain preparation errors.
 
-`RAFMetadataReader` verifies the file hash, RAF framing, X-T5 model, embedded JPEG model/orientation, and recorded RAF geometry without RAW pixel decoding. It keeps sensor/container dimensions separate from recorded crop dimensions and aspect. Synthetic metadata fixtures test parser branches; actual compression and geometry support require the pending device gate.
+`RAFMetadataReader` verifies the file hash, RAF framing, X-T5 model, embedded JPEG model/orientation, and recorded RAF geometry without RAW pixel decoding. It keeps sensor/container dimensions separate from recorded crop dimensions and aspect. Synthetic metadata fixtures test parser branches; broader compression and geometry support still require device evidence.
 
 ## Camera and foreground operation
 
@@ -140,8 +151,11 @@ use a new UUID as an automatic retry. Release excludes this route and driver.
 
 Private evidence stays in the app's `Documents/live-acceptance-private` and
 ignored local `.build`/`.superpowers` artifacts. Public summaries contain only
-counts, booleans and dimensions. Independent software review must precede the
-controller's live run. This route does not measure the 50-source performance
-corpus or establish native Home, rotation, VoiceOver, or Photos chronology UI.
+counts, booleans and dimensions. The recorded run followed independent software
+review and an exact reviewed build/install. A first unarmed attempt stopped on a retained-manifest schema
+mismatch before any camera operation or export; its consumed run was preserved.
+After the reviewed correction, the controller explicitly chose a new run. Total
+Photos exports across those attempts: one. This route does not measure the
+50-source performance corpus or establish native Home, rotation, VoiceOver, or Photos chronology UI.
 
 API references: [XcodeGen project specification](https://github.com/yonaskolb/XcodeGen/blob/master/Docs/ProjectSpec.md), [Apple ImageCaptureCore authorization requirements](https://developer.apple.com/documentation/imagecapturecore), and the installed iOS 27.1 Photos/PhotosUI headers. RAF tag/layout research was checked against [ExifTool's FujiFilm parser](https://github.com/exiftool/exiftool/blob/master/lib/Image/ExifTool/FujiFilm.pm); no third-party code or runtime dependency is included.

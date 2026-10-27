@@ -1,6 +1,11 @@
 # Public USB PTP transport provenance
 
-## Evidence status — 2026-10-26
+Current evidence is summarized in [acceptance.md](acceptance.md). The entries
+below preserve investigation chronology; early pending statements are historical.
+The final Task13 section records the reviewed current production seven-slot and
+one-export/reopen observations, without extending the measured support class.
+
+## Historical evidence status — 2026-10-26
 
 Transport software and deterministic simulator tests are implemented. **Controller observed public sessionOpen on c0f793c; successful PTP is still pending.** Firmware, phone permissions, callback payload mapping, USB mode, and RAW conversion capability remain physical gates. No device build/install, authorization request, camera setting change, recipe-bank write, card deletion, or provisioning change was performed by Task 2.
 
@@ -437,3 +442,73 @@ The one newly admitted control is LMO working word20 at offset593: measured2/OFF
 The explicit DEBUG `--xt5-production-acceptance-probe` invokes this real production service for standalone A → paired B → A using the same frozen C7 snapshot. First A cleanup precedes bank import because the earlier baseline-only upload may leave selectors busy. It then compares current seven-bank imports before/after the sequence, preserves all requested/raw values, requires distinct source keys and repeated-A key identity, and awaits actual native close. Public evidence separates runtime quality, LMO request/effect, output cleanup and closure; private operation journals retain profiles, readbacks, images and source bindings. No actual iPhone combined-validator/LMO-control/A→B→A success follows from simulator tests. Same-source A/vendor comparison and B source/output validation remain the next controller-owned acceptance; B vendor comparison and other frame classes remain separate evidence.
 
 The only native transport integration is making the existing confirmed-close wait/type/storage/completion hook available in Release. Its quarantine/timeout/generation algorithm and the persistent browser are unchanged. Release compiles; focused existing native close/cancellation tests pass. General production portability, opaque input-buffer lifetime, dormant-size encoding and full Task3 completion remain unclaimed.
+
+## Task13 — current production seven-slot comparison
+
+On reviewed `75fbd61b`, the controller ran the actual displayed live composition
+on iPhone 15 Pro / iOS 27.0.1 with X-T5 firmware 4.31. Seven sequential standalone
+A previews and one paired-B C7 preview used the real production service. The
+controller retained the explicit run's actual CameraJPEG records/files and native
+journals. No first/latest-output search or substitute reference input was used.
+A separate offline audit passed 156 assertions across source/bank/key/profile,
+full output hashes, exact candidate/readback bytes, operation ownership/cleanup
+and saved/reopened identity. All eight outputs are complete FINE JPEGs,
+7728 × 5152, orientation 8, with actual effective LMO OFF and requested ON reported.
+PTP ObjectInfo dimensions remain zero; geometry comes from full JPEG decode/EXIF.
+
+Every new A output matches its own same-RAF Mac C-slot reference in all exposed
+metadata (25–27 tags per slot; zero mismatches) and all five coding/table segments.
+Absent-in-both tags are unexposed, not verified settings. Stripped coded streams
+differ. The unchanged comparison helper strips APP/COM only in derived copies,
+uses integer RGB decoding without applying EXIF orientation, and computes sample
+and 32 × 32 tile/channel-mean differences on the 0–255 scale. Partial edge tiles
+have equal tile weight. Each own-slot reference ranks nearest:
+
+| Slot | Actual JPEG bytes | Sample RMSE | Tile-mean RMSE | Next nearest tile RMSE |
+| --- | ---: | ---: | ---: | ---: |
+| C1 | 24,612,301 | 1.316940 | 0.048713 | 14.286491 |
+| C2 | 25,113,044 | 8.229902 | 0.161152 | 6.853273 |
+| C3 | 21,645,773 | 1.280669 | 0.048349 | 13.799072 |
+| C4 | 25,279,137 | 1.343047 | 0.065176 | 15.646110 |
+| C5 | 25,502,467 | 8.419122 | 0.163757 | 6.853817 |
+| C6 | 17,302,827 | 1.222766 | 0.048506 | 13.461088 |
+| C7 | 26,368,721 | 25.136480 | 0.611643 | 26.610716 |
+
+Actual Mac C2 repeat sample/tile RMSE is 8.228818 / 0.160681; C7 is
+25.136123 / 0.610100. Current C2/C7 residuals closely track that vendor-repeat
+context, consistent with stochastic grain; this is not exact pixel equality or
+a universal acceptance threshold. C1/C3/C4/C6 retain small nonzero differences.
+C5 has no own-slot vendor repeat, so its residual is not explained by an observed
+C5 repeat control. No Mac B reference exists: B's 26,127,706-byte C7 output has
+identity, complete-JPEG/geometry/FINE/effective-metadata and saved-byte proof,
+without same-source B Mac visual-fidelity proof.
+
+All seven bank names/imported-name bytes and 23 ordered raw settings matched
+before/after and both frozen captures. Eight unique camera operations shared the
+actual execution context; each completed with validated output and one matching
+owned-delete intent/acknowledgement/empty view. All baselines/candidates/readbacks
+and actual retained output hashes were independently checked. The support remains
+the measured two-source lossless 14-bit, 3:2, orientation-8/lens/profile context;
+opaque input-buffer lifetime and broader source/firmware domains remain unknown.
+
+Seven A previews produced no new native Photos asset identities. One explicit
+viewed-B export then created a distinct Photos asset. Its exact bytes/capture
+date/absent location/unchanged originals/native closure are reviewed on-device
+coded observations. Both source locations were nil; no nonnil GPS case is proved.
+The temporary PhotoKit resource was not retained for an independent offline hash;
+the audit binds the retained actual B preview to saved records without inventing
+that missing second resource. Actual same-UUID process reopen retained identical
+receipt/job/version and all 40 camera-journal files, with no new camera operation
+or export. The preceding failed, unarmed schema attempt remains consumed and
+created no output. Total Photos exports across the attempts: one.
+
+These journal counts and zero-new-operation results cover the recorded reopen
+interval. Later ordinary-app Connect/C3 preview and UI observations are outside
+this fixed audit snapshot; no absence of later camera work is inferred. Those
+checks added no Photos export and are recorded separately in acceptance.md.
+
+Exact private paths, source/asset/run identities, hashes, bank values and media
+remain ignored. The independent Task13 report and verification directory retain
+the complete assertions, comparison rankings, tags/coding segments and commands.
+This record does not establish Photos chronology UI, active interruption recovery,
+native gesture/accessibility behavior or 50-source performance acceptance.

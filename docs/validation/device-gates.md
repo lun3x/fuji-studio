@@ -1,14 +1,16 @@
 # Device validation gates
 
 Current status (2026-10-27): the entries below retain investigation chronology.
-Later evidence supersedes early availability/firmware statements. The observed
-phone is iPhone 15 Pro on iOS 27.0.1; the camera is X-T5 firmware 4.31. Reviewed
-`88996b74` supplied genuine paired RAW display and production C7 A–B–A proof,
-with no Photos writes. The native app composition was subsequently accepted in
-software through `fd94d301`; its physical export/reopen/interruption acceptance
-is still pending. See [acceptance.md](acceptance.md) for the current A01–A24
-matrix. Earlier “pending input” statements describe their historical stage,
-not the availability of the later retained paired production output.
+Later evidence supersedes early availability/firmware/pending-input statements.
+The observed phone is iPhone 15 Pro on iOS 27.0.1; the camera is X-T5 firmware 4.31.
+Reviewed `75fbd61b` completed seven temporary same-A previews, one viewed paired-B
+Photos export and same-run read-only process reopen. Independent offline checks
+passed 156 assertions. Gate5 now has bounded new-asset, byte, capture-date, absent
+location and association proof; chronology UI and nonnil GPS remain open. Gate6 active
+interruption, native gestures/accessibility and mixed-50-source measurements remain
+unrun. See [acceptance.md](acceptance.md) for the current A01–A24 matrix and the
+final section below for the actual run's scope. Earlier stages are not current
+instructions to replay diagnostic camera operations.
 
 ## Gate 1 — actual Photos originals: PENDING
 
@@ -173,7 +175,7 @@ The final focused simulator run passed **15 tests in 1 suite**, exit0: `.build/t
 
 This is software evidence only: the worker performed no Photos write, device installation, camera operation, permission request or privacy change. **Physical Gate5 remains pending** an authoritative paired-source production `CameraJPEG` from the next camera-available run. No probe was added because that exact input/provenance contract is not yet available. Historical standalone diagnostic JPEGs cannot stand in for paired production output. The controller must agree the exact frozen source, production output and deliberate export operation before a reviewed one-save probe is implemented/executed. Required physical observations still include source pair/resource hashes unchanged; output resource byte identity and dimensions/orientation/date/location; capture chronology/Recently Added; reopened catalog Versions association; exact-operation recovery and actual full/limited/revoked access behavior. Photos' equal-time tie ordering must be observed without claiming app control. Previously authorized Full Access/camera permission must not be requested again. See the Task5 report for test process evidence, the narrow geometry API clarification and the exact next-probe inputs.
 
-## Task13 software phase — latest controller evidence and open device gates
+## Task13 software phase — earlier controller evidence and open device gates
 
 The controller's installed reviewed `88996b74` local RAW probe verified the exact
 paired B asset's alternate RAF and primary JPEG roles, identity/revision/names
@@ -199,10 +201,91 @@ without a visual-fidelity claim. The earlier seven-slot diagnostic comparison
 remains separate evidence for its exact input/context. General source support
 and opaque uploaded-RAW buffer lifetime remain unproven.
 
-Task13's guarded DEBUG live validation driver is software instrumentation only
-until the controller installs the independently reviewed checkpoint and records
-its actual run. Physical Gate5 (new asset, exact bytes/date/location, reopened
+At this historical software checkpoint, the guarded DEBUG live validation driver
+had not yet run. Physical Gate5 (new asset, exact bytes/date/location, reopened
 Versions and observed Photos chronology), Gate6 (real interruption/uncertain
 save/recovery), limited/cloud cases, native accessibility/rotation and the
-mixed-50-source Instruments measurements remain open. No worker operated the
-phone/camera or wrote to Photos during the software phase.
+mixed-50-source Instruments measurements were open at that stage. No worker
+operated the phone/camera or wrote to Photos during the software phase.
+
+## Task13 current live composition — bounded preview/export/reopen pass
+
+After software review, the first explicit live run on `a5023386` stopped before
+camera connection, preview or export because the historical standalone manifest
+had no recorded RAW discriminator. Its consumed claim and unarmed receipt were
+preserved, with no job or Photos output. The reviewed `75fbd61b` correction uses
+the actual retained A contract, keeps B descriptors strict, and captures separate
+LIVE source descriptors checked around every materialization. It neither rewrites
+retained proof nor retries an existing UUID.
+
+The controller built/signed/verified/installed exact `75fbd61b` and deliberately
+selected one new controlled run after confirming the first was unarmed. Genuine
+no-recipe A RAW/B original-JPEG defaults were verified. Seven A recipe previews
+left the native Photos identity set unchanged. All seven imported names and all
+23 raw settings matched retained values before/after. Eight real camera outputs
+(seven A previews and B-C7) were FINE 7728 × 5152, orientation 8, with requested
+LMO ON/effective OFF reported. Each native operation retained exact provenance,
+candidate/readback equality and owned-output deletion/empty acknowledgement.
+
+One deliberate Browse-mode export saved viewed B-C7 as a distinct new Photos
+asset. On-device coded checks compared its materialized original bytes with the
+held actual preview, preserved the source capture date and absent location,
+verified unchanged original RAFs/JPEG and saved-version/source association, and
+confirmed native close from the service. Both source locations were nil; this
+is no evidence of nonnil GPS preservation. The saved original was removed from
+temporary storage after comparison, so the offline audit does not claim an
+independent second PhotoKit resource hash.
+
+The controller terminated and relaunched the same run UUID. Read-only reopen
+verified the exact saved version without another export. Receipt/job/version
+were unchanged; all 40 native journal files for eight operations were identical
+byte for byte, with no new camera work. **Total actual Photos exports across both
+attempts: one.** No user Photos asset was deleted. The failed first run remains
+consumed and preserved.
+
+Independent offline verification passed 156 assertions, including actual output
+hashes, bindings, native journals and all-seven same-A Mac comparison. All exposed
+metadata and five coding/table segments matched; each result ranked its own slot
+nearest. C2/C7 residuals track measured vendor repeats; C5 has no own repeat, and
+no pixel-perfect/universal fidelity claim is made. B has no same-source Mac
+reference. [Protocol provenance](protocol-provenance.md#task13--current-production-seven-slot-comparison)
+records the bounded comparison.
+
+Device Hub screenshots let the controller inspect the upright B image,
+RAW/original-JPEG/saved-C7 labels, two-row grid and read-only reopen status. The
+validation route disables workspace controls; this observation does not prove
+manual native gestures, menu interaction, accessibility or rotation. Termination
+after completed saving also does not prove interruption during active work.
+
+Later the controller launched the ordinary app with no validation flag and actual
+coordinate taps worked; the previous remote-input blocker did not recur, with
+cause unknown. Select added checkboxes without a visible grid/two-row size change;
+All selected 761 eligible sources and None cleared to zero. Expand overlaid four
+rows across most of the viewer. Done/source navigation kept the drawer expanded,
+and manual Collapse retained the viewed standalone A tile. Genuine RAW, Zoom+,
+Fit and double-tap zoom/reset were directly observed in returned device images.
+No new local screenshot path is claimed.
+
+The actual floating menu displayed seven slots, including one legitimately
+unnamed slot. C3 selection plus normal Connect reached Camera Ready and a color
+Temporary Preview with one-source Export enabled outside Select. Manual RAW
+switching preserved C3/Export eligibility; returning to Temporary Preview worked.
+No Recipe restored RAW and disabled Export despite the ready camera. No Export
+was tapped, so the total Photos export count stays one.
+
+Two remote drag attempts selected only an endpoint and a wheel attempt did not
+scroll. The user subsequently confirmed on the installed reviewed build that all
+crossed photos became checked during a real finger sweep across thumbnails and
+the next row: a bounded human-observed range-selection pass. Pan and vertical
+scroll remain unverified; the remote-input cause is not asserted. These ordinary
+UI observations postdate the fixed
+156-assertion snapshot. Normal C3 preview may involve native/cached camera work;
+the byte-identical journal proof applies only to the earlier reopen interval.
+
+Still NOT RUN: active Home/background/disconnect/unknown-save recovery,
+Photos chronological UI/tie order, nonnil GPS, limited/cloud cases, native
+vertical scroll/pinch/pan/rotation/VoiceOver/hardware-keyboard checks, broader
+firmware/lens/aspect/
+compression classes and mixed-50-source Instruments measurements. This bounded
+pass does not close full device acceptance. All exact run/source/asset values,
+media and verification artifacts remain in ignored private storage.
