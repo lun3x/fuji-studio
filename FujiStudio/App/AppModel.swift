@@ -9,6 +9,7 @@ import Observation
     private(set) var preview: CameraJPEG?
     private(set) var savedVersions: [SavedVersion] = []
     private(set) var imageStatus: String?
+    private(set) var imageLoading: ImageLoadingState?
     private(set) var message: String?
     private(set) var exportEvent: ExportEvent?
     private var unfinishedEvents: [UUID: ExportEvent] = [:]
@@ -129,9 +130,10 @@ import Observation
             displayFile = nil; availableDisplay = nil
         }
         imageStatus = "Loading image…"
+        imageLoading = .loading
         if preview?.sourceID != state.viewedSourceID || preview?.sourceRevision != state.viewedSourceRevision { preview = nil }
         guard !isSuspended, let source = sources.first(where: { $0.id == state.viewedSourceID }), let version = state.displayedVersion else {
-            savedVersions = []; imageStatus = nil
+            savedVersions = []; imageStatus = nil; imageLoading = nil
             let coordinator = environment.preview
             displayTask = Task { await coordinator.invalidate() }; return
         }
@@ -152,6 +154,7 @@ import Observation
         if let request = event.workspaceRequest {
             guard displayRequest == request, request.sourceRevision == state.viewedSourceRevision else { return }
             guard case .ready = event.state, let jpeg = event.jpeg, case .preview(let key) = event.version else {
+                imageLoading = ImageLoadingState(event.state)
                 if case .failed(let failure) = event.state, state.selectedRecipe == request.recipe {
                     displayFailure = Self.previewMessage(failure); imageStatus = displayFailure
                     isLoadingPreview = false
@@ -173,12 +176,17 @@ import Observation
         }
         switch event.state {
         case .ready:
+            imageLoading = nil
             displayFile = event.displayFile; imageStatus = displayFailure
             if let file = event.displayFile, let version = event.version, let revision = state.viewedSourceRevision {
                 availableDisplay = AvailableDisplay(sourceID: event.sourceID, revision: revision, version: version, file: file)
             }
-        case .loading, .progress: imageStatus = displayFailure ?? Self.loadingMessage(event.state)
-        case .failed(let failure): displayFailure = Self.previewMessage(failure); imageStatus = displayFailure
+        case .loading, .progress:
+            imageLoading = ImageLoadingState(event.state)
+            imageStatus = displayFailure ?? Self.loadingMessage(event.state)
+        case .failed(let failure):
+            imageLoading = nil
+            displayFailure = Self.previewMessage(failure); imageStatus = displayFailure
         }
     }
 
@@ -318,6 +326,7 @@ import Observation
         // Revoke obsolete preparation before export reserves the shared scheduler/pool. An
         // already admitted native render remains independently owned by PreviewCoordinator.
         displayTask?.cancel(); displayIntent &+= 1; displayRequest = nil
+        imageLoading = nil
         if isLoadingPreview { state.reduce(.previewInterrupted); isLoadingPreview = false }
         imageStatus = displayFile == nil ? "Image loading stopped. Select the recipe again to retry." : displayFailure
         await environment.preview.invalidate()
@@ -399,6 +408,7 @@ import Observation
             foreground = false; isSuspended = true; restoreIdle()
             displayIntent &+= 1
             displayTask?.cancel(); displayRequest = nil
+            imageLoading = nil
         }
         let preceding = sceneTask
         let task = Task { [weak self] in
@@ -507,6 +517,7 @@ import Observation
                 displayIntent &+= 1
                 displayTask?.cancel(); displayRequest = nil; availableDisplay = nil
                 displayFile = nil
+                imageLoading = nil
                 imageStatus = "This saved image is unavailable. Manage Photos access to include it."
                 await environment.preview.invalidate()
             }

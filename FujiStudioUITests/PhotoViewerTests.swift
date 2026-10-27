@@ -21,6 +21,39 @@ final class PhotoViewerTests: XCTestCase {
         app.buttons[identifier].tap()
     }
 
+    func testLoadingOverlayPreservesPhotoFrameAndZoom() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launchArguments = ["--viewer-fixture", "--viewer-loading-controls"]
+        app.launch()
+        let viewer = image(app)
+        XCTAssertTrue(viewer.waitForExistence(timeout: 10))
+        viewer.pinch(withScale: 2, velocity: 1)
+        let frame = viewer.frame, zoom = try requiredValues(app)
+        let advance = app.buttons["fixture.loading"]
+        let loading = app.descendants(matching: .any)["viewer.loading"]
+        advance.tap()
+        XCTAssertTrue(loading.waitForExistence(timeout: 3))
+        XCTAssertFalse(app.descendants(matching: .any)["viewer.status"].exists)
+        XCTAssertEqual(viewer.frame, frame)
+        XCTAssertEqual(loading.frame.midX, frame.midX, accuracy: 1)
+        XCTAssertEqual(loading.frame.midY, frame.midY, accuracy: 1)
+        advance.tap()
+        XCTAssertTrue(app.staticTexts["viewer.loading.progress"].waitForExistence(timeout: 3))
+        XCTAssertEqual(app.staticTexts["viewer.loading.progress"].value as? String, "25%")
+        XCTAssertEqual(viewer.frame, frame)
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "Preview download overlay"; attachment.lifetime = .keepAlways; add(attachment)
+        advance.tap()
+        XCTAssertTrue(loading.exists)
+        XCTAssertFalse(app.staticTexts["viewer.loading.progress"].exists)
+        advance.tap()
+        XCTAssertTrue(loading.waitForNonExistence(timeout: 3))
+        XCTAssertEqual(viewer.frame, frame)
+        let after = try requiredValues(app)
+        for i in 0..<3 { XCTAssertEqual(after[i], zoom[i], accuracy: 0.01) }
+    }
+
     func testZoomPersistsAcrossMatchingVersionsAndResetsForNewSource() throws {
         let app = launch(), viewer = image(app)
         XCTAssertTrue(viewer.waitForExistence(timeout: 10))

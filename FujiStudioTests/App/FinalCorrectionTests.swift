@@ -188,6 +188,7 @@ import Testing
         await eventually { await reader.receipt("source-1", format: .raf)?.started == true }
         let receipt = try #require(await reader.receipt("source-1", format: .raf))
         await eventually { model.imageStatus?.contains("25%") == true }
+        #expect(model.imageLoading == .downloading(0.25))
         model.send(.sourceTapped("source-2"))
         if !recipePreview { model.send(.recipeSelected(slot: 1)) }
         await eventually { receipt.cancelled && receipt.cleanupComplete && model.preview?.sourceID == "source-2" }
@@ -198,6 +199,7 @@ import Testing
         let file = model.displayFile
         receipt.lateProgress(); try await Task.sleep(for: .milliseconds(50))
         #expect(model.displayFile === file && model.imageStatus == nil)
+        #expect(model.imageLoading == nil)
         #expect(await f.writer.requests.isEmpty)
     }
 
@@ -242,6 +244,7 @@ import Testing
         await eventually { await reader.receipt(id, format: .jpeg)?.started == true }
         let receipt = try #require(await reader.receipt(id, format: .jpeg))
         await eventually { model.imageStatus?.contains("25%") == true }
+        #expect(model.imageLoading == .downloading(0.25))
         if saved { model.send(.versionSelected(.cameraJPEG)) }
         else { model.send(.sourceTapped("source-2")) }
         await eventually { receipt.cancelled && receipt.cleanupComplete && model.displayFile != nil }
@@ -249,6 +252,7 @@ import Testing
         #expect(!FileManager.default.fileExists(atPath: receipt.transfer.fileURL.path))
         receipt.lateProgress(); try await Task.sleep(for: .milliseconds(50))
         #expect(model.imageStatus == nil)
+        #expect(model.imageLoading == nil)
         #expect(await f.writer.requests.count == (saved ? 1 : 0))
     }
 

@@ -9,6 +9,7 @@ struct WorkspaceView<StatusControl: View, ConnectionControl: View>: View {
     var imageGeometry: ImageGeometry? = nil
     var displayFile: DisplayFileLease? = nil
     var detail: ZoomPhotoView.DetailProvider? = nil
+    var imageLoading: ImageLoadingState? = nil
     var imageStatus: String? = nil
     var imageStatusIsFailure = false
     var savedVersions: [SavedVersion] = []
@@ -38,7 +39,7 @@ struct WorkspaceView<StatusControl: View, ConnectionControl: View>: View {
             let controlFrame = CGRect(x: safe.leading + 16, y: toolbarTop, width: max(1, width - 32), height: controlBottom - toolbarTop)
             // Only a real image-status message reserves space below the image. The two
             // photo controls float over it in every layout; there are no version/zoom rows.
-            let statusReserve = imageGeometry != nil && imageStatus != nil ? statusHeight + 8 : 0
+            let statusReserve = imageGeometry != nil && imageStatus != nil && imageLoading == nil ? statusHeight + 8 : 0
             let available = size.height - safe.bottom - drawerHeaderHeight - controlFrame.maxY - DrawerGeometry.controlClearance - statusReserve - 44
             let gridMetrics = DrawerGeometry.gridMetrics(width: width, availableGridHeight: available)
             let detents = DrawerGeometry.detents(container: size, safeArea: safe, headerHeight: drawerHeaderHeight,
@@ -92,6 +93,7 @@ struct WorkspaceView<StatusControl: View, ConnectionControl: View>: View {
         if let source = sources.first(where: { $0.id == state.viewedSourceID }) {
             PhotoViewer(sourceID: source.id, version: state.displayedVersion ?? .raw, imageURL: imageURL,
                 geometry: imageGeometry, displayFile: displayFile, detail: detail,
+                loading: imageLoading,
                 status: imageStatus, statusIsFailure: imageStatusIsFailure,
                 statusVisible: state.drawerDetent == .collapsed,
                 onStatusHeightChanged: { statusHeight = $0 })
