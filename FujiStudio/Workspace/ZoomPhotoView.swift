@@ -8,9 +8,6 @@ final class ZoomControl {
     func forgetOtherSource(_ sourceID: SourceID) {
         if inspection?.sourceID != sourceID { inspection = nil }
     }
-    var zoomIn: (() -> Void)?
-    var zoomOut: (() -> Void)?
-    var fit: (() -> Void)?
 }
 
 private struct ZoomInspection {
@@ -87,9 +84,6 @@ struct ZoomPhotoView: UIViewRepresentable {
         }
 
         func update(_ next: ZoomPhotoView) {
-            next.control?.zoomIn = { [weak self] in self?.step(2) }
-            next.control?.zoomOut = { [weak self] in self?.step(0.5) }
-            next.control?.fit = { [weak self] in self?.setZoom(1) }
             let previous = input
             input = next
             guard previous?.sourceID != next.sourceID || previous?.version != next.version || previous?.imageURL != next.imageURL || previous?.geometry != next.geometry else { return }

@@ -170,19 +170,18 @@ struct PhotoViewer: View {
     let version: VersionID
     let imageURL: URL?
     let geometry: ImageGeometry?
-    let onVersionSelected: (VersionID) -> Void
     var displayFile: DisplayFileLease? = nil
     var detail: ZoomPhotoView.DetailProvider? = nil
     var status: String? = nil
     var statusIsFailure = false
-    var inspectionAvailable = true
-    var onInspectionHeightChanged: (CGFloat) -> Void = { _ in }
+    var statusVisible = true
+    var onStatusHeightChanged: (CGFloat) -> Void = { _ in }
     @State private var control = ZoomControl()
     @State private var statusPresented = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
-    private var inspectionControls: some View {
-        VStack(spacing: 8) {
+    private var imageStatus: some View {
+        Group {
             if let status {
                 if dynamicTypeSize.isAccessibilitySize {
                     Button { statusPresented = true } label: {
@@ -196,13 +195,9 @@ struct PhotoViewer: View {
                         .accessibilityIdentifier("viewer.status")
                 }
             }
-            HStack {
-                Button("Zoom out", systemImage: "minus.magnifyingglass") { control.zoomOut?() }.accessibilityIdentifier("viewer.zoomOut")
-                Button("Fit") { control.fit?() }.accessibilityIdentifier("viewer.fit")
-                Button("Zoom in", systemImage: "plus.magnifyingglass") { control.zoomIn?() }.accessibilityIdentifier("viewer.zoomIn")
-            }.labelStyle(.iconOnly).buttonStyle(.bordered)
         }.fixedSize(horizontal: false, vertical: true)
-            .onGeometryChange(for: CGFloat.self, of: { $0.size.height }, action: onInspectionHeightChanged)
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.height }, action: onStatusHeightChanged)
+            .onDisappear { onStatusHeightChanged(0) }
     }
 
     var body: some View {
@@ -210,8 +205,10 @@ struct PhotoViewer: View {
             if let imageURL, let geometry, geometry.isValid {
                 ZoomPhotoView(sourceID: sourceID, version: version, imageURL: imageURL, geometry: geometry,
                     displayFile: displayFile, detail: detail, control: control)
-                if inspectionAvailable { inspectionControls }
-                else { inspectionControls.hidden() }
+                if status != nil {
+                    if statusVisible { imageStatus }
+                    else { imageStatus.hidden() }
+                }
             } else {
                 ContentUnavailableView {
                     Label(version == .raw ? "RAW display unavailable" : "Image unavailable", systemImage: "photo")

@@ -40,7 +40,7 @@ struct RecipeMenu: View {
         .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named("workspace")) }, action: onControlFrameChanged)
         .popover(isPresented: $presented, arrowEdge: .top) {
             options.environment(\.dynamicTypeSize, dynamicTypeSize)
-                .background { RecipeEscapeHandler(onDismiss: { presented = false }).frame(width: 1, height: 1) }
+                .background { PopoverEscapeHandler(onDismiss: { presented = false }).frame(width: 1, height: 1) }
                 .presentationCompactAdaptation(.popover)
         }
     }
@@ -92,15 +92,15 @@ struct RecipeMenu: View {
 
 /// Scoped to the presented popover. SwiftUI's scroll view does not necessarily acquire keyboard
 /// focus on iOS. A native responder handles only Escape and leaves all other keys to the system.
-private struct RecipeEscapeHandler: UIViewRepresentable {
+struct PopoverEscapeHandler: UIViewRepresentable {
     var onDismiss: () -> Void
-    func makeUIView(context: Context) -> RecipeEscapeView { RecipeEscapeView(onDismiss: onDismiss) }
-    func updateUIView(_ view: RecipeEscapeView, context: Context) { view.onDismiss = onDismiss }
-    static func dismantleUIView(_ view: RecipeEscapeView, coordinator: ()) {
+    func makeUIView(context: Context) -> PopoverEscapeView { PopoverEscapeView(onDismiss: onDismiss) }
+    func updateUIView(_ view: PopoverEscapeView, context: Context) { view.onDismiss = onDismiss }
+    static func dismantleUIView(_ view: PopoverEscapeView, coordinator: ()) {
         view.resignFirstResponder(); view.onDismiss = {}
     }
 }
-private final class RecipeEscapeView: UIView {
+final class PopoverEscapeView: UIView {
     var onDismiss: () -> Void
     init(onDismiss: @escaping () -> Void) {
         self.onDismiss = onDismiss; super.init(frame: .zero)

@@ -55,3 +55,30 @@ identity, and the partial-row cue.
 - [x] Implement and verify normal/AX/compact layout and existing actions.
 - [x] Complete full simulator/Release/signed builds and fresh scoped review.
 - [x] Commit/push, install and record bounded phone verification.
+
+## Follow-up: floating versions and gesture-only zoom
+
+The user's explicit layout request replaces the bottom versions strip with a
+top-right glass popover trigger, opposite the existing recipe button, and removes
+the zoom button row. Reuse VersionList's identity/label generation in a vertical
+menu; factor a VersionMenu trigger for workspace and generated viewer fixture.
+Keep pinch/pan, double-tap, native accessibility actions, inspection retention,
+image-status details, the single header and drawer behavior. No camera/Photos
+service changes or compatibility mode.
+
+**Files:** WorkspaceView.swift (measured overlays/photo area); PhotoViewer.swift
+(status only beneath image); ZoomPhotoView.swift (remove unused button callbacks);
+VersionList.swift / VersionMenu.swift (scrolling menu/trigger); ViewerFixture.swift;
+PhotoViewerTests.swift, AppFlowTests.swift and WorkspaceLayoutTests.swift.
+
+**Review focus:** unavailable RAW can switch back; long saved labels scroll at
+AX5; dismiss never changes selection; same-source inspection survives menu
+selection; gestures cannot activate recipe/Export; both overlays remain in the
+photo bounds and above the expanded drawer; no reserved bottom control rows.
+
+- [x] Observe the new layout/menu regression fail on the existing workspace.
+- [x] Implement vertical versions popover and remove zoom/strip reservations.
+- [x] Verify menu selection/dismissal, pinch/pan/fit, status details, compact/AX
+  layout and persistent image/grid behavior; adapt existing button-driven tests.
+- [x] Complete simulator/Release/signed builds and one fresh scoped review.
+- [ ] Commit and push using jj; install and record bounded phone verification.

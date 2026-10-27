@@ -15,6 +15,11 @@ final class PhotoViewerTests: XCTestCase {
         return text.split(separator: ",").compactMap { Double($0) }
     }
     private func image(_ app: XCUIApplication) -> XCUIElement { app.descendants(matching: .any)["viewer.image"] }
+    private func selectVersion(_ identifier: String, in app: XCUIApplication) {
+        app.buttons["workspace.versions"].tap()
+        XCTAssertTrue(app.buttons[identifier].waitForExistence(timeout: 5))
+        app.buttons[identifier].tap()
+    }
 
     func testZoomPersistsAcrossMatchingVersionsAndResetsForNewSource() throws {
         let app = launch(), viewer = image(app)
@@ -25,7 +30,7 @@ final class PhotoViewerTests: XCTestCase {
             .press(forDuration: 0.05, thenDragTo: viewer.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.4)))
         let before = try requiredValues(app)
         XCTAssertEqual(before.count, 3)
-        app.buttons["version.saved.11111111-1111-1111-1111-111111111111"].tap()
+        selectVersion("version.saved.11111111-1111-1111-1111-111111111111", in: app)
         let after = try requiredValues(app)
         XCTAssertGreaterThan(before[0], 1.1)
         for i in 0..<3 { XCTAssertEqual(after[i], before[i], accuracy: 0.01) }
@@ -44,7 +49,7 @@ final class PhotoViewerTests: XCTestCase {
         return try XCTUnwrap(measured.count == 5 && measured.allSatisfy(\.isFinite) ? Array(measured.prefix(3)) : nil, "Missing or malformed viewer metrics")
     }
 
-    func testDoubleTapMaximumZoomPanViewportResizeAndAccessibleAlternatives() {
+    func testPinchMaximumZoomPanViewportResizeAndDoubleTapFit() {
         let app = launch(), viewer = image(app)
         XCTAssertTrue(viewer.waitForExistence(timeout: 10))
         guard viewer.exists else { return }
@@ -53,7 +58,9 @@ final class PhotoViewerTests: XCTestCase {
         XCTAssertEqual(values(app).dropFirst().first ?? 0, 0.65, accuracy: 0.02)
         viewer.doubleTap()
         XCTAssertEqual(values(app).first ?? 0, 1, accuracy: 0.01)
-        for _ in 0..<5 { app.buttons["viewer.zoomIn"].tap() }
+        for id in ["viewer.zoomOut", "viewer.fit", "viewer.zoomIn"] { XCTAssertFalse(app.buttons[id].exists) }
+        viewer.pinch(withScale: 4, velocity: 2)
+        viewer.pinch(withScale: 4, velocity: 2)
         XCTAssertEqual(values(app).first ?? 0, 8, accuracy: 0.01)
         viewer.swipeLeft(); viewer.swipeUp()
         let before = values(app)
@@ -79,7 +86,7 @@ final class PhotoViewerTests: XCTestCase {
         measurement.name = "Normalized inspection and actual bounds"; measurement.lifetime = .keepAlways; add(measurement)
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = "Detailed image at 8x after viewport resize"; attachment.lifetime = .keepAlways; add(attachment)
-        app.buttons["viewer.fit"].tap()
+        viewer.doubleTap()
         XCTAssertEqual(values(app).first ?? 0, 1, accuracy: 0.01)
     }
 
@@ -106,9 +113,9 @@ final class PhotoViewerTests: XCTestCase {
         guard viewer.exists else { return }
         viewer.doubleTap()
         let before = values(app)
-        app.buttons["version.raw"].tap()
+        selectVersion("version.raw", in: app)
         XCTAssertTrue(app.descendants(matching: .any)["viewer.unavailable"].waitForExistence(timeout: 3))
-        app.buttons["version.cameraJPEG"].tap()
+        selectVersion("version.cameraJPEG", in: app)
         let after = values(app)
         XCTAssertEqual(before.count, 3); XCTAssertEqual(after.count, 3)
         for index in 0..<min(before.count, after.count) { XCTAssertEqual(after[index], before[index], accuracy: 0.01) }
@@ -119,10 +126,10 @@ final class PhotoViewerTests: XCTestCase {
         let app = launch()
         XCTAssertTrue(image(app).waitForExistence(timeout: 10))
         guard image(app).exists else { return }
-        app.buttons["version.raw"].tap()
+        selectVersion("version.raw", in: app)
         XCTAssertTrue(app.descendants(matching: .any)["viewer.unavailable"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.descendants(matching: .any)["viewer.unavailable"].label.contains("RAW display unavailable"))
-        app.buttons["version.cameraJPEG"].tap()
+        selectVersion("version.cameraJPEG", in: app)
         app.buttons["fixture.latePreview"].tap()
         XCTAssertEqual(app.staticTexts["fixture.selection"].label, "Original camera JPEG")
         XCTAssertEqual(app.staticTexts["fixture.recipe"].label, "Selected recipe: C3 Fixture recipe")

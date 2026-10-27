@@ -32,10 +32,12 @@ private struct ViewerFixtureView: View {
         VStack {
             Text("Generated detail fixture").font(.headline)
             PhotoViewer(sourceID: source.id, version: version, imageURL: version == .raw ? nil : file.fileURL,
-                geometry: fixture.geometry, onVersionSelected: { state.reduce(.versionSelected($0)) }, displayFile: file)
+                geometry: fixture.geometry, displayFile: file)
                 .frame(height: compactViewport ? 210 : nil)
-            VersionList(source: source, saved: [fixture.saved], preview: fixture.preview, selected: version,
-                        onVersionSelected: { state.reduce(.versionSelected($0)) })
+                .overlay(alignment: .topTrailing) {
+                    VersionMenu(source: source, saved: [fixture.saved], preview: fixture.preview, selected: version,
+                        onVersionSelected: { state.reduce(.versionSelected($0)) }).padding(8)
+                }
             Text(version == .cameraJPEG ? "Original camera JPEG" : version == .raw ? "RAW" : "Stored version")
                 .font(.caption).accessibilityIdentifier("fixture.selection")
             Text("Selected recipe: C\(state.selectedRecipe?.slot ?? 0) \(state.selectedRecipe?.name ?? "none")")

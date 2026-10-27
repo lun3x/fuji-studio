@@ -43,17 +43,25 @@ struct VersionList: View {
     }
 
     var body: some View {
-        ScrollView(.horizontal) {
-            HStack {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Image versions").font(.headline).padding()
                 ForEach(entries) { entry in
                     Button { onVersionSelected(entry.id) } label: {
-                        Text(entry.label).font(.caption).padding(10)
-                            .background(selected == entry.id ? Color.accentColor.opacity(0.25) : Color.secondary.opacity(0.12), in: Capsule())
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(entry.label).fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 8)
+                            if selected == entry.id { Image(systemName: "checkmark").accessibilityHidden(true) }
+                        }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            .padding(.horizontal).padding(.vertical, 8).contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
                     .accessibilityIdentifier(entry.accessibilityIdentifier)
                     .accessibilityAddTraits(selected == entry.id ? .isSelected : [])
                 }
-            }.padding(.horizontal)
+            }
         }
+        .accessibilityIdentifier("version.options")
+        .frame(idealWidth: 320, maxHeight: 520)
     }
 }

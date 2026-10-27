@@ -162,7 +162,9 @@ final class WorkspaceLayoutTests: XCTestCase {
         XCTAssertTrue(app.buttons["workspace.export"].isEnabled)
         app.buttons["workspace.export"].tap()
         XCTAssertEqual(app.staticTexts["fixture.exportCount"].label, "Export requests: 1")
+        app.buttons["workspace.versions"].tap()
         XCTAssertTrue(app.buttons["version.cameraJPEG"].isSelected)
+        app.buttons["version.cameraJPEG"].tap()
         openRecipeMenu(app)
 
         let options = app.scrollViews["recipe.options"]
@@ -224,27 +226,25 @@ final class WorkspaceLayoutTests: XCTestCase {
         app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: refresh.midX, dy: refresh.midY)).tap()
         XCTAssertEqual(app.staticTexts["fixture.refreshCount"].label, "Refresh requests: 1")
         // The entire grabber label is a touch target, including its top-leading padding.
-        // Without a label contentShape this touch misses, and a later zoom tap collapses the drawer instead.
+        // Without a label contentShape this touch misses and leaves the image covered.
         let toggle = app.buttons["drawer.toggle"]
         toggle.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 65.0 / 3, dy: 9)).tap()
         XCTAssertEqual(toggle.value as? String, "Collapsed")
         waitForDetent(app, expanded: false)
 
-        XCTAssertTrue(app.buttons["viewer.zoomIn"].isHittable)
-        XCTAssertTrue(app.buttons["viewer.zoomOut"].isHittable)
-        let controlsBottom = max(app.buttons["recipe.control"].frame.maxY, app.buttons["workspace.export"].frame.maxY, app.buttons["workspace.versions"].frame.maxY)
-        XCTAssertLessThanOrEqual(controlsBottom, app.buttons["viewer.zoomOut"].frame.minY + 0.5)
+        for id in ["viewer.zoomOut", "viewer.fit", "viewer.zoomIn"] { XCTAssertFalse(app.buttons[id].exists) }
+        let viewer = app.scrollViews["viewer.image"]
+        XCTAssertGreaterThanOrEqual(app.buttons["workspace.versions"].frame.minY, viewer.frame.minY)
+        XCTAssertLessThanOrEqual(app.buttons["workspace.versions"].frame.maxY, viewer.frame.maxY)
         let beforeZoom = [app.staticTexts["fixture.viewed"].label, app.staticTexts["workspace.count"].label, app.staticTexts["fixture.exportCount"].label, app.buttons["recipe.control"].label]
-        let zoomIn = app.buttons["viewer.zoomIn"].frame
-        app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: zoomIn.midX, dy: zoomIn.midY)).tap()
+        viewer.pinch(withScale: 2.5, velocity: 1)
         let zoomed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             Double((app.scrollViews["viewer.image"].value as! String).split(separator: ",")[0])! > 1
         }, object: nil)
         XCTAssertEqual(XCTWaiter.wait(for: [zoomed], timeout: 5), .completed)
         XCTAssertGreaterThan(Double((app.scrollViews["viewer.image"].value as! String).split(separator: ",")[0])!, 1)
         shot(app, "Workspace AX5 actual zoom after manual collapse")
-        let fit = app.buttons["viewer.fit"].frame
-        app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: fit.midX, dy: fit.midY)).tap()
+        viewer.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7)).doubleTap()
         let fitted = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             abs(Double((app.scrollViews["viewer.image"].value as! String).split(separator: ",")[0])! - 1) < 0.01
         }, object: nil)
