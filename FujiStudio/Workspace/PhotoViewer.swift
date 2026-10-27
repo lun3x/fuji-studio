@@ -174,18 +174,26 @@ struct PhotoViewer: View {
     var displayFile: DisplayFileLease? = nil
     var detail: ZoomPhotoView.DetailProvider? = nil
     var status: String? = nil
+    var inspectionAvailable = true
+    var onInspectionHeightChanged: (CGFloat) -> Void = { _ in }
     @State private var control = ZoomControl()
+
+    private var inspectionControls: some View {
+        HStack {
+            Button("Zoom out", systemImage: "minus.magnifyingglass") { control.zoomOut?() }.accessibilityIdentifier("viewer.zoomOut")
+            Button("Fit") { control.fit?() }.accessibilityIdentifier("viewer.fit")
+            Button("Zoom in", systemImage: "plus.magnifyingglass") { control.zoomIn?() }.accessibilityIdentifier("viewer.zoomIn")
+        }.labelStyle(.iconOnly).buttonStyle(.bordered)
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.height }, action: onInspectionHeightChanged)
+    }
 
     var body: some View {
         VStack(spacing: 8) {
             if let imageURL, let geometry, geometry.isValid {
                 ZoomPhotoView(sourceID: sourceID, version: version, imageURL: imageURL, geometry: geometry,
                     displayFile: displayFile, detail: detail, control: control)
-                HStack {
-                    Button("Zoom out", systemImage: "minus.magnifyingglass") { control.zoomOut?() }.accessibilityIdentifier("viewer.zoomOut")
-                    Button("Fit") { control.fit?() }.accessibilityIdentifier("viewer.fit")
-                    Button("Zoom in", systemImage: "plus.magnifyingglass") { control.zoomIn?() }.accessibilityIdentifier("viewer.zoomIn")
-                }.labelStyle(.iconOnly).buttonStyle(.bordered)
+                if inspectionAvailable { inspectionControls }
+                else { inspectionControls.hidden() }
             } else {
                 ContentUnavailableView {
                     Label(version == .raw ? "RAW display unavailable" : "Image unavailable", systemImage: "photo")

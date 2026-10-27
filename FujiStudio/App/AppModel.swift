@@ -32,6 +32,7 @@ import Observation
     @ObservationIgnored private var cameraEventGeneration: UInt64 = 0
     @ObservationIgnored private var importedSessions: Set<UUID> = []
     @ObservationIgnored private var contextTask: Task<Void, Never>?
+    @ObservationIgnored private var recoverySequence: UInt64 = 0
     @ObservationIgnored private var recoveryNeeded = false
     @ObservationIgnored private var recovering = false
     @ObservationIgnored private var previousIdle: Bool?
@@ -84,6 +85,7 @@ import Observation
 
     private func reduce(_ action: WorkspaceAction) {
         let previousSource = state.viewedSourceID, previousVersion = state.displayedVersion
+        let previousRevision = state.viewedSourceRevision
         let effects = state.reduce(action)
         let request = effects.compactMap { effect -> WorkspacePreviewRequest? in
             if case .requestPreview(let request) = effect { return request }; return nil
@@ -92,7 +94,7 @@ import Observation
         case .sourceTapped, .versionSelected, .recipeSelected: true
         default: false
         }
-        if request != nil || explicitDisplay || previousSource != state.viewedSourceID || previousVersion != state.displayedVersion {
+        if request != nil || explicitDisplay || previousSource != state.viewedSourceID || previousVersion != state.displayedVersion || previousRevision != state.viewedSourceRevision {
             if case .previewCompleted = action { return }
             requestDisplay(request)
         }
@@ -105,7 +107,7 @@ import Observation
         // Supersede intent in the coordinator; an already-active camera operation must drain.
         previewInFlight = request != nil
         displayFile = nil; imageStatus = "Loading image…"
-        if preview?.sourceID != state.viewedSourceID { preview = nil }
+        if preview?.sourceID != state.viewedSourceID || preview?.sourceRevision != state.viewedSourceRevision { preview = nil }
         guard !isSuspended, let source = sources.first(where: { $0.id == state.viewedSourceID }), let version = state.displayedVersion else {
             savedVersions = []; imageStatus = nil
             let coordinator = environment.preview
@@ -296,6 +298,11 @@ import Observation
     }
 
     private func exportChanged(_ event: ExportEvent) async {
+        guard event.sequence > recoverySequence else { return }
+        applyProgress(event)
+        if event.terminal { await refreshVersions(); await recoverWhenIdle() }
+    }
+    private func applyProgress(_ event: ExportEvent) {
         exportEvent = event
         if !jobOrder.contains(event.jobID) { jobOrder.append(event.jobID) }
         if !event.terminal || event.summary.failed + event.summary.skipped + event.summary.unprocessed + event.summary.unresolved > 0 {
@@ -306,7 +313,6 @@ import Observation
         }
         reduce(.activeJobChanged(event.terminal ? nil : event.jobID))
         updateIdle()
-        if event.terminal { await refreshVersions(); await recoverWhenIdle() }
     }
 
     func cancelExport(jobID: UUID? = nil) async {
@@ -332,7 +338,15 @@ import Observation
         recovering = true
         repeat {
             recoveryNeeded = false
-            do { try await environment.exports.recover() }
+            do {
+                let snapshot = try await environment.exports.recover()
+                recoverySequence = snapshot.sequence
+                // Include recovered jobs which became saved as well as still-pending jobs, so
+                // dropped terminal events cannot leave stale outcomes. Existing session retry
+                // summaries outside the durable unfinished set remain actionable.
+                for event in snapshot.jobs { applyProgress(event) }
+                reduce(.activeJobChanged(nil)); updateIdle()
+            }
             catch { message = Self.explain(error) }
         } while recoveryNeeded && !isSubmitting && state.activeJobID == nil
         recovering = false

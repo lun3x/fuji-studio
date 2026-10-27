@@ -153,6 +153,51 @@ import XCTest
         wait { app.staticTexts["export.counts"].label.contains("3 saved") }
         XCTAssertEqual(app.staticTexts["export.status"].label, "Export saved")
     }
+    func testAXInspectionActionsStaySeparateFromEnabledRecipeVersionsAndExport() {
+        let app = launch(["--fixture-accessibility", "--fixture-dark"])
+        app.cells["grid.source-0"].tap(); app.buttons["app.connect"].tap()
+        wait { app.buttons["app.status"].label.contains("Camera ready") }
+        recipe(1, in: app)
+        version("version.preview", in: app).tap()
+        XCTAssertTrue(app.buttons["workspace.export"].isEnabled)
+        let viewer = app.scrollViews["viewer.image"], grid = app.collectionViews["photoGrid"]
+        XCTAssertTrue(viewer.waitForExistence(timeout: 5))
+        func magnitude() -> Double { Double((viewer.value as? String ?? "").split(separator: ",").first ?? "") ?? -1 }
+        func inspect(_ name: String) {
+            let controls = ["viewer.zoomOut", "viewer.fit", "viewer.zoomIn"]
+            let floating = ["recipe.control", "workspace.versions", "workspace.export"]
+            for id in controls {
+                XCTAssertTrue(app.buttons[id].isHittable)
+                for other in floating { XCTAssertFalse(app.buttons[id].frame.intersects(app.buttons[other].frame), "\(id) intersects \(other)") }
+            }
+            let frames = XCTAttachment(string: (controls + floating).map { "\($0): \(app.buttons[$0].frame)" }.joined(separator: "\n") + "\nViewer: \(viewer.frame), Grid: \(grid.frame)")
+            frames.name = name + " inspection frames"; frames.lifetime = .keepAlways; add(frames)
+            tap(app.buttons["viewer.zoomIn"], in: app); wait { magnitude() > 1.5 }
+            tap(app.buttons["viewer.zoomOut"], in: app); wait { abs(magnitude() - 1) < 0.01 }
+            tap(app.buttons["viewer.zoomIn"], in: app); wait { magnitude() > 1.5 }
+            tap(app.buttons["viewer.fit"], in: app); wait { abs(magnitude() - 1) < 0.01 }
+            XCTAssertTrue(app.buttons["recipe.control"].label.contains("C1"))
+            XCTAssertFalse(app.buttons["app.status"].label.contains("saved"))
+            XCTAssertTrue(app.buttons["workspace.export"].isEnabled)
+            shot(app, name)
+        }
+        inspect("AX5 collapsed enabled export and actual inspection actions")
+        let frame = viewer.frame, side = app.cells["grid.source-0"].frame.width
+        XCTAssertEqual(grid.frame.height, side * 2 + 19, accuracy: 0.5)
+        app.buttons["workspace.select"].tap()
+        XCTAssertEqual(app.cells["grid.source-0"].frame.width, side, accuracy: 0.5)
+        app.buttons["drawer.toggle"].tap(); wait { app.buttons["drawer.toggle"].value as? String == "Expanded" }
+        // Expanded drawer intentionally covers the viewer. Covered controls must not remain
+        // separate hit/accessibility targets; exposed controls would require the same tap checks.
+        for id in ["viewer.zoomOut", "viewer.fit", "viewer.zoomIn"] { XCTAssertFalse(app.buttons[id].exists) }
+        shot(app, "AX5 expanded drawer intentionally covers inspection controls")
+        app.buttons["drawer.toggle"].tap(); wait { app.buttons["drawer.toggle"].value as? String == "Collapsed" }
+        XCTAssertEqual(viewer.frame, frame)
+        XCTAssertEqual(app.cells["grid.source-0"].frame.width, side, accuracy: 0.5)
+        XCTAssertEqual(grid.frame.height, side * 2 + 19, accuracy: 0.5)
+        inspect("AX5 recollapsed inspection remains operable without export")
+    }
+
     func testAccessibleStatusAndConnectionControlsStayOutsideWorkspaceControls() {
         let app = launch(["--fixture-accessibility", "--fixture-limited", "--fixture-dark"])
         app.cells["grid.source-0"].tap()

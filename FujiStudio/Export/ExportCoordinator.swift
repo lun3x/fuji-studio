@@ -20,6 +20,14 @@ struct ExportEvent: Sendable, Equatable {
     /// The current run has stopped, including a pause; the frozen job remains resumable.
     let terminal: Bool
     let stopRequested: Bool
+    var sequence: UInt64 = 0
+}
+
+/// Complete durable unfinished-job state at a coordinator sequence boundary. Transient events
+/// at or before this watermark must not overwrite these canonical outcomes.
+struct ExportRecoverySnapshot: Sendable {
+    let sequence: UInt64
+    let jobs: [ExportEvent]
 }
 
 /// One owned worker spans native operations. Caller cancellation never abandons Photos completion.
@@ -31,6 +39,7 @@ actor ExportCoordinator {
     private let pool: OriginalResourcePool
     private let cache: FileRenderCache
     private let scheduler: any CameraWorkScheduling
+    private var sequence: UInt64 = 0
     private var occupied = false
     private var suspended = false
     private var admissionEpoch: UInt64 = 0
@@ -160,19 +169,25 @@ actor ExportCoordinator {
 
     /// Rechecks exact operation identity only. Call on library changes or explicit foreground recovery.
     /// This method never starts a PhotoKit transaction or camera conversion.
-    func recover() async throws {
+    @discardableResult func recover() async throws -> ExportRecoverySnapshot {
         try reserve(); recovering = true
         defer { occupied = false; recovering = false }
+        var reconciled: [ExportJob] = []
         for job in try await catalog.unfinishedJobs() {
             try await reconcile(job.id, releaseFiles: false)
-            emit(try await catalog.job(id: job.id), terminal: true)
+            let current = try await catalog.job(id: job.id)
+            reconciled.append(current)
+            emit(current, terminal: true)
         }
         // Single coordinator admission is still held. Obtain the complete reference set before
         // deleting anything; a failed catalog enumeration releases no reservations.
-        let references = Set(try await catalog.unfinishedJobs().flatMap { job in
+        let unfinished = try await catalog.unfinishedJobs()
+        let references = Set(unfinished.flatMap { job in
             job.items.compactMap { Self.pending($0.state)?.jpeg.key }
         })
         for key in await cache.pinnedKeys() where !references.contains(key) { await cache.unpin(key) }
+        sequence &+= 1
+        return ExportRecoverySnapshot(sequence: sequence, jobs: reconciled.map { progress($0, terminal: true) })
 
     }
 
@@ -464,6 +479,11 @@ actor ExportCoordinator {
     }
     private func emit(_ job: ExportJob, current: SourceID? = nil, reason: ExportPauseReason? = nil, terminal: Bool = false) {
         if activeID == job.id { lastKnownJob = job }
+        sequence &+= 1
+        let event = progress(job, current: current, reason: reason, terminal: terminal)
+        observers.values.forEach { $0.yield(event) }
+    }
+    private func progress(_ job: ExportJob, current: SourceID? = nil, reason: ExportPauseReason? = nil, terminal: Bool) -> ExportEvent {
         var completed = 0, failed = 0, skipped = 0, unprocessed = 0, unresolved = 0
         for item in job.items {
             switch item.state {
@@ -479,9 +499,8 @@ actor ExportCoordinator {
         let failures = job.items.compactMap { item -> ExportFailure? in
             if case .failed(let failure) = item.state { return failure }; return nil
         }.reduce(into: [ExportFailure]()) { if !$0.contains($1) { $0.append($1) } }
-        let event = ExportEvent(jobID: job.id, recipeLabel: job.recipeSnapshot.name, stage: job.state, currentItem: current,
+        return ExportEvent(jobID: job.id, recipeLabel: job.recipeSnapshot.name, stage: job.state, currentItem: current,
             summary: .init(completed: completed, failed: failed, skipped: skipped, unprocessed: unprocessed, unresolved: unresolved),
-            pauseReason: reason, failures: failures, terminal: terminal || recovering, stopRequested: stop != nil)
-        observers.values.forEach { $0.yield(event) }
+            pauseReason: reason, failures: failures, terminal: terminal || recovering, stopRequested: stop != nil, sequence: sequence)
     }
 }

@@ -305,6 +305,68 @@ import Testing
         #expect(!f.platform.idleTimerDisabled)
     }
 
+    @Test(arguments: [false, true]) func sameSourceRevisionReplacesReadyOrHeldOriginalBytes(_ held: Bool) async throws {
+        let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment), barrier = FixtureBarrier()
+        await model.start()
+        defer { Task { await barrier.release() } }
+        if held { await f.reader.holdMaterialize("source-0", barrier: barrier) }
+        model.send(.sourceTapped("source-0"))
+        if held { await barrier.entered() } else { await eventually { model.displayFile != nil } }
+        let old = model.displayFile
+        let expected = try await f.reader.replaceOriginal("source-0", revision: "replacement-original")
+        await model.reloadLibrary()
+        await eventually { model.displayFile != nil && model.displayFile !== old }
+        let replacement = try #require(model.displayFile)
+        #expect(try Data(contentsOf: replacement.fileURL) == expected)
+        #expect(model.state.displayedVersion == .cameraJPEG)
+        #expect(model.state.selectedRecipe == nil)
+        await barrier.release()
+        await eventually { await f.reader.materializations == 2 }
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(model.displayFile === replacement)
+        #expect(try Data(contentsOf: replacement.fileURL) == expected)
+        #expect(await f.writer.requests.isEmpty)
+    }
+
+    @Test func recoverySnapshotSurvivesSlowConsumerBeyondProgressBufferAndRejectsOlderEvents() async throws {
+        let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment), barrier = FixtureBarrier()
+        defer { Task { await barrier.release() } }
+        await model.start(); await model.connect()
+        model.send(.sourceTapped("source-0")); model.send(.recipeSelected(slot: 3))
+        await eventually { model.preview != nil }
+        await model.export(); await eventually { model.savedVersions.count == 1 && model.exportEvent?.terminal == true }
+        let source = try #require(model.sources.first), recipes = model.state.recipes
+        var jobs: [ExportJob] = []
+        for i in 0..<96 {
+            let job = ExportJob(id: UUID(), submittedAt: Date(timeIntervalSince1970: Double(i)), recipeSnapshot: recipes[i % 7],
+                items: [ExportItem(source: source, operationID: UUID()), ExportItem(source: model.sources[1], operationID: UUID())], state: .queued)
+            try await f.environment.catalog.saveJob(job); jobs.append(job)
+        }
+        await f.reader.holdResources(barrier)
+        let recovery = Task { await model.reconcile() }
+        await barrier.entered(); await recovery.value
+        let expected = Dictionary(uniqueKeysWithValues: jobs.map { ($0.id, $0.recipeSnapshot.name) })
+        #expect(Dictionary(uniqueKeysWithValues: model.progressEvents.filter { expected[$0.jobID] != nil }.map { ($0.jobID, $0.recipeLabel) }) == expected)
+        // Change every durable outcome while the terminal-event consumer remains held.
+        for var job in jobs {
+            job.items[0].state = .failed(.insufficientStorage); job.state = .failed
+            try await f.environment.catalog.saveJob(job)
+        }
+        await model.reconcile()
+        #expect(model.progressEvents.filter { expected[$0.jobID] != nil }.allSatisfy { $0.summary.failed == 1 && $0.terminal })
+        await barrier.release()
+        // A later real event is a FIFO drain marker. Earlier buffered recovery events cannot
+        // replace the authoritative failed outcomes with their older queued summaries.
+        let sentinel = try #require(jobs.last)
+        await f.environment.exports.cancel(jobID: sentinel.id)
+        await eventually { model.exportEvent?.jobID == sentinel.id && model.exportEvent?.stage == .cancelled }
+        #expect(model.progressEvents.count == 96)
+        #expect(model.progressEvents.filter { $0.jobID != sentinel.id }.allSatisfy { $0.summary.failed == 1 && $0.terminal })
+        #expect(Dictionary(uniqueKeysWithValues: model.progressEvents.map { ($0.jobID, $0.recipeLabel) }) == expected)
+        #expect(await f.writer.requests.count == 1)
+        #expect(await f.camera.renderCount == 1)
+    }
+
     private func eventually(_ condition: () async -> Bool) async {
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))
         var satisfied = false

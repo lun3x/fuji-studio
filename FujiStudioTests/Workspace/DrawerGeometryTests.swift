@@ -79,6 +79,36 @@ final class WorkspaceHostingTests: XCTestCase {
         XCTAssertTrue(descendants(host).contains { $0 === grid })
         XCTAssertEqual(grid.collectionView.bounds.size, initialSize)
     }
+    func testLiveCompositionRetainsViewerAndGridInstancesAcrossAXSelectionAndDrawer() async throws {
+        let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment)
+        await model.start(); model.send(.sourceTapped("source-0"))
+        for _ in 0..<100 where model.displayFile == nil { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertNotNil(model.displayFile)
+        let host = UIHostingController(rootView: AppWorkspaceView(model: model)
+            .environment(\.dynamicTypeSize, .accessibility5).frame(width: 382, height: 710))
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let priorKeyWindow = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene); window.rootViewController = host; window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; priorKeyWindow?.makeKeyAndVisible() }
+        try await settle(host)
+        let grid = try XCTUnwrap(descendants(host).compactMap { $0 as? PhotoGridController }.first)
+        func views(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(views) }
+        let viewer = try XCTUnwrap(views(host.view).first { $0.accessibilityIdentifier == "viewer.image" } as? UIScrollView)
+        let frame = viewer.convert(viewer.bounds, to: host.view), side = grid.metrics.tileWidth
+        XCTAssertGreaterThanOrEqual(side, 44)
+        XCTAssertEqual(grid.collectionView.bounds.height, 2 * side + 19, accuracy: 0.5)
+        for action: WorkspaceAction in [.select, .drawerMoved(.expanded), .drawerMoved(.collapsed), .done] {
+            model.send(action); try await settle(host)
+            XCTAssertTrue(descendants(host).contains { $0 === grid })
+            XCTAssertTrue(views(host.view).contains { $0 === viewer })
+            XCTAssertEqual(viewer.convert(viewer.bounds, to: host.view), frame)
+            XCTAssertEqual(grid.metrics.tileWidth, side, accuracy: 0.01)
+            if model.state.drawerDetent == .collapsed { XCTAssertEqual(grid.collectionView.bounds.height, 2 * side + 19, accuracy: 0.5) }
+        }
+        let writes = await f.writer.requests
+        XCTAssertTrue(writes.isEmpty)
+    }
+
     private func settle(_ host: UIViewController) async throws {
         // A bounded render turn lets SwiftUI apply measured header/recipe preferences to native views.
         for _ in 0..<4 {

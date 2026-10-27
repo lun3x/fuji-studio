@@ -77,9 +77,12 @@ actor FixtureLibrary: PhotoLibraryReading {
     private let image: DisplayFileLease, root: URL
     private var outputs: [String: ResourceToken] = [:]
     private var allBarrier: FixtureBarrier?
+    private var resourcesBarrier: FixtureBarrier?
     private var discoveryBarrier: FixtureBarrier?
     private var materializeBarriers: [String: FixtureBarrier] = [:]
     private var discoveryLimit: Int?
+    private var revisionBytes: [String: Data] = [:]
+    private(set) var materializations = 0
     private var observers: [AsyncStream<LibraryChange>.Continuation] = []
     private(set) var rawReads = 0, changeSubscriptions = 0
     init(sources: [PhotoSource], image: DisplayFileLease, root: URL, access: LibraryAccess) {
@@ -91,6 +94,17 @@ actor FixtureLibrary: PhotoLibraryReading {
     func holdDiscovery(_ barrier: FixtureBarrier) { discoveryBarrier = barrier }
     func limitDiscovery(_ count: Int) { discoveryLimit = count }
     func holdMaterialize(_ id: String, barrier: FixtureBarrier) { materializeBarriers[id] = barrier }
+    func replaceOriginal(_ id: String, revision: String) throws -> Data {
+        guard let i = index.firstIndex(where: { $0.id == id }) else { throw ResourceError.inaccessibleAsset(id) }
+        let old = index[i]
+        var raw = old.originalResources.raf, jpeg = old.originalResources.jpeg
+        raw.sourceRevision = revision; jpeg?.sourceRevision = revision
+        index[i] = PhotoSource(id: id, originalResources: .init(raf: raw, jpeg: jpeg), captureDate: old.captureDate,
+            location: old.location, resourceRevision: revision)
+        var bytes = try Data(contentsOf: image.fileURL); bytes.append(Data(revision.utf8))
+        revisionBytes[revision] = bytes; materializeBarriers[id] = nil
+        return bytes
+    }
     func removeOutput(_ id: String, notify: Bool = true) { outputs[id] = nil; if notify { observers.forEach { $0.yield(LibraryChange(changedIDs: [], removedIDs: [id], accessScopeChanged: false)) } } }
     func holdAll(_ barrier: FixtureBarrier) { allBarrier = barrier }
     func sources() -> AsyncThrowingStream<[PhotoSource], Error> {
@@ -114,7 +128,9 @@ actor FixtureLibrary: PhotoLibraryReading {
         guard access == .full || access == .limited else { throw ResourceError.authorization(access) }
         guard let source = index.first(where: { $0.id == id }) else { throw ResourceError.inaccessibleAsset(id) }; return source
     }
-    func resources(assetID: String) throws -> [ResourceToken] {
+    func holdResources(_ barrier: FixtureBarrier) { resourcesBarrier = barrier }
+    func resources(assetID: String) async throws -> [ResourceToken] {
+        if let resourcesBarrier { await resourcesBarrier.wait() }
         if let output = outputs[assetID] { return [output] }
         let source = try source(id: assetID); return [source.originalResources.raf] + (source.originalResources.jpeg.map { [$0] } ?? [])
     }
@@ -123,11 +139,13 @@ actor FixtureLibrary: PhotoLibraryReading {
         return AsyncStream { observers.append($0) }
     }
     func materialize(_ resource: ResourceToken, progress: @escaping @Sendable (Double) -> Void) async throws -> LocalResource {
+        let bytes = try revisionBytes[resource.sourceRevision] ?? Data(contentsOf: image.fileURL)
         if let barrier = materializeBarriers[resource.assetID] { await barrier.wait() }
         try Task.checkCancellation()
         if resource.format == .raf { rawReads += 1 }
         let url = root.appendingPathComponent("transfer-\(UUID().uuidString).JPG")
-        try FileManager.default.copyItem(at: image.fileURL, to: url)
+        try bytes.write(to: url)
+        materializations += 1
         progress(1)
         return LocalResource(token: resource, fileURL: url, checksum: try ResourceChecksum.sha256(url))
     }

@@ -18,6 +18,7 @@ struct WorkspaceView: View {
     var onExport: () -> Void
     var onViewportChanged: (GridViewport) -> Void = { _ in }
     @State private var drawerHeaderHeight: CGFloat = 0
+    @State private var inspectionHeight: CGFloat = 0
     @State private var toolbarHeight: CGFloat = 0
     @State private var recipeFrame: CGRect = .zero
     @State private var exportFrame: CGRect = .zero
@@ -37,15 +38,19 @@ struct WorkspaceView: View {
             let reservedRows = GridGeometry.metrics(width: width).height(rows: 2) + drawerHeaderHeight + safe.top + safe.bottom
             let controlStack = toolbarHeight + recipeFrame.height + 16
             let compactControls = size.height < size.width || dynamicTypeSize.isAccessibilitySize || size.height - reservedRows < controlStack * 2
-            let photoTop = compactControls ? toolbarTop : toolbarTop + toolbarHeight + 8
+            let regularPhotoTop = toolbarTop + toolbarHeight + 8
             // Positions come from this layout's current row/stack, never a prior branch's origin.
             // Intrinsic heights remain measured from the actual native controls.
             let recipeHeight = max(44, recipeFrame.height)
             let controlBottom = compactControls
                 ? toolbarTop + max(recipeHeight, exportFrame.height, versionFrame.height)
-                : max(photoTop + recipeHeight, toolbarTop + toolbarHeight)
+                : max(regularPhotoTop + recipeHeight, toolbarTop + toolbarHeight)
             let controlFrame = CGRect(x: safe.leading + 16, y: toolbarTop, width: max(1, width - 32), height: controlBottom - toolbarTop)
-            let available = size.height - safe.bottom - drawerHeaderHeight - controlFrame.maxY - DrawerGeometry.controlClearance
+            let photoTop = compactControls ? controlBottom + DrawerGeometry.controlClearance : regularPhotoTop
+            // The collapsed viewer owns a real inspection row and image area. Grid adaptation
+            // reserves their measured height; expansion covers this same fixed viewer frame.
+            let inspectionReserve = compactControls && imageGeometry != nil ? max(44, inspectionHeight) + 8 + 44 : 0
+            let available = size.height - safe.bottom - drawerHeaderHeight - controlFrame.maxY - DrawerGeometry.controlClearance - inspectionReserve
             let gridMetrics = DrawerGeometry.gridMetrics(width: width, availableTwoRowHeight: available)
             let detents = DrawerGeometry.detents(container: size, safeArea: safe, headerHeight: drawerHeaderHeight,
                 grid: gridMetrics, recipeControlFrame: controlFrame)
@@ -96,7 +101,9 @@ struct WorkspaceView: View {
             VStack(spacing: 4) {
                 PhotoViewer(sourceID: source.id, version: state.displayedVersion ?? .raw, imageURL: imageURL,
                     geometry: imageGeometry, onVersionSelected: { onAction(.versionSelected($0)) },
-                    displayFile: displayFile, detail: detail, status: imageStatus)
+                    displayFile: displayFile, detail: detail, status: imageStatus,
+                    inspectionAvailable: state.drawerDetent == .collapsed,
+                    onInspectionHeightChanged: { inspectionHeight = $0 })
                 if !compactControls {
                     versionList(source: source).fixedSize(horizontal: false, vertical: true)
                 }

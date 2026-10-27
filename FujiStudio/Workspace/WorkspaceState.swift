@@ -84,6 +84,8 @@ struct WorkspaceState: Sendable {
         self.sources = Self.accessibleIndex(sources, access: access)
     }
 
+    var viewedSourceRevision: String? { viewedSourceID.flatMap { sources[$0]?.resourceRevision } }
+
     var effectiveSources: [PhotoSource] {
         let ids = isSelecting ? checkedSourceIDs : Set(viewedSourceID.map { [$0] } ?? [])
         return ids.compactMap { sources[$0] }.sorted { lhs, rhs in
