@@ -84,5 +84,7 @@ photo bounds and above the expanded drawer; no reserved bottom control rows.
 - [x] Commit and push using jj; install and record bounded phone verification.
 
 Phone launch and live library loading are confirmed. Device Hub's remote tap did
-not select a source; the human photo/menu/pinch check is pending and is not
-included in the software gate above.
+not select a source. The user subsequently confirmed photo selection, the
+top-right versions menu, switching versions and pinch-to-zoom on `2e45055b`, with
+the bottom zoom buttons and versions row removed. This human confirmation is
+separate from the software gate above.

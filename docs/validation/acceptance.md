@@ -66,11 +66,12 @@ Ignored evidence: `.build/floating-versions-full.log`,
 Full/Release logs have zero unsafe SQLite unlink/API-violation/open-fd pattern
 matches; existing SDK notices remain. The signed update was installed and
 launched normally on the iPhone, both exit 0. The live library loaded; a Device
-Hub thumbnail tap produced no visible selection, so physical photo/menu/pinch
-interaction is not claimed. A human finger check was requested and remains
-pending; the simulator results above establish the software behavior. No camera
-operation, Photos write, permission or system appearance change was made for this
-UI follow-up.
+Hub thumbnail tap produced no visible selection. The user subsequently confirmed
+photo selection, opening the top-right layers menu, choosing another version and
+pinch-to-zoom on installed `2e45055b`, with no zoom buttons or versions row below
+the photo. This is human on-device confirmation, separate from the controller's
+remote-tap observation and simulator measurements. No camera operation, Photos
+write, permission or system appearance change was made for this UI follow-up.
 
 ### Single workspace header (`b0620450`)
 

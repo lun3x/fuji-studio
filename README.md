@@ -71,6 +71,9 @@ unmerged. The controller signed, verified, installed and normally launched
 `2e45055b` on the phone. Simulator tests verify reclaimed photo space, menu
 selection/dismissal, unavailable RAW recovery, wrapped saved-version labels at
 the largest text size, and zoom/pan retention across version changes.
+The user confirmed photo selection, opening the top-right versions menu,
+switching versions and pinch-to-zoom on this build, with no bottom zoom buttons
+or versions row.
 The earlier `b0620450` phone observation verified the single action row, absent
 title and retained partial second row without a covering band.
 The preceding `0c008f73` phone observation also verified the scrolling cue with
