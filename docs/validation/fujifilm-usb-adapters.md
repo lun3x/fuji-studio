@@ -94,9 +94,9 @@ refused because the phone had relocked. It is ready to open manually.
 The independent unsigned simulator Release build also passed.
 
 X-E3/iPhone: physical USB admission and seven-bank import/final context now pass
-as recorded below. Real original-RAW decoding for both encodings, offline editing,
-preview/FINE Photos export, saved-version viewing, reconnect/background/cancellation
-and interruption recovery remain unverified on the phone. Mac RAW-decoding
+as recorded below. C4 portrait preview now passes as recorded below. Original-RAW decoding for both
+encodings, offline editing, Photos export, saved-version viewing,
+reconnect/background/cancellation and interruption recovery remain unverified. Mac RAW-decoding
 results do not establish the phone's decoder result.
 
 X-T5/iPhone: no X-T5 body is currently attached. Firmware4.31 admission, selector
@@ -161,7 +161,36 @@ in the canonical XE3/1.30 fixture directory. Native command counts were not
 captured on the physical phone and are not inferred from the catalog.
 
 The app's source catalog does not yet contain the supplied DSCF0080–0086 files.
-The next requested check is to make uncompressed portrait DSCF0085.RAF available
-in iPhone Photos and finish a C4 preview. Preview, export, original-RAW decoder,
-saved-version and lifecycle gates remain pending; seven-bank import does not
-establish those behaviors. No camera session is opened by the Mac for this check.
+The user subsequently completed C4 preview on another X-E3 photograph, recorded
+below. Exact source-encoding coverage, Photos export, original-RAW decoding,
+saved-version and lifecycle gates remain pending. No camera session is opened by the Mac for this check.
+
+## Physical X-E3/iPhone C4 preview
+
+On 2026-10-28 the user confirmed a completed portrait C4 preview, then clarified
+that they selected another photograph from this X-E3 instead of DSCF0085.
+The app's completed operation journal independently confirms model X-E3/1.30,
+recipe slot 4, 6000×4000 FINE/orientation 8, validated output, acknowledged trigger,
+exclusive delete-intent marker, acknowledged cleanup and a verified empty camera
+object view. There is no operation failure. A successful preview retains the
+phone's camera session (`closure = notRequested`). Native command counts are not
+captured and are not inferred from these acknowledgements.
+
+The actual 601-byte FF129505 candidate and camera readback are byte-identical;
+their checksum matches the journal. Result source/settings/context provenance
+also matches the journal. Catalog/WAL copies became byte-identical after the
+initial capture overlapped a catalog write, and SQLite integrity is `ok`.
+The app still has the same 8 export jobs and 10 saved-version IDs as before the
+image check: preview added neither an export job nor a saved version.
+
+The original-transfer cache was empty when inspected, so this photo's compression
+class and native original-RAW display outcome are not independently recorded.
+The full JPEG was handed from the journal to the render cache as designed;
+reading that cached file was blocked by iOS file protection while the phone was
+locked. Independent JPEG-file inspection is pending. The public, sanitized proof
+is `phone-preview-acceptance.json` in the canonical XE3/1.30 fixtures. Full journals,
+catalogs and any image data remain private in ignored storage.
+
+The next requested check is one deliberate C4 export and opening the resulting
+saved portrait, with the phone kept unlocked for readback. Export/history and
+saved-version acceptance are not claimed until that check completes.
