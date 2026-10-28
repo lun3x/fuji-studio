@@ -30,9 +30,7 @@ struct PhoneRecipeEditor: View {
                         Section {
                             setting(.film); setting(.dynamicRange); grainSettings
                             setting(.colorChrome); setting(.colorChromeBlue)
-                        } header: { Text("Look") } footer: {
-                            Text("Grain size is remembered while Off. Weak and Strong/Large grain can be saved but aren’t supported for camera conversion yet. Existing unsupported values are kept until you change them.")
-                        }
+                        } header: { Text("Look") }
                         Section("White balance") {
                             setting(.whiteBalance)
                             if draft.value(for: .whiteBalance) == 32775 {

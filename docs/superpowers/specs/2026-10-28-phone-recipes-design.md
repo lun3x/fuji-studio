@@ -115,6 +115,6 @@ the last size in the phone snapshot, including across Save/reopen. Effect change
 preserve size and size changes preserve effect. All six combinations can now be
 saved; untouched legacy/unknown raw values remain unchanged. The existing camera
 renderer still accepts only the measured Off/Small, Off/Large and Strong/Small
-combinations. The form explains that Weak and Strong/Large can be saved but are
-not yet supported for camera conversion. No camera bank or new working-profile
-mapping is written by this UX change.
+combinations. The user subsequently requested removal of the explanatory grain
+and unsupported-value footer; the form contains the controls without that text.
+No camera bank or new working-profile mapping is written by this UX change.

@@ -9,10 +9,16 @@
 
 ## Task — split the grain controls
 
-- [ ] Add failing draft tests for six raw combinations, independent changes, remembering dormant size across Save/reopen, unknown/legacy no-op preservation and invalid grain rejection. Add a UI test for picker choices, greyed/disabled size, and Save/reopen.
-- [ ] Add PhoneRecipeGrain effect/size representation, draft setters and separate native pickers. Update the editor's save domain without widening the renderer domain. Preserve unknown values until an explicit user change.
-- [ ] Run all unit tests, affected editor UI cases and screenshot checks; push a Jujutsu checkpoint to codex/phone-recipes.
-- [ ] Complete one independent review, the full test wrapper and signed Release build/install; report any existing startup-test or runtime limitations accurately. Update PR #16 and validation notes, push and delete this task's simulator.
+- [x] Add failing draft tests for six raw combinations, independent changes, remembering dormant size across Save/reopen, unknown/legacy no-op preservation and invalid grain rejection. Add a UI test for picker choices, greyed/disabled size, and Save/reopen.
+- [x] Add PhoneRecipeGrain effect/size representation, draft setters and separate native pickers. Update the editor's save domain without widening the renderer domain. Preserve unknown values until an explicit user change.
+- [x] Run all unit tests, affected editor UI cases and screenshot checks; push a Jujutsu checkpoint to codex/phone-recipes.
+- [x] Complete one independent review, the full test wrapper and signed Release build/install; report any existing startup-test or runtime limitations accurately. Update PR #16 and validation notes, push and delete this task's simulator.
+
+The user requested removal of the Look footer during the full run. The complete
+suite at79fe1059 passed508 with3 existing native-gate skips and0 failures; all4
+editor UI cases then passed again on the final text-free form. Both final
+Release builds passed and the verified signed app was installed/normal-launched.
+See `docs/validation/phone-grain-controls.md` for exact scope and source provenance.
 
 ## Review focus
 
