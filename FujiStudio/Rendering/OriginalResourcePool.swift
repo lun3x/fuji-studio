@@ -1,3 +1,4 @@
+import FujiCameraCore
 import Foundation
 
 struct OriginalIdentity: Sendable, Hashable {

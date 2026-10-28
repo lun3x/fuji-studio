@@ -1,3 +1,4 @@
+import FujiCameraCore
 #if DEBUG
 import Foundation
 import Observation

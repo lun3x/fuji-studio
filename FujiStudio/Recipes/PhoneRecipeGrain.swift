@@ -1,3 +1,4 @@
+import FujiCameraCore
 import Foundation
 
 /// Phone snapshots retain both components, including dormant size while the effect is off.

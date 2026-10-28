@@ -1,3 +1,4 @@
+import FujiCameraCore
 import Foundation
 
 struct XT5RecipeBatchEvidence: Sendable, Encodable {

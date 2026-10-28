@@ -2,21 +2,21 @@ import Foundation
 
 /// Original bounded reader; ExifTool 13.55 FujiFilm/MakerNotes are format references only.
 /// Parses headers/metadata, not entropy coefficients. Production validation additionally uses ImageIO.
-enum FujiJPEGQuality: String, Sendable, Equatable {
+public enum FujiJPEGQuality: String, Sendable, Equatable {
   case fine = "FINE"
   case normal = "NORMAL"
 }
-enum FujiJPEGValidationError: Error, Sendable, Equatable {
+public enum FujiJPEGValidationError: Error, Sendable, Equatable {
   case invalidJPEG, resourceLimit, invalidTIFF, duplicateMetadata, conflictingMetadata
   case missingMetadata, unsupportedMakerNote, unsupportedQuality, notFine
   case cameraMismatch, geometryMismatch, orientationMismatch
 }
-struct FujiJPEGMetadata: Sendable, Equatable {
-  let width: Int, height: Int, orientation: Int
-  let make: String, model: String
-  let quality: FujiJPEGQuality
-  let lensOptimizer: Bool?
-  func requireFine(width: Int, height: Int, orientation: Int, model: String) throws {
+public struct FujiJPEGMetadata: Sendable, Equatable {
+  public let width: Int, height: Int, orientation: Int
+  public let make: String, model: String
+  public let quality: FujiJPEGQuality
+  public let lensOptimizer: Bool?
+  public func requireFine(width: Int, height: Int, orientation: Int, model: String) throws {
     guard model == "X-T5", self.model == model, make == "FUJIFILM" else {
       throw FujiJPEGValidationError.cameraMismatch
     }
@@ -26,12 +26,25 @@ struct FujiJPEGMetadata: Sendable, Equatable {
     guard self.orientation == orientation else { throw FujiJPEGValidationError.orientationMismatch }
     guard quality == .fine else { throw FujiJPEGValidationError.notFine }
   }
+  public init(
+    width: Int, height: Int, orientation: Int, make: String, model: String,
+    quality: FujiJPEGQuality, lensOptimizer: Bool? = nil
+  ) {
+    self.width = width
+    self.height = height
+    self.orientation = orientation
+    self.make = make
+    self.model = model
+    self.quality = quality
+    self.lensOptimizer = lensOptimizer
+  }
+
 }
 
-enum FujiJPEGMetadataReader {
-  static let maximumJPEGBytes = 128 * 1024 * 1024
+public enum FujiJPEGMetadataReader {
+  public static let maximumJPEGBytes = 128 * 1024 * 1024
   private static let maximumMarkers = 16_384
-  static func read(_ data: Data) throws -> FujiJPEGMetadata {
+  public static func read(_ data: Data) throws -> FujiJPEGMetadata {
     guard data.count <= maximumJPEGBytes else { throw FujiJPEGValidationError.resourceLimit }
     return try data.withUnsafeBytes { bytes in
       let all = Region(bytes: bytes, base: 0, count: bytes.count)
@@ -337,7 +350,9 @@ enum FujiJPEGMetadataReader {
         try visit(dir.next, kind: .thumbnail, depth: depth + 1)
       }
     }
-    private func makerQuality(_ note: Region) throws -> (quality: FujiJPEGQuality, lensOptimizer: Bool?) {
+    private func makerQuality(_ note: Region) throws -> (
+      quality: FujiJPEGQuality, lensOptimizer: Bool?
+    ) {
       guard note.starts(Array("FUJIFILM".utf8)) else {
         throw FujiJPEGValidationError.unsupportedMakerNote
       }

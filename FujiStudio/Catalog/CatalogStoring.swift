@@ -1,3 +1,4 @@
+import FujiCameraCore
 import Foundation
 
 protocol CatalogStoring: Sendable {

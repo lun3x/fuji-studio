@@ -1,3 +1,4 @@
+@testable import FujiCameraCore
 import Foundation
 import Testing
 @testable import FujiStudio
@@ -11,7 +12,7 @@ struct XT5ProductionCameraServiceTests {
     }
     @Test func renderUsesFrozenRecipeFreshBaselineAndReturnsOnlyAfterOwnedCleanup() async throws {
         let f=try ProductionOperationFixture();defer { f.remove() }
-        let wire=ProductionSession(fixture:f),journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"))
+        let wire=ProductionSession(fixture:f),journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"), filePolicy: IOSCameraJournalFilePolicy())
         let service=makeService(wire,journal)
         try await service.connect()
         let result=try await service.render(raw:f.raw,recipe:f.profile.bank,policy:.fullSizeFineRecordedGeometry)
@@ -34,7 +35,7 @@ struct XT5ProductionCameraServiceTests {
     @Test func changedSourceAndPreexistingObjectsNeverReachUpload() async throws {
         for mode in [ProductionSession.Mode.preexisting,.normal] {
             let f=try ProductionOperationFixture();defer { f.remove() }
-            let wire=ProductionSession(fixture:f,mode:mode),journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"))
+            let wire=ProductionSession(fixture:f,mode:mode),journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"), filePolicy: IOSCameraJournalFilePolicy())
             let service=makeService(wire,journal);try await service.connect()
             if mode == .normal { try Data([0]).write(to:f.raw.fileURL) }
             await #expect(throws:CameraServiceError.self) { try await service.render(raw:f.raw,recipe:f.profile.bank,policy:.fullSizeFineRecordedGeometry) }
@@ -45,7 +46,7 @@ struct XT5ProductionCameraServiceTests {
     @Test func profileRefusalNeverTriggersAndCloseIsConfirmed() async throws {
         for mode in [ProductionSession.Mode.profileRejected,.readbackMismatch] {
             let f=try ProductionOperationFixture();defer { f.remove() }
-            let wire=ProductionSession(fixture:f,mode:mode),journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"))
+            let wire=ProductionSession(fixture:f,mode:mode),journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"), filePolicy: IOSCameraJournalFilePolicy())
             let service=makeService(wire,journal);try await service.connect()
             await #expect(throws:CameraServiceError.self) { try await service.render(raw:f.raw,recipe:f.profile.bank,policy:.fullSizeFineRecordedGeometry) }
             #expect(await wire.triggers == 0);#expect(await wire.deletes.isEmpty)
@@ -56,14 +57,14 @@ struct XT5ProductionCameraServiceTests {
     @Test func unsafeOutputOrUncertainCleanupPinsJournalAndNeverReplays() async throws {
         for mode in [ProductionSession.Mode.wrongStorage,.replacedHandle,.payloadChanged,.deleteRejected,.nonemptyAfterDelete,.staleAfterTrigger,.triggerRejected] {
             let f=try ProductionOperationFixture();defer { f.remove() }
-            let wire=ProductionSession(fixture:f,mode:mode),journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"))
+            let wire=ProductionSession(fixture:f,mode:mode),journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"), filePolicy: IOSCameraJournalFilePolicy())
             let service=makeService(wire,journal);try await service.connect()
             await #expect(throws:CameraServiceError.self) { try await service.render(raw:f.raw,recipe:f.profile.bank,policy:.fullSizeFineRecordedGeometry) }
             let pending=try journal.unresolved();#expect(pending.count == 1)
             let deletes=await wire.deletes
             #expect(deletes.count <= 1)
             if [.wrongStorage,.replacedHandle,.payloadChanged,.staleAfterTrigger,.triggerRejected].contains(mode) { #expect(deletes.isEmpty) }
-            let reopened=makeService(wire,try CameraOperationJournal(directory:journal.directory))
+            let reopened=makeService(wire,try CameraOperationJournal(directory:journal.directory, filePolicy: IOSCameraJournalFilePolicy()))
             if mode == .triggerRejected { try await reopened.connect();await reopened.disconnect() }
             else { await #expect(throws:CameraServiceError.self) { try await reopened.connect() } }
             #expect(await wire.deletes == deletes)
@@ -76,7 +77,7 @@ struct XT5ProductionCameraServiceTests {
     @Test func invalidFineOrMissingLMOCannotProduceCameraJPEGOrDelete() async throws {
         for missing in [false,true] {
             let f=try ProductionOperationFixture();defer { f.remove() }
-            let wire=ProductionSession(fixture:f),journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"))
+            let wire=ProductionSession(fixture:f),journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"), filePolicy: IOSCameraJournalFilePolicy())
             let service=XT5CameraService(session:wire,journal:journal,pollWait:{},validateJPEG:{ _,m in
                 if !missing { throw FujiJPEGValidationError.notFine }
                 return XT5ValidatedJPEGMetadata(width:m.recordedGeometry.width,height:m.recordedGeometry.height,orientation:m.orientation,make:"FUJIFILM",model:"X-T5",quality:.fine,lensOptimizer:nil)
@@ -90,7 +91,7 @@ struct XT5ProductionCameraServiceTests {
     @Test func disconnectDuringStateSubscriptionPreventsNativeOpen() async throws {
         let f=try ProductionOperationFixture();defer { f.remove() }
         let wire=ProductionSession(fixture:f,holdStates:true)
-        let journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"))
+        let journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"), filePolicy: IOSCameraJournalFilePolicy())
         let gate=SerialCameraGate(),service=makeService(wire,journal,gate:gate)
         let connecting=Task { try await service.connect() }
         await wire.waitUntilHeld()
@@ -109,7 +110,7 @@ struct XT5ProductionCameraServiceTests {
     }
     @Test func queuedCancellationDoesNotCloseActiveOwnerAndDisconnectStopsNewCommands() async throws {
         let f=try ProductionOperationFixture();defer { f.remove() }
-        let wire=ProductionSession(fixture:f,holdOpcode:0x900D),journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"))
+        let wire=ProductionSession(fixture:f,holdOpcode:0x900D),journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"), filePolicy: IOSCameraJournalFilePolicy())
         let gate=SerialCameraGate(),service=makeService(wire,journal,gate:gate)
         try await service.connect()
         let first=Task { try await service.render(raw:f.raw,recipe:f.profile.bank,policy:.fullSizeFineRecordedGeometry) }
@@ -130,7 +131,7 @@ struct XT5ProductionCameraServiceTests {
     }
     @Test func activeCancellationAndCloseFailureStayDistinctFromQueuedCancellation() async throws {
         let f=try ProductionOperationFixture();defer { f.remove() }
-        let wire=ProductionSession(fixture:f,mode:.closeFails,holdOpcode:0x900D),journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"))
+        let wire=ProductionSession(fixture:f,mode:.closeFails,holdOpcode:0x900D),journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"), filePolicy: IOSCameraJournalFilePolicy())
         let service=makeService(wire,journal);try await service.connect()
         let task=Task { try await service.render(raw:f.raw,recipe:f.profile.bank,policy:.fullSizeFineRecordedGeometry) }
         await wire.waitUntilHeld();task.cancel();await wire.release()
@@ -141,12 +142,12 @@ struct XT5ProductionCameraServiceTests {
     }
     @Test func freshEmptyViewReconcilesMissingWithoutReplayingOldOutput() async throws {
         let f=try ProductionOperationFixture();defer { f.remove() }
-        let wire=ProductionSession(fixture:f,mode:.deleteRejected),journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"))
+        let wire=ProductionSession(fixture:f,mode:.deleteRejected),journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"), filePolicy: IOSCameraJournalFilePolicy())
         let first=makeService(wire,journal);try await first.connect()
         await #expect(throws:CameraServiceError.self) { try await first.render(raw:f.raw,recipe:f.profile.bank,policy:.fullSizeFineRecordedGeometry) }
         let old=try #require(journal.unresolved().first)
         await wire.simulatePhysicalReconnect(empty:true)
-        let resumed=makeService(wire,try CameraOperationJournal(directory:journal.directory))
+        let resumed=makeService(wire,try CameraOperationJournal(directory:journal.directory, filePolicy: IOSCameraJournalFilePolicy()))
         try await resumed.connect()
         #expect(try journal.load(old.id).phase == .reconciledMissing)
         #expect(try journal.load(old.id).deleteAcknowledged == false)
@@ -158,7 +159,7 @@ struct XT5ProductionCameraServiceTests {
     }
     @Test func refreshedCurrentSlotDoesNotReplaceFrozenRequestOrItsProvenance() async throws {
         let f=try ProductionOperationFixture();defer { f.remove() }
-        let wire=ProductionSession(fixture:f),journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"))
+        let wire=ProductionSession(fixture:f),journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"), filePolicy: IOSCameraJournalFilePolicy())
         let service=makeService(wire,journal);try await service.connect()
         let refreshed=try await service.importRecipes()
         let current=try #require(refreshed.first { $0.slot == 7 })
@@ -173,7 +174,7 @@ struct XT5ProductionCameraServiceTests {
     }
     @Test func perCommandBusyAndLateTerminalEventsDoNotEraseVerifiedContext() async throws {
         let f=try ProductionOperationFixture();defer { f.remove() }
-        let wire=ProductionSession(fixture:f),journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"))
+        let wire=ProductionSession(fixture:f),journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"), filePolicy: IOSCameraJournalFilePolicy())
         let service=makeService(wire,journal);try await service.connect()
         await wire.emit(.disconnected) // Stale terminal event while the current session is still valid.
         _ = try await service.render(raw:f.raw,recipe:f.profile.bank,policy:.fullSizeFineRecordedGeometry)

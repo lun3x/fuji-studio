@@ -1,3 +1,4 @@
+@testable import FujiCameraCore
 import CryptoKit
 import Foundation
 import Photos

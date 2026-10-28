@@ -1,3 +1,4 @@
+import FujiCameraCore
 import SwiftUI
 
 /// A single floating selector. Opening or dismissing it never selects a version.

@@ -1,3 +1,4 @@
+import FujiCameraCore
 #if DEBUG
 import SwiftUI
 import UIKit

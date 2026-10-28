@@ -1,3 +1,4 @@
+import FujiCameraCore
 import CoreLocation
 import Foundation
 import Photos

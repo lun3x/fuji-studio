@@ -1,3 +1,4 @@
+import FujiCameraCore
 import SwiftUI
 
 enum CameraIndicatorState: String {

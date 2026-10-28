@@ -1,3 +1,4 @@
+import FujiCameraCore
 import SwiftUI
 import Photos
 import PhotosUI
@@ -51,7 +52,7 @@ import UIKit
             try fm.createDirectory(at: support, withIntermediateDirectories: true)
             let catalog = try SwiftDataCatalog(storeURL: support.appendingPathComponent("catalog.store"))
             let cache = try FileRenderCache(directory: caches.appendingPathComponent("renders"), pinnedDirectory: support.appendingPathComponent("export-pins"))
-            let journal = try CameraOperationJournal(directory: support.appendingPathComponent("camera-journal"))
+            let journal = try CameraOperationJournal(directory: support.appendingPathComponent("camera-journal"), filePolicy: IOSCameraJournalFilePolicy())
             try ResourceFileTransfer.prepareDirectory()
             let display = caches.appendingPathComponent("raw-display", isDirectory: true)
             // Dedicated disposable fit/detail output, before constructing the sole renderer.

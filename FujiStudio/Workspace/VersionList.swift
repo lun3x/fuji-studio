@@ -1,3 +1,4 @@
+import FujiCameraCore
 import SwiftUI
 
 /// Explicit catalog associations only. A recipe selection is never an instruction to alter an

@@ -1,3 +1,4 @@
+import FujiCameraCore
 import Foundation
 
 enum VersionID: Sendable, Hashable {

@@ -1,3 +1,4 @@
+import FujiCameraCore
 import Foundation
 
 enum PhoneRecipeSetting: String, CaseIterable, Sendable, Identifiable {

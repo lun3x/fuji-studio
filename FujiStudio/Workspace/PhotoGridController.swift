@@ -1,3 +1,4 @@
+import FujiCameraCore
 import UIKit
 
 @MainActor

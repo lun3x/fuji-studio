@@ -1,3 +1,4 @@
+import FujiCameraCore
 import Foundation
 
 /// Exact retained-source diagnostic. This shape/offset is not a general _0200 grammar.

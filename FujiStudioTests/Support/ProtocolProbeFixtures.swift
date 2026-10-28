@@ -1,3 +1,4 @@
+@testable import FujiCameraCore
 import Foundation
 
 /// Hand-authored standard PTP grammar, never an observed X-T5 capture.

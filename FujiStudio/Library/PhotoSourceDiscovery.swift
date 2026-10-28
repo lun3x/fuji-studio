@@ -1,3 +1,4 @@
+import FujiCameraCore
 import Foundation
 
 /// Lazily traverses a capture-date-descending fetch. Only one equal-date group,

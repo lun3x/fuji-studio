@@ -1,3 +1,4 @@
+@testable import FujiCameraCore
 import Foundation
 import Testing
 @testable import FujiStudio
@@ -11,7 +12,7 @@ import Testing
         let operation = try ProductionOperationFixture(); defer { operation.remove() }
         let fails = scenario == .failedClose || scenario == .failedCloseInBackground
         let wire = ProductionSession(fixture: operation, mode: fails ? .closeFails : .normal)
-        let service = XT5CameraService(session: wire, journal: try CameraOperationJournal(directory: operation.directory.appendingPathComponent("journal")))
+        let service = XT5CameraService(session: wire, journal: try CameraOperationJournal(directory: operation.directory.appendingPathComponent("journal"), filePolicy: IOSCameraJournalFilePolicy()))
         let fixture = try await FixtureEnvironment.make(cameraOverride: service)
         let model = AppModel(environment: fixture.environment)
         // Keep stream consumption out of this ordering: background itself supplies the UI

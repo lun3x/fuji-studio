@@ -1,3 +1,4 @@
+import FujiCameraCore
 import Foundation
 
 enum PhoneRecipeEditingError: Error, Sendable, Equatable {

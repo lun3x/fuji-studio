@@ -1,3 +1,4 @@
+import FujiCameraCore
 #if DEBUG
 import Foundation
 import Observation
@@ -93,7 +94,7 @@ struct XT5ProductionAcceptanceEvidence: Encodable {
     init(transport:ImageCaptureTransport=ImageCaptureTransport(),directory:URL?=nil,
          prepare:@escaping Prepare = { try await RetainedProductionAcceptanceInputs.prepare(documents:$0,destination:$1) },makeService:ServiceFactory?=nil) {
         native=transport;requestedDirectory=directory;self.prepare=prepare
-        self.makeService=makeService ?? { root in XT5CameraService(session:ImageCaptureSessionTransport(native:transport),journal:try CameraOperationJournal(directory:root)) }
+        self.makeService=makeService ?? { root in XT5CameraService(session:ImageCaptureSessionTransport(native:transport),journal:try CameraOperationJournal(directory:root, filePolicy: IOSCameraJournalFilePolicy())) }
     }
     func runIfRequested(arguments:[String]) async {
         let others=["--xt5-read-only-probe","--xt5-direct-values-probe","--camera-reconnect-probe","--xt5-bank-import-probe","--xt5-raw-baseline-probe","--xt5-paired-baseline-probe","--xt5-unchanged-baseline-probe","--xt5-output-recovery-probe","--xt5-output-quarantine-probe","--xt5-trigger-one-probe","--xt5-film-only-probe","--xt5-recipe-batch-probe"]

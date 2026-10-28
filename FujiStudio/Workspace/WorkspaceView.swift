@@ -1,3 +1,4 @@
+import FujiCameraCore
 import SwiftUI
 
 /// Presentation only. The caller owns the reducer, accessible source index and service effects.
