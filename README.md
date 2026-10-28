@@ -179,11 +179,15 @@ selectors instead of `--fast`. When changing UI behavior, also run the affected
 UI tests. Run the complete suite for final validation; a fast run does not
 establish that UI tests pass. Use `Scripts/test-ios.sh --help` for usage.
 
-The script generates the ignored `FujiStudio.xcodeproj` and shared `FujiStudio` scheme, uses `.build/DerivedData` and timestamped `.build/TestResults/*.xcresult`, and disables signing for simulator destinations. The observed simulator was iPhone Duo, iOS 27.1. Select an available destination on your machine:
+The script generates the ignored `FujiStudio.xcodeproj` and shared `FujiStudio` scheme, uses `.build/DerivedData` and timestamped `.build/TestResults/*.xcresult`, and disables signing for simulator destinations. It defaults to a simulator named `iPhone 15 Pro`; create one in Xcode's Devices and Simulators window if needed. Select another available destination on your machine:
 
 ```sh
 FUJI_STUDIO_DESTINATION='platform=iOS Simulator,id=YOUR_SIMULATOR_UUID' Scripts/test-ios.sh
 ```
+
+The simulator needs an iOS 27+ runtime that supports iPhone 15 Pro. The currently
+installed iOS 27.1 runtime supports only iPhone Duo, so it cannot create this
+device; install a compatible runtime before using the default destination.
 
 For an unsigned Release simulator build:
 
