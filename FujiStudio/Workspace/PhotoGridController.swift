@@ -310,6 +310,8 @@ private final class PhotoGridCell: UICollectionViewCell {
     override init(frame: CGRect) {
         super.init(frame: frame)
         contentView.backgroundColor = .secondarySystemBackground
+        contentView.layer.cornerRadius = 2
+        contentView.layer.cornerCurve = .continuous
         contentView.clipsToBounds = true
         image.contentMode = .scaleAspectFill; image.clipsToBounds = true
         // The decorative kind badge stays compact; the cell speaks its complete kind/status.
