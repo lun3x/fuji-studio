@@ -1,8 +1,7 @@
 # Fujifilm USB camera adapters
 
-Status: proposed design, pending user approval. Scope confirmed by the user:
-additional **Fujifilm cameras over USB**. This document proposes the remaining
-implementation decisions; they have not already been approved by the user.
+Status: approved by the user on 2026-10-28. Scope: additional **Fujifilm cameras
+over USB**. The user approved this document and requested the next step.
 
 ## Intent
 
@@ -28,7 +27,7 @@ camera-specific behavior underneath it.
    device-discovery and deployment concerns. The confirmed Fujifilm USB scope
    does not require it.
 
-This design selects approach 2 as the author's recommendation for approval.
+The user approved approach 2: a shared Fujifilm service plus model adapters.
 
 ## Scope and boundaries
 
