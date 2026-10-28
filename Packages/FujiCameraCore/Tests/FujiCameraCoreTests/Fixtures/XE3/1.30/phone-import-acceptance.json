@@ -1,0 +1,36 @@
+{
+  "kind": "Physical iPhone user-confirmed seven-bank import with matching persisted receipt from two identical catalog/WAL captures; SQLite integrity ok.",
+  "implementationRevision": "3ea81052d5a3",
+  "phone": "iPhone 15 Pro / iOS 27.0.1",
+  "import": {
+    "model": "X-E3",
+    "firmware": "1.30",
+    "supportVersion": "xe3-1.30-FF129505-v1",
+    "nativeGeneration": 11,
+    "declaredSlots": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "recipeSlots": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "recipeCount": 7,
+    "uniqueSnapshots": true,
+    "allFinalContextsMatch": true,
+    "allRecordedIssuesEmpty": true,
+    "catalogFormat": 3
+  },
+  "cameraCommandCounts": "not captured on physical iPhone",
+  "nativeConversion": "not yet verified on physical iPhone"
+}

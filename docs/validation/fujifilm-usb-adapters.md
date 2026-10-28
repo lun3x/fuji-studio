@@ -93,11 +93,11 @@ updated build installed after a transient RSD channel failure; its launch was
 refused because the phone had relocked. It is ready to open manually.
 The independent unsigned simulator Release build also passed.
 
-X-E3/iPhone: USB mode/admission, seven-bank import/final context, real original-RAW
-decoding for both source encodings, offline editing, preview/FINE Photos export,
-saved-version viewing, reconnect/background/cancellation and interruption recovery
-remain unverified on the physical phone. Mac compressed-RAW decoding failure does
-not establish the phone's decoder result.
+X-E3/iPhone: physical USB admission and seven-bank import/final context now pass
+as recorded below. Real original-RAW decoding for both encodings, offline editing,
+preview/FINE Photos export, saved-version viewing, reconnect/background/cancellation
+and interruption recovery remain unverified on the phone. Mac RAW-decoding
+results do not establish the phone's decoder result.
 
 X-T5/iPhone: no X-T5 body is currently attached. Firmware4.31 admission, selector
 restoration, preview/export, model switching and strict LMO output admission need
@@ -110,8 +110,9 @@ session confirmed closed. The five-preset controlled WB calibration and restorat
 the WB selector, complete table and all bank bytes are unchanged after conversion.
 
 Software implementation, review fixes and laptop acceptance for the current seven
-banks are verified. All nine known WB modes are verified; custom measured-WB gains and physical
-iPhone/X-T5 acceptance remain outside the completed gates. The workbench and private evidence are retained at
+banks are verified. All nine known WB modes and physical X-E3/iPhone bank import are verified. Custom
+measured-WB gains, phone image/lifecycle acceptance and physical X-T5 regression
+remain outside the completed gates. The workbench and private evidence are retained at
 `/tmp/fuji-usb-adapters-20261028` for that continuation; only this task's simulator
 is removed after final verification.
 
@@ -138,7 +139,29 @@ The public controlled/restored and conversion proofs are in
 
 The signed `3ea81052d5a3` Release (version 0.1/build 1, iPhoneOS 27.1 SDK) passed
 `codesign --verify --deep --strict` and installed on Louisphone. Its normal launch
-was refused solely by the iOS lock screen. The user has been asked to connect the
-idle X-E3 to the phone and confirm actual seven-bank import; that physical result
-is pending. No new camera operation is scheduled on the Mac. Only this follow-up's
+was refused solely by the iOS lock screen. The user subsequently connected the X-E3 and confirmed seven-bank import; the
+persisted physical receipt is recorded below. No new camera operation is scheduled on the Mac. Only this follow-up's
 simulator `BE837DC6-2B5F-4A3B-AE4A-C9973FD9B654` was shut down/deleted.
+
+## Physical X-E3/iPhone seven-bank import
+
+On 2026-10-28 the user connected the X-E3 in USB RAW CONV./BACKUP RESTORE mode,
+opened the installed 3ea81052 Release normally and confirmed all seven recipes
+imported. This establishes normal launch, physical USB admission and actual bank
+import on iPhone 15 Pro / iOS 27.0.1.
+
+A read-only copy of the app's catalog independently confirmed X-E3/1.30,
+support `xe3-1.30-FF129505-v1`, slots 1–7, seven distinct snapshots with no recorded
+rendering issues, and a shared final execution context/native generation 11.
+All snapshot session identities/generations match the collection declaration.
+Two consecutive database/WAL captures were byte-identical; SQLite integrity was
+`ok`. The catalog uses format 3. Full catalogs, IDs, names and photo metadata stay
+in private ignored storage. The sanitized proof is `phone-import-acceptance.json`
+in the canonical XE3/1.30 fixture directory. Native command counts were not
+captured on the physical phone and are not inferred from the catalog.
+
+The app's source catalog does not yet contain the supplied DSCF0080–0086 files.
+The next requested check is to make uncompressed portrait DSCF0085.RAF available
+in iPhone Photos and finish a C4 preview. Preview, export, original-RAW decoder,
+saved-version and lifecycle gates remain pending; seven-bank import does not
+establish those behaviors. No camera session is opened by the Mac for this check.
