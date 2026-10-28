@@ -364,7 +364,7 @@ private final class PhotoGridCell: UICollectionViewCell {
         accessibilityValue = selecting ? (checked ? "Checked" : "Unchecked") : (viewed ? "Viewed" : "")
         accessibilityTraits = checked && selecting ? [.button, .selected] : [.button]
         accessibilityCustomActions = selecting ? [UIAccessibilityCustomAction(name: "Toggle selection", target: self, selector: #selector(activate))] : nil
-        contentView.layer.borderWidth = viewed && !selecting ? 2 : 0; contentView.layer.borderColor = UIColor.systemYellow.cgColor
+        contentView.layer.borderWidth = viewed && !selecting ? 2 : 0; contentView.layer.borderColor = UIColor.systemBlue.cgColor
     }
     @objc private func activate() -> Bool { tap(); return true }
     override func accessibilityActivate() -> Bool { activate() }
