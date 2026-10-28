@@ -402,3 +402,26 @@ WB table and recipe area. The sanitized proof is
 `Packages/FujiCameraCore/Tests/FujiCameraCoreTests/Fixtures/XE3/1.30/underwater-wb-controlled-diff.json`.
 This establishes C7's dependency without saved-bank writes. It is diagnostic
 protocol evidence; shared-service laptop/iPhone acceptance remains a separate gate.
+
+## Shared Swift core runner
+
+`Tools/FujiCameraLaptop` now provides the native macOS entry point described in
+its [README](../../Tools/FujiCameraLaptop/README.md). Normal `run.sh` validation
+calls `FujiCameraService`; the earlier spike is explicitly diagnostic-only.
+The Mac bridge uses the public discovery API; the iOS browser authorization and
+suspension callbacks are unavailable in the macOS SDK. Both bridges preserve
+callback correlation, confirmed close and physical attachment continuity.
+
+Software validation covers argument admission before discovery, exclusive/private
+output storage, retired native callbacks, accepted full-size X-E3 JPEG cleanup
+through the actual core service, and refusal to delete a changed payload.
+The shared-core suite also checks the seven supplied RAFs, the real C4 camera JPEG
+and all seven decoded banks in the restored private backup.
+
+The first live shared-core import attempted on October28 timed out during
+connection with confirmed closure. macOS `SPUSBHostDataType` listed no Fujifilm
+USB device. The user has been asked to power on/reconnect the camera. The
+seven-source/seven-bank live shared-core matrix, new Kelvin candidates and final
+post-conversion settings comparison remain pending this connection. Earlier
+successful spike runs are historical protocol evidence and do not substitute for
+this matrix. No live shared-core render has been claimed from a mock test.

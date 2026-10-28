@@ -1,4 +1,5 @@
-// Laptop-only protocol spike. No saved-setting or card write operations are exposed.
+// Historical diagnostic-only protocol spike; never shipping-core acceptance.
+// Normal validation uses Tools/FujiCameraLaptop. No saved-setting or card writes.
 import Foundation
 import ImageCaptureCore
 import ImageIO

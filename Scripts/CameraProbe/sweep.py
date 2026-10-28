@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Historical diagnostic-only sweep; shipping-core acceptance uses Tools/FujiCameraLaptop.
 """Sequential hardware experiments. Stops after any incomplete operation; never retries it."""
 import argparse
 import json
@@ -41,7 +42,7 @@ def main():
     parser.add_argument("--only",nargs="*")
     args=parser.parse_args()
     root=Path(__file__).resolve().parents[2]
-    executable=root/".build/CameraProbe/probe"
+    executable=root/".build/CameraProbe/diagnostic-probe"
     args.output.mkdir(parents=True,exist_ok=False,mode=0o700)
     summary=[]
     for name,patches in CASES:

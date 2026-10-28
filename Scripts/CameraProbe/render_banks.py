@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Historical diagnostic-only sweep; shipping-core acceptance uses Tools/FujiCameraLaptop.
 """Render decoded X-E3 banks via working profiles only. Never writes C1-C7."""
 import argparse
 import json
@@ -43,7 +44,7 @@ def main():
         if bank['slot'] not in args.slots:continue
         directory=(args.output/f"C{bank['slot']}").resolve()
         patches=bank_patches(bank,args.dynamic_range)
-        command=[str(root/'.build/CameraProbe/probe'),'--raw',str(args.raw),'--output',str(directory),'--trigger','1','--cleanup']
+        command=[str(root/'.build/CameraProbe/diagnostic-probe'),'--raw',str(args.raw),'--output',str(directory),'--trigger','1','--cleanup']
         for offset,value in sorted(patches.items()):command+=['--set',f'{offset}:{value}']
         with (args.output/f"C{bank['slot']}.log").open('w') as log:
             result=subprocess.run(command,stdout=log,stderr=subprocess.STDOUT)

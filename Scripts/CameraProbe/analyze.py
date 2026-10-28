@@ -132,9 +132,45 @@ def compare(reference, candidate):
             "referenceMetadata": am, "candidateMetadata": bm}
 
 
+def core_evidence(path):
+    """Sanitize evidence produced by the shipping Swift service; no wire decoding."""
+    import uuid
+    data = json.loads(path.read_text())
+    if data.get("schema") != "fujifilm-shared-core-laptop-v1":
+        raise ValueError("Unknown shared-core evidence schema")
+    support = data.get("support", {})
+    jpeg = data.get("jpeg", {})
+    operation = data.get("operation", {})
+    exact = None
+    if operation.get("id"):
+        operation_id = str(uuid.UUID(operation["id"])).upper()
+        directory = path.parent / "journal" / operation_id
+        candidate, readback = directory / "candidate.bin", directory / "readback.bin"
+        if candidate.exists() and readback.exists():
+            exact = candidate.read_bytes() == readback.read_bytes()
+    effective = jpeg.get("effectiveRecipe", {})
+    return {
+        "schema": data["schema"],
+        "adapter": support.get("adapter"), "model": support.get("model"),
+        "firmware": support.get("firmware"), "supportVersion": support.get("supportVersion"),
+        "capabilityOrigin": support.get("capabilityOrigin"),
+        "source": data.get("source"), "sourceUnchanged": data.get("sourceUnchanged"),
+        "recordedOutput": {key: jpeg.get(key) for key in ["width", "height", "orientation", "quality"]},
+        "requested": effective.get("requested"), "evidenceBySetting": effective.get("evidenceBySetting"),
+        "readbackMatches": exact, "phase": operation.get("phase"),
+        "outputValidated": operation.get("outputValidated"),
+        "deleteAcknowledged": operation.get("deleteAcknowledged"),
+        "emptyViewVerified": operation.get("emptyViewVerified"),
+        "deleteSubmissions": data.get("commandCounts", {}).get("0x100B"),
+        "triggerSubmissions": data.get("commandCounts", {}).get("0x1016/0xD183"),
+        "closeConfirmed": data.get("closeConfirmed"),
+        "failed": data.get("failure") is not None,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=["profile", "raf", "backup", "compare"])
+    parser.add_argument("mode", choices=["profile", "raf", "backup", "compare", "core-evidence"])
     parser.add_argument("paths", type=Path, nargs="+")
     args = parser.parse_args()
     if args.mode == "compare":
@@ -142,8 +178,8 @@ def main():
             parser.error("compare needs reference and candidate")
         result = compare(*args.paths)
     else:
-        method = {"profile":profile,"raf":raf,"backup":backup}[args.mode]
-        result = [dict(file=str(path), **method(path)) for path in args.paths]
+        method = {"profile":profile,"raf":raf,"backup":backup,"core-evidence":core_evidence}[args.mode]
+        result = [method(path) if args.mode == "core-evidence" else dict(file=str(path), **method(path)) for path in args.paths]
     print(json.dumps(result, indent=2))
 
 
