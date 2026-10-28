@@ -205,10 +205,21 @@ final class WorkspaceLayoutTests: XCTestCase {
         XCTAssertEqual(app.buttons["drawer.toggle"].value as? String, "Expanded")
         waitForDetent(app, expanded: true)
         app.buttons["workspace.select"].tap()
-        XCTAssertTrue(app.buttons["drawer.toggle"].isHittable)
+        // Verify real touch delivery where XCTest can report no hit point
+        // for the glass header over the photo view.
+        func tapHeader() {
+            let header = app.buttons["drawer.toggle"].frame
+            app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: header.midX, dy: header.midY)).tap()
+        }
+        tapHeader()
+        XCTAssertEqual(app.buttons["drawer.toggle"].value as? String, "Collapsed")
+        waitForDetent(app, expanded: false)
+        tapHeader()
+        XCTAssertEqual(app.buttons["drawer.toggle"].value as? String, "Expanded")
+        waitForDetent(app, expanded: true)
         assertRecipeControlUsable(app)
         shot(app, "Workspace dark expanded Select")
-        app.buttons["drawer.toggle"].tap()
+        tapHeader()
         XCTAssertEqual(app.buttons["drawer.toggle"].value as? String, "Collapsed")
         waitForDetent(app, expanded: false)
         shot(app, "Workspace dark collapsed Select")
