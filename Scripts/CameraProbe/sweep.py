@@ -60,7 +60,7 @@ def main():
              "cleanupVerified":evidence.get("cleanupVerified"),"closeConfirmed":evidence.get("closeConfirmed"),
              "width":evidence.get("outputWidth"),"height":evidence.get("outputHeight"),"failure":evidence.get("failure")}
         if (directory/"output.JPG").exists():
-            metadata=json.loads(subprocess.check_output(["exiftool","-json"]+["-"+tag for tag in TAGS]+[str(directory/"output.JPG")]))[0]
+            metadata=json.loads(subprocess.check_output(["exiftool","-json"]+["-FujiFilm:"+tag for tag in TAGS]+[str(directory/"output.JPG")]))[0]
             metadata.pop("SourceFile",None)
             row["metadata"]=metadata
         summary.append(row)

@@ -32,13 +32,14 @@ struct Reader {
     mutating func words() throws -> [UInt16] { let count = try u32(); guard count < 4096 else { throw fail("oversized") }; return try (0..<count).map { _ in try u16() } }
 }
 struct Options {
-    let raw: URL?, directory: URL, trigger: UInt16?, patches: [(Int, UInt32)], cleanup: Bool
+    let raw: URL?, directory: URL, trigger: UInt16?, patches: [(Int, UInt32)], cleanup: Bool, backup: Bool
     init() throws {
         var args = Array(CommandLine.arguments.dropFirst())
-        var raw: URL?, directory: URL?, trigger: UInt16?, patches: [(Int,UInt32)] = [], cleanup = false
+        var raw: URL?, directory: URL?, trigger: UInt16?, patches: [(Int,UInt32)] = [], cleanup = false, backup = false
         while !args.isEmpty {
             let key = args.removeFirst()
             if key == "--cleanup" { cleanup = true; continue }
+            if key == "--backup" { backup = true; continue }
             guard !args.isEmpty else { throw fail("missing-argument") }
             let value = args.removeFirst()
             switch key {
@@ -53,8 +54,8 @@ struct Options {
             default: throw fail("unknown-argument-\(key)")
             }
         }
-        guard let directory, raw != nil || trigger == nil, raw != nil || patches.isEmpty else { throw fail("usage: --output DIRECTORY [--raw RAF] [--trigger 0|1] [--set BYTE_OFFSET:VALUE] [--cleanup]") }
-        self.raw = raw; self.directory = directory; self.trigger = trigger; self.patches = patches; self.cleanup = cleanup
+        guard let directory, raw != nil || trigger == nil, raw != nil || patches.isEmpty, !backup || raw == nil else { throw fail("usage: --output DIRECTORY [--raw RAF] [--trigger 0|1] [--set BYTE_OFFSET:VALUE] [--cleanup] [--backup]") }
+        self.raw = raw; self.directory = directory; self.trigger = trigger; self.patches = patches; self.cleanup = cleanup; self.backup = backup
     }
 }
 @MainActor final class Probe: NSObject, @preconcurrency ICDeviceBrowserDelegate, @preconcurrency ICCameraDeviceDelegate {
@@ -83,7 +84,7 @@ struct Options {
         browser.browsedDeviceTypeMask = ICDeviceTypeMask(rawValue: 0x101)!
         browser.start()
         DispatchQueue.main.asyncAfter(deadline: .now()+30) { [weak self] in
-            guard let self, self.camera == nil else { return }; self.finish("discovery-deadline")
+            guard let self, !self.finished, self.camera?.hasOpenSession != true else { return }; self.finish("discovery-or-open-deadline")
         }
     }
     func finish(_ failure: String? = nil) {
@@ -92,7 +93,7 @@ struct Options {
         persist()
         let end = {
             self.persist(); self.log("Evidence: \(self.options.directory.path)")
-            exit(failure == nil ? 0 : 1)
+            exit(failure == nil && self.report["closeConfirmed"] as? Bool == true ? 0 : 1)
         }
         DispatchQueue.main.asyncAfter(deadline: .now()+15) {
             self.report["closeConfirmed"] = false; self.log("Closure not confirmed"); end()
@@ -183,6 +184,26 @@ struct Options {
         guard mode == Data([6,0]) else { throw fail("wrong-mode") }; report["usbMode"] = 6
         let before = try await handles(); report["beforeHandles"] = before; persist()
         guard before.isEmpty else { throw fail("preexisting-objects") }
+        if options.backup {
+            let info = try await command(0x1008,[0]).data
+            guard info.count >= 12, info.u16(4) == 0x5000, info.u32(8) == 5660 else { throw fail("unmeasured-backup-info") }
+            let backup = try await command(0x1009,[0]).data
+            guard backup.count == 5660, backup.prefix(8) == Data("FUJIFILM".utf8),
+                  String(decoding:backup[20..<52].prefix { $0 != 0 },as:UTF8.self) == "X-E3" else { throw fail("unmeasured-backup") }
+            try backup.write(to:options.directory.appendingPathComponent("settings-backup-private.bin"))
+            report["backupBytes"] = backup.count
+            var properties: [[String:Any]] = []
+            for code: UInt32 in [0x5005,0xD00B,0xD00C,0xD017] {
+                do {
+                    let value = try await command(0x1015,[code]).data
+                    properties.append(["property":hex(UInt16(code)),"bytes":value.count,"hex":value.map { String(format:"%02x",$0) }.joined()])
+                } catch PTPError.responseCode(let status) {
+                    properties.append(["property":hex(UInt16(code)),"response":hex(status)])
+                }
+            }
+            report["currentWBProperties"] = properties
+            return
+        }
         guard let rawURL = options.raw else { return }
         let raw = try Data(contentsOf: rawURL, options: .mappedIfSafe)
         guard raw.count > 112, raw.prefix(16) == Data("FUJIFILMCCD-RAW ".utf8),

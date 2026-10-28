@@ -7,6 +7,8 @@ for path in CommandLine.arguments.dropFirst() {
     var report: [String:Any] = ["file":url.lastPathComponent]
     if let filter = CIRAWFilter(imageURL: url) {
         report["filterAvailable"] = true
+        report["decoderVersion"] = filter.decoderVersion.rawValue
+        report["supportedDecoderVersions"] = filter.supportedDecoderVersions.map { $0.rawValue }
         report["nativeWidth"] = filter.nativeSize.width
         report["nativeHeight"] = filter.nativeSize.height
         filter.orientation = .up

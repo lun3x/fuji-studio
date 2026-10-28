@@ -182,3 +182,132 @@ and model-aware phone-recipe editing. Reuse the existing serial operation gate,
 transport, journal, scheduler, cache and export machinery. Physical iPhone USB,
 source RAW display, interruption/recovery and broader source classes are not
 established by these laptop runs.
+
+## Controlled conversion sweep
+
+The core sweep completed **41 trials**, each with exact 601-byte profile
+readback, a full-size FINE JPEG, verified exact-output cleanup and confirmed
+native closure. `verify_sweep.py` checks the actual candidate/readback files and
+independent ExifTool interpretation, not just the probe's success booleans.
+The public `control-sweep.json` fixture retains settings/effective metadata only.
+
+- Film codes **1–15** render their expected native simulations. PRO Neg. Hi/Std
+  are codes 4/5; Monochrome/Yellow/Red/Green are 6/7/8/9; Sepia is 10;
+  Classic Chrome 11; ACROS/Yellow/Red/Green 12/13/14/15. Monochrome and ACROS
+  modes are identified by FujiFilm Saturation, not a missing FilmMode tag.
+- Grain codes **1/2/3** mean Off/Weak/Strong.
+- Literal DR **100/200/400** are observed, including a successful 400 request on
+  the original DR200 source. Do not impose an unmeasured source-DR clamp.
+- Highlights/shadows at **-2/+4**, colour at **-4/+4**, sharpness at **-4/+4**,
+  and the initial intermediate settings use signed values times ten.
+- WB shifts are signed grid steps. Red -9 and blue +9 appear as -180/+180 in
+  FujiFilm metadata: the EXIF scale is twenty times the grid step.
+- Explicit WB needs **553=2**. Modes: Auto 2, Daylight 4, Shade 0x8006,
+  Fluorescent 1/2/3 0x8001/0x8002/0x8003, Incandescent 6, Underwater 8,
+  Temperature 0x8007. Temperature **5000 K** is verified. Shade is labelled
+  Cloudy by ExifTool. Measured custom-WB presets remain unvalidated.
+- Signed exposure words **+667/-667** produce the expected brightness direction.
+  Mean luma at 750×500 is 145.158 / 99.033, versus 122.469 unchanged. Exposure
+  is verified through image response; the selected JPEG metadata tags do not
+  contain a corresponding development-exposure field.
+- LMO **1/2** means On/Off, confirmed by returned metadata on these sources/lens.
+
+A further seven trials complete the noise-reduction lookup across all nine
+levels: -4=0x8000, -3=0x7000, -2=0x4000, -1=0x3000, 0=0x2000,
++1=0x1000, +2=0, +3=0x6000, +4=0x5000.
+
+**Successful readback is not sufficient semantic validation.** A further Kelvin
+trial requesting **5310 K** read back exactly, but the resulting JPEG reports
+**2500 K**. The X-T5 editor's continuous Kelvin interval must not be reused for
+this model. Restrict choices to verified native presets, and keep requested and
+effective values separate. Other Kelvin presets still need enumeration.
+
+**Qualify maker-note tags.** Plain `Sharpness` can select ExifIFD's coarse
+Soft/Normal/Hard enum and hide the FujiFilm -4…+4 field. The analysis tools now
+request `FujiFilm:Sharpness` and qualify other rendering metadata. The sharpness
+trials do report **-4 (softest)** and **+4 (hardest)** in the Fuji maker note.
+
+## Four additional uncompressed sources
+
+All four new sources convert through the camera to 6000×4000 FINE JPEGs and
+preserve orientation (one landscape, three orientation 8). Their native frame
+is still 601 bytes / FF129505. The DR400 sources additionally establish different
+baseline grain, WB shifts, tones, colour, sharpness and NR values; these cannot
+be hard-coded to the first three sources' particular baseline words.
+
+Uncompressed RAF geometry differs: container **6160×4032**, crop **6000×4000**,
+origin **top 16 / left 16**. Apple CIRAWFilter successfully renders all four from
+actual sensor data at full resolution and 0.25 scale. Its native size is the
+recorded 6000×4000 crop. The three compressed files continue to have no usable
+Apple decoder on this laptop. This is a format-specific source-viewing boundary,
+not a reason to reject the compressed files from camera conversion.
+
+The paired-JPEG comparison MAEs are **1.276247, 1.256629, 8.778686, 1.342058**.
+All checked metadata and quantization tables match. The third source has Weak
+grain. Its independent Weak-grain repeat has MAE **8.779134**, maximum 61;
+turning grain Off in two new conversions reduces repeat MAE to **1.326656**,
+maximum 12. This controlled change explains the grain-dependent repeat residual;
+no pixel-equality guarantee is made.
+
+Output ObjectInfo width/height are **zero**, so actual JPEG dimensions must be
+validated independently. Observed association values are **7** for landscape and
+**2055 (0x0807)** for orientation 8. The X-T5's `[0,2055]` check would reject the
+X-E3 landscape outputs. Preserve these as observed values; broader orientation
+encoding is not established.
+
+A trigger value of **0** produces a separate **3008×2000 NORMAL JPEG** (about
+1.52 MB on the tested source), with verified cleanup and closure. This offers a
+future preview path but is a separate quality/geometry policy. The verified
+initial app conversion path should continue using trigger 1 / full-size FINE.
+
+## Second backup observation
+
+A fresh-session single backup download succeeded after the conversion trials.
+All seven decoded candidate bank records/names match the earlier capture.
+Whole-backup bytes differ after the user's camera operation and new photographs;
+that does not authorize assuming every unclassified byte is part of a bank.
+Standard/current WB properties **5005, D00B, D00C, D017** all return 200A in RAW
+conversion mode, so they cannot fill the unresolved shared-WB dependency.
+
+The camera is deliberately idle during a user-controlled one-step red WB shift
+change. A backup diff will be used to locate that shared setting without writing
+any saved settings through the probe.
+
+## Controlled shared-WB decoding and restoration
+
+The user kept Colour Temperature **6300 K** selected and changed just one grid
+coordinate at a time, without saving a custom bank. Each backup read used a
+fresh session and confirmed closure:
+
+| State | User setting | Byte 441 | Byte 442 |
+| --- | --- | ---: | ---: |
+| Baseline | Red -4, Blue -2 | 13 | 11 |
+| Red-only change | Red -3, Blue -2 | 12 | 11 |
+| Red restored, blue-only change | Red -4, Blue -1 | 13 | 10 |
+| Both restored | Red -4, Blue -2 | 13 | 11 |
+
+Both coordinates encode **9 minus the signed grid value**. The full 24-byte
+candidate WB-shift table at **433…456** was byte-identical after restoration.
+A separate unclassified byte at 691 changed from 2 to 1; the experiment does not
+assign it a meaning or authorize changing it. No saved settings were written by
+the probe; the user performed the controlled changes and restoration.
+
+Candidate two-byte pairs start at 433 with the order Auto, Custom1, Custom2,
+Custom3, Temperature, Daylight, Shade, Fluorescent1/2/3, Incandescent, Underwater.
+The Auto pair at 433 gives **+3/-4**, and the Daylight pair at 443 gives **+2/-4**;
+both independently match the supplied RAF/JPEG capture settings. Temperature at
+441 is directly verified above. Other mode positions and measured custom-WB
+gains are not independently calibrated. The currently unused positions mostly
+contain neutral 9/9 values, so their order cannot be proven just from equality.
+
+A phone copy of a bank must freeze the selected mode's **shared** shift values
+alongside the bank's own settings. Reading the bank bytes alone is insufficient,
+and assuming that each bank owns independent WB shifts would change its look.
+`analyze.py backup` reports this dependency explicitly and marks the bank layout
+as a candidate rather than declaring general production support.
+
+`render_banks.py` exercises the complete candidate path: read a private backup,
+decode a bank and its shared shifts, upload a RAF, patch only known D185 fields,
+verify readback, render/download/validate/clean the new JPEG and confirm closure.
+It never selects or writes a saved camera bank. Optional `--dynamic-range` is an
+explicit diagnostic override recorded in the output, not a silent source policy.
