@@ -4,13 +4,15 @@ import SwiftUI
 
 struct DrawerGeometryTests {
     // Omitting the header/safe area or using a prototype drawer height breaks the actual one-row viewport.
-    @Test func collapsedViewportExposesNextRowCueWithoutChangingTrayHeight() {
-        let grid = DrawerGeometry.gridMetrics(width: 390, availableGridHeight: 500)
-        let result = DrawerGeometry.detents(container: CGSize(width: 390, height: 844),
+    @Test(arguments: [(CGFloat(390), CGFloat(162)), (414, 170)])
+    func collapsedViewportExposesNextRowCueBelowFullWidthTiles(width: CGFloat, gridHeight: CGFloat) {
+        let grid = DrawerGeometry.gridMetrics(width: width, availableGridHeight: 500)
+        #expect(grid.columns == 3)
+        let result = DrawerGeometry.detents(container: CGSize(width: width, height: 844),
             safeArea: EdgeInsets(top: 59, leading: 0, bottom: 34, trailing: 0), headerHeight: 88,
             grid: grid, recipeControlFrame: CGRect(x: 16, y: 120, width: 70, height: 44))
-        #expect(abs(result.collapsedGridHeight - 156.6666666667) < 0.001)
-        #expect(abs(result.collapsedHeight - 244.6666666667) < 0.001)
+        #expect(abs(result.collapsedGridHeight - gridHeight) < 0.001)
+        #expect(abs(result.collapsedHeight - (88 + gridHeight)) < 0.001)
         #expect(result.expandedTop == 172)
         #expect(result.expandedHeight == 672)
         #expect(result.height(for: .collapsed) == result.collapsedHeight)
@@ -18,15 +20,15 @@ struct DrawerGeometryTests {
     }
     @Test func adaptiveLandscapeRowsClearMeasuredControlsAndHeader() {
         let grid = DrawerGeometry.gridMetrics(width: 800, availableGridHeight: 70)
-        // Eleven columns of 68 6/11 pt squares fit the 70 pt viewport.
+        // Eleven columns of 70 pt squares fill the width and fit the viewport.
         #expect(grid.columns == 11)
-        #expect(abs(grid.tileWidth - 68.5454545455) < 0.001)
-        #expect(abs(grid.height(rows: 1) - 68.5454545455) < 0.001)
+        #expect(abs(grid.tileWidth - 70) < 0.001)
+        #expect(abs(grid.height(rows: 1) - 70) < 0.001)
         let result = DrawerGeometry.detents(container: CGSize(width: 800, height: 390),
             safeArea: EdgeInsets(top: 0, leading: 0, bottom: 21, trailing: 0), headerHeight: 100,
             grid: grid, recipeControlFrame: CGRect(x: 16, y: 100, width: 80, height: 44))
         #expect(result.expandedTop >= 152)
-        #expect(abs(result.collapsedHeight - 189.5454545455) < 0.001)
+        #expect(abs(result.collapsedHeight - 191) < 0.001)
         #expect(result.expandedHeight >= result.collapsedHeight)
     }
     @Test func dragClampsAndSnapsWithoutDependingOnPhotoSelection() {
