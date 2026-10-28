@@ -90,6 +90,14 @@ actor SwiftDataCatalog: ModelActor, CatalogStoring {
         return recipe
     }
 
+    /// Remove chooser membership only; immutable snapshots still belong to export history.
+    func deletePhoneRecipe(id: UUID) throws {
+        try write {
+            let request = FetchDescriptor<CatalogPhoneRecipeRecord>(predicate: #Predicate { $0.snapshotID == id })
+            if let membership = try modelContext.fetch(request).first { modelContext.delete(membership) }
+        }
+    }
+
     func recipes(camera: CameraExecutionContext) throws -> [RecipeSnapshot] {
         let snapshots = try latestRecipes()
         guard let observed = snapshots.first?.cameraContext,

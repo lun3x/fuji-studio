@@ -141,6 +141,7 @@ private actor ViewerCatalog: CatalogStoring {
     func latestRecipes() -> [RecipeSnapshot] { [] }
     func phoneRecipes() -> [RecipeSnapshot] { [] }
     func copyRecipeToPhone(_ recipe: RecipeSnapshot) throws -> RecipeSnapshot { throw ViewerError.invalidVersion }
+    func deletePhoneRecipe(id: UUID) throws { throw ViewerError.invalidVersion }
     func saveJob(_ job: ExportJob) throws { throw ViewerError.invalidVersion }
     func job(id: UUID) throws -> ExportJob { throw ViewerError.invalidVersion }
     func unfinishedJobs() -> [ExportJob] { [] }

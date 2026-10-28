@@ -3,6 +3,53 @@ import Testing
 @testable import FujiStudio
 
 @MainActor struct AppModelTests {
+    @Test func deletingSelectedPhoneRecipeStopsPendingPreviewAndCannotPublishLateResult() async throws {
+        let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment), barrier = FixtureBarrier()
+        defer { Task { await barrier.release() } }
+        await model.start(automaticallyConnect: false)
+        let original = try #require(model.state.recipes.first { $0.slot == 3 })
+        #expect(await model.copyRecipeToPhone(id: original.id))
+        let copy = try #require(model.state.phoneRecipes.first)
+        await model.connect()
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
+        model.send(.sourceTapped("source-0"))
+        await eventually { model.displayFile != nil }
+        await f.camera.holdRender(barrier)
+        model.send(.phoneRecipeSelected(copy.id))
+        await barrier.entered()
+        #expect(model.isLoadingPreview)
+        #expect(await model.deletePhoneRecipe(id: copy.id))
+        #expect(model.state.phoneRecipes.isEmpty)
+        #expect(model.state.selectedRecipe == nil)
+        #expect(!model.isLoadingPreview)
+        #expect(try await f.environment.catalog.phoneRecipes().isEmpty)
+        await barrier.release()
+        let session = await f.camera.session
+        await eventually { model.displayFile != nil && model.state.cameraState == .ready(session) }
+        #expect(model.state.displayedVersion == .cameraJPEG)
+        #expect(model.state.selectedRecipe == nil)
+        #expect(model.preview == nil)
+        #expect(await f.writer.requests.isEmpty)
+    }
+
+    @Test func failedPhoneDeletionKeepsRecipeAndSelection() async throws {
+        let f = try await FixtureEnvironment.make(), catalog = HeldVersionCatalog(base: f.environment.catalog)
+        let model = model(f.environment, catalog: catalog)
+        await model.start(automaticallyConnect: false)
+        let original = try #require(model.state.recipes.first { $0.slot == 3 })
+        #expect(await model.copyRecipeToPhone(id: original.id))
+        let copy = try #require(model.state.phoneRecipes.first)
+        await model.connect()
+        await eventually { model.state.currentCameraExecutionContext != nil }
+        model.send(.phoneRecipeSelected(copy.id))
+        await catalog.failPhoneDeletes()
+        #expect(!(await model.deletePhoneRecipe(id: copy.id)))
+        #expect(model.state.phoneRecipes == [copy])
+        #expect(model.state.selectedRecipe == copy)
+        #expect(try await f.environment.catalog.phoneRecipes() == [copy])
+        #expect(model.message != nil)
+    }
+
     @Test func startupAutomaticallyConnectsAndImportsRecipesOnlyOnce() async throws {
         let f = try await FixtureEnvironment.make()
         let model = AppModel(environment: f.environment)
@@ -145,9 +192,10 @@ import Testing
         let original = try #require(model.state.recipes.first { $0.slot == 3 })
         #expect(await model.copyRecipeToPhone(id: original.id))
         let copy = try #require(model.state.phoneRecipes.first)
+        await model.connect()
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
         model.send(.sourceTapped("source-0"))
         model.send(.phoneRecipeSelected(copy.id))
-        await model.connect()
         await eventually { model.preview != nil && !model.isRefreshing }
         #expect(model.state.selectedRecipe == copy)
         #expect(model.preview?.settingsDigest == copy.settingsDigest)
@@ -157,6 +205,9 @@ import Testing
         #expect(saved.count == 1)
         #expect(saved.first?.recipeSnapshot == copy)
         #expect(saved.first?.recipeSnapshot.copiedFromRecipeID == original.id)
+        #expect(await model.deletePhoneRecipe(id: copy.id))
+        #expect(model.state.selectedRecipe == nil)
+        #expect(try await f.environment.catalog.versions(sourceID: "source-0") == saved)
     }
 
     @Test func startOwnsOneSubscriptionAndPairedDisplayNeverMaterializesRAW() async throws {
@@ -737,6 +788,12 @@ import Testing
 private actor HeldVersionCatalog: CatalogStoring {
     let base: any CatalogStoring
     private var phoneSavesFail = false
+    private var phoneDeletesFail = false
+    func failPhoneDeletes() { phoneDeletesFail = true }
+    func deletePhoneRecipe(id: UUID) async throws {
+        if phoneDeletesFail { throw CatalogError.durableFailure("Synthetic phone delete failure") }
+        try await base.deletePhoneRecipe(id: id)
+    }
     func failPhoneSaves() { phoneSavesFail = true }
     func phoneRecipes() async throws -> [RecipeSnapshot] { try await base.phoneRecipes() }
     func copyRecipeToPhone(_ recipe: RecipeSnapshot) async throws -> RecipeSnapshot {

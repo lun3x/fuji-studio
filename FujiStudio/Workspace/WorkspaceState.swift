@@ -28,6 +28,7 @@ enum WorkspaceAction: Sendable {
     case versionSelected(VersionID)
     case recipeSelected(slot: Int?)
     case phoneRecipeSelected(UUID)
+    case phoneRecipeDeleted(UUID)
     case phoneRecipesLoaded([RecipeSnapshot])
     case recipesRefreshed([RecipeSnapshot])
     case recipeRefreshFailed(String)
@@ -188,12 +189,17 @@ struct WorkspaceState: Sendable {
             return requestPreview()
 
         case .phoneRecipeSelected(let id):
-            guard let recipe = phoneRecipes.first(where: { $0.id == id }) else { return [] }
+            guard isCameraConnected, let recipe = phoneRecipes.first(where: { $0.id == id }) else { return [] }
             selectedRecipe = recipe
             previewRequiresUserIntent = false
             displayedVersion = originalVersion
             wantsRecipePreview = true
             return requestPreview()
+
+        case .phoneRecipeDeleted(let id):
+            guard phoneRecipes.contains(where: { $0.id == id }) else { return [] }
+            phoneRecipes.removeAll { $0.id == id }
+            if selectedRecipe?.id == id { return reduce(.recipeSelected(slot: nil)) }
 
         case .phoneRecipesLoaded(let saved):
             guard saved.allSatisfy(\.isPhoneRecipe), Set(saved.map(\.id)).count == saved.count else { return [] }
@@ -241,7 +247,7 @@ struct WorkspaceState: Sendable {
                 belongsToExecution(cameraState, context: context) && belongsToExecution(state, context: context)
             cameraState = state
             currentCameraExecutionContext = context
-            if !isCameraConnected, let selectedRecipe, !selectedRecipe.isPhoneRecipe {
+            if !isCameraConnected, selectedRecipe != nil {
                 return reduce(.recipeSelected(slot: nil))
             }
             // Render admission/completion publishes busy/ready for the same verified execution.

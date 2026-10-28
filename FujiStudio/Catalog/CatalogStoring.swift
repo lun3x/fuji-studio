@@ -7,6 +7,7 @@ protocol CatalogStoring: Sendable {
     func latestRecipes() async throws -> [RecipeSnapshot]
     func phoneRecipes() async throws -> [RecipeSnapshot]
     func copyRecipeToPhone(_ recipe: RecipeSnapshot) async throws -> RecipeSnapshot
+    func deletePhoneRecipe(id: UUID) async throws
     func versions(sourceID: SourceID) async throws -> [SavedVersion]
     func saveJob(_ job: ExportJob) async throws
     func job(id: UUID) async throws -> ExportJob

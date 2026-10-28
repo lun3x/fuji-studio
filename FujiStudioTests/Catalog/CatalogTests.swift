@@ -3,6 +3,44 @@ import Testing
 @testable import FujiStudio
 
 struct CatalogTests {
+    @Test func deletingPhoneRecipeSurvivesRestartAndAllowsRecopy() async throws {
+        let disk = try CatalogTestDisk(), f = try CatalogFixture()
+        let catalog = try SwiftDataCatalog(storeURL: disk.url)
+        let originals = f.recipes()
+        try await catalog.replaceRecipes(originals)
+        let copy = try await catalog.copyRecipeToPhone(originals[0])
+        try await catalog.deletePhoneRecipe(id: copy.id)
+        try await catalog.deletePhoneRecipe(id: copy.id)
+        let reopened = try SwiftDataCatalog(storeURL: disk.url)
+        #expect(try await reopened.phoneRecipes().isEmpty)
+        #expect(try await reopened.latestRecipes() == originals)
+        let recopied = try await reopened.copyRecipeToPhone(originals[0])
+        #expect(recopied.id != copy.id)
+        #expect(recopied.importedSettings == copy.importedSettings)
+        #expect(try await reopened.phoneRecipes() == [recopied])
+        try await reopened.deletePhoneRecipe(id: originals[0].id)
+        #expect(try await reopened.phoneRecipes() == [recopied])
+        #expect(try await reopened.latestRecipes() == originals)
+    }
+
+    @Test func deletingPhoneRecipePreservesFrozenExportHistory() async throws {
+        let disk = try CatalogTestDisk(), f = try CatalogFixture()
+        let catalog = try SwiftDataCatalog(storeURL: disk.url)
+        let copy = try await catalog.copyRecipeToPhone(f.recipe)
+        var job = f.job(recipe: copy)
+        let operationID = job.items[0].operationID
+        job.items[0].state = .pendingSave(f.pending(operationID: operationID))
+        let version = f.version(operationID: operationID, recipe: copy)
+        try await catalog.saveJob(job)
+        try await catalog.confirmSaved(jobID: job.id, operationID: operationID, version: version)
+        try await catalog.deletePhoneRecipe(id: copy.id)
+        let reopened = try SwiftDataCatalog(storeURL: disk.url)
+        #expect(try await reopened.phoneRecipes().isEmpty)
+        #expect(try await reopened.versions(sourceID: f.source.id) == [version])
+        #expect(try await reopened.job(id: job.id).recipeSnapshot == copy)
+        #expect(try await reopened.job(id: job.id).items[0].state == .saved(version.id))
+    }
+
     @Test func phoneCopyPreservesLosslessImportAcrossRestartAndCameraRefresh() async throws {
         let disk = try CatalogTestDisk(), f = try CatalogFixture()
         let original = f.recipe

@@ -130,8 +130,8 @@ import Observation
         }.first
         let explicitDisplay: Bool = switch action {
         case .sourceTapped, .versionSelected, .recipeSelected, .phoneRecipeSelected: true
-        case .cameraChanged: displayRequest != nil && previousRecipe != nil &&
-            (state.selectedRecipe == nil || (state.selectedRecipe?.isPhoneRecipe == true && !state.isCameraConnected))
+        case .phoneRecipeDeleted: previousRecipe != nil && state.selectedRecipe == nil
+        case .cameraChanged: displayRequest != nil && previousRecipe != nil && state.selectedRecipe == nil
         default: false
         }
         if request != nil || explicitDisplay || previousSource != state.viewedSourceID || previousVersion != state.displayedVersion || previousRevision != state.viewedSourceRevision {
@@ -331,7 +331,7 @@ import Observation
         default:
             contextTask?.cancel()
             if isLoadingPreview {
-                if state.selectedRecipe?.isPhoneRecipe != true { state.reduce(.previewInterrupted) }
+                state.reduce(.previewInterrupted)
                 isLoadingPreview = false
             }
             reduce(.cameraChanged(event, context: nil))
@@ -403,6 +403,19 @@ import Observation
             if !state.phoneRecipes.contains(where: { $0.id == copy.id }) {
                 reduce(.phoneRecipesLoaded(state.phoneRecipes + [copy]))
             }
+            message = nil
+            return true
+        } catch {
+            message = Self.explain(error)
+            return false
+        }
+    }
+
+    func deletePhoneRecipe(id: UUID) async -> Bool {
+        guard state.phoneRecipes.contains(where: { $0.id == id }) else { return false }
+        do {
+            try await environment.catalog.deletePhoneRecipe(id: id)
+            reduce(.phoneRecipeDeleted(id))
             message = nil
             return true
         } catch {
