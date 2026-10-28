@@ -3,6 +3,107 @@ import Testing
 @testable import FujiStudio
 
 @MainActor struct AppModelTests {
+    @Test func startupAutomaticallyConnectsAndImportsRecipesOnlyOnce() async throws {
+        let f = try await FixtureEnvironment.make()
+        let model = AppModel(environment: f.environment)
+        await model.start(); await model.start()
+        await eventually { model.state.currentCameraExecutionContext != nil && model.state.recipes.count == 7 && !model.isRefreshing }
+        #expect(await f.camera.connectCount == 1)
+        #expect(await f.camera.importCount == 1)
+        #expect(model.message == nil)
+        await model.sceneChanged(.background)
+    }
+
+    @Test func missingCameraRetriesAfterThreeSecondsWithoutAnErrorAndLeavesReadySessionAlone() async throws {
+        let f = try await FixtureEnvironment.make(), retry = ManualConnectionRetry()
+        await f.camera.setConnectionFailure(.transport(.timeout))
+        let model = AppModel(environment: f.environment, connectionRetryWait: { try await retry.wait($0) })
+        await model.start()
+        await eventually { await retry.isWaiting }
+        #expect(model.state.currentCameraExecutionContext == nil)
+        #expect(model.message == nil)
+        #expect(model.connectionError == nil)
+        #expect(await f.camera.connectCount == 1)
+        #expect(await retry.delays == [.seconds(3)])
+        await f.camera.setConnectionFailure(nil)
+        await retry.advance()
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
+        await eventually { await retry.isWaiting }
+        await retry.advance()
+        await eventually { await retry.delays.count == 3 }
+        #expect(await f.camera.connectCount == 2)
+        #expect(await f.camera.importCount == 1)
+        await model.sceneChanged(.background)
+    }
+
+    @Test func inactiveStopsRetriesAndForegroundConnectsWithoutAnEarlierSuccessfulSession() async throws {
+        let f = try await FixtureEnvironment.make(), retry = ManualConnectionRetry()
+        await f.camera.setConnectionFailure(.transport(.notConnected))
+        let model = AppModel(environment: f.environment, connectionRetryWait: { try await retry.wait($0) })
+        await model.start()
+        await eventually { await retry.isWaiting }
+        await model.sceneChanged(.inactive)
+        await retry.advance()
+        await eventually { !(await retry.isWaiting) }
+        #expect(await f.camera.connectCount == 1)
+        await model.sceneChanged(.background)
+        await f.camera.setConnectionFailure(nil)
+        await model.sceneChanged(.active)
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
+        #expect(await f.camera.connectCount == 2)
+        await model.sceneChanged(.background)
+    }
+
+    @Test func discoveryDoesNotOverlapAndCancellationPreventsLateConnection() async throws {
+        let f = try await FixtureEnvironment.make(), barrier = FixtureBarrier(), retry = ManualConnectionRetry()
+        await f.camera.holdConnect(barrier)
+        let model = AppModel(environment: f.environment, connectionRetryWait: { try await retry.wait($0) })
+        await model.start(); await barrier.entered()
+        #expect(model.isConnecting)
+        #expect(!(await retry.isWaiting))
+        await model.connect()
+        #expect(await f.camera.connectCount == 1)
+        await model.sceneChanged(.inactive)
+        await barrier.release()
+        await eventually { !model.isConnecting }
+        #expect(model.state.currentCameraExecutionContext == nil)
+        #expect(model.connectionError == nil)
+        #expect(!(await retry.isWaiting))
+        await model.sceneChanged(.active)
+        await eventually { model.state.currentCameraExecutionContext != nil }
+        await model.sceneChanged(.background)
+    }
+
+    @Test func cameraAuthorizationDenialWaitsForForegroundBeforeTryingAgain() async throws {
+        let f = try await FixtureEnvironment.make(), retry = ManualConnectionRetry()
+        await f.camera.setConnectionFailure(.transport(.authorizationDenied))
+        let model = AppModel(environment: f.environment, connectionRetryWait: { try await retry.wait($0) })
+        await model.start()
+        await eventually { model.state.cameraState == .authorizationDenied && !model.isConnecting }
+        await eventually { await retry.isWaiting }
+        await retry.advance()
+        await eventually { await retry.delays.count == 2 }
+        #expect(await f.camera.connectCount == 1)
+        await model.sceneChanged(.inactive)
+        await f.camera.setConnectionFailure(nil)
+        await model.sceneChanged(.active)
+        await eventually { model.state.currentCameraExecutionContext != nil }
+        #expect(await f.camera.connectCount == 2)
+        await model.sceneChanged(.background)
+    }
+
+    @Test func automaticDiscoveryStartsBeforePhotosDiscoveryFinishes() async throws {
+        let f = try await FixtureEnvironment.make(), barrier = FixtureBarrier()
+        await f.reader.holdDiscovery(barrier)
+        let model = AppModel(environment: f.environment)
+        let startup = Task { await model.start() }
+        await barrier.entered()
+        await eventually { model.state.currentCameraExecutionContext != nil }
+        #expect(model.isLoadingLibrary)
+        await barrier.release(); await startup.value
+        await model.sceneChanged(.background)
+    }
+
     @Test func startOwnsOneSubscriptionAndPairedDisplayNeverMaterializesRAW() async throws {
         let f = try await FixtureEnvironment.make()
         let model = AppModel(environment: f.environment)
@@ -46,7 +147,7 @@ import Testing
         guard case .stale = model.state.recipeRefreshState else { Issue.record("Failed refresh lost stale status"); return }
     }
 
-    @Test func deniedAndLimitedAccessHaveActionsWithoutCameraConnection() async throws {
+    @Test func deniedAndLimitedPhotosAccessStillAllowsAutomaticCameraConnection() async throws {
         let f = try await FixtureEnvironment.make(access: .denied), model = AppModel(environment: f.environment)
         await model.start()
         #expect(model.sources.isEmpty)
@@ -56,7 +157,8 @@ import Testing
         await model.reloadLibrary()
         #expect(model.sources.count == 3)
         model.managePhotos(); #expect(f.platform.manageCalls == 1)
-        #expect(await f.camera.connectCount == 0)
+        await eventually { model.state.currentCameraExecutionContext != nil }
+        #expect(await f.camera.connectCount == 1)
     }
 
     @Test func scopeNarrowingAfterCompletedExportRetainsSavedVersion() async throws {
@@ -129,6 +231,7 @@ import Testing
         #expect(model.state.activeJobID == nil)
         #expect(f.platform.idleTimerDisabled)
         #expect(await f.camera.disconnectCount == 1)
+        await eventually { await f.camera.connectCount == 2 }
         #expect(await f.camera.connectCount == 2)
         #expect(await f.camera.renderCount == 1)
     }
@@ -280,6 +383,7 @@ import Testing
         #expect(await f.camera.connectCount == 1)
         #expect(model.isSuspended)
         await model.sceneChanged(.active)
+        await eventually { await f.camera.connectCount == 2 }
         #expect(await f.camera.connectCount == 2)
         #expect(!model.isSuspended)
     }

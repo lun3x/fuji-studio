@@ -48,10 +48,6 @@ private struct WorkspaceFixtureView: View {
                             Label("Generated status", systemImage: "info.circle").font(.caption).lineLimit(1).frame(minHeight: 44)
                         }
                     }.accessibilityLabel("Generated status").accessibilityIdentifier("app.status")
-                }, connectionControl: {
-                    Button {} label: {
-                        Image(systemName: "cable.connector").frame(minWidth: 44, minHeight: 44)
-                    }.accessibilityLabel("Connect").accessibilityIdentifier("app.connect").disabled(true)
                 })
                 .frame(width: compact ? proxy.size.width - 32 : proxy.size.width,
                     height: compact ? max(360, proxy.size.height * 0.65) : proxy.size.height)

@@ -39,6 +39,7 @@ private struct AppEntryView: View {
     @State private var fixturePreviewBarrier: FixtureBarrier?
     @State private var fixturePreviewCamera: FixtureCamera?
     @State private var fixturePreviewBlocked = false
+    @State private var fixtureDisconnectedCamera: FixtureCamera?
     #endif
     var body: some View {
         Group {
@@ -59,6 +60,11 @@ private struct AppEntryView: View {
                             Button("Inject background") { Task { await model.sceneChanged(.background) } }.accessibilityIdentifier("fixture.background")
                             Button("Inject foreground") { Task { await model.sceneChanged(.active) } }.accessibilityIdentifier("fixture.foreground")
                         }.font(.caption).buttonStyle(.bordered)
+                    }
+                    if let camera = fixtureDisconnectedCamera {
+                        Button("Plug in fixture camera") {
+                            Task { await camera.setConnectionFailure(nil); fixtureDisconnectedCamera = nil }
+                        }.accessibilityIdentifier("fixture.plugInCamera")
                     }
                     if let barrier = fixtureSaveBarrier {
                         Button("Finish fixture save") { Task { await barrier.release(); fixtureSaveBarrier = nil } }
@@ -88,6 +94,10 @@ private struct AppEntryView: View {
                     let flags = ProcessInfo.processInfo.arguments
                     let bundle = try await FixtureEnvironment.make(access: flags.contains("--fixture-denied") ? .denied : flags.contains("--fixture-limited") ? .limited : .full, uncertain: flags.contains("--fixture-unknown-save"))
                     environment = bundle.environment
+                    if flags.contains("--fixture-disconnected-camera") {
+                        await bundle.camera.setConnectionFailure(.transport(.notConnected))
+                        fixtureDisconnectedCamera = bundle.camera
+                    }
                     if flags.contains("--fixture-preview-failure") { await bundle.camera.failRender() }
                     if flags.contains("--fixture-held-start") {
                         let barrier = FixtureBarrier(); fixtureStartBarrier = barrier
@@ -105,9 +115,21 @@ private struct AppEntryView: View {
                 #else
                 environment = try await AppEnvironment.live()
                 #endif
+                #if DEBUG
+                if fixture && ProcessInfo.processInfo.arguments.contains("--fixture-initial-inactive") {
+                    latestScenePhase = .inactive
+                }
+                #endif
                 let owner = AppModel(environment: environment)
                 model = owner
+                // Environment creation can outlive a scene transition while model is nil.
+                // Seed that phase before start() is allowed to begin camera discovery.
+                await owner.sceneChanged(latestScenePhase)
+                #if DEBUG
+                await owner.start(automaticallyConnect: acceptanceID == nil)
+                #else
                 await owner.start()
+                #endif
                 await owner.sceneChanged(latestScenePhase)
                 #if DEBUG
                 if let acceptanceID { await acceptance.run(model: owner, id: acceptanceID) }

@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Presentation only. The caller owns the reducer, accessible source index and service effects.
-struct WorkspaceView<StatusControl: View, ConnectionControl: View>: View {
+struct WorkspaceView<StatusControl: View>: View {
     let state: WorkspaceState
     let sources: [PhotoSource]
     let thumbnails: any GridThumbnailProviding
@@ -19,7 +19,6 @@ struct WorkspaceView<StatusControl: View, ConnectionControl: View>: View {
     var onRefreshRecipes: () -> Void
     var onExport: () -> Void
     @ViewBuilder var statusControl: () -> StatusControl
-    @ViewBuilder var connectionControl: () -> ConnectionControl
     var onViewportChanged: (GridViewport) -> Void = { _ in }
     @State private var drawerHeaderHeight: CGFloat = 0
     @State private var statusHeight: CGFloat = 0
@@ -106,7 +105,6 @@ struct WorkspaceView<StatusControl: View, ConnectionControl: View>: View {
         HStack(alignment: .center, spacing: 8) {
             statusControl().buttonStyle(.bordered).frame(minWidth: 44).layoutPriority(-1)
             Spacer(minLength: 0)
-            connectionControl().buttonStyle(.bordered).fixedSize(horizontal: true, vertical: true)
         }
     }
     private var recipeControl: some View {
