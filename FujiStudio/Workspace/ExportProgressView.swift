@@ -79,7 +79,7 @@ struct AppWorkspaceView: View {
             savedVersions: model.savedVersions, exportPending: model.isSubmitting, previewLoading: model.isLoadingPreview,
             onAction: model.send, onRefreshRecipes: { Task { await model.refreshRecipes() } },
             onExport: { Task { await model.export() } },
-            statusControl: { statusButton }, connectionControl: { connectButton })
+            statusControl: { statusButton })
         .sheet(isPresented: $statusPresented) {
             NavigationStack {
                 ScrollView {
@@ -91,6 +91,7 @@ struct AppWorkspaceView: View {
                         if let reason = model.state.exportDisabledReason { Text(reason.message).accessibilityIdentifier("app.exportDisabledReason") }
                         if case .authorizationDenied = model.state.cameraState { Button("Open Settings", action: model.openSettings) }
                         if let message = model.message { Text(message).accessibilityIdentifier("app.error") }
+                        if let error = model.connectionError { Text(error).accessibilityIdentifier("app.connectionError") }
                         ForEach(model.progressEvents, id: \.jobID) { event in
                             ExportProgressView(event: event, canResume: !model.isSuspended && !model.isSubmitting && model.state.currentCameraExecutionContext != nil,
                                 onCancel: { Task { await model.cancelExport(jobID: event.jobID) } }, onResume: { Task { await model.resumeExport(jobID: event.jobID) } },
@@ -117,17 +118,6 @@ struct AppWorkspaceView: View {
             }
         }.accessibilityLabel(statusLabel).accessibilityIdentifier("app.status")
     }
-    private var connectButton: some View {
-        Button { Task { await model.connect() } } label: {
-            if dynamicTypeSize.isAccessibilitySize {
-                Image(systemName: "cable.connector").font(.system(size: 24)).frame(minWidth: 44, minHeight: 44)
-            } else {
-                Text(model.isConnecting ? "Connecting…" : "Connect").frame(minWidth: 44, minHeight: 44)
-            }
-        }.accessibilityLabel(model.isConnecting ? "Connecting…" : "Connect")
-            .disabled(model.isConnecting || model.isSuspended || model.state.currentCameraExecutionContext != nil)
-            .accessibilityIdentifier("app.connect")
-    }
     private var statusTitle: String {
         switch statusLabel {
         case "Photos · Camera disconnected": "Disconnected"
@@ -138,9 +128,15 @@ struct AppWorkspaceView: View {
     private var statusLabel: String {
         if model.isLoadingLibrary { return "Reading Photos…" }
         if let event = model.exportEvent { return "\(event.recipeLabel) · \(event.summary.completed) saved · \(ExportProgressView.status(event))" }
-        if model.message != nil { return "Action needed" }
+        if model.message != nil || model.connectionError != nil { return "Action needed" }
         if model.state.libraryAccess == .denied || model.state.libraryAccess == .restricted { return "Photos access needed" }
         if model.isRefreshing { return "Importing seven recipes…" }
+        switch model.state.cameraState {
+        case .authorizationDenied: return "Camera access needed"
+        case .wrongMode: return "Check camera USB mode"
+        default: break
+        }
+        if model.isConnecting { return "Looking for camera…" }
         return model.state.currentCameraExecutionContext == nil ? "Photos · Camera disconnected" : "Photos · Camera ready"
     }
     private var accessMessage: String {
@@ -157,11 +153,11 @@ struct AppWorkspaceView: View {
         case .ready: "X-T5 ready for conversion."
         case .busy: "X-T5 is processing the current operation."
         case .authorizationRequired: "Allow camera control to read recipes and convert RAWs over USB. This does not take new pictures."
-        case .authorizationDenied: "Camera control is denied. Allow it in Settings, then reconnect."
+        case .authorizationDenied: "Camera control is denied. Allow it in Settings, then return to Fuji Studio to connect automatically."
         case .wrongMode: "Set the X-T5 USB connection mode to USB RAW CONV./BACKUP RESTORE. Use a USB data cable."
-        case .recoverableError: "Camera connection interrupted. Check its USB mode and data cable, then reconnect."
+        case .recoverableError: "Camera connection interrupted. Check its USB mode and data cable. Fuji Studio reconnects automatically."
         case .opening, .discovering, .sessionOpen: "Connecting and verifying the X-T5…"
-        case .disconnected: "Connect an X-T5 with a USB data cable in USB RAW CONV./BACKUP RESTORE mode. Browsing originals and saved versions works without the camera."
+        case .disconnected: "Plug in an X-T5 with a USB data cable in USB RAW CONV./BACKUP RESTORE mode. Fuji Studio connects automatically and retries every three seconds while active. Browsing originals and saved versions works without the camera."
         }
     }
 }

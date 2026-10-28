@@ -12,7 +12,7 @@ import Testing
         let recipe = try #require(try await original.latestRecipes().first)
         let savedID = UUID(), savedOperation = UUID(), remainingOperation = UUID()
         var first = ExportItem(source: source, operationID: savedOperation)
-        await f.camera.connect()
+        try await f.camera.connect()
         let local = try await f.reader.materialize(source.originalResources.raf, progress: { _ in })
         defer { try? FileManager.default.removeItem(at: local.fileURL) }
         let jpeg = try await f.camera.render(raw: Self.prepare(local), recipe: recipe, policy: .fullSizeFineRecordedGeometry)

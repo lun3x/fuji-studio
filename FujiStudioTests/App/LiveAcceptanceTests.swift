@@ -87,7 +87,8 @@ import Testing
     }
     @Test func replayWithoutRecordedJobNeverConnectsRendersOrSaves() async throws {
         let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment)
-        await model.start()
+        await model.start(automaticallyConnect: false)
+        await model.sceneChanged(.active)
         let documents = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: documents) }
         for kind in 0...2 {
@@ -104,7 +105,7 @@ import Testing
     }
     @Test func bankProofRequiresFreshImportFromCurrentSession() async throws {
         let f = try await FixtureEnvironment.make()
-        await f.camera.connect()
+        try await f.camera.connect()
         let banks = try await f.camera.importRecipes(), context = try await f.camera.executionContext()
         var state = WorkspaceState()
         state.reduce(.recipesRefreshed(banks))
@@ -113,7 +114,7 @@ import Testing
         state.reduce(.recipeRefreshFailed("synthetic failure"))
         #expect(!LiveAcceptanceRunner.banksMatch(state: state, retained: banks))
         state.reduce(.recipesRefreshed(banks))
-        await f.camera.connect()
+        try await f.camera.connect()
         state.reduce(.cameraChanged(.ready(await f.camera.session), context: try await f.camera.executionContext()))
         #expect(!LiveAcceptanceRunner.banksMatch(state: state, retained: banks))
     }

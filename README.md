@@ -214,6 +214,16 @@ Only primary/alternate original roles qualify; content types distinguish RAF, JP
 Connect the X-T5 by USB data cable and select **USB RAW CONV./BACKUP RESTORE**
 on the camera. The observed support context is X-T5 firmware **4.31**. Import
 reads the existing C1–C7 names/settings; the app has no saved-bank editor.
+Fuji Studio starts camera discovery automatically while active; there is no
+Connect button. USB attachment callbacks open a camera discovered during an
+attempt. After an unsuccessful attempt, the app waits three seconds before
+trying again. Ready sessions are left open, and automatic connection pauses
+when the app becomes inactive or enters the background. Returning to the app
+starts it again, including when no camera was previously connected. A camera
+permission denial is shown in status; allow access in Settings and return to
+Fuji Studio. Reconnecting imports recipes but never resumes a conversion or
+export automatically. The explicit DEBUG acceptance route retains its own
+controlled connection sequence.
 Conversion fails closed outside the measured supported profile/source class.
 The observed full-size 3:2 outputs are FINE **7728 × 5152**, encoded orientation 8.
 The retained standalone input is lossless-compressed 14-bit. Other compression,

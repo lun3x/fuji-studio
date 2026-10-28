@@ -11,6 +11,7 @@ import Observation
     private(set) var imageStatus: String?
     private(set) var imageLoading: ImageLoadingState?
     private(set) var message: String?
+    private(set) var connectionError: String?
     private(set) var exportEvent: ExportEvent?
     private var unfinishedEvents: [UUID: ExportEvent] = [:]
     private var jobOrder: [UUID] = []
@@ -39,7 +40,10 @@ import Observation
     @ObservationIgnored private var recoveryNeeded = false
     @ObservationIgnored private var recovering = false
     @ObservationIgnored private var previousIdle: Bool?
-    @ObservationIgnored private var reconnectOnReturn = false
+    @ObservationIgnored private var automaticConnectionTask: Task<Void, Never>?
+    @ObservationIgnored private let connectionRetryWait: @Sendable (Duration) async throws -> Void
+    @ObservationIgnored private var cameraAuthorizationDenied = false
+    @ObservationIgnored private var automaticConnectionEnabled = true
     @ObservationIgnored private var foreground = true
     @ObservationIgnored private var sceneRevision: UInt64 = 0
     @ObservationIgnored private var displayRequest: WorkspacePreviewRequest?
@@ -57,7 +61,10 @@ import Observation
     var validationScene: (revision: UInt64, foreground: Bool) { (sceneRevision, foreground) }
     #endif
 
-    init(environment: AppEnvironment) { self.environment = environment }
+    init(environment: AppEnvironment,
+         connectionRetryWait: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }) {
+        self.environment = environment; self.connectionRetryWait = connectionRetryWait
+    }
     var imageStatusIsFailure: Bool { displayFailure != nil }
     /// Keep the displayed file's identity until its replacement is ready, even after selection moves.
     var imageIdentity: (sourceID: SourceID, version: VersionID)? {
@@ -70,6 +77,7 @@ import Observation
     }
     deinit {
         streams.forEach { $0.cancel() }; displayTask?.cancel(); contextTask?.cancel(); versionRefreshTask?.cancel()
+        automaticConnectionTask?.cancel()
     }
 
     var progressEvents: [ExportEvent] {
@@ -78,8 +86,9 @@ import Observation
         return values
     }
 
-    func start() async {
+    func start(automaticallyConnect: Bool = true) async {
         guard !started else { return }; started = true
+        automaticConnectionEnabled = automaticallyConnect
         let library = await environment.reader.changes()
         let camera = await environment.camera.states()
         let previews = await environment.preview.events()
@@ -92,6 +101,7 @@ import Observation
             Task { [weak self] in for await event in previews { guard !Task.isCancelled else { break }; self?.previewChanged(event) } },
             Task { [weak self] in for await event in exports { guard !Task.isCancelled else { break }; await self?.exportChanged(event) } }
         ]
+        startAutomaticConnection()
         do {
             let recipes = try await environment.catalog.latestRecipes()
             if !recipes.isEmpty { reduce(.recipesRefreshed(recipes)) }
@@ -290,6 +300,9 @@ import Observation
     }
 
     private func cameraChanged(_ event: CameraState) {
+        // Session cleanup may deliver DISCONNECTED after connect() reports denial.
+        // Keep the Settings action until the next foreground authorization attempt.
+        if cameraAuthorizationDenied, event == .disconnected { return }
         cameraEventGeneration &+= 1
         let token = cameraEventGeneration
         switch event {
@@ -320,11 +333,45 @@ import Observation
     }
 
     func connect() async {
-        guard !isConnecting, !isSuspended else { return }
+        guard !Task.isCancelled, !isConnecting, foreground, !isSuspended,
+              !cameraAuthorizationDenied, state.currentCameraExecutionContext == nil else { return }
+        // READY may precede the asynchronous execution-context lookup.
+        switch state.cameraState { case .ready, .busy: return; default: break }
         isConnecting = true
         defer { isConnecting = false }
-        do { try await environment.camera.connect(); message = nil }
-        catch { message = Self.explain(error) }
+        do { try await environment.camera.connect(); connectionError = nil }
+        catch {
+            guard !Task.isCancelled else { return }
+            switch error {
+            case CameraServiceError.transport(.authorizationDenied):
+                cameraAuthorizationDenied = true
+                reduce(.cameraChanged(.authorizationDenied, context: nil))
+                connectionError = nil
+            case CameraServiceError.transport(.timeout), CameraServiceError.transport(.notConnected),
+                 CameraServiceError.cancelled, is CancellationError:
+                connectionError = nil // An absent camera is normal while browsing photos.
+            default: connectionError = Self.explain(error)
+            }
+        }
+    }
+
+    private func startAutomaticConnection() {
+        guard started, automaticConnectionEnabled, foreground, !isSuspended, automaticConnectionTask == nil else { return }
+        let wait = connectionRetryWait
+        automaticConnectionTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard self != nil else { return }
+                await self?.connect()
+                guard !Task.isCancelled else { return }
+                // Discovery already reacts to USB attachment while connect is pending.
+                // Only a completed attempt reaches this delay; opens never overlap.
+                do { try await wait(.seconds(3)) } catch { return }
+            }
+        }
+    }
+
+    private func stopAutomaticConnection() {
+        automaticConnectionTask?.cancel(); automaticConnectionTask = nil
     }
 
     func refreshRecipes() async {
@@ -426,11 +473,12 @@ import Observation
 
     func sceneChanged(_ phase: ScenePhase) async {
         sceneRevision &+= 1
-        if phase == .inactive { foreground = false; restoreIdle(); return }
+        if phase == .inactive { foreground = false; stopAutomaticConnection(); restoreIdle(); return }
         let revision = sceneRevision
         if phase == .background {
             state.reduce(.previewInterrupted); isLoadingPreview = false
             foreground = false; isSuspended = true; restoreIdle()
+            stopAutomaticConnection()
             displayIntent &+= 1
             displayTask?.cancel(); displayRequest = nil
             imageLoading = !hasCurrentSourceDisplay && imageLoading != nil ? .loading : nil
@@ -440,7 +488,6 @@ import Observation
             await preceding?.value
             guard let self else { return }
             if phase == .background {
-                self.reconnectOnReturn = self.reconnectOnReturn || self.state.currentCameraExecutionContext != nil || self.isConnecting
                 await self.environment.preview.invalidate()
                 await self.environment.exports.suspend()
                 // Submission admission may be awaiting validation/persistence. Await its REAL ID.
@@ -453,6 +500,7 @@ import Observation
                 guard self.sceneRevision == revision else { return }
                 let wasSuspended = self.isSuspended
                 self.foreground = true
+                self.cameraAuthorizationDenied = false
                 if wasSuspended {
                     await self.reloadLibrary()
                     self.recoveryNeeded = true; await self.recoverWhenIdle()
@@ -460,9 +508,9 @@ import Observation
                     await self.environment.exports.allowForegroundWork()
                     guard self.sceneRevision == revision else { return }
                     self.isSuspended = false
-                    if self.reconnectOnReturn { await self.connect() }
                     self.requestDisplay(nil)
                 }
+                self.startAutomaticConnection()
                 self.updateIdle()
             }
         }

@@ -169,6 +169,8 @@ actor FixtureCamera: CameraServing {
     private var shouldFailRender = false
     private var shouldFailRenderWithoutDisconnect = false
     private var renderBarrier: FixtureBarrier?
+    private var connectBarrier: FixtureBarrier?
+    private var connectionFailure: CameraServiceError?
     private var disconnectBarrier: FixtureBarrier?
     private(set) var cancelledRenders = 0
     private(set) var subscriptions = 0, importCount = 0, connectCount = 0, disconnectCount = 0, renderCount = 0
@@ -182,8 +184,13 @@ actor FixtureCamera: CameraServing {
     }
     func states() -> AsyncStream<CameraState> { subscriptions += 1; return AsyncStream { observers.append($0); $0.yield(state) } }
     private func emit(_ next: CameraState) { state = next; observers.forEach { $0.yield(next) } }
-    func connect() {
+    func setConnectionFailure(_ failure: CameraServiceError?) { connectionFailure = failure }
+    func holdConnect(_ barrier: FixtureBarrier) { connectBarrier = barrier }
+    func connect() async throws {
         connectCount += 1
+        if let connectBarrier { await connectBarrier.wait() }
+        try Task.checkCancellation()
+        if let connectionFailure { emit(.disconnected); throw connectionFailure }
         context = CameraExecutionContext(model: context.model, firmware: context.firmware, capability: context.capability, supportVersion: context.supportVersion, sessionIdentity: UUID(), generation: context.generation + 1)
         emit(.ready(session))
     }
