@@ -40,6 +40,27 @@ struct RecipeSnapshot: Sendable, Equatable, Codable, Identifiable {
     let importedAt: Date
     /// Recorded import observations. Frozen older observations are not an executable support cache.
     let renderingIssues: [RecipeRenderingIssue]
+    /// Phone copies retain the original camera slot as provenance, never as selection identity.
+    let copiedFromRecipeID: UUID?
+    var isPhoneRecipe: Bool { copiedFromRecipeID != nil }
+    var displayLabel: String { isPhoneRecipe ? "Phone recipe \(name)" : "C\(slot) \(name)" }
+
+    init(id: UUID, slot: Int, name: String, importedName: Data, importedSettings: [ImportedRecipeProperty],
+         settingsDigest: String, cameraContext: RecipeCameraContext, importedAt: Date,
+         renderingIssues: [RecipeRenderingIssue], copiedFromRecipeID: UUID? = nil) {
+        self.id = id; self.slot = slot; self.name = name; self.importedName = importedName
+        self.importedSettings = importedSettings; self.settingsDigest = settingsDigest
+        self.cameraContext = cameraContext; self.importedAt = importedAt
+        self.renderingIssues = renderingIssues; self.copiedFromRecipeID = copiedFromRecipeID
+    }
+
+    func copiedToPhone() -> PhoneRecipe {
+        let snapshot = RecipeSnapshot(id: UUID(), slot: slot, name: name, importedName: importedName,
+            importedSettings: importedSettings, settingsDigest: settingsDigest, cameraContext: cameraContext,
+            importedAt: importedAt, renderingIssues: renderingIssues, copiedFromRecipeID: id)
+        return PhoneRecipe(id: id, snapshot: snapshot)
+    }
+
     var normalizedSettings: NormalizedRecipeSettings { get throws { try XT5WorkingProfile.normalize(self) } }
     var renderingSupport: RecipeRenderingSupport {
         do { return .supported(try normalizedSettings) }
