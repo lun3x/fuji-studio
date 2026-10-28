@@ -185,9 +185,9 @@ The script generates the ignored `FujiStudio.xcodeproj` and shared `FujiStudio` 
 FUJI_STUDIO_DESTINATION='platform=iOS Simulator,id=YOUR_SIMULATOR_UUID' Scripts/test-ios.sh
 ```
 
-The simulator needs an iOS 27+ runtime that supports iPhone 15 Pro. The currently
-installed iOS 27.1 runtime supports only iPhone Duo, so it cannot create this
-device; install a compatible runtime before using the default destination.
+The simulator needs an iOS 27+ runtime that supports iPhone 15 Pro. iOS 27.0
+is verified to work. The iOS 27.1 runtime installed during setup supports only
+iPhone Duo, so use iOS 27.0 for this device.
 
 For an unsigned Release simulator build:
 
