@@ -64,5 +64,18 @@ xcodebuild build -project FujiStudio.xcodeproj -scheme FujiStudio \
 
 These checks verify the copy/save increment and its integration with the
 established renderer using deterministic fixtures. They do not add new physical
-camera/firmware/settings acceptance evidence. This task does not install on a
-physical phone or modify camera custom banks.
+camera/firmware/settings acceptance evidence. The local-copy implementation does
+not modify camera custom banks.
+
+## Physical installation follow-up — 28 October 2026
+
+At the user's request, the phone recipe code at `5f9d2d76` was built in Release
+for the connected iPhone 15 Pro using the project's existing automatic signing
+credentials. The signed `.build/PhoneInstall/Build/Products/Release-iphoneos/FujiStudio.app`
+passed `codesign --verify --deep --strict`, and that exact bundle was installed.
+The normal `com.lun3x.FujiStudio` launch succeeded with no fixture/test arguments;
+a subsequent device process listing confirmed the app was running. Build,
+installation and launch results are retained under ignored `.build/`.
+
+This confirms installation and normal launch, without adding physical recipe
+conversion or Photos-export acceptance evidence.
