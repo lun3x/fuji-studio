@@ -26,7 +26,7 @@ Scripts/CameraProbe/run.sh --raw /path/to/source.RAF \
 uv venv .venv
 uv pip install --python .venv/bin/python -r Scripts/CameraProbe/requirements.txt
 .venv/bin/python Scripts/CameraProbe/analyze.py profile \
-  Tests/Fixtures/Protocol/XE3/1.30/baseline-601.bin
+  Packages/FujiCameraCore/Tests/FujiCameraCoreTests/Fixtures/XE3/1.30/baseline-601.bin
 .venv/bin/python Scripts/CameraProbe/analyze.py compare reference.JPG output.JPG
 ```
 
@@ -399,6 +399,6 @@ from9→8. Every backup read occurred once in a fresh session with confirmed clo
 The user restored Underwater0/0 and Colour Temperature6300K, Red−4/Blue−2. The final
 5660-byte backup is identical to this experiment's baseline, including the full
 WB table and recipe area. The sanitized proof is
-`Tests/Fixtures/Protocol/XE3/1.30/underwater-wb-controlled-diff.json`.
+`Packages/FujiCameraCore/Tests/FujiCameraCoreTests/Fixtures/XE3/1.30/underwater-wb-controlled-diff.json`.
 This establishes C7's dependency without saved-bank writes. It is diagnostic
 protocol evidence; shared-service laptop/iPhone acceptance remains a separate gate.

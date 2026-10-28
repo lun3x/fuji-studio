@@ -3,7 +3,8 @@ import Foundation
 public enum SourceCompatibility {
   public static func detected(_ metadata: RAWMetadata) -> RAWCompatibility {
     // Recognition allows original sensor viewing; adapter admission still checks source class.
-    ["X-T5", "X-E3"].contains(metadata.cameraModel) ? .supported(model: metadata.cameraModel) : .incompatible(model: metadata.cameraModel)
+    ["X-T5", "X-E3"].contains(metadata.cameraModel)
+      ? .supported(model: metadata.cameraModel) : .incompatible(model: metadata.cameraModel)
   }
   public static func assess(_ metadata: RAWMetadata, for support: VerifiedCameraSupport)
     -> RAWCompatibility

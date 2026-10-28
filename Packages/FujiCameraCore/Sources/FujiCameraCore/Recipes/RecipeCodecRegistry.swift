@@ -3,6 +3,7 @@ import Foundation
 public struct RecipeCodecRegistry: Sendable {
   public init() {}
   public func assess(_ snapshot: RecipeSnapshot) -> RecipeAssessment {
+    if snapshot.cameraContext.model == "X-E3" { return XE3RecipeCodec.assess(snapshot) }
     do {
       return RecipeAssessment(settings: try requireModelSettings(snapshot), issues: [])
     } catch CameraServiceError.unsupportedContext {
@@ -16,23 +17,32 @@ public struct RecipeCodecRegistry: Sendable {
   }
   public func editableSettings(_ snapshot: RecipeSnapshot) throws -> RecipeSettings {
     try verify(snapshot.cameraContext)
+    if snapshot.cameraContext.model == "X-E3" { return try XE3RecipeCodec.decode(snapshot) }
     return try XT5RecipeSettingsCodec.decode(snapshot)
   }
   public func encodeEditedRecipe(_ settings: RecipeSettings, preserving snapshot: RecipeSnapshot)
     throws -> RecipeSnapshot
   {
     try verify(snapshot.cameraContext)
+    if snapshot.cameraContext.model == "X-E3" {
+      return try XE3RecipeCodec.encodeEditedRecipe(settings, preserving: snapshot)
+    }
     return try XT5RecipeSettingsCodec.encode(settings, preserving: snapshot)
   }
   public func capabilities(for context: RecipeCameraContext) throws -> CameraCapabilities {
     try verify(context)
-    return Self.xt5Capabilities
+    return context.model == "X-E3" ? XE3Capabilities.measured : Self.xt5Capabilities
   }
   public func supportVersion(for context: RecipeCameraContext) throws -> String {
     try verify(context)
-    return XT5WorkingProfile.supportVersion
+    return context.model == "X-E3" ? XE3Support.identifier : XT5WorkingProfile.supportVersion
   }
   private func verify(_ context: RecipeCameraContext) throws {
+    if context.model == "X-E3", context.firmware == "1.30",
+      context.capability == XE3Support.identifier
+    {
+      return
+    }
     guard context.model == "X-T5", context.firmware == "4.31", context.capability == "X-T5_0200"
     else { throw CameraServiceError.unsupportedContext }
   }

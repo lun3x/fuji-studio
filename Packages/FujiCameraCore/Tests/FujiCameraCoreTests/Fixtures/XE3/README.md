@@ -1,0 +1,1 @@
+Sanitized X-E3 firmware 1.30 protocol fixtures from the laptop investigation. These contain processor/profile settings, rendering evidence and controlled WB diffs; no original images, full backups, serials or private bank names. See docs/validation/xe3-laptop-protocol.md for provenance.

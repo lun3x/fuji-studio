@@ -32,6 +32,7 @@ public struct ImportedRecipeProperty: Sendable, Equatable, Codable {
 
 public enum RecipeRenderingIssue: Sendable, Equatable, Codable {
   case unsupportedMeasuredDomain, unsupportedCameraContext
+  case unvalidatedDependency(String)
   case conversionProfileUnvalidated
   case unmappedProperty(UInt16)
   case unsupportedValue(UInt16)
