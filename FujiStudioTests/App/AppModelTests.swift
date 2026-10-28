@@ -104,6 +104,61 @@ import Testing
         await model.sceneChanged(.background)
     }
 
+    @Test func copyingOfflinePersistsWithoutChangingSelectionAndReloadsOnRestart() async throws {
+        let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment)
+        await model.start(automaticallyConnect: false)
+        model.send(.sourceTapped("source-0"))
+        await eventually { model.displayFile != nil }
+        let original = try #require(model.state.recipes.first)
+        #expect(await model.copyRecipeToPhone(id: original.id))
+        #expect(model.state.selectedRecipe == nil)
+        #expect(model.state.displayedVersion == .cameraJPEG)
+        #expect(model.state.phoneRecipes.count == 1)
+        let copy = try #require(model.state.phoneRecipes.first)
+        #expect(copy.copiedFromRecipeID == original.id)
+        #expect(await model.copyRecipeToPhone(id: original.id))
+        #expect(model.state.phoneRecipes == [copy])
+        let restarted = AppModel(environment: f.environment)
+        await restarted.start(automaticallyConnect: false)
+        #expect(restarted.state.phoneRecipes == [copy])
+        #expect(await f.writer.requests.isEmpty)
+        #expect(await f.camera.connectCount == 0)
+    }
+
+    @Test func failedPhoneSaveDoesNotPublishACopyOrChangeSelection() async throws {
+        let f = try await FixtureEnvironment.make()
+        let catalog = HeldVersionCatalog(base: f.environment.catalog)
+        let model = model(f.environment, catalog: catalog)
+        await model.start(automaticallyConnect: false)
+        await catalog.failPhoneSaves()
+        let original = try #require(model.state.recipes.first)
+        #expect(!(await model.copyRecipeToPhone(id: original.id)))
+        #expect(model.state.phoneRecipes.isEmpty)
+        #expect(model.state.selectedRecipe == nil)
+        #expect(model.message != nil)
+        #expect(try await f.environment.catalog.phoneRecipes().isEmpty)
+    }
+
+    @Test func phoneRecipeRendersAndExportsFrozenCopyThroughCamera() async throws {
+        let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment)
+        await model.start(automaticallyConnect: false)
+        let original = try #require(model.state.recipes.first { $0.slot == 3 })
+        #expect(await model.copyRecipeToPhone(id: original.id))
+        let copy = try #require(model.state.phoneRecipes.first)
+        model.send(.sourceTapped("source-0"))
+        model.send(.phoneRecipeSelected(copy.id))
+        await model.connect()
+        await eventually { model.preview != nil && !model.isRefreshing }
+        #expect(model.state.selectedRecipe == copy)
+        #expect(model.preview?.settingsDigest == copy.settingsDigest)
+        await model.export()
+        await eventually { model.exportEvent?.terminal == true }
+        let saved = try await f.environment.catalog.versions(sourceID: "source-0")
+        #expect(saved.count == 1)
+        #expect(saved.first?.recipeSnapshot == copy)
+        #expect(saved.first?.recipeSnapshot.copiedFromRecipeID == original.id)
+    }
+
     @Test func startOwnsOneSubscriptionAndPairedDisplayNeverMaterializesRAW() async throws {
         let f = try await FixtureEnvironment.make()
         let model = AppModel(environment: f.environment)
@@ -681,6 +736,13 @@ import Testing
 /// Delegates to the same actual disk catalog; only the captured version-list return is delayed.
 private actor HeldVersionCatalog: CatalogStoring {
     let base: any CatalogStoring
+    private var phoneSavesFail = false
+    func failPhoneSaves() { phoneSavesFail = true }
+    func phoneRecipes() async throws -> [RecipeSnapshot] { try await base.phoneRecipes() }
+    func copyRecipeToPhone(_ recipe: RecipeSnapshot) async throws -> RecipeSnapshot {
+        if phoneSavesFail { throw CatalogError.durableFailure("Synthetic phone save failure") }
+        return try await base.copyRecipeToPhone(recipe)
+    }
     private var barrier: FixtureBarrier?
     private var readsBeforeHold = 0
     init(base: any CatalogStoring) { self.base = base }

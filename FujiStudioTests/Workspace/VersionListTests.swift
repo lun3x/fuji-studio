@@ -5,6 +5,16 @@ import Testing
 
 @MainActor
 struct VersionListTests {
+    @Test func savedPhoneVersionShowsPhoneIdentityInsteadOfItsOriginalCameraSlot() throws {
+        let f = try RenderFixture(); defer { f.remove() }
+        let recipe = f.recipe(named: "Phone preset").copiedToPhone()
+        let version = saved(f, jpeg: try f.jpeg(), recipe: recipe)
+        let entry = try #require(VersionList(source: f.source, saved: [version]).entries.last)
+        #expect(entry.recipeSlot == nil)
+        #expect(entry.isPhoneRecipe)
+        #expect(entry.accessibilityLabel.contains("Phone recipe Phone preset"))
+    }
+
     @Test func onlyOriginalsAndExplicitSavedSourceAssociationsAppear() throws {
         let f = try RenderFixture(); defer { f.remove() }
         let jpeg = try f.jpeg(), a = saved(f, jpeg: jpeg), foreign = saved(f, jpeg: jpeg, sourceID: "other")

@@ -3,6 +3,60 @@ import Testing
 @testable import FujiStudio
 
 struct WorkspaceStateTests {
+    @Test func phoneSelectionSurvivesCameraRefreshAndUsesIndependentIdentity() throws {
+        let f = try WorkspaceFixture(), copy = f.recipes[2].copiedToPhone()
+        var state = f.state()
+        state.reduce(.sourceTapped("viewed"))
+        state.reduce(.phoneRecipesLoaded([copy]))
+        let request = try #require(preview(in: state.reduce(.phoneRecipeSelected(copy.id))))
+        #expect(request.recipe == copy)
+        state.reduce(.previewCompleted(request: request, key: f.key(request)))
+        #expect(state.reduce(.recipesRefreshed(try f.refreshedRecipes())).isEmpty)
+        #expect(state.selectedRecipe == copy)
+        #expect(state.displayedVersion == .preview(f.key(request)))
+        #expect(state.canExport)
+        state.reduce(.recipeSelected(slot: 3))
+        #expect(state.selectedRecipe?.isPhoneRecipe == false)
+        state.reduce(.phoneRecipeSelected(UUID()))
+        #expect(state.selectedRecipe?.isPhoneRecipe == false)
+    }
+
+    @Test func phoneSelectionWorksOfflineAndWaitsForCompatibleCamera() throws {
+        let f = try WorkspaceFixture(), copy = f.recipes[2].copiedToPhone()
+        var state = WorkspaceState(sources: [f.source("viewed")], access: .full)
+        state.reduce(.sourceTapped("viewed"))
+        state.reduce(.phoneRecipesLoaded([copy]))
+        #expect(state.reduce(.phoneRecipeSelected(copy.id)).isEmpty)
+        #expect(state.selectedRecipe == copy)
+        #expect(state.exportDisabledReason == .cameraNotReady)
+        let request = try #require(preview(in: state.reduce(.cameraChanged(.ready(f.session), context: f.context))))
+        #expect(request.recipe == copy)
+        state.reduce(.previewCompleted(request: request, key: f.key(request)))
+        state.reduce(.cameraChanged(.disconnected, context: nil))
+        #expect(state.selectedRecipe == copy)
+        #expect(!state.canExport)
+        let reconnect = try #require(preview(in: state.reduce(.cameraChanged(.ready(f.session), context: f.context))))
+        #expect(reconnect.recipe == copy)
+        let wrong = CameraExecutionContext(model: "X-T4", firmware: f.context.firmware,
+            capability: f.context.capability, supportVersion: f.context.supportVersion, sessionIdentity: UUID(), generation: 1)
+        #expect(state.reduce(.cameraChanged(.ready(f.session), context: wrong)).isEmpty)
+        #expect(state.exportDisabledReason == .recipeCameraMismatch)
+        state.reduce(.recipeSelected(slot: nil))
+        #expect(state.selectedRecipe == nil)
+    }
+
+    @Test func unsupportedPhoneCopyCannotRequestPreviewOrExport() throws {
+        let f = try WorkspaceFixture()
+        let original = f.recipes[0]
+        let unsupported = f.copy(original, digest: "invalid").copiedToPhone()
+        var state = f.state()
+        state.reduce(.sourceTapped("viewed"))
+        state.reduce(.phoneRecipesLoaded([unsupported]))
+        #expect(state.reduce(.phoneRecipeSelected(unsupported.id)).isEmpty)
+        #expect(state.selectedRecipe == unsupported)
+        guard case .unsupportedRecipe = state.exportDisabledReason else { Issue.record("Unsupported copy became exportable"); return }
+    }
+
     @Test func disconnectedCameraCannotSelectCachedRecipes() throws {
         let f = try WorkspaceFixture()
         var state = WorkspaceState(sources: [f.source("viewed")], access: .full)

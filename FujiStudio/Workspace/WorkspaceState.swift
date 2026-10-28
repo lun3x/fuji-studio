@@ -27,6 +27,8 @@ enum WorkspaceAction: Sendable {
     case checkedSourcesReplaced(Set<SourceID>)
     case versionSelected(VersionID)
     case recipeSelected(slot: Int?)
+    case phoneRecipeSelected(UUID)
+    case phoneRecipesLoaded([RecipeSnapshot])
     case recipesRefreshed([RecipeSnapshot])
     case recipeRefreshFailed(String)
     /// Complete accessible metadata index after removals or an authorization change.
@@ -48,7 +50,7 @@ enum WorkspaceExportDisabledReason: Sendable, Equatable {
     var message: String {
         switch self {
         case .noSources: "Choose a photo to export."
-        case .noRecipe: "Choose a camera recipe to export."
+        case .noRecipe: "Choose a recipe to export."
         case .activeJob: "Wait for the current export to finish."
         case .cameraNotReady: "Connect an X-T5 and wait for it to be ready."
         case .cameraContextUnavailable: "Verify the connected camera before exporting."
@@ -67,6 +69,7 @@ struct WorkspaceState: Sendable {
     private(set) var checkedSourceIDs: Set<SourceID> = []
     private(set) var drawerDetent: DrawerDetent = .collapsed
     private(set) var recipes: [RecipeSnapshot] = []
+    private(set) var phoneRecipes: [RecipeSnapshot] = []
     private(set) var recipeRefreshState: RecipeRefreshState = .fresh
     private(set) var currentCameraExecutionContext: CameraExecutionContext?
     private(set) var cameraState: CameraState = .disconnected
@@ -184,16 +187,29 @@ struct WorkspaceState: Sendable {
             wantsRecipePreview = selectedRecipe != nil
             return requestPreview()
 
+        case .phoneRecipeSelected(let id):
+            guard let recipe = phoneRecipes.first(where: { $0.id == id }) else { return [] }
+            selectedRecipe = recipe
+            previewRequiresUserIntent = false
+            displayedVersion = originalVersion
+            wantsRecipePreview = true
+            return requestPreview()
+
+        case .phoneRecipesLoaded(let saved):
+            guard saved.allSatisfy(\.isPhoneRecipe), Set(saved.map(\.id)).count == saved.count else { return [] }
+            phoneRecipes = saved
+
         case .recipesRefreshed(let refreshed):
             guard refreshed.count == 7, Set(refreshed.map(\.slot)) == Set(1...7),
-                  Set(refreshed.map(\.id)).count == 7 else {
+                  Set(refreshed.map(\.id)).count == 7, refreshed.allSatisfy({ !$0.isPhoneRecipe }) else {
                 recipeRefreshState = .stale("Recipe refresh must contain seven distinct snapshots for C1–C7.")
                 return []
             }
             recipes = refreshed.sorted { $0.slot < $1.slot }
             recipeRefreshState = .fresh
-            if let slot = selectedRecipe?.slot {
-                selectedRecipe = recipes.first { $0.slot == slot }
+            if let selectedRecipe, !selectedRecipe.isPhoneRecipe {
+                let slot = selectedRecipe.slot
+                self.selectedRecipe = recipes.first { $0.slot == slot }
                 guard !previewRequiresUserIntent else { return [] }
                 displayedVersion = originalVersion
                 wantsRecipePreview = true
@@ -225,7 +241,7 @@ struct WorkspaceState: Sendable {
                 belongsToExecution(cameraState, context: context) && belongsToExecution(state, context: context)
             cameraState = state
             currentCameraExecutionContext = context
-            if !isCameraConnected, selectedRecipe != nil {
+            if !isCameraConnected, let selectedRecipe, !selectedRecipe.isPhoneRecipe {
                 return reduce(.recipeSelected(slot: nil))
             }
             // Render admission/completion publishes busy/ready for the same verified execution.

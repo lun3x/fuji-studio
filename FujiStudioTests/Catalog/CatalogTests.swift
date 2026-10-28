@@ -3,6 +3,44 @@ import Testing
 @testable import FujiStudio
 
 struct CatalogTests {
+    @Test func phoneCopyPreservesLosslessImportAcrossRestartAndCameraRefresh() async throws {
+        let disk = try CatalogTestDisk(), f = try CatalogFixture()
+        let original = f.recipe
+        let catalog = try SwiftDataCatalog(storeURL: disk.url)
+        let copy = try await catalog.copyRecipeToPhone(original)
+        #expect(copy.id != original.id)
+        #expect(copy.copiedFromRecipeID == original.id)
+        #expect(copy.isPhoneRecipe)
+        #expect(copy.name == original.name)
+        #expect(copy.slot == original.slot)
+        #expect(copy.importedName == original.importedName)
+        #expect(copy.importedSettings == original.importedSettings)
+        #expect(copy.settingsDigest == original.settingsDigest)
+        #expect(copy.cameraContext == original.cameraContext)
+        #expect(copy.importedAt == original.importedAt)
+        #expect(copy.renderingIssues == original.renderingIssues)
+        #expect(copy.renderingSupport == original.renderingSupport)
+        #expect(try await catalog.copyRecipeToPhone(original) == copy)
+        let refreshed = f.recipes()
+        try await catalog.replaceRecipes(refreshed)
+        let reopened = try SwiftDataCatalog(storeURL: disk.url)
+        #expect(try await reopened.phoneRecipes() == [copy])
+        #expect(try await reopened.latestRecipes() == refreshed)
+        #expect(try JSONDecoder().decode(RecipeSnapshot.self, from: JSONEncoder().encode(copy)) == copy)
+    }
+
+    @Test func phoneCopiesRemainDistinctWhenTheirCameraSlotIsReused() async throws {
+        let disk = try CatalogTestDisk(), f = try CatalogFixture()
+        let catalog = try SwiftDataCatalog(storeURL: disk.url)
+        let a = try await catalog.copyRecipeToPhone(f.recipe)
+        let b = try await catalog.copyRecipeToPhone(f.recipe(slot: 1, name: "New bank"))
+        #expect(a.id != b.id)
+        #expect(try await catalog.phoneRecipes().map(\.name) == ["Synthetic bank", "New bank"])
+        await #expect(throws: CatalogError.invalidRecipeCollection) {
+            try await catalog.replaceRecipes([a] + Array(f.recipes().dropFirst()))
+        }
+    }
+
     // Catches timestamp-based association, lost journal identity, and acknowledged-but-unsaved writes.
     @Test func restartPreservesDistinctSourcesWithEqualCaptureDates() async throws {
         let disk = try CatalogTestDisk()

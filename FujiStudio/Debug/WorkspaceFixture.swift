@@ -39,7 +39,13 @@ private struct WorkspaceFixtureView: View {
                 imageURL: state.displayedVersion == .raw ? nil : fixture.file.fileURL,
                 imageGeometry: fixture.geometry, displayFile: fixture.file,
                 imageStatus: "Generated fixture has no RAW display; original JPEG remains available.",
-                onAction: { state.reduce($0) }, onRefreshRecipes: { refreshCount += 1 }, onExport: { exportCount += 1 },
+                onAction: { state.reduce($0) }, onRefreshRecipes: { refreshCount += 1 }, onCopyRecipeToPhone: { id in
+                    guard let recipe = state.recipes.first(where: { $0.id == id }) else { return false }
+                    if !state.phoneRecipes.contains(where: { $0.copiedFromRecipeID == id }) {
+                        state.reduce(.phoneRecipesLoaded(state.phoneRecipes + [recipe.copiedToPhone()]))
+                    }
+                    return true
+                }, onExport: { exportCount += 1 },
                 statusControl: {
                     Button {} label: {
                         if flags.contains("--fixture-accessibility") || nativeDynamicTypeSize.isAccessibilitySize {
