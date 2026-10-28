@@ -49,6 +49,10 @@ See [the protocol record](xe3-laptop-protocol.md) for full measurements.
 
 ## Software gates
 
+Validated implementation revision: **`5f2192b5d38c`**. Later documentation
+checkpoints do not change production code. Simulator: task-isolated iPhone 15 Pro,
+iOS 27.0. Latest signed phone artifact: version 0.1/build 1, iPhoneOS 27.1 SDK.
+
 The first complete simulator run passed **543 tests, three established skips,
 zero failures** (546 total), result `20261028-201726-2333.xcresult`. The skips are
 native Home/background, native rotation and hardware Escape, each opt-in.
@@ -67,8 +71,12 @@ then verifies mixed-format restart, history and exclusive delete markers. The
 catalog boundary hook first failed to compile before implementation; the journal
 needed coverage only and passed its new injected failure test unchanged.
 
-After these fixes: **467 Swift tests/57 suites and 19 XCTest unit tests pass**,
-zero failures. Final full-suite and Release rechecks are in progress.
+After these fixes, the complete suite passed **545 tests, three established
+skips, zero failures** (548 total), result `20261028-204103-7919.xcresult`.
+That includes 467 Swift tests/57 suites, 19 XCTest unit tests and 62 UI cases
+(59 passing, three skipped). Both final simulator Release and signed phone
+Release builds passed. Core 99/16 and native Mac CLI 6/3 remain green; those modules
+were unchanged by the app recovery fix.
 
 Two review minors are deferred: persist known JPEG mismatch diagnostics before
 cleanup so an interruption retains them, and distinguish the five pending WB
@@ -77,10 +85,13 @@ blocks unverified dependency execution; the current seven imported banks pass.
 
 ## Physical iPhone gates
 
-Louisphone, iPhone 15 Pro / iOS 27.0.1, is paired and available. The Release build from `bd90deb2fd98` (version 0.1/build 1, iPhoneOS 27.1 SDK)
+Louisphone, iPhone 15 Pro / iOS 27.0.1, is paired and available. The Release build
+from `5f2192b5d38c` (version 0.1/build 1, iPhoneOS 27.1 SDK)
 passed `codesign --verify --deep --strict` and was installed successfully using
-automatic signing, team `AZH3P824F3`, Apple Development identity. Its normal
-launch was refused by iOS because the phone was locked; an unlock is pending.
+automatic signing, team `AZH3P824F3`, Apple Development identity. The initial
+pre-fix build launched normally after the user unlocked the phone. The
+updated build installed after a transient RSD channel failure; its launch was
+refused because the phone had relocked. It is ready to open manually.
 The independent unsigned simulator Release build also passed.
 
 X-E3/iPhone: USB mode/admission, seven-bank import/final context, real original-RAW
@@ -93,4 +104,14 @@ X-T5/iPhone: no X-T5 body is currently attached. Firmware4.31 admission, selecto
 restoration, preview/export, model switching and strict LMO output admission need
 physical regression. Existing simulated-transport results do not replace it.
 
-This branch is under validation; physical acceptance is not claimed complete.
+The latest Release is installed and ready to open manually. Its two launch
+attempts were refused solely by the iOS lock screen; the earlier build's normal
+launch succeeded after user unlock. The camera remains idle with every Mac
+session confirmed closed. The five-preset controlled WB question is still pending;
+the last measured WB table and all bank records were unchanged after conversion.
+
+Software implementation, review fixes and laptop acceptance for the current seven
+banks are verified. The five additional WB dependencies and physical iPhone/X-T5
+acceptance remain outstanding. The workbench and private evidence are retained at
+`/tmp/fuji-usb-adapters-20261028` for that continuation; only this task's simulator
+is removed after final verification.
