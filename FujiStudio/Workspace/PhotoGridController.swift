@@ -170,6 +170,10 @@ final class PhotoGridController: UIViewController, UICollectionViewDelegate, UIC
         }
     }
     func handleScrollPan(state: UIGestureRecognizer.State, translation: CGPoint, velocity: CGPoint = .zero) {
+        // Keep the stable window-space measurement, but consume movement along the
+        // device's portrait axis when the tray opens sideways in landscape.
+        let toCanvas = CGAffineTransform(rotationAngle: contentRotation)
+        let translation = translation.applying(toCanvas), velocity = velocity.applying(toCanvas)
         switch state {
         case .began:
             cancelDrawerPan()

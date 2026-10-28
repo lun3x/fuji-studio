@@ -9,7 +9,6 @@ struct RecipeMenu: View {
     let isCameraConnected: Bool
     var onSelect: (Int?) -> Void
     var onRefresh: () -> Void
-    var onControlFrameChanged: (CGRect) -> Void = { _ in }
     @State private var presented: Bool
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -17,11 +16,10 @@ struct RecipeMenu: View {
     @Environment(\.workspaceOrientation) private var orientation
 
     init(current: RecipeSnapshot?, snapshots: [RecipeSnapshot], refreshState: RecipeRefreshState, isCameraConnected: Bool,
-         onSelect: @escaping (Int?) -> Void, onRefresh: @escaping () -> Void,
-         onControlFrameChanged: @escaping (CGRect) -> Void = { _ in }, initiallyPresented: Bool = false) {
+         onSelect: @escaping (Int?) -> Void, onRefresh: @escaping () -> Void, initiallyPresented: Bool = false) {
         self.current = current; self.snapshots = snapshots; self.refreshState = refreshState
         self.isCameraConnected = isCameraConnected
-        self.onSelect = onSelect; self.onRefresh = onRefresh; self.onControlFrameChanged = onControlFrameChanged
+        self.onSelect = onSelect; self.onRefresh = onRefresh
         _presented = State(initialValue: initiallyPresented)
     }
     var body: some View {
@@ -40,7 +38,6 @@ struct RecipeMenu: View {
         .accessibilityLabel(current.map { "C\($0.slot) \($0.name)" } ?? "No recipe selected")
         .accessibilityHint(isCameraConnected ? "Choose a cached camera recipe or import recipes" : "Connect a camera to choose or import recipes")
         .accessibilityIdentifier("recipe.control")
-        .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named("workspace")) }, action: onControlFrameChanged)
         .popover(isPresented: $presented, arrowEdge: orientation.popoverEdge) {
             options.environment(\.dynamicTypeSize, dynamicTypeSize)
                 .background { PopoverEscapeHandler(onDismiss: { presented = false }).frame(width: 1, height: 1) }

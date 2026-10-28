@@ -6,7 +6,6 @@ struct VersionMenu: View {
     let saved: [SavedVersion]
     let selected: VersionID?
     var onVersionSelected: (VersionID) -> Void
-    var onControlFrameChanged: (CGRect) -> Void = { _ in }
     @State private var presented = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.timeZone) private var timeZone
@@ -32,9 +31,8 @@ struct VersionMenu: View {
         .accessibilityValue(options.entries.first { $0.id == selected }?.accessibilityLabel ?? "No image version")
         .accessibilityHint("Choose the original RAW, camera JPEG or a saved version")
         .accessibilityIdentifier("workspace.versions")
-        .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named("workspace")) }, action: onControlFrameChanged)
         .onChange(of: source.id) { _, _ in presented = false }
-        .onDisappear { presented = false; onControlFrameChanged(.zero) }
+        .onDisappear { presented = false }
         .popover(isPresented: $presented, arrowEdge: orientation.popoverEdge) {
             options.environment(\.dynamicTypeSize, dynamicTypeSize)
                 .background { PopoverEscapeHandler(onDismiss: { presented = false }).frame(width: 1, height: 1) }

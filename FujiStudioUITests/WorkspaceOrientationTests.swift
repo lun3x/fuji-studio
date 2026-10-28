@@ -2,10 +2,10 @@ import XCTest
 
 @MainActor
 final class WorkspaceOrientationTests: XCTestCase {
-    private func launch() -> XCUIApplication {
-        XCUIDevice.shared.orientation = .portrait
+    private func launch(_ flags: [String] = [], orientation: UIDeviceOrientation = .portrait) -> XCUIApplication {
+        XCUIDevice.shared.orientation = orientation
         let app = XCUIApplication()
-        app.launchArguments = ["--workspace-fixture"]
+        app.launchArguments = ["--workspace-fixture"] + flags
         app.launch()
         XCTAssertTrue(app.buttons["drawer.toggle"].waitForExistence(timeout: 10))
         return app
@@ -45,7 +45,7 @@ final class WorkspaceOrientationTests: XCTestCase {
                 XCTAssertGreaterThan(status.midY, recipe.midY)
                 XCTAssertGreaterThan(recipe.midY, export.midY)
             }
-            let shot = XCTAttachment(screenshot: app.screenshot())
+            let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
             shot.name = trayOnLeft ? "Landscape tray left" : "Landscape tray right"
             shot.lifetime = .keepAlways; add(shot)
         }
@@ -58,21 +58,28 @@ final class WorkspaceOrientationTests: XCTestCase {
         app.cells["grid.source-1"].tap()
         let viewed = app.staticTexts["fixture.viewed"].label
         let selected = app.staticTexts["workspace.count"].label
-        XCUIDevice.shared.orientation = .landscapeRight
         let grid = app.collectionViews["photoGrid"], handle = app.buttons["drawer.toggle"]
-        let rotated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            grid.frame.height > grid.frame.width && grid.frame.maxX < app.windows.firstMatch.frame.midX
-        }, object: nil)
-        XCTAssertEqual(XCTWaiter.wait(for: [rotated], timeout: 5), .completed)
-        let start = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 450, dy: 0)))
-        XCTAssertEqual(handle.value as? String, "Expanded")
-        XCTAssertEqual(app.staticTexts["workspace.count"].label, selected)
-        XCTAssertEqual(app.staticTexts["fixture.viewed"].label, viewed)
-        let expanded = XCTAttachment(screenshot: app.screenshot())
-        expanded.name = "Landscape expanded selection"; expanded.lifetime = .keepAlways; add(expanded)
-        tap(handle, in: app)
-        XCTAssertEqual(handle.value as? String, "Collapsed")
+        for (orientation, distance) in [(UIDeviceOrientation.landscapeRight, 450.0), (.landscapeLeft, -450.0)] {
+            XCUIDevice.shared.orientation = orientation
+            let rotated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                grid.frame.height > grid.frame.width && (distance > 0
+                    ? grid.frame.maxX < app.windows.firstMatch.frame.midX
+                    : grid.frame.minX > app.windows.firstMatch.frame.midX)
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [rotated], timeout: 5), .completed)
+            let start = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: distance, dy: 0)))
+            XCTAssertEqual(handle.value as? String, "Expanded")
+            XCTAssertEqual(app.staticTexts["workspace.count"].label, selected)
+            XCTAssertEqual(app.staticTexts["fixture.viewed"].label, viewed)
+            let expanded = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            expanded.name = "Landscape expanded selection \(orientation.rawValue)"
+            expanded.lifetime = .keepAlways; add(expanded)
+            let pull = grid.coordinate(withNormalizedOffset: CGVector(dx: distance > 0 ? 0.85 : 0.15, dy: 0.5))
+            pull.press(forDuration: 0.05, thenDragTo: pull.withOffset(CGVector(dx: -distance, dy: 0)),
+                withVelocity: .slow, thenHoldForDuration: 0.3)
+            XCTAssertEqual(handle.value as? String, "Collapsed")
+        }
 
         tap(app.buttons["recipe.control"], in: app)
         XCTAssertTrue(app.buttons["recipe.none"].waitForExistence(timeout: 5))
@@ -84,5 +91,31 @@ final class WorkspaceOrientationTests: XCTestCase {
         XCUIDevice.shared.orientation = .portrait
         XCTAssertEqual(app.staticTexts["workspace.count"].label, selected)
         XCTAssertEqual(app.staticTexts["fixture.viewed"].label, viewed)
+    }
+
+    func testLaunchingInEitherLandscapeDirectionSupportsLargestTextAndMenus() {
+        defer { XCUIDevice.shared.orientation = .portrait }
+        for orientation in [UIDeviceOrientation.landscapeRight, .landscapeLeft] {
+            let app = launch(["--fixture-accessibility"], orientation: orientation)
+            let grid = app.collectionViews["photoGrid"]
+            let rotated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                grid.frame.height > grid.frame.width
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [rotated], timeout: 5), .completed)
+            tap(app.buttons["workspace.select"], in: app)
+            XCTAssertEqual(app.buttons["workspace.select"].label, "Cancel selection")
+            tap(app.buttons["recipe.control"], in: app)
+            XCTAssertTrue(app.buttons["recipe.none"].waitForExistence(timeout: 5))
+            app.buttons["recipe.none"].tap()
+            tap(app.buttons["workspace.versions"], in: app)
+            let jpeg = app.buttons["version.cameraJPEG"]
+            XCTAssertTrue(jpeg.waitForExistence(timeout: 5))
+            XCTAssertTrue(jpeg.isHittable)
+            jpeg.tap()
+            XCTAssertEqual(app.buttons["workspace.versions"].value as? String, "Original camera JPEG")
+            let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            shot.name = "Landscape launch AX5 \(orientation.rawValue)"; shot.lifetime = .keepAlways; add(shot)
+            app.terminate()
+        }
     }
 }
