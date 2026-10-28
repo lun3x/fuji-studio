@@ -119,15 +119,7 @@ public actor FujiCameraService: CameraServing {
     publish(.opening)
     needsClose = true
     do {
-      try await session.connect()
-      nativeSession = try await session.currentSession()
-      try await verifyCapabilities()
-      guard let nativeSession else { throw CameraServiceError.notReady }
-      guard let support = verifiedSupport else { throw CameraServiceError.notReady }
-      context = CameraExecutionContext(
-        model: support.model, firmware: support.firmware, capability: support.capability,
-        supportVersion: support.supportVersion, sessionIdentity: UUID(),
-        generation: nativeSession.generation)
+      context = try await openVerified(epoch: epoch)
       let pending = try journal.unresolved()
       if !pending.isEmpty {
         guard try await handles().isEmpty else {
@@ -143,13 +135,49 @@ public actor FujiCameraService: CameraServing {
         }
       }
       try await validateCurrent()
-      publish(.ready(nativeSession))
+      try await finishReady()
     } catch {
       let failure = Self.failure(error)
       let closed = await closeUncancelled()
       if !closed { throw CameraServiceError.closeUnconfirmed }
       throw failure
     }
+  }
+  /// Opens and verifies under the current operation permit. The owner decides when
+  /// the returned context can be published; import's intermediate session stays private.
+  private func openVerified(epoch: UInt64) async throws -> CameraExecutionContext {
+    try Task.checkCancellation()
+    guard epoch == admissionEpoch, !stopRequested else { throw CameraServiceError.cancelled }
+    needsClose = true
+    try await session.connect()
+    nativeSession = try await session.currentSession()
+    try Task.checkCancellation()
+    guard epoch == admissionEpoch, !stopRequested else { throw CameraServiceError.cancelled }
+    try await verifyCapabilities()
+    try await validateCurrent()
+    guard epoch == admissionEpoch, let nativeSession, let support = verifiedSupport else {
+      throw CameraServiceError.cancelled
+    }
+    return CameraExecutionContext(
+      model: support.model, firmware: support.firmware, capability: support.capability,
+      supportVersion: support.supportVersion, sessionIdentity: UUID(),
+      generation: nativeSession.generation)
+  }
+  private func reopenForImport(epoch: UInt64) async throws -> CameraExecutionContext {
+    // Retire public affinity before native close callbacks can arrive. Only this owner
+    // opens again, and a real detach is checked by currentSession on every command.
+    let previousGeneration = nativeSession?.generation
+    context = nil
+    guard await closeUncancelled(publishState: false) else {
+      throw CameraServiceError.closeUnconfirmed
+    }
+    try Task.checkCancellation()
+    guard epoch == admissionEpoch, !stopRequested else { throw CameraServiceError.cancelled }
+    let opened = try await openVerified(epoch: epoch)
+    guard opened.generation != previousGeneration else {
+      throw CameraServiceError.unsupportedContext
+    }
+    return opened
   }
   private func withIO<T: Sendable>(
     temporarySelector: TemporaryBankSelector? = nil,
@@ -189,29 +217,53 @@ public actor FujiCameraService: CameraServing {
   private func currentSupport() -> VerifiedCameraSupport? { verifiedSupport }
   public func importRecipes() async throws -> ImportedRecipeCollection {
     let epoch = admissionEpoch
+    let expected = context
     do {
-      return try await gate.withExclusiveAccess { try await self.importOwned(epoch: epoch) }
+      return try await gate.withExclusiveAccess {
+        try await self.importOwned(epoch: epoch, expected: expected)
+      }
     } catch { throw Self.failure(error) }
   }
-  private func importOwned(epoch: UInt64) async throws -> ImportedRecipeCollection {
+  private func importOwned(epoch: UInt64, expected: CameraExecutionContext?) async throws
+    -> ImportedRecipeCollection
+  {
+    guard let expected, context == expected, epoch == admissionEpoch else {
+      throw CameraServiceError.notReady
+    }
     guard verifiedSupport?.capabilities.recipeImport == .supported else {
       throw CameraServiceError.recipeImportUnavailable
     }
-    let execution = try await admit(epoch: epoch)
+    var execution = try await admit(epoch: epoch)
     do {
       guard try await handles().isEmpty else { throw CameraServiceError.preexistingObjects }
       guard let adapter = activeAdapter, let support = verifiedSupport else {
         throw CameraServiceError.notReady
       }
-      let current = RecipeCameraContext(
-        model: execution.model, firmware: execution.firmware, capability: execution.capability,
-        sessionIdentity: execution.sessionIdentity, sessionGeneration: execution.generation)
+      let operationEpoch: UInt64
+      if adapter.recipeImportSessionPolicy == .freshBeforeAndAfter {
+        admissionEpoch &+= 1
+        operationEpoch = admissionEpoch
+        execution = try await reopenForImport(epoch: operationEpoch)
+        guard verifiedSupport == support else { throw CameraServiceError.unsupportedContext }
+      } else {
+        operationEpoch = epoch
+      }
+      let importingContext = Self.recipeContext(execution)
       let result = try await withIO(temporarySelector: adapter.temporaryBankSelector) {
-        try await adapter.importRecipes(io: $0, support: support, context: current)
+        try await adapter.importRecipes(io: $0, support: support, context: importingContext)
       }
-      guard result.declaredSlots == support.capabilities.bankSlots else {
-        throw CameraServiceError.unsupportedContext
+      let ids = result.declaredSlots.map(\.id)
+      guard result.declaredSlots == support.capabilities.bankSlots,
+        Set(ids).count == ids.count, result.recipes.count == ids.count,
+        Set(result.recipes.map(\.slot)) == Set(ids),
+        Set(result.recipes.map(\.id)).count == result.recipes.count
+      else { throw CameraServiceError.unsupportedContext }
+      if adapter.recipeImportSessionPolicy == .freshBeforeAndAfter {
+        execution = try await reopenForImport(epoch: operationEpoch)
+        guard verifiedSupport == support else { throw CameraServiceError.unsupportedContext }
+        context = execution
       }
+      let current = Self.recipeContext(execution)
       let recipes = result.recipes.map { r in
         let issues: [RecipeRenderingIssue]
         switch r.renderingSupport(using: RecipeCodecRegistry()) {
@@ -232,15 +284,27 @@ public actor FujiCameraService: CameraServing {
       throw failure
     }
   }
+  private static func recipeContext(_ execution: CameraExecutionContext) -> RecipeCameraContext {
+    .init(
+      model: execution.model, firmware: execution.firmware, capability: execution.capability,
+      sessionIdentity: execution.sessionIdentity, sessionGeneration: execution.generation)
+  }
   public func render(raw: PreparedRAW, recipe: RecipeSnapshot, policy: OutputPolicy) async throws
     -> CameraJPEG
   {
     let epoch = admissionEpoch
+    let expected = context
     do {
       return try await gate.withExclusiveAccess {
-        try await self.renderOwned(raw: raw, recipe: recipe, policy: policy, epoch: epoch)
+        guard let expected, await self.matches(expected, epoch: epoch) else {
+          throw CameraServiceError.notReady
+        }
+        return try await self.renderOwned(raw: raw, recipe: recipe, policy: policy, epoch: epoch)
       }
     } catch { throw Self.failure(error) }  // A rejected/cancelled waiter owns no close responsibility.
+  }
+  private func matches(_ expected: CameraExecutionContext, epoch: UInt64) -> Bool {
+    context == expected && admissionEpoch == epoch && !stopRequested
   }
   private func renderOwned(
     raw: PreparedRAW, recipe: RecipeSnapshot, policy: OutputPolicy, epoch: UInt64
@@ -471,12 +535,14 @@ public actor FujiCameraService: CameraServing {
     }
     _ = try? await owner.value
   }
-  private func closeUncancelled() async -> Bool {
+  private func closeUncancelled(publishState: Bool = true) async -> Bool {
     let expected = nativeSession?.generation
-    let task = Task.detached { await self.closeOwned(expected: expected) }
+    let task = Task.detached {
+      await self.closeOwned(expected: expected, publishState: publishState)
+    }
     return await task.value
   }
-  private func closeOwned(expected: UInt64?) async -> Bool {
+  private func closeOwned(expected: UInt64?, publishState: Bool) async -> Bool {
     guard needsClose else { return true }
     do {
       if let expected, let current = try? await session.currentSession(),
@@ -490,7 +556,7 @@ public actor FujiCameraService: CameraServing {
       context = nil
       activeAdapter = nil
       verifiedSupport = nil
-      publish(.disconnected)
+      if publishState { publish(.disconnected) }
       return true
     } catch {
       context = nil

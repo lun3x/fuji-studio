@@ -27,7 +27,7 @@ public enum XE3Capabilities {
     ]
     return .init(
       bankSlots: (1...7).map { .init(id: $0, label: "C\($0)") }, settings: settings,
-      recipeImport: .unimplemented,
+      recipeImport: .supported,
       sourceConstraints: .init(
         model: "X-E3", recordedWidth: 6000, recordedHeight: 4000, orientations: [1, 8]))
   }()

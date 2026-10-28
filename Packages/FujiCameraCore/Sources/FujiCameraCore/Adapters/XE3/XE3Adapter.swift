@@ -23,7 +23,10 @@ public struct XE3Adapter: FujiCameraAdapter {
   }
   public func importRecipes(
     io: CameraOperationIO, support: VerifiedCameraSupport, context: RecipeCameraContext
-  ) async throws -> DecodedRecipeCollection { throw CameraServiceError.recipeImportUnavailable }
+  ) async throws -> DecodedRecipeCollection {
+    try XE3BackupRecipeCodec.decode(
+      await io.readSettingsBackup(), context: context, importedAt: Date())
+  }
   public func decodeRecipe(_ snapshot: RecipeSnapshot) throws -> RecipeAssessment {
     XE3RecipeCodec.assess(snapshot)
   }

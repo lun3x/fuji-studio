@@ -41,10 +41,21 @@ enum XE3NativeRecipeFields {
     else { throw CameraServiceError.unsupportedSettings }
     let fields = Dictionary(
       uniqueKeysWithValues: snapshot.importedSettings.map { ($0.code, $0.raw) })
-    guard required.isSubset(of: Set(fields.keys)),
-      (1...12).allSatisfy({ fields[UInt16($0)]?.count == 1 }), fields[13]?.count == 2,
+    let knownWB = fields[4]?.count == 1 && whiteBalances[fields[4]![0]] != nil
+    let ownFields = required.subtracting([5, 6, 13])
+    guard ownFields.isSubset(of: Set(fields.keys)),
+      ownFields.allSatisfy({ fields[$0]?.count == 1 }),
       digest(fields) == snapshot.settingsDigest
     else { throw CameraServiceError.unsupportedSettings }
+    if knownWB {
+      guard fields[5]?.count == 1, fields[6]?.count == 1, fields[13]?.count == 2 else {
+        throw CameraServiceError.unsupportedSettings
+      }
+    } else {
+      guard fields[14]?.count == 24, fields[5] == nil, fields[6] == nil, fields[13] == nil else {
+        throw CameraServiceError.unsupportedSettings
+      }
+    }
     return fields
   }
 }
