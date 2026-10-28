@@ -60,8 +60,10 @@ struct RecipeMenu: View {
                     let recipe = snapshots.first { $0.slot == slot }
                     Button { choose(slot) } label: {
                         HStack(alignment: .firstTextBaseline) {
+                            RecipeSlotBadge(slot: slot)
                             VStack(alignment: .leading, spacing: 4) {
-                                Text("C\(slot) \(recipe?.name ?? "Not imported")")
+                                Text(recipe?.name ?? "Not imported")
+                                    .accessibilityLabel("C\(slot) \(recipe?.name ?? "Not imported")")
                                 if let recipe, case .unsupported = recipe.renderingSupport {
                                     Text("Cached · conversion unsupported").font(.caption).foregroundStyle(.secondary)
                                 }

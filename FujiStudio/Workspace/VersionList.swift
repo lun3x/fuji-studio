@@ -68,13 +68,7 @@ struct VersionList: View {
                                 }
                             }.fixedSize(horizontal: false, vertical: true)
                             if let slot = entry.recipeSlot {
-                                Text("C\(slot)")
-                                    .font(.caption.monospaced().weight(.semibold))
-                                    .foregroundStyle(.secondary)
-                                    .padding(.horizontal, 6).padding(.vertical, 3)
-                                    .background(Color(uiColor: .secondarySystemFill), in: RoundedRectangle(cornerRadius: 4))
-                                    .fixedSize()
-                                    .accessibilityHidden(true)
+                                RecipeSlotBadge(slot: slot)
                             }
                         }.frame(maxWidth: .infinity, minHeight: 44, alignment: .trailing)
                             .padding(.horizontal).padding(.vertical, 8).contentShape(Rectangle())
