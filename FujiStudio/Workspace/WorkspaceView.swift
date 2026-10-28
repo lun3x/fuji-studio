@@ -8,6 +8,7 @@ struct WorkspaceView<StatusControl: View, ConnectionControl: View>: View {
     var imageURL: URL? = nil
     var imageGeometry: ImageGeometry? = nil
     var displayFile: DisplayFileLease? = nil
+    var imageIdentity: (sourceID: SourceID, version: VersionID)? = nil
     var detail: ZoomPhotoView.DetailProvider? = nil
     var imageLoading: ImageLoadingState? = nil
     var imageStatus: String? = nil
@@ -92,7 +93,8 @@ struct WorkspaceView<StatusControl: View, ConnectionControl: View>: View {
     }
     @ViewBuilder private var viewer: some View {
         if let source = sources.first(where: { $0.id == state.viewedSourceID }) {
-            PhotoViewer(sourceID: source.id, version: state.displayedVersion ?? .raw, imageURL: imageURL,
+            PhotoViewer(sourceID: imageIdentity?.sourceID ?? source.id,
+                version: imageIdentity?.version ?? state.displayedVersion ?? .raw, imageURL: imageURL,
                 geometry: imageGeometry, displayFile: displayFile, detail: detail,
                 loading: imageLoading,
                 status: imageStatus, statusIsFailure: imageStatusIsFailure,

@@ -150,6 +150,101 @@ import Testing
         #expect(await f.camera.renderCount == 2)
     }
 
+    @Test func photoSelectionDuringForegroundReloadKeepsMatchingImageAndLoadsNewSelection() async throws {
+        let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment), barrier = FixtureBarrier()
+        defer { Task { await barrier.release() } }
+        await model.start()
+        model.send(.sourceTapped("source-0"))
+        await eventually { model.displayFile != nil }
+        let original = try #require(model.displayFile)
+        await model.sceneChanged(.background)
+        await f.reader.holdDiscovery(barrier)
+        let foreground = Task { await model.sceneChanged(.active) }
+        await barrier.entered()
+
+        model.send(.sourceTapped("source-0"))
+        #expect(model.displayFile === original)
+        model.send(.sourceTapped("source-2"))
+        #expect(model.displayFile === original)
+        #expect(model.imageLoading == .loading)
+        #expect(!model.imageStatusIsFailure)
+
+        await barrier.release(); await foreground.value
+        await eventually { model.displayFile != nil && model.imageLoading == nil }
+        #expect(model.state.viewedSourceID == "source-2")
+        #expect(model.state.displayedVersion == .cameraJPEG)
+        #expect(model.displayFile !== original)
+        #expect(await f.camera.renderCount == 0)
+        #expect(await f.writer.requests.isEmpty)
+    }
+
+    @Test func interruptedRecipeWaitsForOriginalWithoutReportingItUnavailable() async throws {
+        let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment), barrier = FixtureBarrier()
+        defer { Task { await barrier.release() } }
+        await model.start(); await model.connect()
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
+        model.send(.sourceTapped("source-0")); model.send(.recipeSelected(slot: 3))
+        await eventually { model.preview != nil }
+        await model.sceneChanged(.background)
+        #expect(model.state.selectedRecipe == nil)
+        #expect(model.state.displayedVersion == .cameraJPEG)
+        #expect(model.displayFile == nil)
+        #expect(model.imageLoading == .loading)
+        #expect(!model.imageStatusIsFailure)
+
+        await f.reader.holdMaterialize("source-0", barrier: barrier)
+        await model.sceneChanged(.active)
+        await barrier.entered()
+        #expect(model.imageLoading == .loading)
+        await barrier.release()
+        await eventually { model.displayFile != nil && model.imageLoading == nil }
+        #expect(model.state.displayedVersion == .cameraJPEG)
+        #expect(await f.camera.renderCount == 1)
+        #expect(await f.writer.requests.isEmpty)
+    }
+
+    @Test func foregroundKeepsReadyOriginalWhileRefreshingItsBytes() async throws {
+        let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment), barrier = FixtureBarrier()
+        defer { Task { await barrier.release() } }
+        await model.start()
+        model.send(.sourceTapped("source-0"))
+        await eventually { model.displayFile != nil }
+        let original = try #require(model.displayFile)
+        await model.sceneChanged(.background)
+        await f.reader.holdMaterialize("source-0", barrier: barrier)
+        await model.sceneChanged(.active)
+        await barrier.entered()
+        #expect(model.displayFile === original)
+        #expect(model.imageLoading == .loading)
+        await barrier.release()
+        await eventually { model.displayFile != nil && model.imageLoading == nil }
+        #expect(model.state.displayedVersion == .cameraJPEG)
+        #expect(await f.writer.requests.isEmpty)
+    }
+
+    @Test func originalInterruptedDuringLoadingStaysPendingThroughForegroundDiscovery() async throws {
+        let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment)
+        let transfer = FixtureBarrier(), discovery = FixtureBarrier()
+        defer { Task { await transfer.release(); await discovery.release() } }
+        await model.start()
+        await f.reader.holdMaterialize("source-0", barrier: transfer)
+        model.send(.sourceTapped("source-0"))
+        await transfer.entered()
+        await model.sceneChanged(.background)
+        await f.reader.holdDiscovery(discovery)
+        let foreground = Task { await model.sceneChanged(.active) }
+        await discovery.entered()
+        #expect(model.displayFile == nil)
+        #expect(model.imageLoading == .loading)
+        #expect(!model.imageStatusIsFailure)
+        await discovery.release(); await foreground.value; await transfer.release()
+        await eventually { model.displayFile != nil && model.imageLoading == nil }
+        #expect(model.state.viewedSourceID == "source-0")
+        #expect(model.state.displayedVersion == .cameraJPEG)
+        #expect(await f.camera.renderCount == 0)
+        #expect(await f.writer.requests.isEmpty)
+    }
+
     @Test func incrementalDiscoveryPrunesViewedSourceOnlyAfterCompletePass() async throws {
         let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment)
         await model.start(); model.send(.sourceTapped("source-2"))
@@ -449,10 +544,10 @@ import Testing
         let old = Task { await model.reloadLibrary() }
         await barrier.entered()
         model.send(.sourceTapped("source-2"))
-        await eventually { model.displayFile != nil && model.savedVersions.isEmpty }
+        await eventually { model.displayFile != nil && model.imageLoading == nil && model.savedVersions.isEmpty }
         await f.reader.removeOutput(saved.outputAssetID, notify: false)
         model.send(.sourceTapped("source-0"))
-        await eventually { model.savedVersions.first?.availability == .inaccessible && model.displayFile != nil }
+        await eventually { model.savedVersions.first?.availability == .inaccessible && model.displayFile != nil && model.imageLoading == nil }
         let current = model.displayFile
         await barrier.release(); await old.value
         #expect(model.savedVersions.first?.id == saved.id)
