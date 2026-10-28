@@ -1,0 +1,39 @@
+{
+  "encoding": "byte = 9 - grid coordinate",
+  "mode": "Underwater",
+  "redOffset": 455,
+  "blueOffset": 456,
+  "baseline": {
+    "red": 0,
+    "blue": 0,
+    "bytes": [
+      9,
+      9
+    ]
+  },
+  "redTrial": {
+    "red": 1,
+    "blue": 0,
+    "bytes": [
+      8,
+      9
+    ]
+  },
+  "blueTrial": {
+    "red": 0,
+    "blue": 1,
+    "bytes": [
+      9,
+      8
+    ]
+  },
+  "restored": {
+    "bytes": [
+      9,
+      9
+    ],
+    "fullWBTableRestored": true,
+    "fullRecipeAreaUnchanged": true
+  },
+  "eachSessionCloseConfirmed": true
+}

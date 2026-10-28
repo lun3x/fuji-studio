@@ -56,7 +56,9 @@ actor OriginalResourcePool {
             }
             guard raw.sourceID == source.id, raw.sourceRevision == source.resourceRevision,
                   raw.fileURL == resource.fileURL else { throw ResourceError.resourceChanged }
-            await self.record(.supported(model: "X-T5"), source: source)
+            let compatibility=SourceCompatibility.detected(raw.metadata)
+            await self.record(compatibility, source: source)
+            if case .incompatible(let model)=compatibility { throw ResourceError.incompatibleCamera(model) }
             return try await operation(raw)
         }
     }

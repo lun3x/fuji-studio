@@ -155,7 +155,7 @@ Do not use Git commands. Resolve genuinely new upstream overlap through Jujutsu 
 - Produces `SourceCompatibility.assess(_ metadata: RAWMetadata, for support: VerifiedCameraSupport) -> RAWCompatibility` with `.unknown`, `.supported(model: String)` and `.incompatible(model: String)`; known source model is retained independently of currently attached hardware.
 - Each adapter implements source validation as part of `prepareConversion`; render admission requires recipe model, RAF model and connected model to agree.
 
-- [ ] **Step 1: Add bounded parser/admission tests.** Preserve signature/checksum, payload bounds, duplicate tag, embedded-model mismatch and geometry tests. Assert the two X-E3 source classes:
+- [x] **Step 1: Add bounded parser/admission tests.** Preserve signature/checksum, payload bounds, duplicate tag, embedded-model mismatch and geometry tests. Assert the two X-E3 source classes:
   ```swift
   #expect(compressed.containerGeometry == PixelSize(width: 6048, height: 4038))
   #expect(compressed.cropTop == 21 && compressed.cropLeft == 16)
@@ -165,11 +165,11 @@ Do not use Git commands. Resolve genuinely new upstream overlap through Jujutsu 
   #expect(acceptedOrientations == Set([1, 8]))
   ```
   Assert a valid X-E3 RAF is rejected before upload on X-T5; unknown geometry/orientation/compression classes are not inferred supported from model text. Record sufficient RAF encoding/source-class metadata to distinguish the measured classes, using actual files for any unestablished compression tag encoding.
-- [ ] **Step 2: Verify failure.** `swift test --package-path Packages/FujiCameraCore --filter XE3SourceRulesTests` and `Scripts/test-ios.sh FujiStudioTests/OriginalResourcePoolTests`; expect missing model-aware admission.
+- [x] **Step 2: Verify failure.** `swift test --package-path Packages/FujiCameraCore --filter XE3SourceRulesTests` and `Scripts/test-ios.sh FujiStudioTests/OriginalResourcePoolTests`; expect missing model-aware admission.
 
   Name the geometry cases `compressedXE3RecordedCropIsIndependentOfEmbeddedJPEG` and `uncompressedXE3UsesItsMeasuredContainer`; use Step 1's exact assertions. `sourceFromOtherModelNeverUploads` asserts `#expect(wire.uploads == 0)` after admission failure.
-- [ ] **Step 3: Implement structural parsing and adapter source rules.** Move the fixed X-T5 model check out of the parser. Preserve safe tag bounds/recorded crop; do not use embedded-JPEG dimensions as RAW geometry. Replace `.xt5` compatibility writes with the parsed supported model and update app fixtures/callers. Keep original-resource retrieval independent from local pixel decoding.
-- [ ] **Step 4: Verify and checkpoint.** Run the targeted tests, existing `RAFMetadataReaderTests` and `ResourceTransferTests`, then package tests. Verify all seven private samples structurally without publishing images. Commit/push `feat: admit measured X-E3 RAF source classes`.
+- [x] **Step 3: Implement structural parsing and adapter source rules.** Move the fixed X-T5 model check out of the parser. Preserve safe tag bounds/recorded crop; do not use embedded-JPEG dimensions as RAW geometry. Replace `.xt5` compatibility writes with the parsed supported model and update app fixtures/callers. Keep original-resource retrieval independent from local pixel decoding.
+- [x] **Step 4: Verify and checkpoint.** Run the targeted tests, existing `RAFMetadataReaderTests` and `ResourceTransferTests`, then package tests. Verify all seven private samples structurally without publishing images. Commit/push `feat: admit measured X-E3 RAF source classes`.
 
 ### Task 5: Implement the X-E3 conversion-profile and settings codec
 

@@ -381,3 +381,24 @@ shift table and all seven decoded bank snapshots/names remain identical to the
 pre-experiment reference. Only the previously unclassified backup byte 691
 differs. The final native session closed successfully; no camera process is
 left running by the spike.
+
+## Shared-core RAF admission and remaining C7 WB dependency
+
+The shared Swift reader now records compression from RAF header offset108 and
+bit depth from TIFF Fuji SubIFD F003. The seven supplied sources all have RAF
+version0130 and 14-bit sensor data: the three compressed files use header value2,
+and the four uncompressed files use0. The source rules bind these values to the
+previously measured container/crop/orientation classes. These header definitions
+were checked against installed ExifTool13.55's FujiFilm header/IFD tables and the
+actual files; JPEG IFD1 Compression=6 describes the embedded JPEG, not RAW encoding.
+Original sensor viewing remains independent of conversion source-class admission.
+
+A further manual controlled experiment verifies Underwater shared shifts: Red
+0→+1 changes byte455 from9→8; restoring Red and changing Blue0→+1 changes byte456
+from9→8. Every backup read occurred once in a fresh session with confirmed close.
+The user restored Underwater0/0 and Colour Temperature6300K, Red−4/Blue−2. The final
+5660-byte backup is identical to this experiment's baseline, including the full
+WB table and recipe area. The sanitized proof is
+`Tests/Fixtures/Protocol/XE3/1.30/underwater-wb-controlled-diff.json`.
+This establishes C7's dependency without saved-bank writes. It is diagnostic
+protocol evidence; shared-service laptop/iPhone acceptance remains a separate gate.

@@ -13,7 +13,7 @@ public struct RAFMetadataReader: Sendable {
     }
     let model = String(decoding: data[28..<60].prefix { $0 != 0 }, as: UTF8.self)
       .trimmingCharacters(in: .whitespaces)
-    guard model == "X-T5" else { throw ResourceError.incompatibleCamera(model) }
+    guard !model.isEmpty else { throw ResourceError.invalidRAF("Missing camera model") }
     let payloadOffset = integer(data, 100, 4)
     let payloadLength = integer(data, 104, 4)
     guard payloadOffset >= 112, payloadOffset <= data.count,
@@ -68,12 +68,23 @@ public struct RAFMetadataReader: Sendable {
     else {
       throw ResourceError.invalidRAF("Missing or inconsistent recorded geometry")
     }
+    let sensor = RAFSensorMetadata.read(data, offset: payloadOffset, length: payloadLength)
+    if let sensor, sensor.width != full[1] || sensor.height != full[0] {
+      throw ResourceError.invalidRAF("Inconsistent sensor geometry")
+    }
+    let compression: RAFCompression? =
+      data[108..<111].allSatisfy { $0 == 0 }
+      ? RAFCompression(rawValue: UInt32(integer(data, 108, 4))) : nil
+    let version = String(data: data.subdata(in: 60..<64), encoding: .ascii).flatMap {
+      $0.utf8.allSatisfy { (48...57).contains($0) } ? $0 : nil
+    }
     let metadata = RAWMetadata(
       cameraModel: model,
       containerGeometry: PixelSize(width: full[1], height: full[0]),
       recordedGeometry: PixelSize(width: crop[1], height: crop[0]),
       recordedAspect: PixelSize(width: aspect[1], height: aspect[0]),
-      cropTop: origin[0], cropLeft: origin[1], orientation: orientation)
+      cropTop: origin[0], cropLeft: origin[1], orientation: orientation, compression: compression,
+      bitDepth: sensor?.bits, rafVersion: version)
     return PreparedRAW(
       fileURL: resource.fileURL, sha256: checksum, sourceID: resource.token.assetID,
       sourceRevision: resource.token.sourceRevision, metadata: metadata)

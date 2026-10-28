@@ -127,9 +127,9 @@ import Testing
 
     @Test(arguments: [false, true]) func detectedModelSurvivesReloadAndAllButNotRevisionChange(_ fromExport: Bool) async throws {
         let f = try await FixtureEnvironment.make(), reader = CorrectionLibrary(base: f.reader)
-        var bytes = Data(repeating: 0, count: 128)
-        bytes.replaceSubrange(0..<16, with: Data("FUJIFILMCCD-RAW ".utf8))
-        bytes.replaceSubrange(28..<32, with: Data("X-T4".utf8))
+        let raf = try rafMetadataFixture(model: "X-T4")
+        defer { try? FileManager.default.removeItem(at: raf.fileURL) }
+        let bytes = try Data(contentsOf: raf.fileURL)
         await reader.setRAW("source-0", bytes: bytes)
         let env = try correctionEnvironment(f, reader: reader, prepare: { try RAFMetadataReader().prepare($0) })
         let model = AppModel(environment: env)

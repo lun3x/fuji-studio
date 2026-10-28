@@ -135,6 +135,12 @@ public struct PixelSize: Sendable, Equatable, Hashable {
 
 }
 
+public enum RAFCompression: UInt32, Sendable, Equatable {
+  case uncompressed = 0
+  case lossless = 2
+  case lossy = 3
+}
+
 public struct RAWMetadata: Sendable, Equatable {
   public let cameraModel: String
   public let containerGeometry: PixelSize
@@ -143,9 +149,13 @@ public struct RAWMetadata: Sendable, Equatable {
   public let cropTop: Int
   public let cropLeft: Int
   public let orientation: Int
+  public let compression: RAFCompression?
+  public let bitDepth: Int?
+  public let rafVersion: String?
   public init(
     cameraModel: String, containerGeometry: PixelSize, recordedGeometry: PixelSize,
-    recordedAspect: PixelSize, cropTop: Int, cropLeft: Int, orientation: Int
+    recordedAspect: PixelSize, cropTop: Int, cropLeft: Int, orientation: Int,
+    compression: RAFCompression? = nil, bitDepth: Int? = nil, rafVersion: String? = nil
   ) {
     self.cameraModel = cameraModel
     self.containerGeometry = containerGeometry
@@ -154,6 +164,9 @@ public struct RAWMetadata: Sendable, Equatable {
     self.cropTop = cropTop
     self.cropLeft = cropLeft
     self.orientation = orientation
+    self.compression = compression
+    self.bitDepth = bitDepth
+    self.rafVersion = rafVersion
   }
 
 }
