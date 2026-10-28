@@ -1,6 +1,112 @@
 import XCTest
 
 @MainActor final class AppFlowTests: XCTestCase {
+    func testPhoneEditorGrainEffectAndSizeSaveIndependently() {
+        let app = launch(["--fixture-disconnected-camera"])
+        tap(app.buttons["recipe.control"], in: app); app.buttons["recipe.copy.3"].tap()
+        let edit = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.edit.")).firstMatch
+        XCTAssertTrue(edit.waitForExistence(timeout: 5)); edit.tap()
+        let effect = app.buttons["recipe.editor.setting.grainEffect"]
+        let size = app.buttons["recipe.editor.setting.grainSize"]
+        XCTAssertTrue(effect.waitForExistence(timeout: 5))
+        reveal(effect, in: app); effect.tap(); app.buttons["Weak"].tap()
+        XCTAssertTrue(size.isEnabled)
+        size.tap(); app.buttons["Large"].tap()
+        effect.tap(); app.buttons["Off"].tap()
+        XCTAssertFalse(size.isEnabled); XCTAssertTrue(size.label.contains("Large"))
+        shot(app, "Grain Off disables size and retains Large")
+        effect.tap(); app.buttons["Strong"].tap()
+        XCTAssertTrue(size.isEnabled); XCTAssertTrue(size.label.contains("Large"))
+        app.buttons["recipe.editor.save"].tap()
+        XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitForNonExistence(timeout: 5))
+        edit.tap(); reveal(effect, in: app)
+        XCTAssertTrue(effect.label.contains("Strong")); XCTAssertTrue(size.label.contains("Large"))
+        effect.tap(); app.buttons["Off"].tap(); app.buttons["recipe.editor.save"].tap()
+        XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitForNonExistence(timeout: 5))
+        edit.tap(); reveal(effect, in: app)
+        XCTAssertTrue(effect.label.contains("Off")); XCTAssertFalse(size.isEnabled)
+        XCTAssertTrue(size.label.contains("Large"))
+        effect.tap(); app.buttons["Weak"].tap()
+        XCTAssertTrue(size.isEnabled); XCTAssertTrue(size.label.contains("Large"))
+        size.tap(); app.buttons["Small"].tap()
+        XCTAssertTrue(effect.label.contains("Weak")); XCTAssertTrue(size.label.contains("Small"))
+        app.buttons["recipe.editor.cancel"].tap()
+    }
+
+    private func replaceText(_ field: XCUIElement, with value: String) {
+        field.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.5)).tap()
+        let current = field.value as? String ?? ""
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count) + value)
+    }
+    private func reveal(_ element: XCUIElement, in app: XCUIApplication) {
+        for _ in 0..<8 { if element.isHittable { return }; app.swipeUp() }
+        XCTAssertTrue(element.isHittable)
+    }
+    func testPhoneEditorSavesNameAndFilmOfflineAndCancelDiscardsChanges() {
+        let app = launch(["--fixture-disconnected-camera"])
+        tap(app.buttons["recipe.control"], in: app); app.buttons["recipe.copy.3"].tap()
+        let phoneQuery = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.phone."))
+        XCTAssertTrue(phoneQuery.firstMatch.waitForExistence(timeout: 5))
+        let id = phoneQuery.firstMatch.identifier
+        let edit = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.edit.")).firstMatch
+        XCTAssertTrue(edit.isEnabled); XCTAssertFalse(phoneQuery.firstMatch.isEnabled)
+        edit.tap()
+        XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitForExistence(timeout: 5))
+        replaceText(app.textFields["recipe.editor.name"], with: "My Provia")
+        app.buttons["recipe.editor.setting.film"].tap()
+        app.buttons["PROVIA / Standard"].tap()
+        shot(app, "Phone editor name and film draft")
+        app.buttons["recipe.editor.save"].tap()
+        XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.buttons[id].label.contains("My Provia"))
+        XCTAssertFalse(app.buttons[id].isEnabled)
+        edit.tap()
+        XCTAssertEqual(app.textFields["recipe.editor.name"].value as? String, "My Provia")
+        let film = app.buttons["recipe.editor.setting.film"]
+        XCTAssertTrue(film.label.contains("PROVIA") || (film.value as? String ?? "").contains("PROVIA"))
+        replaceText(app.textFields["recipe.editor.name"], with: "Discard me")
+        app.buttons["recipe.editor.cancel"].tap()
+        XCTAssertTrue(app.buttons[id].label.contains("My Provia"))
+        XCTAssertEqual(phoneQuery.count, 1)
+    }
+
+    func testPhoneEditorRejectsInvalidTemperatureAndKeepsDraft() {
+        let app = launch(["--fixture-disconnected-camera"])
+        tap(app.buttons["recipe.control"], in: app); app.buttons["recipe.copy.3"].tap()
+        let edit = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.edit.")).firstMatch
+        XCTAssertTrue(edit.waitForExistence(timeout: 5)); edit.tap()
+        let balance = app.buttons["recipe.editor.setting.whiteBalance"]
+        reveal(balance, in: app); balance.tap(); app.buttons["Colour temperature"].tap()
+        let temperature = app.textFields["recipe.editor.temperature"]
+        reveal(temperature, in: app); replaceText(temperature, with: "10001")
+        shot(app, "Phone editor temperature draft before validation")
+        app.buttons["recipe.editor.save"].tap()
+        XCTAssertTrue(app.staticTexts["recipe.editor.error"].waitForExistence(timeout: 5))
+        XCTAssertEqual(temperature.value as? String, "10001")
+        replaceText(temperature, with: "5200")
+        app.buttons["recipe.editor.save"].tap()
+        XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitForNonExistence(timeout: 5))
+        edit.tap(); reveal(app.buttons["recipe.editor.setting.whiteBalance"], in: app)
+        XCTAssertEqual(app.textFields["recipe.editor.temperature"].value as? String, "5200")
+    }
+
+    func testPhoneEditorAtLargestTextHasUsableSaveAndCancel() {
+        let app = launch(["--fixture-disconnected-camera", "--fixture-accessibility"])
+        tap(app.buttons["recipe.control"], in: app); app.buttons["recipe.copy.1"].tap()
+        let edit = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.edit.")).firstMatch
+        XCTAssertTrue(edit.waitForExistence(timeout: 5)); XCTAssertGreaterThanOrEqual(edit.frame.width, 44)
+        edit.tap(); XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitForExistence(timeout: 5))
+        XCTAssertGreaterThan(app.textFields["recipe.editor.name"].frame.height, 44,
+                             "The editor must inherit the largest accessibility text size")
+        let effect = app.buttons["recipe.editor.setting.grainEffect"]
+        reveal(effect, in: app); effect.tap(); app.buttons["Off"].tap()
+        let size = app.buttons["recipe.editor.setting.grainSize"]
+        reveal(size, in: app); XCTAssertFalse(size.isEnabled)
+        shot(app, "Phone editor at largest text")
+        XCTAssertTrue(app.buttons["recipe.editor.save"].isHittable)
+        XCTAssertTrue(app.buttons["recipe.editor.cancel"].isHittable)
+        app.buttons["recipe.editor.cancel"].tap()
+    }
     private func launch(_ flags: [String] = []) -> XCUIApplication {
         let app = XCUIApplication(); app.launchArguments = ["--ui-fixtures"] + flags; app.launch()
         XCTAssertTrue(app.buttons["workspace.select"].waitForExistence(timeout: 10))
@@ -111,7 +217,7 @@ import XCTest
         XCTAssertFalse(app.buttons["app.connect"].exists)
         app.buttons["app.status"].tap()
         XCTAssertTrue(app.staticTexts["app.camera"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["app.camera"].label.contains("Plug in an X-T5"))
+        XCTAssertTrue(app.staticTexts["app.camera"].label.contains("Plug in an X-T5"), app.staticTexts["app.camera"].label)
         app.buttons["Done"].tap()
         app.buttons["fixture.foreground"].tap()
         wait { app.buttons["app.status"].label.contains("Camera ready") }
@@ -162,6 +268,121 @@ import XCTest
         XCTAssertTrue(none.isSelected)
         for slot in 1...7 { XCTAssertTrue(app.buttons["recipe.slot.\(slot)"].isEnabled) }
         XCTAssertTrue(app.buttons["recipe.refresh"].isEnabled)
+    }
+
+    func testOfflineCameraCopyAppearsOnPhoneButRequiresCameraForSelection() {
+        let app = launch(["--fixture-disconnected-camera"])
+        app.cells["grid.source-0"].tap()
+        tap(app.buttons["recipe.control"], in: app)
+        let tabs = app.segmentedControls["recipe.collection"]
+        XCTAssertTrue(tabs.waitForExistence(timeout: 5))
+        tabs.buttons["Phone"].tap()
+        XCTAssertTrue(app.staticTexts["recipe.phone.empty"].waitForExistence(timeout: 5))
+        shot(app, "Phone recipes empty state")
+        tabs.buttons["Camera"].tap()
+        let copy = app.buttons["recipe.copy.3"]
+        XCTAssertTrue(copy.isEnabled, "Copying cached recipes works offline")
+        XCTAssertFalse(app.buttons["recipe.slot.3"].isEnabled)
+        copy.tap()
+        let phone = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.phone.")).firstMatch
+        XCTAssertTrue(phone.waitForExistence(timeout: 5))
+        XCTAssertTrue(tabs.buttons["Phone"].isSelected)
+        XCTAssertFalse(phone.isSelected)
+        XCTAssertTrue(app.buttons["recipe.none"].isSelected)
+        XCTAssertEqual(app.buttons["recipe.control"].label, "No recipe selected")
+        shot(app, "Camera recipe saved on phone without changing selection")
+        tabs.buttons["Camera"].tap()
+        copy.tap()
+        XCTAssertTrue(phone.waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.phone.")).count, 1)
+        XCTAssertFalse(phone.isEnabled)
+        tap(app.buttons["recipe.none"], in: app)
+        app.buttons["fixture.plugInCamera"].tap()
+        wait { app.buttons["app.status"].label.contains("Camera ready") }
+        tap(app.buttons["recipe.control"], in: app)
+        tabs.buttons["Phone"].tap()
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.phone.")).count, 1)
+        XCTAssertTrue(phone.isEnabled)
+        phone.tap()
+        XCTAssertTrue(app.buttons["workspace.export"].waitForExistence(timeout: 5))
+        wait { app.buttons["workspace.export"].isEnabled }
+        shot(app, "Saved phone recipe selected with camera ready")
+    }
+
+    func testPhoneRecipeCopyAndDeletionAtLargestText() {
+        let app = launch(["--fixture-accessibility", "--fixture-disconnected-camera"])
+        tap(app.buttons["recipe.control"], in: app)
+        let copy = app.buttons["recipe.copy.1"]
+        XCTAssertTrue(copy.waitForExistence(timeout: 5))
+        XCTAssertGreaterThanOrEqual(copy.frame.width, 44)
+        XCTAssertGreaterThanOrEqual(copy.frame.height, 44)
+        shot(app, "Camera recipe copy controls at largest text")
+        copy.tap()
+        let phone = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.phone.")).firstMatch
+        XCTAssertTrue(phone.waitForExistence(timeout: 5))
+        XCTAssertGreaterThanOrEqual(phone.frame.height, 44)
+        XCTAssertGreaterThanOrEqual(app.buttons["recipe.none"].frame.minY, app.scrollViews["recipe.options"].frame.minY,
+            "Switching collections starts at the top even after the camera list scrolls")
+        shot(app, "Phone recipe at largest text")
+        XCTAssertFalse(phone.isEnabled)
+        let delete = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.delete.")).firstMatch
+        XCTAssertTrue(delete.isEnabled)
+        XCTAssertGreaterThanOrEqual(delete.frame.width, 44)
+        XCTAssertGreaterThanOrEqual(delete.frame.height, 44)
+        delete.tap()
+        XCTAssertTrue(app.alerts["Delete phone recipe?"].waitForExistence(timeout: 5))
+        shot(app, "Phone recipe delete confirmation at largest text")
+        app.alerts.buttons["Delete"].tap()
+        XCTAssertTrue(app.staticTexts["recipe.phone.empty"].waitForExistence(timeout: 5))
+    }
+
+    func testOfflinePhoneDeletionCanBeCancelledConfirmedAndRecopied() {
+        let app = launch(["--fixture-disconnected-camera"])
+        tap(app.buttons["recipe.control"], in: app)
+        app.buttons["recipe.copy.3"].tap()
+        let phoneQuery = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.phone."))
+        XCTAssertTrue(phoneQuery.firstMatch.waitForExistence(timeout: 5))
+        let originalIdentifier = phoneQuery.firstMatch.identifier
+        XCTAssertFalse(phoneQuery.firstMatch.isEnabled)
+        let delete = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.delete.")).firstMatch
+        XCTAssertTrue(delete.isEnabled)
+        shot(app, "Disconnected phone recipe greyed with delete enabled")
+        delete.tap()
+        XCTAssertTrue(app.alerts["Delete phone recipe?"].waitForExistence(timeout: 5))
+        app.alerts.buttons["Cancel"].tap()
+        XCTAssertTrue(app.buttons[originalIdentifier].exists)
+        delete.tap()
+        app.alerts.buttons["Delete"].tap()
+        XCTAssertTrue(app.buttons[originalIdentifier].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["recipe.phone.empty"].exists)
+        XCTAssertTrue(app.buttons["recipe.none"].isSelected)
+        app.segmentedControls["recipe.collection"].buttons["Camera"].tap()
+        app.buttons["recipe.copy.3"].tap()
+        XCTAssertTrue(phoneQuery.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertEqual(phoneQuery.firstMatch.identifier, originalIdentifier)
+        XCTAssertEqual(phoneQuery.count, 1)
+    }
+
+    func testDeletingSelectedPhoneRecipeClearsSelectionAndRestoresVersionsControl() {
+        let app = launch()
+        wait { app.buttons["app.status"].label.contains("Camera ready") }
+        app.cells["grid.source-0"].tap()
+        tap(app.buttons["recipe.control"], in: app)
+        app.buttons["recipe.copy.3"].tap()
+        let phone = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.phone.")).firstMatch
+        XCTAssertTrue(phone.waitForExistence(timeout: 5))
+        phone.tap()
+        wait { app.buttons["workspace.export"].isEnabled }
+        tap(app.buttons["recipe.control"], in: app)
+        XCTAssertTrue(app.segmentedControls["recipe.collection"].buttons["Phone"].isSelected)
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.delete.")).firstMatch.tap()
+        app.alerts.buttons["Delete"].tap()
+        XCTAssertTrue(app.staticTexts["recipe.phone.empty"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["recipe.none"].isSelected)
+        XCTAssertEqual(app.buttons["recipe.control"].label, "No recipe selected")
+        XCTAssertFalse(app.buttons["workspace.export"].exists)
+        XCTAssertTrue(app.buttons["workspace.versions"].exists)
+        shot(app, "Deleting selected phone recipe restores versions")
     }
     private func assertFloatingPhotoControls(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
         let status = app.buttons["app.status"], recipe = app.buttons["recipe.control"], versions = app.buttons["workspace.versions"]

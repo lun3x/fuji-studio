@@ -139,6 +139,10 @@ private actor ViewerCatalog: CatalogStoring {
     func replaceRecipes(_ snapshots: [RecipeSnapshot]) throws { throw ViewerError.invalidVersion }
     func recipes(camera: CameraExecutionContext) -> [RecipeSnapshot] { [] }
     func latestRecipes() -> [RecipeSnapshot] { [] }
+    func updatePhoneRecipe(_ draft: PhoneRecipeDraft) throws -> PhoneRecipe { throw ViewerError.invalidVersion }
+    func phoneRecipes() -> [PhoneRecipe] { [] }
+    func copyRecipeToPhone(_ recipe: RecipeSnapshot) throws -> PhoneRecipe { throw ViewerError.invalidVersion }
+    func deletePhoneRecipe(id: UUID) throws { throw ViewerError.invalidVersion }
     func saveJob(_ job: ExportJob) throws { throw ViewerError.invalidVersion }
     func job(id: UUID) throws -> ExportJob { throw ViewerError.invalidVersion }
     func unfinishedJobs() -> [ExportJob] { [] }

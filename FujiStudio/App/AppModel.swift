@@ -106,6 +106,8 @@ import Observation
             let recipes = try await environment.catalog.latestRecipes()
             if !recipes.isEmpty { reduce(.recipesRefreshed(recipes)) }
         } catch { message = Self.explain(error) }
+        do { reduce(.phoneRecipesLoaded(try await environment.catalog.phoneRecipes())) }
+        catch { message = Self.explain(error) }
         await reloadLibrary()
         await recoverWhenIdle()
     }
@@ -127,8 +129,10 @@ import Observation
             if case .requestPreview(let request) = effect { return request }; return nil
         }.first
         let explicitDisplay: Bool = switch action {
-        case .sourceTapped, .versionSelected, .recipeSelected: true
-        case .cameraChanged: previousRecipe != nil && state.selectedRecipe == nil && displayRequest != nil
+        case .sourceTapped, .versionSelected, .recipeSelected, .phoneRecipeSelected: true
+        case .phoneRecipeDeleted: previousRecipe != nil && state.selectedRecipe == nil
+        case .phoneRecipeUpdated: previousRecipe != state.selectedRecipe
+        case .cameraChanged: displayRequest != nil && previousRecipe != nil && state.selectedRecipe == nil
         default: false
         }
         if request != nil || explicitDisplay || previousSource != state.viewedSourceID || previousVersion != state.displayedVersion || previousRevision != state.viewedSourceRevision {
@@ -327,7 +331,10 @@ import Observation
             }
         default:
             contextTask?.cancel()
-            if isLoadingPreview { state.reduce(.previewInterrupted); isLoadingPreview = false }
+            if isLoadingPreview {
+                state.reduce(.previewInterrupted)
+                isLoadingPreview = false
+            }
             reduce(.cameraChanged(event, context: nil))
         }
     }
@@ -388,6 +395,45 @@ import Observation
             guard !isSuspended, state.currentCameraExecutionContext == expected else { return }
             reduce(.recipesRefreshed(recipes))
         } catch { reduce(.recipeRefreshFailed(Self.explain(error))) }
+    }
+
+    func copyRecipeToPhone(id: UUID) async -> Bool {
+        guard let recipe = state.recipes.first(where: { $0.id == id }) else { return false }
+        do {
+            let copy = try await environment.catalog.copyRecipeToPhone(recipe)
+            if !state.phoneRecipes.contains(where: { $0.id == copy.id }) {
+                reduce(.phoneRecipesLoaded(state.phoneRecipes + [copy]))
+            }
+            message = nil
+            return true
+        } catch {
+            message = Self.explain(error)
+            return false
+        }
+    }
+
+    func deletePhoneRecipe(id: UUID) async -> Bool {
+        guard state.phoneRecipes.contains(where: { $0.id == id }) else { return false }
+        do {
+            try await environment.catalog.deletePhoneRecipe(id: id)
+            reduce(.phoneRecipeDeleted(id))
+            message = nil
+            return true
+        } catch {
+            message = Self.explain(error)
+            return false
+        }
+    }
+
+    func updatePhoneRecipe(_ draft: PhoneRecipeDraft) async throws {
+        do {
+            let updated = try await environment.catalog.updatePhoneRecipe(draft)
+            reduce(.phoneRecipeUpdated(updated))
+            message = nil
+        } catch {
+            message = (error as? PhoneRecipeEditingError)?.message ?? Self.explain(error)
+            throw error
+        }
     }
 
     func export() async {

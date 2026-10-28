@@ -10,7 +10,7 @@ actor SwiftDataCatalog: ModelActor, CatalogStoring {
         do {
             let schema = Schema([CatalogSourceRecord.self, CatalogRecipeRecord.self,
                 CatalogCollectionRecord.self, CatalogJobRecord.self,
-                CatalogOperationRecord.self, CatalogVersionRecord.self])
+                CatalogOperationRecord.self, CatalogVersionRecord.self, CatalogPhoneRecipeRecord.self])
             let configuration = ModelConfiguration("FujiStudioLocal", schema: schema,
                 url: storeURL, cloudKitDatabase: .none)
             let container = try ModelContainer(for: schema, configurations: [configuration])
@@ -31,7 +31,7 @@ actor SwiftDataCatalog: ModelActor, CatalogStoring {
         guard snapshots.count == 7, Set(snapshots.map(\.slot)) == Set(1...7),
               Set(snapshots.map(\.id)).count == 7,
               let context = snapshots.first?.cameraContext,
-              snapshots.allSatisfy({ $0.cameraContext == context }) else {
+              snapshots.allSatisfy({ $0.cameraContext == context && !$0.isPhoneRecipe }) else {
             throw CatalogError.invalidRecipeCollection
         }
         let ordered = snapshots.sorted { $0.slot < $1.slot }
@@ -57,6 +57,47 @@ actor SwiftDataCatalog: ModelActor, CatalogStoring {
         }
     }
 
+    func phoneRecipes() throws -> [PhoneRecipe] {
+        try read {
+            let request = FetchDescriptor<CatalogPhoneRecipeRecord>(sortBy: [SortDescriptor(\.savedAt), SortDescriptor(\.sourceSnapshotID)])
+            return try modelContext.fetch(request).map { try phoneSnapshot($0) }
+        }
+    }
+
+    /// The actor serializes repeat taps; membership and the immutable snapshot save atomically.
+    func copyRecipeToPhone(_ recipe: RecipeSnapshot) throws -> PhoneRecipe {
+        guard !recipe.isPhoneRecipe, (1...7).contains(recipe.slot) else { throw CatalogError.invalidRecipeCollection }
+        let sourceID = recipe.id
+        let request = FetchDescriptor<CatalogPhoneRecipeRecord>(predicate: #Predicate { $0.sourceSnapshotID == sourceID })
+        if let existing = try read({ try modelContext.fetch(request).first }) { return try read { try phoneSnapshot(existing) } }
+        let copy = recipe.copiedToPhone()
+        try write {
+            try retain(recipe)
+            try retain(copy.snapshot)
+            modelContext.insert(CatalogPhoneRecipeRecord(sourceSnapshotID: sourceID, snapshotID: copy.snapshot.id))
+        }
+        return copy
+    }
+
+    private func phoneSnapshot(_ membership: CatalogPhoneRecipeRecord) throws -> PhoneRecipe {
+        guard let record = try recipeRecord(membership.snapshotID) else {
+            throw CatalogError.durableFailure("Saved phone recipe is missing")
+        }
+        let recipe = try decode(RecipeSnapshot.self, record.payload)
+        guard recipe.copiedFromRecipeID == membership.sourceSnapshotID else {
+            throw CatalogError.durableFailure("Saved phone recipe provenance does not match")
+        }
+        return PhoneRecipe(id: membership.sourceSnapshotID, snapshot: recipe)
+    }
+
+    /// Remove chooser membership only; immutable snapshots still belong to export history.
+    func deletePhoneRecipe(id: UUID) throws {
+        try write {
+            let request = FetchDescriptor<CatalogPhoneRecipeRecord>(predicate: #Predicate { $0.sourceSnapshotID == id })
+            if let membership = try modelContext.fetch(request).first { modelContext.delete(membership) }
+        }
+    }
+
     func recipes(camera: CameraExecutionContext) throws -> [RecipeSnapshot] {
         let snapshots = try latestRecipes()
         guard let observed = snapshots.first?.cameraContext,
@@ -64,6 +105,20 @@ actor SwiftDataCatalog: ModelActor, CatalogStoring {
               observed.capability == camera.capability, observed.sessionIdentity == camera.sessionIdentity,
               observed.sessionGeneration == camera.generation else { return [] }
         return snapshots
+    }
+
+    func updatePhoneRecipe(_ draft: PhoneRecipeDraft) throws -> PhoneRecipe {
+        let id = draft.original.id
+        let snapshot = try draft.makeSnapshot()
+        try write {
+            let request = FetchDescriptor<CatalogPhoneRecipeRecord>(predicate: #Predicate { $0.sourceSnapshotID == id })
+            guard let membership = try modelContext.fetch(request).first else { throw PhoneRecipeEditingError.missingRecipe }
+            guard membership.snapshotID == draft.original.snapshot.id,
+                  try phoneSnapshot(membership) == draft.original else { throw PhoneRecipeEditingError.staleRecipe }
+            try retain(snapshot)
+            membership.snapshotID = snapshot.id
+        }
+        return PhoneRecipe(id: id, snapshot: snapshot)
     }
 
     func versions(sourceID: SourceID) throws -> [SavedVersion] {
@@ -306,6 +361,7 @@ actor SwiftDataCatalog: ModelActor, CatalogStoring {
         } catch {
             modelContext.rollback()
             if let catalogError = error as? CatalogError { throw catalogError }
+            if let editingError = error as? PhoneRecipeEditingError { throw editingError }
             throw CatalogError.durableFailure(String(describing: error))
         }
     }

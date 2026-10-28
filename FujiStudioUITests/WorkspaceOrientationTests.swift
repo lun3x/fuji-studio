@@ -27,6 +27,29 @@ final class WorkspaceOrientationTests: XCTestCase {
         XCTAssertEqual(handle.maxY, window.maxY, accuracy: 0.5, file: file, line: line)
     }
 
+    func testPhoneRecipeEditorOpensInBothLandscapeDirections() {
+        defer { XCUIDevice.shared.orientation = .portrait }
+        for orientation in [UIDeviceOrientation.landscapeRight, .landscapeLeft] {
+            let app = launch(orientation: orientation)
+            tap(app.buttons["recipe.control"], in: app)
+            let copy = app.buttons["recipe.copy.1"]
+            XCTAssertTrue(copy.waitForExistence(timeout: 5))
+            copy.tap()
+            let edit = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.edit.")).firstMatch
+            XCTAssertTrue(edit.waitForExistence(timeout: 5))
+            edit.tap()
+            let editor = app.navigationBars["Edit phone recipe"]
+            XCTAssertTrue(editor.waitForExistence(timeout: 5))
+            XCTAssertTrue(app.textFields["recipe.editor.name"].exists)
+            XCTAssertTrue(app.buttons["recipe.editor.save"].isHittable)
+            XCTAssertTrue(app.buttons["recipe.editor.cancel"].isHittable)
+            app.buttons["recipe.editor.cancel"].tap()
+            XCTAssertTrue(editor.waitForNonExistence(timeout: 5))
+            XCTAssertTrue(app.buttons["recipe.control"].label.contains("C3"))
+            app.terminate()
+        }
+    }
+
     func testTrayAndControlsStayAtPhysicalDeviceEdgesInBothLandscapeDirections() {
         let app = launch(["--fixture-dark"])
         defer { XCUIDevice.shared.orientation = .portrait }
