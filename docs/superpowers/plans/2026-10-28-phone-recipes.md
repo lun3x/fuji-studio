@@ -53,5 +53,5 @@
 
 - [x] Add a UI test for empty Phone tab, offline cached copy, automatic Phone-tab reveal without selection, selection/dismissal, repeat-copy reuse, relaunch persistence and camera refresh independence; observe failure. Restart persistence is exercised by catalog reopen and fresh-model integration tests because UI fixtures intentionally use a fresh catalog for each launch.
 - [x] Implement native segmented tabs, separate accessible copy buttons, inline save errors and saving state, phone rows/indicator, and saved-version phone badges.
-- [ ] Run relevant UI suites and all unit tests; inspect normal and large-text screenshots; build Release for the simulator.
-- [ ] Request one fresh whole-branch review, address substantive findings with regression tests, then commit/push and create a draft PR. Shut down/delete the task simulator.
+- [x] Run relevant UI suites and all unit tests; inspect normal and large-text screenshots; build Release for the simulator.
+- [x] Request one fresh whole-branch review, address substantive findings with regression tests, then commit/push and create a draft PR. Shut down/delete the task simulator. Draft PR: https://github.com/lun3x/fuji-studio/pull/16.

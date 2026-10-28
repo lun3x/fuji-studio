@@ -63,8 +63,9 @@ final class WorkspaceLayoutTests: XCTestCase {
     func testRecipeRowsRespondToBlankPadding() {
         let app = launch()
         openRecipeMenu(app)
-        // Trailing padding is measured from the popover, outside the row text and checkmark.
-        app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: app.scrollViews["recipe.options"].frame.maxX - 6, dy: app.buttons["recipe.slot.2"].frame.midY)).tap()
+        // Selection padding ends before the separate copy button.
+        let cameraRow = app.buttons["recipe.slot.2"]
+        app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: cameraRow.frame.maxX - 6, dy: cameraRow.frame.midY)).tap()
         XCTAssertTrue(app.buttons["recipe.none"].waitForNonExistence(timeout: 3))
         XCTAssertTrue(app.buttons["recipe.control"].label.contains("C2"))
         openRecipeMenu(app)
@@ -72,6 +73,19 @@ final class WorkspaceLayoutTests: XCTestCase {
         XCTAssertTrue(app.buttons["recipe.none"].waitForNonExistence(timeout: 3))
         XCTAssertEqual(app.buttons["recipe.control"].label, "No recipe selected")
         XCTAssertFalse(app.buttons["workspace.export"].exists)
+    }
+    func testCopyButtonIncludesTrailingPaddingWithoutSelectingRecipe() {
+        let app = launch()
+        openRecipeMenu(app)
+        let previous = app.buttons["recipe.control"].label
+        let copy = app.buttons["recipe.copy.2"]
+        app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
+            dx: app.scrollViews["recipe.options"].frame.maxX - 6, dy: copy.frame.midY)).tap()
+        let phone = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.phone.")).firstMatch
+        XCTAssertTrue(phone.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.segmentedControls["recipe.collection"].buttons["Phone"].isSelected)
+        XCTAssertEqual(app.buttons["recipe.control"].label, previous)
+        XCTAssertFalse(phone.isSelected)
     }
     func testNativeHardwareEscapeDismissal() throws {
         guard ProcessInfo.processInfo.environment["FUJI_STUDIO_NATIVE_KEYBOARD"] == "1" else {
