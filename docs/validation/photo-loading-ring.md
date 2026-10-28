@@ -56,7 +56,22 @@ passed before installation. That exact signed bundle was installed with
 `devicectl`, and `com.lun3x.FujiStudio` was launched normally without fixture or
 test arguments. Device process inspection confirmed Fuji Studio remained running.
 
-## Limits
+## Light grey refinement
+
+The user requested a lighter grey after viewing the ring on the phone. Commit
+`270c6f26` changes the active arc and download fill from the theme's primary
+color to `UIColor.lightGray`. The Release phone build succeeded, strict code
+signature verification passed, and that exact bundle was installed and launched
+normally on the connected iPhone 15 Pro.
+
+The full simulator suite passed again: **517 passed, 3 established native-gate
+skips, 0 failures**, exit 0. Result bundle:
+`.build/TestResults/20261028-182422-73899.xcresult`. The passed loading regression
+screenshot at `.build/grey-ring-final/7B4DEACF-8274-4069-95C2-117B4223AB3C.png`
+was inspected and confirms the lighter grey fill with no visible percentage.
+The task-specific simulator was shut down and deleted after validation.
+
+## Remaining device checks
 
 Reduce Motion's static branch was reviewed in code; runtime setting changes
 and spoken VoiceOver output were not exercised. No camera conversion or Photos
