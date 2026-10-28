@@ -80,8 +80,8 @@ struct XT5ImportedRecipeTests {
         #expect(snapshot.renderingIssues.contains(.unsupportedValue(0xD195))) // Preserved observation from the earlier import table.
         #expect(snapshot.renderingIssues.contains(.conversionProfileUnvalidated))
         // Historical import observations are lossless history, not the current executable support cache.
-        #expect(try snapshot.normalizedSettings.grain == .offLarge)
-        try snapshot.requireRenderable()
+        #expect(try snapshot.settings(using: RecipeCodecRegistry()).grain == GrainSettings(strength: .off, size: .large))
+        try snapshot.requireRenderable(using: RecipeCodecRegistry())
     }
     @Test func settingsDigestExcludesNamesSlotsDatesIDsAndIncludesUnknownFields() throws {
         let one = try XT5RecipeCodec.recipe(slot: 1, nameData: ProtocolProbeFixtures.string("One"), properties: BankImportFixtures.properties, context: context, importedAt: Date(timeIntervalSince1970: 1))
@@ -97,7 +97,7 @@ struct XT5ImportedRecipeTests {
         let snapshot = try XT5RecipeCodec.recipe(slot: 1, nameData: ProtocolProbeFixtures.string("Synthetic"), properties: values, context: context, importedAt: Date())
         #expect(snapshot.renderingIssues.contains(.unsupportedValue(0xD192)))
         #expect(snapshot.importedSettings.first { $0.code == 0xD192 }?.raw == Data([255,127]))
-        #expect(throws: (any Error).self) { try snapshot.requireRenderable() }
+        #expect(throws: (any Error).self) { try snapshot.requireRenderable(using: RecipeCodecRegistry()) }
     }
     @Test func incompleteMalformedOrExtraFieldsNeverBecomeImportedRecipes() {
         var missing = BankImportFixtures.properties; missing[0xD1A4] = nil

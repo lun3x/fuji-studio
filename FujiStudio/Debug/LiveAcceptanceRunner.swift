@@ -222,7 +222,7 @@ private enum LiveAcceptanceFailure: Error { case stopped(String) }
     }
     private func recipe(_ slot: Int, banks: [RecipeSnapshot]) throws -> RecipeSnapshot {
         guard let result = banks.first(where: { $0.slot == slot }) else { throw CameraServiceError.unsupportedSettings }
-        _ = try result.normalizedSettings
+        _ = try result.settings(using: RecipeCodecRegistry())
         return result
     }
     private func preview(_ model: AppModel, source: PhotoSource, recipe: RecipeSnapshot, hash: String) async throws -> (CameraJPEG, DisplayFileLease) {

@@ -107,7 +107,7 @@ struct RAWBaselineSourcePreparer: Sendable {
         try Task.checkCancellation()
         complete = true
         var confirmedSource = source
-        if requirePair { confirmedSource.compatibility = .xt5 }
+        if requirePair { confirmedSource.compatibility = .supported(model: "X-T5") }
         return (Selection(source: confirmedSource, raw: selected), true)
     }
     private struct SourceManifest: Encodable {

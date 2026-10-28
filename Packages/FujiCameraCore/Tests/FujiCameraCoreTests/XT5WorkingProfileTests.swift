@@ -6,18 +6,18 @@ struct XT5WorkingProfileTests {
     @Test func snapshotSupportReassessesFrozenRawValuesInsteadOfTrustingOldIssues() throws {
         let f=try ProductionProfileFixture()
         #expect(!f.bank.renderingIssues.isEmpty)
-        #expect(try f.bank.normalizedSettings.grain == .strongSmall)
-        try f.bank.requireRenderable()
+        #expect(try f.bank.settings(using: RecipeCodecRegistry()).grain == GrainSettings(strength: .strong, size: .small))
+        try f.bank.requireRenderable(using: RecipeCodecRegistry())
         var changed=f.properties;changed[0xD1A4]=2
         let unsupported=try f.bank(changed)
-        #expect(throws:RecipeImportError.self) { try unsupported.requireRenderable() }
+        #expect(throws:RecipeImportError.self) { try unsupported.requireRenderable(using: RecipeCodecRegistry()) }
     }
     @Test func freshMeasuredFrameAndFrozenSnapshotProduceBoundedRequestedPatch() throws {
         let f=try ProductionProfileFixture()
         let normalized=try XT5WorkingProfile.normalize(f.bank)
-        #expect(normalized.grain == .strongSmall)
+        #expect(normalized.grain == GrainSettings(strength: .strong, size: .small))
         #expect(normalized.noiseReduction == -4)
-        #expect(normalized.lensOptimizerRequested)
+        #expect(normalized.lensOptimizerRequested == true)
         let patch=try XT5WorkingProfile.make(baseline:f.baseline,recipe:f.bank,metadata:f.metadata)
         #expect(patch.bytes.count == 625)
         #expect(patch.bytes[593] == 1)
@@ -25,7 +25,7 @@ struct XT5WorkingProfileTests {
         let allowed=Set([533,541,545,549,553,557,561,565,569,573,577,581,585,589,593,609,617].flatMap { Array($0..<$0+4) })
         #expect((0..<625).filter { !allowed.contains($0) }.allSatisfy { patch.bytes[$0] == f.baseline[$0] })
         #expect(f.bank.id == patch.recipeID && f.bank.settingsDigest == patch.settingsDigest)
-        #expect(patch.settings.grain == .strongSmall)
+        #expect(patch.settings.grain == GrainSettings(strength: .strong, size: .small))
     }
     @Test func everyChangedFrameByteAndUnobservedSourceGeometryRefuse() throws {
         let f=try ProductionProfileFixture()
@@ -45,7 +45,7 @@ struct XT5WorkingProfileTests {
             var p=f.properties;p[code]=value
             #expect(throws: CameraServiceError.unsupportedSettings) { try XT5WorkingProfile.normalize(f.bank(p)) }
         }
-        for (raw,size):(UInt16,RequestedGrain) in [(6,.offSmall),(7,.offLarge)] {
+        for (raw,size):(UInt16,GrainSettings) in [(6,.init(strength:.off,size:.small)),(7,.init(strength:.off,size:.large))] {
             var p=f.properties;p[0xD195]=raw
             let bank=try f.bank(p),patch=try XT5WorkingProfile.make(baseline:f.baseline,recipe:bank,metadata:f.metadata)
             #expect(patch.settings.grain == size && patch.bytes[545] == 1)

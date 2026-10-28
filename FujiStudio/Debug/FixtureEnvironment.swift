@@ -221,11 +221,11 @@ actor FixtureCamera: CameraServing {
         defer { emit(.ready(session)) }
         let url = root.appendingPathComponent("render-\(UUID().uuidString).JPG")
         try FileManager.default.copyItem(at: image.fileURL, to: url)
-        let normalized = try recipe.normalizedSettings
+        let normalized = try recipe.settings(using: RecipeCodecRegistry())
         let key = RenderKey(sourceID: raw.sourceID, sourceRevision: raw.sourceRevision, sourceSHA256: raw.sha256, settingsDigest: recipe.settingsDigest, cameraContext: context, width: 1800, height: 1200, orientation: 1, policy: policy, quality: .fullResolutionFine)
         return CameraJPEG(fileURL: url, sourceID: raw.sourceID, sourceRevision: raw.sourceRevision, sourceSHA256: raw.sha256,
             recipeSnapshotID: recipe.id, settingsDigest: recipe.settingsDigest, cameraContext: context, operationID: UUID(), width: 1800, height: 1200, orientation: 1, quality: .fullResolutionFine,
-            effectiveRecipe: EffectiveRecipeReport(supportVersion: normalized.supportVersion, requested: normalized, dormantGrainSizeNotSerialized: false, inactiveKelvinPreserved: false, lensOptimizerRequested: true, lensOptimizerEffective: true, lensOptimizerAdjusted: false, evidence: "Synthetic UI fixture; not camera evidence"),
+            effectiveRecipe: EffectiveRecipeReport(supportVersion: XT5WorkingProfile.supportVersion, requested: normalized, dormantGrainSizeNotSerialized: false, inactiveKelvinPreserved: false, lensOptimizerRequested: true, lensOptimizerEffective: true, lensOptimizerAdjusted: false, evidence: "Synthetic UI fixture; not camera evidence"),
             baselineSHA256: "synthetic", candidateSHA256: "synthetic", outputSHA256: try ResourceChecksum.sha256(url), key: key)
     }
 }

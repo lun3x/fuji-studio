@@ -471,7 +471,7 @@ struct XT5PairedBaselinePreparationTests {
             let library=PairedBaselineLibrary(ids:["standalone","old","square","reference"], reversed:reversed)
             let selected=try await RAWBaselineSourcePreparer(reader:library,prepare:Self.parse).preparePaired(in:fixture.directory)
             #expect(selected.source.id == "square")
-            #expect(selected.source.compatibility == .xt5)
+            #expect(selected.source.compatibility == .supported(model: "X-T5"))
             #expect(selected.raw.metadata.recordedGeometry == PixelSize(width:5000,height:5000))
             #expect(selected.raw.metadata.orientation == 6)
             #expect(await library.materialized == ["old","square"])

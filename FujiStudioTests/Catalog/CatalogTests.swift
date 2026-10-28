@@ -15,7 +15,7 @@ struct CatalogTests {
         let updated = try await catalog.updatePhoneRecipe(draft)
         #expect(updated.id == original.id)
         #expect(updated.snapshot.id != original.snapshot.id)
-        #expect(try updated.snapshot.normalizedSettings.film == .provia)
+        #expect(try updated.snapshot.settings(using: RecipeCodecRegistry()).film == .provia)
         let reopened = try SwiftDataCatalog(storeURL: disk.url)
         #expect(try await reopened.phoneRecipes() == [updated])
         #expect(try await reopened.latestRecipes() == cameras)
@@ -95,7 +95,7 @@ struct CatalogTests {
         #expect(copy.snapshot.cameraContext == original.cameraContext)
         #expect(copy.snapshot.importedAt == original.importedAt)
         #expect(copy.snapshot.renderingIssues == original.renderingIssues)
-        #expect(copy.snapshot.renderingSupport == original.renderingSupport)
+        #expect(copy.snapshot.renderingSupport(using: RecipeCodecRegistry()) == original.renderingSupport(using: RecipeCodecRegistry()))
         #expect(try await catalog.copyRecipeToPhone(original) == copy)
         let refreshed = f.recipes()
         try await catalog.replaceRecipes(refreshed)
@@ -501,7 +501,7 @@ private struct CatalogFixture {
     var source: PhotoSource { source(id: "A") }
     var sourceB: PhotoSource { source(id: "B") }
     var changedSource: PhotoSource { PhotoSource(id: "A", originalResources: source.originalResources,
-        captureDate: Date(timeIntervalSince1970: 9_000), location: nil, resourceRevision: "changed", compatibility: .xt5) }
+        captureDate: Date(timeIntervalSince1970: 9_000), location: nil, resourceRevision: "changed", compatibility: .supported(model: "X-T5")) }
     func source(id: String) -> PhotoSource {
         PhotoSource(id: id, originalResources: .init(raf: .init(assetID: id, role: .primaryOriginal,
             contentTypeIdentifier: "com.fujifilm.raw-image", format: .raf, originalFilename: "SYNTHETIC.RAF",
@@ -510,7 +510,7 @@ private struct CatalogFixture {
                 format: .jpeg, originalFilename: "SYNTHETIC.JPG", discriminator: "synthetic-jpeg",
                 sourceRevision: "original-revision", byteCount: 50) : nil),
             captureDate: Date(timeIntervalSince1970: 100), location: .init(latitude: 1, longitude: 2, altitude: 3),
-            resourceRevision: "original-revision", compatibility: .xt5)
+            resourceRevision: "original-revision", compatibility: .supported(model: "X-T5"))
     }
     func job(operationID: UUID = UUID(), recipe: RecipeSnapshot? = nil) -> ExportJob {
         ExportJob(id: UUID(), submittedAt: Date(timeIntervalSince1970: 1_500), recipeSnapshot: recipe ?? self.recipe,
@@ -524,7 +524,7 @@ private struct CatalogFixture {
             sourceRevision: "original-revision", sourceSHA256: "synthetic-raw", recipeSnapshotID: profile.bank.id,
             settingsDigest: "synthetic-digest", cameraContext: camera, operationID: camera.sessionIdentity,
             width: 7728, height: 5152, orientation: 8, quality: .fullResolutionFine,
-            effectiveRecipe: .init(supportVersion: "synthetic", requested: try! profile.bank.normalizedSettings,
+            effectiveRecipe: .init(supportVersion: "synthetic", requested: try! profile.bank.settings(using: RecipeCodecRegistry()),
                 dormantGrainSizeNotSerialized: false, inactiveKelvinPreserved: false,
                 lensOptimizerRequested: true, lensOptimizerEffective: false, lensOptimizerAdjusted: true, evidence: "synthetic"),
             baselineSHA256: "synthetic-baseline", candidateSHA256: "synthetic-candidate", outputSHA256: "synthetic-output", key: key)

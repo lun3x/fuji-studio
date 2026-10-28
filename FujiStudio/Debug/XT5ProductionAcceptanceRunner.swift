@@ -27,7 +27,7 @@ enum RetainedProductionAcceptanceInputs {
             let decoder=JSONDecoder();decoder.dateDecodingStrategy = .iso8601
             let capture=try decoder.decode(BankCapture.self,from:bytes)
             guard capture.complete,XT5FiniteRecipePatch.sameBanks(capture.snapshots,capture.verificationSnapshots) else { throw CameraServiceError.unsupportedSettings }
-            for recipe in capture.snapshots { _ = try recipe.normalizedSettings }
+            for recipe in capture.snapshots { _ = try recipe.settings(using: RecipeCodecRegistry()) }
             try Task.checkCancellation()
             try bytes.write(to:destination.appendingPathComponent("frozen-banks.json"),options:[.atomic,.completeFileProtection])
             let binding=["sourceA":a.fileURL.path,"sourceASHA256":a.sha256,"sourceAID":a.sourceID,"sourceARevision":a.sourceRevision,
@@ -111,7 +111,7 @@ struct XT5ProductionAcceptanceEvidence: Encodable {
             let inputs=try await prepare(documents,run)
             guard inputs.a.sha256 != inputs.b.sha256,let frozen=inputs.banks.first(where:{ $0.slot == 7 }),
                   XT5FiniteRecipePatch.sameBanks(inputs.banks,inputs.banks) else { throw CameraServiceError.sourceChanged }
-            _ = try frozen.normalizedSettings
+            _ = try frozen.settings(using: RecipeCodecRegistry())
             let camera=try makeService(root.appendingPathComponent("operations"));service=camera
             evidence.stage="connecting verified production service";try save(evidence,to:documents)
             try await camera.connect()

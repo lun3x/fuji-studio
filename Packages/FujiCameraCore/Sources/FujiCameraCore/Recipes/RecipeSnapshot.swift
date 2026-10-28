@@ -89,23 +89,19 @@ public struct RecipeSnapshot: Sendable, Equatable, Codable, Identifiable {
     return PhoneRecipe(id: id, snapshot: snapshot)
   }
 
-  public var normalizedSettings: NormalizedRecipeSettings {
-    get throws { try XT5WorkingProfile.normalize(self) }
+  public func settings(using codecs: RecipeCodecRegistry) throws -> RecipeSettings {
+    try codecs.requireSettings(self)
   }
-  public var renderingSupport: RecipeRenderingSupport {
-    do { return .supported(try normalizedSettings) } catch CameraServiceError.unsupportedContext {
-      return .unsupported([.unsupportedCameraContext])
-    } catch { return .unsupported([.unsupportedMeasuredDomain]) }
+  public func renderingSupport(using codecs: RecipeCodecRegistry) -> RecipeRenderingSupport {
+    codecs.assess(self).renderingSupport
+  }
+  public func requireRenderable(using codecs: RecipeCodecRegistry) throws {
+    _ = try codecs.requireSettings(self)
   }
 
-  public func requireRenderable() throws {
-    if case .unsupported(let issues) = renderingSupport {
-      throw RecipeImportError.unsupportedRendering(issues)
-    }
-  }
 }
 
 public enum RecipeRenderingSupport: Sendable, Equatable {
-  case supported(NormalizedRecipeSettings)
+  case supported(RecipeSettings)
   case unsupported([RecipeRenderingIssue])
 }

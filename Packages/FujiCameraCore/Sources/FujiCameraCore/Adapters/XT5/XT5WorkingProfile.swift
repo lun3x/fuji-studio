@@ -10,7 +10,7 @@ public struct XT5WorkingProfile: Sendable {
   public let bytes: Data
   public let recipeID: UUID
   public let settingsDigest: String
-  public let settings: NormalizedRecipeSettings
+  public let settings: RecipeSettings
   public let baselineSHA256: String, candidateSHA256: String
 
   public static func validateSource(_ metadata: RAWMetadata) throws {
@@ -26,7 +26,7 @@ public struct XT5WorkingProfile: Sendable {
       metadata.recordedGeometry.height <= metadata.containerGeometry.height - metadata.cropTop
     else { throw CameraServiceError.unsupportedSource }
   }
-  public static func normalize(_ recipe: RecipeSnapshot) throws -> NormalizedRecipeSettings {
+  public static func normalize(_ recipe: RecipeSnapshot) throws -> RecipeSettings {
     guard recipe.cameraContext.model == "X-T5", recipe.cameraContext.firmware == "4.31",
       recipe.cameraContext.capability == "X-T5_0200"
     else { throw CameraServiceError.unsupportedContext }
@@ -39,25 +39,18 @@ public struct XT5WorkingProfile: Sendable {
       0x5000: 4,
     ]
     guard tuple[0] == 7, [2, 4].contains(tuple[1]), tuple[2] == 1, tuple[3] == 1,
-      [100, 400].contains(v(0xD190)), v(0xD191) == 0, let film = SupportedFilm(rawValue: v(0xD192)),
+      [100, 400].contains(v(0xD190)), v(0xD191) == 0,
+      [UInt16(1), 11, 12, 14, 15].contains(v(0xD192)),
       v(0xD193) == 0, v(0xD194) == 0, [3, 6, 7].contains(v(0xD195)),
       (1...3).contains(v(0xD196)), (1...3).contains(v(0xD197)), v(0xD198) == 1,
-      let wb = SupportedWhiteBalance(rawValue: v(0xD199)), (-9...9).contains(s(0xD19A)),
+      [UInt16(2), 32775].contains(v(0xD199)), (-9...9).contains(s(0xD19A)),
       (-9...9).contains(s(0xD19B)),
       (2500...10000).contains(v(0xD19C)), let noise = nr[v(0xD1A1)],
       [UInt16(0xD19D), 0xD19E].allSatisfy({ (-20...40).contains(s($0)) && s($0) % 5 == 0 }),
       [UInt16(0xD19F), 0xD1A0].allSatisfy({ (-40...40).contains(s($0)) && s($0) % 10 == 0 }),
       (-50...50).contains(s(0xD1A2)), s(0xD1A2) % 10 == 0
     else { throw CameraServiceError.unsupportedSettings }
-    return NormalizedRecipeSettings(
-      supportVersion: supportVersion, film: film,
-      grain: v(0xD195) == 3 ? .strongSmall : v(0xD195) == 6 ? .offSmall : .offLarge,
-      dynamicRange: Int(v(0xD190)), colorChrome: Int(v(0xD196)), colorChromeBlue: Int(v(0xD197)),
-      whiteBalance: wb,
-      whiteBalanceRed: s(0xD19A), whiteBalanceBlue: s(0xD19B), kelvin: Int(v(0xD19C)),
-      highlightTenths: s(0xD19D), shadowTenths: s(0xD19E),
-      colorTenths: s(0xD19F), sharpnessTenths: s(0xD1A0), clarityTenths: s(0xD1A2),
-      noiseReduction: noise, observedOpaqueTuple: tuple, lensOptimizerRequested: true)
+    return try XT5RecipeSettingsCodec.decode(recipe)
   }
   public static func make(baseline: Data, recipe: RecipeSnapshot, metadata: RAWMetadata) throws
     -> Self
@@ -90,7 +83,7 @@ public struct XT5WorkingProfile: Sendable {
         offset..<offset + 4,
         with: word(signed ? UInt32(bitPattern: Int32(Int16(bitPattern: v))) : UInt32(v)))
     }
-    output.replaceSubrange(545..<549, with: word(settings.grain == .strongSmall ? 3 : 1))
+    output.replaceSubrange(545..<549, with: word(settings.grain.strength == .strong ? 3 : 1))
     output.replaceSubrange(553..<557, with: word(2))
     output.replaceSubrange(593..<597, with: word(1))  // Explicit requested ON; effective value comes from returned JPEG.
     return Self(
@@ -100,7 +93,7 @@ public struct XT5WorkingProfile: Sendable {
   public func effective(lensOptimizer: Bool) -> EffectiveRecipeReport {
     EffectiveRecipeReport(
       supportVersion: Self.supportVersion, requested: settings,
-      dormantGrainSizeNotSerialized: settings.grain != .strongSmall,
+      dormantGrainSizeNotSerialized: settings.grain.strength != .strong,
       inactiveKelvinPreserved: settings.whiteBalance != .temperature, lensOptimizerRequested: true,
       lensOptimizerEffective: lensOptimizer,
       lensOptimizerAdjusted: !lensOptimizer,
@@ -114,7 +107,7 @@ public struct XT5WorkingProfile: Sendable {
   private static func word(_ value: UInt32) -> Data {
     Data((0..<4).map { UInt8(truncatingIfNeeded: value >> ($0 * 8)) })
   }
-  private static func properties(_ recipe: RecipeSnapshot) throws -> [UInt16: UInt16] {
+  static func properties(_ recipe: RecipeSnapshot) throws -> [UInt16: UInt16] {
     let codes = Array(UInt16(0xD18E)...0xD1A4)
     guard recipe.importedSettings.count == codes.count,
       Set(recipe.importedSettings.map(\.code)) == Set(codes),
@@ -133,7 +126,7 @@ public struct XT5WorkingProfile: Sendable {
     return entries.mapValues { UInt16($0[0]) | UInt16($0[1]) << 8 }
   }
   public init(
-    bytes: Data, recipeID: UUID, settingsDigest: String, settings: NormalizedRecipeSettings,
+    bytes: Data, recipeID: UUID, settingsDigest: String, settings: RecipeSettings,
     baselineSHA256: String, candidateSHA256: String
   ) {
     self.bytes = bytes

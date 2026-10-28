@@ -11,12 +11,13 @@ actor SwiftDataCatalog: ModelActor, CatalogStoring {
         do {
             let schema = Schema([CatalogSourceRecord.self, CatalogRecipeRecord.self,
                 CatalogCollectionRecord.self, CatalogJobRecord.self,
-                CatalogOperationRecord.self, CatalogVersionRecord.self, CatalogPhoneRecipeRecord.self])
+                CatalogOperationRecord.self, CatalogVersionRecord.self, CatalogPhoneRecipeRecord.self, CatalogFormatRecord.self])
             let configuration = ModelConfiguration("FujiStudioLocal", schema: schema,
                 url: storeURL, cloudKitDatabase: .none)
             let container = try ModelContainer(for: schema, configurations: [configuration])
             let context = ModelContext(container)
             context.autosaveEnabled = false
+            try CatalogPayloadUpgrade(context: context, storeURL: storeURL).runIfNeeded()
             modelContainer = container
             modelExecutor = DefaultSerialModelExecutor(modelContext: context)
         } catch { throw CatalogError.durableFailure(String(describing: error)) }

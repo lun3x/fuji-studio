@@ -130,7 +130,7 @@ struct WorkspaceState: Sendable {
                 return .incompatibleSource(sourceID: source.id, model: model)
             }
         }
-        if case .unsupported(let issues) = recipe.renderingSupport { return .unsupportedRecipe(issues) }
+        if case .unsupported(let issues) = recipe.renderingSupport(using: RecipeCodecRegistry()) { return .unsupportedRecipe(issues) }
         guard activeJobID == nil else { return .activeJob }
         guard case .ready(let session) = cameraState else { return .cameraNotReady }
         guard let context = currentCameraExecutionContext, context.generation == session.generation else {
@@ -326,7 +326,7 @@ struct WorkspaceState: Sendable {
         guard !previewSatisfied, pendingPreview == nil,
               wantsRecipePreview, let id = viewedSourceID, let source = sources[id],
               eligibleSourceIDs.contains(id), let recipe = selectedRecipe,
-              case .supported = recipe.renderingSupport,
+              case .supported = recipe.renderingSupport(using: RecipeCodecRegistry()),
               case .ready(let session) = cameraState,
               let context = currentCameraExecutionContext, context.generation == session.generation,
               matches(recipe: recipe, context: context) else { return [] }

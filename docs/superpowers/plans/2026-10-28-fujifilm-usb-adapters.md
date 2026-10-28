@@ -105,7 +105,7 @@ Do not use Git commands. Resolve genuinely new upstream overlap through Jujutsu 
 - Produces `EffectiveRecipeReport` carrying requested semantic settings and per-field `SettingEvidence` with `.jpegObserved` or `.profileConfirmed`, plus explicit mismatch diagnostics. Model-native bytes remain only in snapshots/adapters.
 - Produces `CatalogPayloadUpgrade.runIfNeeded() throws` before catalog readers/workers run. It converts only the currently shipped payload format to the new current format; no old service API or multi-version decoder in normal execution.
 
-- [ ] **Step 1: Add exact domain/storage tests before changing DTOs.** Capture deterministic synthetic current-format JSON containing a source, phone membership, frozen recipe, completed version, unresolved Photos submission and camera journal with delete-intent marker. Assertions:
+- [x] **Step 1: Add exact domain/storage tests before changing DTOs.** Capture deterministic synthetic current-format JSON containing a source, phone membership, frozen recipe, completed version, unresolved Photos submission and camera journal with delete-intent marker. Assertions:
   ```swift
   #expect(xt5Assessment.settings?.film == .classicChrome)
   #expect(xt5Assessment.settings?.whiteBalanceRed == -4)
@@ -117,12 +117,12 @@ Do not use Git commands. Resolve genuinely new upstream overlap through Jujutsu 
   #expect(upgradeEffects.cameraCommands.isEmpty && upgradeEffects.photosWrites == 0)
   ```
   Add crash/retry tests at preparation and commit boundaries; malformed data leaves the original store readable and reports a durable error. Existing X-T5 digest canonicalization remains `xt5.imported-settings.v1`; do not recompute frozen identifiers.
-- [ ] **Step 2: Run the failing tests.** `swift test --package-path Packages/FujiCameraCore --filter RecipeDomainTests` and `Scripts/test-ios.sh FujiStudioTests/CatalogPayloadUpgradeTests`; expect missing semantic types/upgrade behavior.
+- [x] **Step 2: Run the failing tests.** `swift test --package-path Packages/FujiCameraCore --filter RecipeDomainTests` and `Scripts/test-ios.sh FujiStudioTests/CatalogPayloadUpgradeTests`; expect missing semantic types/upgrade behavior.
 
   Name the storage cases `currentPayloadUpgradePreservesFrozenHistory`, `failedUpgradeLeavesOriginalReadable` and `interruptedUpgradeRetriesWithoutSideEffects`; the Step 1 assertions apply on every reopened copy.
-- [ ] **Step 3: Implement projections and bounded forward conversion.** Make `RecipeSnapshot` passive: remove its direct `XT5WorkingProfile.normalize` dependency and migrate callers to injected assessment. Preserve raw fields/name bytes and unknown values on edit. For unavoidable requested/effective/source-compatibility payload changes, decode/prepare/validate the whole affected catalog in memory, commit through one SwiftData transaction, and mark the format in that transaction. Keep a recovery copy until successful verification. Upgrade journal JSON by synchronized atomic replacement with per-record format detection; preserve binary artifacts and exclusive delete markers verbatim. Restarted conversion is idempotent and never starts work. Keep current X-T5 opaque tuple restrictions inside its codec.
-- [ ] **Step 4: Verify.** Run both commands from Step 2 and `Scripts/test-ios.sh --fast`; reopen copied stores and assert the IDs/digests/associations/uncertainty above. Test offline assessment and an edit that leaves an unknown native field byte-identical. No store-reset fallback is allowed.
-- [ ] **Step 5: Checkpoint.** Commit/push `refactor: model recipe settings independently of camera wire codes`.
+- [x] **Step 3: Implement projections and bounded forward conversion.** Make `RecipeSnapshot` passive: remove its direct `XT5WorkingProfile.normalize` dependency and migrate callers to injected assessment. Preserve raw fields/name bytes and unknown values on edit. For unavoidable requested/effective/source-compatibility payload changes, decode/prepare/validate the whole affected catalog in memory, commit through one SwiftData transaction, and mark the format in that transaction. Keep a recovery copy until successful verification. Upgrade journal JSON by synchronized atomic replacement with per-record format detection; preserve binary artifacts and exclusive delete markers verbatim. Restarted conversion is idempotent and never starts work. Keep current X-T5 opaque tuple restrictions inside its codec.
+- [x] **Step 4: Verify.** Run both commands from Step 2 and `Scripts/test-ios.sh --fast`; reopen copied stores and assert the IDs/digests/associations/uncertainty above. Test offline assessment and an edit that leaves an unknown native field byte-identical. No store-reset fallback is allowed.
+- [x] **Step 5: Checkpoint.** Commit/push `refactor: model recipe settings independently of camera wire codes`.
 
 ### Task 3: Extract the shared operation owner and X-T5 adapter
 

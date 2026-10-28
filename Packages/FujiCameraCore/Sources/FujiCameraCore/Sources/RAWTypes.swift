@@ -56,7 +56,8 @@ public struct PhotoLocation: Sendable, Equatable, Codable {
 }
 
 public enum RAWCompatibility: Sendable, Equatable, Codable {
-  case unknown, xt5
+  case unknown
+  case supported(model: String)
   case incompatible(model: String)
 }
 

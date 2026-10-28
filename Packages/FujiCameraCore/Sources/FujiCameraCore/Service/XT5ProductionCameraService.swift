@@ -191,7 +191,7 @@ public actor XT5CameraService: CameraServing {
         sessionIdentity: execution.sessionIdentity, sessionGeneration: execution.generation)
       let recipes = result.recipes.map { r in
         let issues: [RecipeRenderingIssue]
-        switch r.renderingSupport {
+        switch r.renderingSupport(using: RecipeCodecRegistry()) {
         case .supported: issues = []
         case .unsupported(let observed): issues = observed
         }

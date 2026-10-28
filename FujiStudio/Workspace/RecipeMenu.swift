@@ -123,7 +123,7 @@ struct RecipeMenu: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(recipe?.name ?? "Not imported")
                                     .accessibilityLabel("C\(slot) \(recipe?.name ?? "Not imported")")
-                                if let recipe, case .unsupported = recipe.renderingSupport {
+                                if let recipe, case .unsupported = recipe.renderingSupport(using: RecipeCodecRegistry()) {
                                     Text("Cached · conversion unsupported").font(.caption).foregroundStyle(.secondary)
                                 }
                             }
@@ -189,7 +189,7 @@ struct RecipeMenu: View {
                         .foregroundStyle(isCameraConnected ? .secondary : .tertiary).accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(recipe.snapshot.name)
-                        if case .unsupported = recipe.snapshot.renderingSupport {
+                        if case .unsupported = recipe.snapshot.renderingSupport(using: RecipeCodecRegistry()) {
                             Text("Conversion unsupported").font(.caption)
                                 .foregroundStyle(isCameraConnected ? .secondary : .tertiary)
                         }

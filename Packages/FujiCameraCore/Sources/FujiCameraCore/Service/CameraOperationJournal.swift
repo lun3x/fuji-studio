@@ -77,7 +77,39 @@ public struct CameraOperationJournal: Sendable {
   public init(directory: URL, filePolicy: any CameraJournalFilePolicy) throws {
     self.filePolicy = filePolicy
     self.directory = directory
-    do { try filePolicy.createDirectory(at: directory) } catch { throw CameraServiceError.storage }
+    do {
+      try filePolicy.createDirectory(at: directory)
+      try upgradeExistingPayloads()
+    } catch { throw CameraServiceError.storage }
+  }
+  private func upgradeExistingPayloads() throws {
+    let directories = try FileManager.default.contentsOfDirectory(
+      at: directory, includingPropertiesForKeys: nil, options: .skipsHiddenFiles)
+    var replacements: [(URL, Data, Data)] = []
+    for folder in directories {
+      guard let id = UUID(uuidString: folder.lastPathComponent) else {
+        throw CameraServiceError.storage
+      }
+      let url = folder.appendingPathComponent("journal.json")
+      guard let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > 0,
+        size <= 1_048_576
+      else { throw CameraServiceError.storage }
+      let old = try Data(contentsOf: url)
+      let converted = try RecipePayloadUpgrade.convert(old)
+      let record = try JSONDecoder().decode(CameraOperationRecord.self, from: converted)
+      guard record.id == id else { throw CameraServiceError.storage }
+      if converted != old { replacements.append((url, old, converted)) }
+    }
+    for (url, old, converted) in replacements {
+      let backup = url.deletingLastPathComponent().appendingPathComponent("journal-v1-backup.json")
+      if !FileManager.default.fileExists(atPath: backup.path) {
+        try filePolicy.write(old, to: backup, exclusive: true)
+        let handle = try FileHandle(forWritingTo: backup)
+        try handle.synchronize()
+        try handle.close()
+      }
+      try durable(converted, to: url, exclusive: false)
+    }
   }
   public func operationDirectory(_ id: UUID) -> URL {
     directory.appendingPathComponent(id.uuidString, isDirectory: true)

@@ -165,7 +165,7 @@ struct XT5ProductionCameraServiceTests {
         let current=try #require(refreshed.first { $0.slot == 7 })
         #expect(current.settingsDigest != f.profile.bank.settingsDigest)
         #expect(current.renderingIssues.isEmpty)
-        try current.requireRenderable()
+        try current.requireRenderable(using: RecipeCodecRegistry())
         let rendered=try await service.render(raw:f.raw,recipe:f.profile.bank,policy:.fullSizeFineRecordedGeometry)
         #expect(rendered.recipeSnapshotID == f.profile.bank.id)
         #expect(rendered.effectiveRecipe.requested.film == .classicChrome)

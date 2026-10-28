@@ -71,80 +71,21 @@ public struct CameraJPEG: Sendable, Codable, Equatable {
 
 }
 
-public enum RequestedGrain: String, Sendable, Codable, Hashable {
-  case offSmall, offLarge, strongSmall
-}
-public enum SupportedFilm: UInt16, Sendable, Codable, Hashable {
-  case provia = 1
-  case classicChrome = 11
-  case acros = 12
-  case acrosRed = 14
-  case acrosGreen = 15
-}
-public enum SupportedWhiteBalance: UInt16, Sendable, Codable, Hashable {
-  case auto = 2
-  case temperature = 32775
-}
-
-public struct NormalizedRecipeSettings: Sendable, Codable, Hashable {
-  public let supportVersion: String
-  public let film: SupportedFilm
-  public let grain: RequestedGrain
-  public let dynamicRange: Int
-  /// Observed 1=OFF, 2=WEAK, 3=STRONG domains, not the older zero-based FX Blue table.
-  public let colorChrome: Int, colorChromeBlue: Int
-  public let whiteBalance: SupportedWhiteBalance
-  public let whiteBalanceRed: Int, whiteBalanceBlue: Int, kelvin: Int
-  public let highlightTenths: Int, shadowTenths: Int, colorTenths: Int, sharpnessTenths: Int,
-    clarityTenths: Int
-  public let noiseReduction: Int
-  /// Joint profile-class evidence; no individual semantic meaning assigned to these properties.
-  public let observedOpaqueTuple: [UInt16]
-  public let lensOptimizerRequested: Bool
-  public var colorSpace: String { "sRGB" }
-  public init(
-    supportVersion: String, film: SupportedFilm, grain: RequestedGrain, dynamicRange: Int,
-    colorChrome: Int, colorChromeBlue: Int, whiteBalance: SupportedWhiteBalance,
-    whiteBalanceRed: Int, whiteBalanceBlue: Int, kelvin: Int, highlightTenths: Int,
-    shadowTenths: Int, colorTenths: Int, sharpnessTenths: Int, clarityTenths: Int,
-    noiseReduction: Int, observedOpaqueTuple: [UInt16], lensOptimizerRequested: Bool
-  ) {
-    self.supportVersion = supportVersion
-    self.film = film
-    self.grain = grain
-    self.dynamicRange = dynamicRange
-    self.colorChrome = colorChrome
-    self.colorChromeBlue = colorChromeBlue
-    self.whiteBalance = whiteBalance
-    self.whiteBalanceRed = whiteBalanceRed
-    self.whiteBalanceBlue = whiteBalanceBlue
-    self.kelvin = kelvin
-    self.highlightTenths = highlightTenths
-    self.shadowTenths = shadowTenths
-    self.colorTenths = colorTenths
-    self.sharpnessTenths = sharpnessTenths
-    self.clarityTenths = clarityTenths
-    self.noiseReduction = noiseReduction
-    self.observedOpaqueTuple = observedOpaqueTuple
-    self.lensOptimizerRequested = lensOptimizerRequested
-  }
-
-}
-
 public struct EffectiveRecipeReport: Sendable, Codable, Equatable {
   public let supportVersion: String
-  public let requested: NormalizedRecipeSettings
+  public let requested: RecipeSettings
   public let dormantGrainSizeNotSerialized: Bool
   public let inactiveKelvinPreserved: Bool
   public let lensOptimizerRequested: Bool
   public let lensOptimizerEffective: Bool
   public let lensOptimizerAdjusted: Bool
   public let evidence: String
+  public let evidenceBySetting: [RecipeSettingID: SettingEvidence]?
   public init(
-    supportVersion: String, requested: NormalizedRecipeSettings,
+    supportVersion: String, requested: RecipeSettings,
     dormantGrainSizeNotSerialized: Bool, inactiveKelvinPreserved: Bool,
     lensOptimizerRequested: Bool, lensOptimizerEffective: Bool, lensOptimizerAdjusted: Bool,
-    evidence: String
+    evidence: String, evidenceBySetting: [RecipeSettingID: SettingEvidence]? = nil
   ) {
     self.supportVersion = supportVersion
     self.requested = requested
@@ -154,6 +95,7 @@ public struct EffectiveRecipeReport: Sendable, Codable, Equatable {
     self.lensOptimizerEffective = lensOptimizerEffective
     self.lensOptimizerAdjusted = lensOptimizerAdjusted
     self.evidence = evidence
+    self.evidenceBySetting = evidenceBySetting
   }
 
 }

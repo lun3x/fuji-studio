@@ -44,8 +44,8 @@ struct PhoneRecipeDraftTests {
         #expect(PhoneRecipeDraft(recipe: PhoneRecipe(id: original.id, snapshot: snapshot)).value(for: .grain) == raw)
         #expect(snapshot.importedSettings.filter { $0.code != 0xD195 } == original.snapshot.importedSettings.filter { $0.code != 0xD195 })
         if [2, 4, 5].contains(raw) {
-            #expect(throws: RecipeImportError.self) { try snapshot.requireRenderable() }
-        } else { try snapshot.requireRenderable() }
+            #expect(throws: RecipeImportError.self) { try snapshot.requireRenderable(using: RecipeCodecRegistry()) }
+        } else { try snapshot.requireRenderable(using: RecipeCodecRegistry()) }
     }
 
     @Test func untouchedPaddedNameDoesNotCreateARevision() throws {
@@ -76,7 +76,7 @@ struct PhoneRecipeDraftTests {
         #expect(updated.name == "My daylight 🌤")
         #expect(updated.copiedFromRecipeID == original.id)
         #expect(updated.settingsDigest != original.snapshot.settingsDigest)
-        let settings = try updated.normalizedSettings
+        let settings = try updated.settings(using: RecipeCodecRegistry())
         #expect(settings.film == .provia)
         #expect(settings.highlightTenths == -5)
         #expect(settings.noiseReduction == 3)
@@ -98,7 +98,7 @@ struct PhoneRecipeDraftTests {
         let updated = try draft.makeSnapshot()
         #expect(updated.importedSettings == original.snapshot.importedSettings)
         #expect(updated.settingsDigest == original.snapshot.settingsDigest)
-        #expect(updated.renderingSupport == original.snapshot.renderingSupport)
+        #expect(updated.renderingSupport(using: RecipeCodecRegistry()) == original.snapshot.renderingSupport(using: RecipeCodecRegistry()))
         #expect(updated.name == "Renamed unsupported")
         #expect(try PhoneRecipeDraft(recipe: original).makeSnapshot() == original.snapshot)
     }
@@ -117,7 +117,7 @@ struct PhoneRecipeDraftTests {
             var draft = PhoneRecipeDraft(recipe: original); draft.setValue(raw, for: .grain)
             #expect(throws: PhoneRecipeEditingError.self) { try draft.makeSnapshot() }
         }
-        #expect(try original.snapshot.normalizedSettings.dynamicRange == 400)
+        #expect(try original.snapshot.settings(using: RecipeCodecRegistry()).dynamicRange == 400)
     }
 
     @Test(arguments: PhoneRecipeSetting.allCases.filter { $0 != .kelvin && $0 != .grain })
@@ -126,7 +126,7 @@ struct PhoneRecipeDraftTests {
         for choice in setting.choices {
             var draft = PhoneRecipeDraft(recipe: original)
             draft.setValue(choice.value, for: setting)
-            try draft.makeSnapshot().requireRenderable()
+            try draft.makeSnapshot().requireRenderable(using: RecipeCodecRegistry())
         }
     }
 }

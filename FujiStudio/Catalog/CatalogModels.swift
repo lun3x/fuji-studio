@@ -65,3 +65,9 @@ import SwiftData
         outputAssetID = version.outputAssetID; exportedAt = version.exportedAt; self.payload = payload
     }
 }
+
+@Model final class CatalogFormatRecord {
+    @Attribute(.unique) var key: String
+    var version: Int
+    init(version: Int) { self.key = "value-payloads"; self.version = version }
+}
