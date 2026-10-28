@@ -3,8 +3,8 @@
 An iOS app for developing Fujifilm RAW photos with a connected camera's own
 conversion engine and saved profiles.
 
-The USB implementation uses model adapters for Fujifilm X-T5 firmware4.31 and
-X-E3 firmware1.30. Shared Swift code owns import, conversion, output validation
+The USB implementation uses model adapters for Fujifilm X-T5 firmware 4.31 and
+X-E3 firmware 1.30. Shared Swift code owns import, conversion, output validation
 and cleanup on iOS and in the native macOS runner. See the
 [adapter validation record](docs/validation/fujifilm-usb-adapters.md) for measured
 support and the independent physical iPhone gates.
@@ -55,8 +55,8 @@ disconnecting clears the selection. Phone rows have a trash icon with confirmati
 and deletion preserves saved photos and export history. The pencil opens a native
 editor with Name, Look, White balance, and Tone and detail sections. Save applies
 the draft; Cancel discards it. Editing works offline, and saving the selected
-recipe refreshes its preview when a camera is connected. Choices follow each recipe's model capabilities. X-E3 offers its15 films, whole
-tone steps, strength-only grain and31 verified discrete Kelvin values. X-T5
+recipe refreshes its preview when a camera is connected. Choices follow each recipe's model capabilities. X-E3 offers its 15 films, whole
+tone steps, strength-only grain and 31 verified discrete Kelvin values. X-T5
 retains its measured rendering domain, with all grain combinations saveable. Grain effect and Grain size are separate controls; Off greys out size
 and remembers it. Weak grain and Strong with Large size are not yet supported
 for camera conversion. Existing unsupported values are preserved until

@@ -14,9 +14,9 @@ validation, durable operation intents and proven owned-output cleanup. Platform
 ImageCaptureCore drivers deliver correlated callbacks and attachment continuity.
 `Tools/FujiCameraLaptop` calls the same service. Python only analyzes evidence.
 
-X-E3 admission requires FUJIFILM/X-E3/1.30, USB mode6 and FF129505/601-byte profiles.
-All seven supplied RAFs are14-bit/version0130, recorded6000×4000: lossless containers
-6048×4038 with crop21/16 and uncompressed6160×4032 with crop16/16, orientations1/8.
+X-E3 admission requires FUJIFILM/X-E3/1.30, USB mode 6 and FF129505/601-byte profiles.
+All seven supplied RAFs are 14-bit/version0130, recorded 6000×4000: lossless containers
+6048×4038 with crop 21/16 and uncompressed 6160×4032 with crop 16/16, orientations 1/8.
 Unknown classes are refused. Conversion admission is independent of Apple RAW
 viewing availability. Custom measured-WB gains remain unsupported.
 
@@ -29,35 +29,59 @@ normal ownership checks but never published. Unsafe ownership remains uncertain.
 
 ## Native Mac X-E3 acceptance
 
-Measured on2026-10-28, firmware1.30. The initial disconnected import timed out and
+Measured on 2026-10-28, firmware 1.30. The initial disconnected import timed out and
 closed. After the user reconnected, import passed with seven complete renderable
-snapshots, exactly one backup read and a final verified native generation5.
+snapshots, exactly one backup read and a final verified native generation 5.
 No persistent camera setting or saved bank was written.
 
-Seven bank/seven source conversions passed, covering both encodings/orientations
-and C7's calibrated Underwater shifts. Each output was6000×4000 FINE, with exact
+Seven bank and seven source conversions passed, covering both encodings/orientations
+and C7's calibrated Underwater shifts. Each output was 6000×4000 FINE, with exact
 profile readback, qualified setting evidence, one trigger/delete, verified empty
 view and confirmed session close. All original RAF checksums remained unchanged.
-C3's explicitDR200 reference diagnostic, a C4 repeat and frozen C4 edits to10000K
-and2500K also passed. Normal C3 remainsDR400. Public sanitized results and reference
+C3's explicit DR200 reference diagnostic, a C4 repeat and frozen C4 edits to 10000 K
+and 2500 K also passed. Normal C3 remains DR400. Public sanitized results and reference
 statistics are under the core's `Fixtures/XE3/1.30/shared-core-*.json`; full photos,
 backups, hashes, native diagnostics and journals stay in ignored private storage.
 
-All31 native Kelvin choices independently matched qualified JPEG temperature.
-5310K read back unchanged but rendered2500K and is rejected before upload.
+All 31 native Kelvin choices independently matched qualified JPEG temperature.
+5310K read back unchanged but rendered 2500 K and is rejected before upload.
 See [the protocol record](xe3-laptop-protocol.md) for full measurements.
 
 ## Software gates
 
-Latest implementation iteration: core99 tests/16 suites; native Mac CLI6/3;
-iOS unit465/57, zero failures. The full simulator suite, Release builds and final
-independent review are in progress. Existing opt-in native Home/background and
-hardware Escape tests do not count as physical lifecycle proof.
+The first complete simulator run passed **543 tests, three established skips,
+zero failures** (546 total), result `20261028-201726-2333.xcresult`. The skips are
+native Home/background, native rotation and hardware Escape, each opt-in.
+Core 99 tests/16 suites and native Mac CLI 6/3 also passed; the core run explicitly
+included all seven private RAFs, the camera JPEG and the restored backup.
+
+The independent whole-branch review found no Critical issues and two Important
+issues: recipe persistence failure stranded a live camera context, and commit
+interruption was not actually covered. The app now closes the live context on
+failed import/commit so Connect can retry without a cable reconnect. The new
+regression failed with four assertions before that fix, then passed. Catalog
+upgrade tests now interrupt immediately before durable commit and verify rollback
+of payloads/format, frozen version/phone IDs and unresolved Photos intent on
+restart. A multi-record journal test interrupts its second durable replacement,
+then verifies mixed-format restart, history and exclusive delete markers. The
+catalog boundary hook first failed to compile before implementation; the journal
+needed coverage only and passed its new injected failure test unchanged.
+
+After these fixes: **467 Swift tests/57 suites and 19 XCTest unit tests pass**,
+zero failures. Final full-suite and Release rechecks are in progress.
+
+Two review minors are deferred: persist known JPEG mismatch diagnostics before
+cleanup so an interruption retains them, and distinguish the five pending WB
+preset dependencies in renderable capability choices. Snapshot admission already
+blocks unverified dependency execution; the current seven imported banks pass.
 
 ## Physical iPhone gates
 
-Louisphone, iPhone15Pro/iOS27.0.1, is paired and available. The final signed Release
-bundle has not yet been installed for this adapter checkpoint.
+Louisphone, iPhone 15 Pro / iOS 27.0.1, is paired and available. The Release build from `bd90deb2fd98` (version 0.1/build 1, iPhoneOS 27.1 SDK)
+passed `codesign --verify --deep --strict` and was installed successfully using
+automatic signing, team `AZH3P824F3`, Apple Development identity. Its normal
+launch was refused by iOS because the phone was locked; an unlock is pending.
+The independent unsigned simulator Release build also passed.
 
 X-E3/iPhone: USB mode/admission, seven-bank import/final context, real original-RAW
 decoding for both source encodings, offline editing, preview/FINE Photos export,

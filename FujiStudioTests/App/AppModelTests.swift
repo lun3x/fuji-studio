@@ -4,6 +4,29 @@ import Testing
 @testable import FujiStudio
 
 @MainActor struct AppModelTests {
+    @Test func failedRecipeCommitCanRetryWithoutPhysicalReconnect() async throws {
+        let camera = try ReceiptCamera(), f = try await FixtureEnvironment.make(cameraOverride: camera)
+        let catalog = HeldVersionCatalog(base: f.environment.catalog)
+        let model = model(f.environment, catalog: catalog)
+        await model.start(automaticallyConnect: false)
+        let previous = model.state.recipes
+        await catalog.failNextRecipeSave()
+        await model.connect()
+        await eventually { await camera.importCount == 1 && !model.isRefreshing }
+        #expect(model.state.recipes == previous)
+        #expect(try await catalog.latestRecipes() == previous)
+        #expect(model.state.currentCameraExecutionContext == nil)
+        #expect(model.state.cameraState == .disconnected)
+        // The Connect action must recover using the same attached body. The real
+        // service does not emit READY again while its existing context is live.
+        await model.connect()
+        await eventually { await camera.importCount == 2 && !model.isRefreshing }
+        #expect(model.state.currentCameraExecutionContext?.generation == 3)
+        #expect(model.state.recipes.allSatisfy { $0.cameraContext.model == "X-E3" })
+        #expect(try await catalog.latestRecipes() == model.state.recipes)
+        #expect(await camera.renderCount == 0)
+        #expect(await f.writer.requests.isEmpty)
+    }
     @Test func temporaryInactiveSceneDoesNotDiscardOwnedImport() async throws {
         let camera=try ReceiptCamera(),f=try await FixtureEnvironment.make(cameraOverride:camera)
         let catalog=HeldVersionCatalog(base:f.environment.catalog),barrier=FixtureBarrier()
@@ -922,6 +945,8 @@ import Testing
 /// Delegates to the same actual disk catalog; only the captured version-list return is delayed.
 private actor HeldVersionCatalog: CatalogStoring {
     let base: any CatalogStoring
+    private var recipeSavesToFail = 0
+    func failNextRecipeSave() { recipeSavesToFail += 1 }
     private var recipeSaveBarrier:FixtureBarrier?
     func holdRecipeSave(_ barrier:FixtureBarrier) { recipeSaveBarrier=barrier }
     private var phoneSavesFail = false
@@ -957,6 +982,10 @@ private actor HeldVersionCatalog: CatalogStoring {
     }
     func upsertSources(_ sources: [PhotoSource]) async throws { try await base.upsertSources(sources) }
     func replaceRecipes(_ snapshots: ImportedRecipeCollection) async throws {
+        if recipeSavesToFail > 0 {
+            recipeSavesToFail -= 1
+            throw CatalogError.durableFailure("Synthetic recipe commit failure")
+        }
         try await base.replaceRecipes(snapshots)
         if let barrier=recipeSaveBarrier { recipeSaveBarrier=nil;await barrier.wait() }
     }

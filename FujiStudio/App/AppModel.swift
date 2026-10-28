@@ -443,10 +443,15 @@ import Observation
             }
         } catch {
             if recipeRequestIsCurrent(request,lifecycle:lifecycle) {
-                if let terminal=pendingImportTerminal {
-                    if terminal == .authorizationDenied { cameraAuthorizationDenied=true }
-                    reduce(.cameraChanged(terminal,context:nil))
-                }
+                // A failed receipt commit must not leave a live service context behind
+                // the app's retired context. Close it so Connect can start a fresh
+                // attempt; never publish the collection whose persistence failed.
+                let denied = pendingImportTerminal == .authorizationDenied
+                await environment.camera.disconnect()
+                guard recipeRequestIsCurrent(request,lifecycle:lifecycle) else { return }
+                let terminal = denied ? CameraState.authorizationDenied : (pendingImportTerminal ?? .disconnected)
+                if terminal == .authorizationDenied { cameraAuthorizationDenied=true }
+                reduce(.cameraChanged(terminal,context:nil))
                 reduce(.recipeRefreshFailed(Self.explain(error)))
             }
         }

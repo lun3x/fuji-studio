@@ -422,12 +422,12 @@ and all seven decoded banks in the restored private backup.
 The first live import timed out with confirmed closure because macOS saw no
 Fujifilm USB device. After the user powered on/reconnected the camera, a fresh
 import passed: one backup read between three verified native sessions, final
-native generation5, seven complete snapshots and no rendering issues. No saved
+native generation 5, seven complete snapshots and no rendering issues. No saved
 setting was written. The failed run remains in private evidence.
 
 Eleven shared-core conversions passed: C1–C7 over all seven supplied sources,
-an explicit C3 DR200 frozen snapshot, a C4 repeat, and C4 edited to10000/2500K.
-Each produced6000×4000 FINE with the source orientation, exact profile readback,
+an explicit C3 DR200 frozen snapshot, a C4 repeat, and C4 edited to 10000/2500 K.
+Each produced 6000×4000 FINE with the source orientation, exact profile readback,
 qualified effective-setting evidence, one owned delete, empty-view verification
 and confirmed close. All seven original RAF checksums remain unchanged.
 The public summary is `shared-core-renders.json` in the canonical XE3 fixtures.
@@ -445,15 +445,15 @@ Normal imported C3 continues to request DR400. Only the named reference diagnost
 uses DR200. See `shared-core-reference-comparisons.json`.
 
 The native preset sweep independently verified every remaining Kelvin index
-against qualified Fuji ColorTemperature metadata: all31 native choices render
-exactly as requested. A5310K negative trial read back exactly but rendered2500K;
+against qualified Fuji ColorTemperature metadata: all 31 native choices render
+exactly as requested. A 5310 K negative trial read back exactly but rendered 2500 K;
 it remains rejected before upload. `kelvin-preset-sweep.json` distinguishes this
 diagnostic evidence from the shared-core endpoint conversions. The app picker
-now offers precisely the31 native values.
+now offers precisely the 31 native values.
 
-A fresh backup after these runs confirms the entire24-byte WB table and all
+A fresh backup after these runs confirms the entire 24-byte WB table and all
 seven bank records/names match the earlier restored baseline. Four bytes outside
-those regions changed (675,3800,3802,3804); their semantics are unclassified.
+those regions changed (675, 3800, 3802, 3804); their semantics are unclassified.
 Every session was closed. Five remaining preset shift pairs are being calibrated
 with manual user changes and will remain blocked until verified and restored.
 Custom measured-WB gains remain unsupported. Physical iPhone acceptance remains

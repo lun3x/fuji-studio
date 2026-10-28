@@ -7,7 +7,9 @@ import FujiCameraCore
 struct CatalogPayloadUpgrade {
     let context: ModelContext
     let storeURL: URL
-    func runIfNeeded() throws {
+    // The boundary hook lets recovery tests stop after all in-memory updates,
+    // immediately before the transaction's durable commit.
+    func runIfNeeded(beforeCommit: () throws -> Void = {}) throws {
         let formats = try context.fetch(FetchDescriptor<CatalogFormatRecord>())
         if let current = formats.first, current.version == 3 { return }
         let version=formats.first?.version ?? 1
@@ -65,6 +67,7 @@ struct CatalogPayloadUpgrade {
                 updates.forEach { $0() }
                 if let current=formats.first { current.version=3 }
                 else { context.insert(CatalogFormatRecord(version:3)) }
+                try beforeCommit()
                 try context.save()
             }
         } catch { context.rollback();throw error }

@@ -4,5 +4,5 @@ Shipping-core acceptance (2026-10-28): `1.30/shared-core-renders.json` contains
 sanitized actual FujiCameraService runs; `shared-core-reference-comparisons.json`
 contains pixel statistics and qualified JPEG metadata comparisons.
 `kelvin-preset-sweep.json` is diagnostic-only independent native Kelvin evidence;
-its arbitrary5310K negative remains unsupported. No source hashes, recipe names,
+its arbitrary 5310 K negative remains unsupported. No source hashes, recipe names,
 serials, full backups, operation IDs or photographs are included.

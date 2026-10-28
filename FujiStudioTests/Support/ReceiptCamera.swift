@@ -37,6 +37,7 @@ actor ReceiptCamera: CameraServing {
       connection: .init(name: "X-E3", usbVendorID: 0x04cb, usbProductID: 0x02d6))
   }
   func connect() {
+    guard context == nil else { return }
     context = .init(
       model: "X-E3", firmware: "1.30", capability: XE3Support.identifier,
       supportVersion: XE3Support.identifier, sessionIdentity: UUID(), generation: 1)
