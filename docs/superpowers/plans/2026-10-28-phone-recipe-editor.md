@@ -19,16 +19,16 @@ Retain stable preset identity across snapshot changes; reject stale drafts and e
 
 ## Task 1 — editable values and immutable persistence
 
-- [ ] Verify baseline on a new task simulator.
-- [ ] Add failing tests for supported/raw setting edits, name-only/unsupported preservation, validation, no-op saves, stable identity, durable restart, history and stale drafts/deleted targets.
-- [ ] Introduce PhoneRecipe (stable identity + snapshot), PhoneRecipeSetting and PhoneRecipeDraft. Update the existing phone APIs/consumers to stable identity. Atomically save a new snapshot; preserve membership, camera imports and export snapshots.
-- [ ] Run all unit tests and push a checkpoint.
+- [x] Verify baseline on a new task simulator.
+- [x] Add failing tests for supported/raw setting edits, name-only/unsupported preservation, validation, no-op saves, stable identity, durable restart, history and stale drafts/deleted targets.
+- [x] Introduce PhoneRecipe (stable identity + snapshot), PhoneRecipeSetting and PhoneRecipeDraft. Update the existing phone APIs/consumers to stable identity. Atomically save a new snapshot; preserve membership, camera imports and export snapshots.
+- [x] Run all unit tests and push a checkpoint.
 
 ## Task 2 — native editor and state integration
 
-- [ ] Add failing reducer/model and UI checks for selected/unselected updates, offline edit/save, cancel, invalid input, settings changes, persistence failure and largest text.
-- [ ] Add PhoneRecipeEditor and accessible pencil controls; preserve drafts on failure and prevent dismissal during saving. Forward through the real model and synthetic workspace fixture.
-- [ ] Run affected UI cases and unit tests, inspect screenshots, and push a checkpoint.
+- [x] Add failing reducer/model and UI checks for selected/unselected updates, offline edit/save, cancel, invalid input, settings changes, persistence failure and largest text.
+- [x] Add PhoneRecipeEditor and accessible pencil controls; preserve drafts on failure and prevent dismissal during saving. Forward through the real model and synthetic workspace fixture.
+- [x] Run affected UI cases and unit tests, inspect screenshots, and push a checkpoint.
 
 ## Task 3 — completion
 

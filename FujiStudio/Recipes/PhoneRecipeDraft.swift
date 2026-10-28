@@ -42,8 +42,8 @@ struct PhoneRecipeDraft: Sendable, Equatable {
     func makeSnapshot() throws -> RecipeSnapshot {
         let source = original.snapshot
         guard source.copiedFromRecipeID == original.id else { throw PhoneRecipeEditingError.invalidSettings }
-        let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty else { throw PhoneRecipeEditingError.emptyName }
+        let title = name == source.name ? source.name : name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw PhoneRecipeEditingError.emptyName }
         var changes = changedValues
         if temperature != initialTemperature {
             guard let kelvin = UInt16(temperature.trimmingCharacters(in: .whitespacesAndNewlines)),

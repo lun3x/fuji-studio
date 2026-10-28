@@ -3,6 +3,20 @@ import Testing
 @testable import FujiStudio
 
 struct PhoneRecipeDraftTests {
+    @Test func untouchedPaddedNameDoesNotCreateARevision() throws {
+        let source = try ProductionProfileFixture().bank
+        let camera = try XT5RecipeCodec.recipe(slot: source.slot,
+            nameData: ProtocolProbeFixtures.string("  My look  "),
+            properties: Dictionary(uniqueKeysWithValues: source.importedSettings.map { ($0.code, $0.raw) }),
+            context: source.cameraContext, importedAt: source.importedAt)
+        let original = camera.copiedToPhone()
+        let draft = PhoneRecipeDraft(recipe: original)
+        #expect(!draft.hasChanges)
+        #expect(try draft.makeSnapshot() == original.snapshot)
+        var changed = draft; changed.setValue(1, for: .film)
+        #expect(try changed.makeSnapshot().name == original.snapshot.name)
+    }
+
     @Test func changedSettingsProduceValidSnapshotAndPreserveUntouchedValues() throws {
         let original = try ProductionProfileFixture().bank.copiedToPhone()
         var draft = PhoneRecipeDraft(recipe: original)
