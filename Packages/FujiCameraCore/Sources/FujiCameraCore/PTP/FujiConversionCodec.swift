@@ -200,9 +200,12 @@ public struct ValidatedJPEGMetadata: Sendable, Equatable {
   public let make: String, model: String
   public let quality: FujiJPEGQuality
   public let lensOptimizer: Bool?
+  public let rendering: [RecipeSettingID: RecipeSettingValue]
+  public let unrecognized: Set<RecipeSettingID>
   public init(
     width: Int, height: Int, orientation: Int, make: String, model: String,
-    quality: FujiJPEGQuality, lensOptimizer: Bool? = nil
+    quality: FujiJPEGQuality, lensOptimizer: Bool? = nil,
+    rendering: [RecipeSettingID: RecipeSettingValue] = [:], unrecognized: Set<RecipeSettingID> = []
   ) {
     self.width = width
     self.height = height
@@ -211,6 +214,8 @@ public struct ValidatedJPEGMetadata: Sendable, Equatable {
     self.model = model
     self.quality = quality
     self.lensOptimizer = lensOptimizer
+    self.rendering = rendering
+    self.unrecognized = unrecognized
   }
 
 }
@@ -237,6 +242,7 @@ extension FujiConversionCodec {
     return ValidatedJPEGMetadata(
       width: metadata.width, height: metadata.height, orientation: metadata.orientation,
       make: metadata.make, model: metadata.model, quality: metadata.quality,
-      lensOptimizer: metadata.lensOptimizer)
+      lensOptimizer: metadata.lensOptimizer, rendering: metadata.rendering,
+      unrecognized: metadata.unrecognized)
   }
 }

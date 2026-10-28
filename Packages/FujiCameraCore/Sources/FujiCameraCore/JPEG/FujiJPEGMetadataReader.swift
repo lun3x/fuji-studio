@@ -16,8 +16,10 @@ public struct FujiJPEGMetadata: Sendable, Equatable {
   public let make: String, model: String
   public let quality: FujiJPEGQuality
   public let lensOptimizer: Bool?
+  public let rendering: [RecipeSettingID: RecipeSettingValue]
+  public let unrecognized: Set<RecipeSettingID>
   public func requireFine(width: Int, height: Int, orientation: Int, model: String) throws {
-    guard model == "X-T5", self.model == model, make == "FUJIFILM" else {
+    guard self.model == model, make == "FUJIFILM" else {
       throw FujiJPEGValidationError.cameraMismatch
     }
     guard self.width == width, self.height == height else {
@@ -28,7 +30,8 @@ public struct FujiJPEGMetadata: Sendable, Equatable {
   }
   public init(
     width: Int, height: Int, orientation: Int, make: String, model: String,
-    quality: FujiJPEGQuality, lensOptimizer: Bool? = nil
+    quality: FujiJPEGQuality, lensOptimizer: Bool? = nil,
+    rendering: [RecipeSettingID: RecipeSettingValue] = [:], unrecognized: Set<RecipeSettingID> = []
   ) {
     self.width = width
     self.height = height
@@ -37,6 +40,8 @@ public struct FujiJPEGMetadata: Sendable, Equatable {
     self.model = model
     self.quality = quality
     self.lensOptimizer = lensOptimizer
+    self.rendering = rendering
+    self.unrecognized = unrecognized
   }
 
 }
@@ -262,6 +267,8 @@ public enum FujiJPEGMetadataReader {
     var reader: IFDReader?
     var make: String?, model: String?, orientation: Int?, thumbnailOrientation: Int?,
       quality: FujiJPEGQuality?
+    var rendering: [RecipeSettingID: RecipeSettingValue] = [:]
+    var unrecognized: Set<RecipeSettingID> = []
     var lensOptimizer: Bool?
     var thumbnailMake: String?, thumbnailModel: String?, pixelWidth: Int?, pixelHeight: Int?,
       thumbnailOffset: Int?, thumbnailLength: Int?
@@ -296,7 +303,8 @@ public enum FujiJPEGMetadataReader {
       }
       return FujiJPEGMetadata(
         width: width, height: height, orientation: orientation, make: make, model: model,
-        quality: quality, lensOptimizer: lensOptimizer)
+        quality: quality, lensOptimizer: lensOptimizer, rendering: rendering,
+        unrecognized: unrecognized)
     }
     mutating func visit(_ offset: Int, kind: Kind, depth: Int) throws {
       guard depth <= 4 else { throw FujiJPEGValidationError.resourceLimit }
@@ -333,6 +341,8 @@ public enum FujiJPEGMetadataReader {
           let maker = try makerQuality(region.slice(e.value, e.length))
           quality = maker.quality
           lensOptimizer = maker.lensOptimizer
+          rendering = maker.rendering
+          unrecognized = maker.unrecognized
         case 0xa002, 0xa003:
           guard kind == .exif else { throw FujiJPEGValidationError.conflictingMetadata }
           let value = try reader!.scalar(e)
@@ -351,7 +361,8 @@ public enum FujiJPEGMetadataReader {
       }
     }
     private func makerQuality(_ note: Region) throws -> (
-      quality: FujiJPEGQuality, lensOptimizer: Bool?
+      quality: FujiJPEGQuality, lensOptimizer: Bool?,
+      rendering: [RecipeSettingID: RecipeSettingValue], unrecognized: Set<RecipeSettingID>
     ) {
       guard note.starts(Array("FUJIFILM".utf8)) else {
         throw FujiJPEGValidationError.unsupportedMakerNote
@@ -375,7 +386,113 @@ public enum FujiJPEGMetadataReader {
         guard value == 0 || value == 1 else { throw FujiJPEGValidationError.conflictingMetadata }
         lensOptimizer = value == 1
       }
-      return (quality, lensOptimizer)
+      var values: [RecipeSettingID: RecipeSettingValue] = [:]
+      var unknown: Set<RecipeSettingID> = []
+      func unsigned(_ tag: Int) throws -> Int? {
+        guard let e = dir.entries.first(where: { $0.tag == tag }) else { return nil }
+        guard e.type == 3, e.count == 1 else { throw FujiJPEGValidationError.invalidTIFF }
+        return try note.u16(e.value, little: true)
+      }
+      func signed(_ tag: Int, count: Int = 1) throws -> [Int]? {
+        guard let e = dir.entries.first(where: { $0.tag == tag }) else { return nil }
+        guard e.type == 9, e.count == count else { throw FujiJPEGValidationError.invalidTIFF }
+        return try (0..<count).map {
+          Int(Int32(bitPattern: UInt32(try note.u32(e.value + 4 * $0, little: true))))
+        }
+      }
+      func mapped(_ tag: Int, _ id: RecipeSettingID, _ table: [Int: RecipeSettingValue]) throws {
+        if let raw = try unsigned(tag) {
+          if let value = table[raw] { values[id] = value } else { unknown.insert(id) }
+        }
+      }
+      try mapped(
+        0x1001, .sharpness,
+        [
+          0: .integer(-40), 1: .integer(-30), 2: .integer(-20), 3: .integer(0), 4: .integer(20),
+          5: .integer(30), 6: .integer(40), 0x82: .integer(-10), 0x84: .integer(10),
+        ])
+      try mapped(
+        0x1002, .whiteBalance,
+        [
+          0: .whiteBalance(.auto), 0x100: .whiteBalance(.daylight), 0x200: .whiteBalance(.shade),
+          0x300: .whiteBalance(.fluorescent1), 0x301: .whiteBalance(.fluorescent2),
+          0x302: .whiteBalance(.fluorescent3), 0x400: .whiteBalance(.incandescent),
+          0x600: .whiteBalance(.underwater), 0xff0: .whiteBalance(.temperature),
+        ])
+      try mapped(
+        0x1401, .film,
+        [
+          0: .film(.provia), 0x120: .film(.astia), 0x200: .film(.velvia), 0x500: .film(.proNegStd),
+          0x501: .film(.proNegHi), 0x600: .film(.classicChrome),
+        ])
+      if let saturation = try unsigned(0x1003) {
+        let mono: [Int: FilmSimulation] = [
+          0x300: .monochrome, 0x301: .monochromeRed, 0x302: .monochromeYellow,
+          0x303: .monochromeGreen, 0x310: .sepia, 0x500: .acros, 0x501: .acrosRed,
+          0x502: .acrosYellow, 0x503: .acrosGreen,
+        ]
+        let colors = [
+          0: 0, 0x80: 10, 0x100: 20, 0xc0: 30, 0xe0: 40, 0x180: -10, 0x400: -20, 0x4c0: -30,
+          0x4e0: -40,
+        ]
+        if let film = mono[saturation] {
+          if let previous = values[.film], previous != .film(film) { unknown.insert(.film) }
+          values[.film] = .film(film)
+        } else if let color = colors[saturation] {
+          values[.color] = .integer(color)
+        } else {
+          unknown.insert(.color)
+        }
+      }
+      if let temperature = try unsigned(0x1005) { values[.kelvin] = .integer(temperature) }
+      if let wb = try signed(0x100a, count: 2) {
+        if wb.allSatisfy({ (-180...180).contains($0) && $0 % 20 == 0 }) {
+          values[.whiteBalanceRed] = .integer(wb[0] / 20)
+          values[.whiteBalanceBlue] = .integer(wb[1] / 20)
+        } else {
+          unknown.formUnion([.whiteBalanceRed, .whiteBalanceBlue])
+        }
+      }
+      try mapped(
+        0x100e, .noiseReduction,
+        [
+          0: .integer(0), 0x100: .integer(2), 0x180: .integer(1), 0x1c0: .integer(3),
+          0x1e0: .integer(4), 0x200: .integer(-2), 0x280: .integer(-1), 0x2c0: .integer(-3),
+          0x2e0: .integer(-4),
+        ])
+      for (tag, id): (Int, RecipeSettingID) in [(0x1040, .shadow), (0x1041, .highlight)] {
+        if let raw = try signed(tag)?.first {
+          if (-64...32).contains(raw), raw % 8 == 0 {
+            values[id] = .integer(-raw * 10 / 16)
+          } else {
+            unknown.insert(id)
+          }
+        }
+      }
+      if let raw = try unsigned(0x1403) { values[.dynamicRange] = .integer(raw) }
+      for (tag, id): (Int, RecipeSettingID) in [
+        (0x1047, .grain), (0x1048, .colorChrome), (0x104e, .colorChromeBlue),
+      ] {
+        if let raw = try signed(tag)?.first {
+          if id == .grain, let grain = [0: GrainStrength.off, 32: .weak, 64: .strong][raw] {
+            values[id] = .grain(.init(strength: grain, size: nil))
+          } else if id != .grain,
+            let strength = [0: EffectStrength.off, 32: .weak, 64: .strong][raw]
+          {
+            values[id] = .effect(strength)
+          } else {
+            unknown.insert(id)
+          }
+        }
+      }
+      if let clarity = try signed(0x100f)?.first {
+        if (-5000...5000).contains(clarity), clarity % 100 == 0 {
+          values[.clarity] = .integer(clarity / 100)
+        } else {
+          unknown.insert(.clarity)
+        }
+      }
+      return (quality, lensOptimizer, values, unknown)
 
     }
   }

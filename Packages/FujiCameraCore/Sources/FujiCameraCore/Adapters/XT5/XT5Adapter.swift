@@ -77,29 +77,7 @@ public struct XT5Adapter: FujiCameraAdapter {
     -> CameraOutputAssessment
   {
     let metadata = try validateJPEG(jpeg, conversion.source)
-    guard let lmo = metadata.lensOptimizer else { throw CameraServiceError.invalidOutput }
-    guard lmo == conversion.expectedLensOptimizer else {
-      return CameraOutputAssessment(
-        metadata: metadata,
-        admission: .rejected(
-          .init(
-            field: "lensOptimizer", requested: String(conversion.expectedLensOptimizer),
-            observed: String(lmo))))
-    }
-    var evidence = Dictionary(
-      uniqueKeysWithValues: conversion.requested.values.keys.map {
-        ($0, SettingEvidence.profileConfirmed)
-      })
-    evidence[.lensOptimizer] = .jpegObserved
-    let report = EffectiveRecipeReport(
-      supportVersion: conversion.supportVersion, requested: conversion.requested,
-      dormantGrainSizeNotSerialized: conversion.requested.grain.strength == .off,
-      inactiveKelvinPreserved: conversion.requested.whiteBalance != .temperature,
-      lensOptimizerRequested: conversion.expectedLensOptimizer, lensOptimizerEffective: lmo,
-      lensOptimizerAdjusted: false,
-      evidence:
-        "Exact profile readback within measured X-T5 domain; JPEG identity, FINE, geometry and LMO observed.",
-      evidenceBySetting: evidence)
-    return CameraOutputAssessment(metadata: metadata, admission: .accepted(report))
+    return try CameraOutputAssessment.assess(
+      metadata: metadata, conversion: conversion, required: [])
   }
 }

@@ -17,6 +17,7 @@ public enum CameraServiceError: Error, Sendable, Equatable {
   case preexistingObjects, ownershipChanged, timeout
   case uncertainOperation(UUID)
   case closeUnconfirmed
+  case recipeImportUnavailable
   case recipeImportFailed(restorationConfirmed: Bool)
   case transport(PTPError)
 }

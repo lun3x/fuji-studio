@@ -194,6 +194,9 @@ public actor FujiCameraService: CameraServing {
     } catch { throw Self.failure(error) }
   }
   private func importOwned(epoch: UInt64) async throws -> ImportedRecipeCollection {
+    guard verifiedSupport?.capabilities.recipeImport == .supported else {
+      throw CameraServiceError.recipeImportUnavailable
+    }
     let execution = try await admit(epoch: epoch)
     do {
       guard try await handles().isEmpty else { throw CameraServiceError.preexistingObjects }
