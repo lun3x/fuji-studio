@@ -40,6 +40,7 @@ private struct AppEntryView: View {
     @State private var fixturePreviewCamera: FixtureCamera?
     @State private var fixturePreviewBlocked = false
     @State private var fixtureDisconnectedCamera: FixtureCamera?
+    @State private var fixturePhotoBarrier: FixtureBarrier?
     #endif
     var body: some View {
         Group {
@@ -69,6 +70,10 @@ private struct AppEntryView: View {
                     if let barrier = fixtureSaveBarrier {
                         Button("Finish fixture save") { Task { await barrier.release(); fixtureSaveBarrier = nil } }
                             .accessibilityIdentifier("fixture.finishSave").accessibilityValue(model.environment.platform.idleTimerDisabled ? "Awake" : "Idle timer restored").buttonStyle(.bordered)
+                    }
+                    if let barrier = fixturePhotoBarrier {
+                        Button("Finish fixture photo") { Task { await barrier.release(); fixturePhotoBarrier = nil } }
+                            .accessibilityIdentifier("fixture.finishPhoto").buttonStyle(.bordered)
                     }
                     if let barrier = fixturePreviewBarrier, let camera = fixturePreviewCamera {
                         HStack {
@@ -110,6 +115,10 @@ private struct AppEntryView: View {
                     if flags.contains("--fixture-held-preview") {
                         let barrier = FixtureBarrier(); fixturePreviewBarrier = barrier; fixturePreviewCamera = bundle.camera
                         await bundle.reader.holdMaterialize("source-0", barrier: barrier)
+                    }
+                    if flags.contains("--fixture-held-photo") {
+                        let barrier = FixtureBarrier(); fixturePhotoBarrier = barrier
+                        await bundle.reader.holdMaterialize("source-2", barrier: barrier)
                     }
                 } else { environment = try await AppEnvironment.live() }
                 #else

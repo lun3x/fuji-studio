@@ -6,6 +6,16 @@
 - Create a new simulator for each task so that concurrently running agents do not interfere with one another. Shut down and delete that simulator when the task is finished.
 - Do not maintain backwards compatibility unless explicitly requested.
 
+## Test iteration
+
+- Use `Scripts/test-ios.sh --fast` for implementation iterations. It runs all
+  unit tests without UI automation. For a narrower check, supply one or more
+  selectors, e.g. `Scripts/test-ios.sh FujiStudioTests/WorkspaceStateTests
+  FujiStudioTests/AppModelTests`.
+- Run affected UI suites explicitly when changing UI behavior. Run the complete
+  `Scripts/test-ios.sh` suite for final validation; `--fast` does not verify UI
+  behavior. Use `FUJI_STUDIO_DESTINATION` to select the task's isolated simulator.
+
 ## Installing on the physical iPhone
 
 - Reuse the existing local signing credentials and development team `AZH3P824F3`.

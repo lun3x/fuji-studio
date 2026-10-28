@@ -163,9 +163,21 @@ project's `.venv` rather than a global Python environment.
 Requires Xcode 27.1 (verified toolchain 27A9275), iOS 27+, and XcodeGen 2.46.0 (`brew install xcodegen`). No runtime packages are used.
 
 ```sh
-Scripts/test-ios.sh
+Scripts/test-ios.sh --fast # All unit tests; use during implementation.
 Scripts/test-ios.sh FujiStudioTests/RawResourceSelectorTests
+Scripts/test-ios.sh FujiStudioTests/WorkspaceStateTests FujiStudioTests/AppModelTests
+Scripts/test-ios.sh FujiStudioUITests/LaunchTests
+Scripts/test-ios.sh # Complete unit and UI suite; use for final validation.
 ```
+
+`--fast` runs the entire `FujiStudioTests` target without UI tests. This keeps
+coverage of the model, camera, library, rendering and export logic while avoiding
+UI automation during each iteration. It still builds the app and needs an iOS
+simulator or device; the first run in a fresh workspace includes compilation.
+For a narrower check, supply one or more `Target/Suite` or `Target/Suite/Test`
+selectors instead of `--fast`. When changing UI behavior, also run the affected
+UI tests. Run the complete suite for final validation; a fast run does not
+establish that UI tests pass. Use `Scripts/test-ios.sh --help` for usage.
 
 The script generates the ignored `FujiStudio.xcodeproj` and shared `FujiStudio` scheme, uses `.build/DerivedData` and timestamped `.build/TestResults/*.xcresult`, and disables signing for simulator destinations. The observed simulator was iPhone Duo, iOS 27.1. Select an available destination on your machine:
 
@@ -180,9 +192,8 @@ xcodegen generate
 xcodebuild -project FujiStudio.xcodeproj -scheme FujiStudio -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
 ```
 
-The test wrapper accepts one optional selector. For several suites, use direct
-`xcodebuild test` with a separate `-only-testing:` argument for each. Native
-Home, hardware-keyboard and rotation tests are explicit, unverified opt-ins;
+The test wrapper forwards each selector as a separate `-only-testing:` argument.
+Native Home, hardware-keyboard and rotation tests are explicit, unverified opt-ins;
 the shell must forward `TEST_RUNNER_FUJI_STUDIO_NATIVE_LIFECYCLE=1`,
 `TEST_RUNNER_FUJI_STUDIO_NATIVE_KEYBOARD=1` or
 `TEST_RUNNER_FUJI_STUDIO_NATIVE_ROTATION=1` to the XCTest runner. Default skips

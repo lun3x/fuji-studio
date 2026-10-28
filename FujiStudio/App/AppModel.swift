@@ -66,6 +66,15 @@ import Observation
         self.environment = environment; self.connectionRetryWait = connectionRetryWait
     }
     var imageStatusIsFailure: Bool { displayFailure != nil }
+    /// Keep the displayed file's identity until its replacement is ready, even after selection moves.
+    var imageIdentity: (sourceID: SourceID, version: VersionID)? {
+        guard displayFile != nil, let availableDisplay else { return nil }
+        return (availableDisplay.sourceID, availableDisplay.version)
+    }
+    private var hasCurrentSourceDisplay: Bool {
+        availableDisplay?.sourceID == state.viewedSourceID && availableDisplay?.revision == state.viewedSourceRevision
+            && displayFile != nil
+    }
     deinit {
         streams.forEach { $0.cancel() }; displayTask?.cancel(); contextTask?.cancel(); versionRefreshTask?.cancel()
         automaticConnectionTask?.cancel()
@@ -110,6 +119,10 @@ import Observation
         let previousRecipe = state.selectedRecipe
         let previousRevision = state.viewedSourceRevision
         let effects = state.reduce(action)
+        if let availableDisplay,
+           !sources.contains(where: { $0.id == availableDisplay.sourceID && $0.resourceRevision == availableDisplay.revision }) {
+            displayFile = nil; self.availableDisplay = nil
+        }
         let request = effects.compactMap { effect -> WorkspacePreviewRequest? in
             if case .requestPreview(let request) = effect { return request }; return nil
         }.first
@@ -132,22 +145,28 @@ import Observation
         // Supersede intent in the coordinator; an already-active camera operation must drain.
         isLoadingPreview = request != nil
         displayRequest = request; displayFailure = nil
-        if let availableDisplay, request != nil,
-           availableDisplay.sourceID == state.viewedSourceID, availableDisplay.revision == state.viewedSourceRevision {
+        if let availableDisplay, let selected = state.viewedSourceID, state.displayedVersion != nil,
+           sources.contains(where: { $0.id == availableDisplay.sourceID && $0.resourceRevision == availableDisplay.revision }),
+           availableDisplay.sourceID != selected || (hasCurrentSourceDisplay && (request != nil || availableDisplay.version == state.displayedVersion)) {
             displayFile = availableDisplay.file
-            state.reduce(.previewFallback(availableDisplay.version))
+            if request != nil, hasCurrentSourceDisplay { state.reduce(.previewFallback(availableDisplay.version)) }
         } else {
             displayFile = nil; availableDisplay = nil
         }
         imageStatus = "Loading image…"
         imageLoading = .loading
         if preview?.sourceID != state.viewedSourceID || preview?.sourceRevision != state.viewedSourceRevision { preview = nil }
-        guard !isSuspended, let source = sources.first(where: { $0.id == state.viewedSourceID }), let version = state.displayedVersion else {
+        guard let source = sources.first(where: { $0.id == state.viewedSourceID }), let version = state.displayedVersion else {
             savedVersions = []; imageStatus = nil; imageLoading = nil
             let coordinator = environment.preview
             displayTask = Task { await coordinator.invalidate() }; return
         }
         let coordinator = environment.preview
+        // Foreground recovery reloads Photos before reopening work. A selected image is
+        // still pending during that interval; an empty viewer must keep its loading state.
+        guard !isSuspended else {
+            displayTask = Task { await coordinator.invalidate() }; return
+        }
         displayTask = Task { [weak self] in
             guard !Task.isCancelled else { return }
             await coordinator.invalidate()
@@ -169,7 +188,7 @@ import Observation
                     displayFailure = Self.previewMessage(failure); imageStatus = displayFailure
                     isLoadingPreview = false
                     state.reduce(.previewInterrupted)
-                    if displayFile == nil { resolveFallbackOriginal() }
+                    if !hasCurrentSourceDisplay { resolveFallbackOriginal() }
                 } else {
                     imageStatus = Self.loadingMessage(event.state)
                 }
@@ -196,6 +215,7 @@ import Observation
             imageStatus = displayFailure ?? Self.loadingMessage(event.state)
         case .failed(let failure):
             imageLoading = nil
+            if !hasCurrentSourceDisplay { displayFile = nil; availableDisplay = nil }
             displayFailure = Self.previewMessage(failure); imageStatus = displayFailure
         }
     }
@@ -205,12 +225,13 @@ import Observation
         guard let source = sources.first(where: { $0.id == state.viewedSourceID }) else { return }
         let version: VersionID = source.originalResources.jpeg == nil ? .raw : .cameraJPEG
         state.reduce(.previewFallback(version))
+        imageLoading = .loading
         let coordinator = environment.preview, intent = displayIntent
         displayTask = Task { await coordinator.selectStoredVersion(version, source: source, displayIntent: intent) }
     }
 
     var detail: ZoomPhotoView.DetailProvider? {
-        guard let source = sources.first(where: { $0.id == state.viewedSourceID }), let file = displayFile else { return nil }
+        guard hasCurrentSourceDisplay, let source = sources.first(where: { $0.id == state.viewedSourceID }), let file = displayFile else { return nil }
         if state.displayedVersion == .raw {
             let resolver = environment.resolver
             return { region, size in try await resolver.rawDetail(source: source, topLeftRegion: region, maximumDimension: size) }
@@ -263,6 +284,9 @@ import Observation
     }
 
     private func libraryChanged(_ event: LibraryChange) async {
+        if !hasCurrentSourceDisplay, event.accessScopeChanged || !event.removedIDs.isEmpty {
+            displayFile = nil; availableDisplay = nil
+        }
         sources.removeAll { event.removedIDs.contains($0.id) }
         reduce(.libraryUpdated(sources: sources, access: state.libraryAccess))
         if !event.removedIDs.isEmpty { await environment.exports.pauseActiveWork() }
@@ -375,6 +399,7 @@ import Observation
         displayTask?.cancel(); displayIntent &+= 1; displayRequest = nil
         imageLoading = nil
         if isLoadingPreview { state.reduce(.previewInterrupted); isLoadingPreview = false }
+        if !hasCurrentSourceDisplay { displayFile = nil; availableDisplay = nil }
         imageStatus = displayFile == nil ? "Image loading stopped. Select the recipe again to retry." : displayFailure
         await environment.preview.invalidate()
         let task = Task { try await engine.start(sources: sources, recipe: recipe) }
@@ -456,7 +481,7 @@ import Observation
             stopAutomaticConnection()
             displayIntent &+= 1
             displayTask?.cancel(); displayRequest = nil
-            imageLoading = nil
+            imageLoading = !hasCurrentSourceDisplay && imageLoading != nil ? .loading : nil
         }
         let preceding = sceneTask
         let task = Task { [weak self] in

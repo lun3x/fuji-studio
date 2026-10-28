@@ -116,6 +116,29 @@ import XCTest
         app.buttons["fixture.foreground"].tap()
         wait { app.buttons["app.status"].label.contains("Camera ready") }
     }
+    func testPhotoChangeKeepsPreviousImageAndZoomUnderLoadingOverlay() {
+        let app = launch(["--fixture-held-photo"])
+        app.cells["grid.source-0"].tap()
+        let viewer = app.scrollViews["viewer.image"], loading = app.descendants(matching: .any)["viewer.loading"]
+        XCTAssertTrue(viewer.waitForExistence(timeout: 5))
+        wait { !loading.exists }
+        viewer.pinch(withScale: 2, velocity: 1)
+        func zoom() -> Double { Double((viewer.value as? String ?? "").split(separator: ",").first ?? "") ?? -1 }
+        let frame = viewer.frame, previousZoom = zoom()
+        XCTAssertGreaterThan(previousZoom, 1.1)
+        app.cells["grid.source-2"].tap()
+        XCTAssertTrue(loading.waitForExistence(timeout: 5))
+        XCTAssertTrue(viewer.exists)
+        XCTAssertEqual(viewer.frame, frame)
+        XCTAssertEqual(zoom(), previousZoom, accuracy: 0.01)
+        XCTAssertEqual(loading.frame.midX, frame.midX, accuracy: 1)
+        XCTAssertEqual(loading.frame.midY, frame.midY, accuracy: 1)
+        shot(app, "Previous photo greyed under photo-switch spinner")
+        app.buttons["fixture.finishPhoto"].tap()
+        wait { !loading.exists && abs(zoom() - 1) < 0.01 }
+        XCTAssertFalse(app.descendants(matching: .any)["viewer.unavailable"].exists)
+        shot(app, "New photo replaces previous photo at fit")
+    }
     func testDisconnectedRecipeMenuSelectsNoneAndDisablesCachedRecipesAndRefresh() {
         let app = launch(["--fixture-disconnected-camera"])
         tap(app.buttons["recipe.control"], in: app)
