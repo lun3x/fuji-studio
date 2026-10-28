@@ -47,8 +47,18 @@ and noninteractive overlay behavior are retained.
   waited 60 seconds for simulator animation notifications and eventually passed
   after 1,222 seconds. Its fixture does not display the loading ring.
 
+## Physical iPhone installation
+
+The user requested a phone installation after simulator validation. The Release
+build from `5d9b4c9c` succeeded for the connected physical iPhone 15 Pro using
+the existing automatic signing configuration. `codesign --verify --deep --strict`
+passed before installation. That exact signed bundle was installed with
+`devicectl`, and `com.lun3x.FujiStudio` was launched normally without fixture or
+test arguments. Device process inspection confirmed Fuji Studio remained running.
+
 ## Limits
 
 Reduce Motion's static branch was reviewed in code; runtime setting changes
-and spoken VoiceOver output were not exercised. No physical iPhone installation,
-camera conversion, or Photos export was performed for this UI change.
+and spoken VoiceOver output were not exercised. No camera conversion or Photos
+export was performed for this UI change. Visual acceptance of the loading ring
+on the physical phone remains a user check.
