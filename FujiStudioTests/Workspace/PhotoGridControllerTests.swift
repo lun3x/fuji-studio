@@ -15,6 +15,23 @@ final class PhotoGridControllerTests: XCTestCase {
         controller.view.frame = window.bounds; controller.view.setNeedsLayout(); controller.view.layoutIfNeeded()
         return window
     }
+    func testLandscapePhotoPullProjectsWindowMovementOntoDrawerAxis() {
+        for (rotation, horizontal): (CGFloat, CGFloat) in [(-.pi / 2, -60), (.pi / 2, 60)] {
+            let controller = PhotoGridController(thumbnails: GridThumbnailSpy())
+            controller.update(sources: (0..<120).map { source("source-\($0)") }, checked: ["source-1"],
+                selecting: true, viewed: "source-1", scrollRequest: nil, contentRotation: rotation, allowsDrawerCollapse: true)
+            let window = host(controller)
+            defer { controller.stop(); window.isHidden = true }
+            var events: [DrawerScrollDrag] = []
+            controller.onDrawerDrag = { events.append($0) }
+            controller.handleScrollPan(state: .began, translation: .zero)
+            controller.handleScrollPan(state: .changed, translation: CGPoint(x: horizontal, y: 0))
+            XCTAssertEqual(events, [.changed(translation: 60)])
+            controller.handleScrollPan(state: .ended, translation: CGPoint(x: horizontal, y: 0),
+                velocity: CGPoint(x: horizontal * 10, y: 0))
+            XCTAssertEqual(events.last, .ended(translation: 60, velocity: 600))
+        }
+    }
     func testScrollHandsOnlyDistancePastTopToDrawerAndReversesBeforeRelease() {
         let controller = PhotoGridController(thumbnails: GridThumbnailSpy())
         controller.update(sources: (0..<120).map { source("source-\($0)") }, checked: ["source-1"],

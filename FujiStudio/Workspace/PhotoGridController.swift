@@ -11,6 +11,7 @@ final class PhotoGridController: UIViewController, UICollectionViewDelegate, UIC
     private var indices: [SourceID: Int] = [:]
     private var checked: Set<SourceID> = []
     private var selecting = false
+    private var contentRotation: CGFloat = 0
     private var viewed: SourceID?
     private(set) var metrics = GridGeometry.metrics(width: 1)
     private var prefetched: Set<SourceID> = []
@@ -40,6 +41,10 @@ final class PhotoGridController: UIViewController, UICollectionViewDelegate, UIC
         collectionView.accessibilityIdentifier = "photoGrid"
         collectionView.alwaysBounceVertical = true
         collectionView.contentInsetAdjustmentBehavior = .never
+        // Our tray supplies its own glass controls. Automatic scroll-edge blur can
+        // cover an entire row of photos when the collection view is rotated.
+        for edge in [collectionView.topEdgeEffect, collectionView.bottomEdgeEffect,
+                     collectionView.leftEdgeEffect, collectionView.rightEdgeEffect] { edge.isHidden = true }
         collectionView.delegate = self; collectionView.prefetchDataSource = self
         collectionView.register(PhotoGridCell.self, forCellWithReuseIdentifier: "photo")
         dataSource = UICollectionViewDiffableDataSource<Int, SourceID>(collectionView: collectionView) { [weak self] collection, path, id in
@@ -81,8 +86,13 @@ final class PhotoGridController: UIViewController, UICollectionViewDelegate, UIC
         }
         publishViewport(); cacheVisible()
     }
-    func update(sources: [PhotoSource], checked: Set<SourceID>, selecting: Bool, viewed: SourceID?, scrollRequest: GridScrollRequest?, gridMetrics: GridMetrics? = nil, bottomInset: CGFloat = 0, allowsDrawerCollapse: Bool = false) {
+    func update(sources: [PhotoSource], checked: Set<SourceID>, selecting: Bool, viewed: SourceID?, scrollRequest: GridScrollRequest?, gridMetrics: GridMetrics? = nil, bottomInset: CGFloat = 0, contentRotation: CGFloat = 0, allowsDrawerCollapse: Bool = false) {
         loadViewIfNeeded()
+        if self.contentRotation != contentRotation {
+            cancelDrawerPan()
+            finishSweep(cancelled: true)
+        }
+        self.contentRotation = contentRotation
         suppliedMetrics = gridMetrics
         collectionView.contentInset.bottom = max(0, bottomInset)
         collectionView.verticalScrollIndicatorInsets.bottom = max(0, bottomInset)
@@ -106,6 +116,7 @@ final class PhotoGridController: UIViewController, UICollectionViewDelegate, UIC
         }
         for case let cell as PhotoGridCell in collectionView.visibleCells {
             if let id = cell.sourceID, let source = byID[id] {
+                cell.contentView.transform = CGAffineTransform(rotationAngle: contentRotation)
                 if metadataChanged { configure(cell, source: source) }
                 else { cell.membership(selecting: selecting, checked: checked.contains(id), viewed: id == viewed) }
             }
@@ -114,6 +125,7 @@ final class PhotoGridController: UIViewController, UICollectionViewDelegate, UIC
         view.setNeedsLayout(); cacheVisible()
     }
     private func configure(_ cell: PhotoGridCell, source: PhotoSource) {
+        cell.contentView.transform = CGAffineTransform(rotationAngle: contentRotation)
         cell.configure(source: source, selecting: selecting, checked: checked.contains(source.id), viewed: source.id == viewed,
             thumbnails: thumbnails, pixelSize: pixelSize, onTap: { [weak self] in self?.onSourceTapped(source.id) })
     }
@@ -162,6 +174,10 @@ final class PhotoGridController: UIViewController, UICollectionViewDelegate, UIC
         }
     }
     func handleScrollPan(state: UIGestureRecognizer.State, translation: CGPoint, velocity: CGPoint = .zero) {
+        // Keep the stable window-space measurement, but consume movement along the
+        // device's portrait axis when the tray opens sideways in landscape.
+        let toCanvas = CGAffineTransform(rotationAngle: contentRotation)
+        let translation = translation.applying(toCanvas), velocity = velocity.applying(toCanvas)
         switch state {
         case .began:
             cancelDrawerPan()

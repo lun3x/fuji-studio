@@ -14,7 +14,6 @@ struct RecipeMenu: View {
     var onDeletePhone: (UUID) async -> Bool
     var onEditPhone: (PhoneRecipeDraft) async throws -> Void
     var onRefresh: () -> Void
-    var onControlFrameChanged: (CGRect) -> Void = { _ in }
     @State private var presented: Bool
     private enum Collection { case camera, phone }
     @State private var collection: Collection
@@ -29,20 +28,20 @@ struct RecipeMenu: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.workspaceOrientation) private var orientation
 
     init(current: RecipeSnapshot?, snapshots: [RecipeSnapshot], phoneSnapshots: [PhoneRecipe],
          refreshState: RecipeRefreshState, isCameraConnected: Bool,
          onSelect: @escaping (Int?) -> Void, onSelectPhone: @escaping (UUID) -> Void,
          onCopyToPhone: @escaping (UUID) async -> Bool, onDeletePhone: @escaping (UUID) async -> Bool,
          onEditPhone: @escaping (PhoneRecipeDraft) async throws -> Void,
-         onRefresh: @escaping () -> Void,
-         onControlFrameChanged: @escaping (CGRect) -> Void = { _ in }, initiallyPresented: Bool = false) {
+         onRefresh: @escaping () -> Void, initiallyPresented: Bool = false) {
         self.current = current; self.snapshots = snapshots; self.refreshState = refreshState
         self.phoneSnapshots = phoneSnapshots; self.onSelectPhone = onSelectPhone; self.onCopyToPhone = onCopyToPhone
         self.onDeletePhone = onDeletePhone
         self.onEditPhone = onEditPhone
         self.isCameraConnected = isCameraConnected
-        self.onSelect = onSelect; self.onRefresh = onRefresh; self.onControlFrameChanged = onControlFrameChanged
+        self.onSelect = onSelect; self.onRefresh = onRefresh
         _presented = State(initialValue: initiallyPresented)
         _collection = State(initialValue: current?.isPhoneRecipe == true ? .phone : .camera)
     }
@@ -66,8 +65,7 @@ struct RecipeMenu: View {
         .accessibilityLabel(current?.displayLabel ?? "No recipe selected")
         .accessibilityHint("Choose camera or phone recipes, or copy a camera recipe to your phone")
         .accessibilityIdentifier("recipe.control")
-        .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named("workspace")) }, action: onControlFrameChanged)
-        .popover(isPresented: $presented, arrowEdge: .top) {
+        .popover(isPresented: $presented, arrowEdge: orientation.popoverEdge) {
             options.environment(\.dynamicTypeSize, dynamicTypeSize)
                 .background { PopoverEscapeHandler(onDismiss: { presented = false }).frame(width: 1, height: 1) }
                 .presentationCompactAdaptation(.popover)
