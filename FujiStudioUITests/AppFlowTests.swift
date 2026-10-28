@@ -163,35 +163,38 @@ import XCTest
         for slot in 1...7 { XCTAssertTrue(app.buttons["recipe.slot.\(slot)"].isEnabled) }
         XCTAssertTrue(app.buttons["recipe.refresh"].isEnabled)
     }
-    private func assertSingleHeaderRow(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
-        let status = app.buttons["app.status"]
-        for control in [status] {
+    private func assertFloatingPhotoControls(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
+        let status = app.buttons["app.status"], recipe = app.buttons["recipe.control"], versions = app.buttons["workspace.versions"]
+        let viewer = app.scrollViews["viewer.image"]
+        for control in [status, recipe, versions] {
             XCTAssertGreaterThanOrEqual(control.frame.height, 44, file: file, line: line)
             XCTAssertGreaterThanOrEqual(control.frame.width, 44, file: file, line: line)
-            XCTAssertEqual(control.frame.midY, status.frame.midY, accuracy: 1, file: file, line: line)
+            XCTAssertEqual(control.frame.minY, status.frame.minY, accuracy: 1, file: file, line: line)
+            XCTAssertGreaterThanOrEqual(control.frame.minY, viewer.frame.minY, file: file, line: line)
+            XCTAssertLessThanOrEqual(control.frame.maxY, viewer.frame.maxY, file: file, line: line)
             XCTAssertGreaterThanOrEqual(control.frame.minX, app.frame.minX, file: file, line: line)
             XCTAssertLessThanOrEqual(control.frame.maxX, app.frame.maxX, file: file, line: line)
         }
+        XCTAssertEqual(status.frame.width, 44, accuracy: 1, file: file, line: line)
+        XCTAssertEqual(status.frame.minX, viewer.frame.minX + 16, accuracy: 1, file: file, line: line)
+        XCTAssertEqual(status.frame.minY, viewer.frame.minY + 8, accuracy: 1, file: file, line: line)
+        XCTAssertEqual(versions.frame.maxX, viewer.frame.maxX - 16, accuracy: 1, file: file, line: line)
+        XCTAssertEqual(recipe.frame.maxX + 8, versions.frame.minX, accuracy: 1, file: file, line: line)
         XCTAssertFalse(app.buttons["app.connect"].exists, file: file, line: line)
         XCTAssertFalse(app.buttons["workspace.export"].exists, file: file, line: line)
         XCTAssertFalse(app.staticTexts["Fuji Studio"].exists, file: file, line: line)
     }
-    func testSingleHeaderRowGivesSpaceBackToPhotoAndKeepsStatusActions() {
+    func testFloatingStatusAndRightAlignedPhotoControlsGiveSpaceBackToPhoto() {
         let app = launch()
         app.cells["grid.source-0"].tap()
         XCTAssertTrue(app.scrollViews["viewer.image"].waitForExistence(timeout: 5))
-        assertSingleHeaderRow(app)
-        let bottom = app.buttons["app.status"].frame.maxY
-        let viewer = app.scrollViews["viewer.image"]
-        XCTAssertGreaterThanOrEqual(viewer.frame.minY, bottom)
-        XCTAssertLessThanOrEqual(viewer.frame.minY - bottom, 12, "No empty title row should remain above the photo")
-        XCTAssertTrue(app.buttons["app.status"].isHittable)
-        app.buttons["app.status"].tap()
+        assertFloatingPhotoControls(app)
+        tap(app.buttons["app.status"], in: app)
         XCTAssertTrue(app.staticTexts["app.access"].waitForExistence(timeout: 5))
         app.buttons["Done"].tap()
         wait { app.buttons["app.status"].label.contains("Camera ready") }
-        assertSingleHeaderRow(app)
-        shot(app, "Single status header above photo without Connect")
+        assertFloatingPhotoControls(app)
+        shot(app, "Floating camera icon and right-aligned recipe and versions over photo")
     }
     func testFloatingVersionsMenuReclaimsPhotoSpaceAndSwitchesWithoutExport() {
         let app = launch()
@@ -497,13 +500,13 @@ import XCTest
         XCTAssertFalse(app.buttons["workspace.versions"].exists)
     }
 
-    func testAccessibleStatusStaysOutsideWorkspaceControlsWithoutConnect() {
+    func testAccessibleFloatingPhotoControlsRemainSeparateWithoutConnect() {
         let app = launch(["--fixture-accessibility", "--fixture-limited", "--fixture-dark"])
         app.cells["grid.source-0"].tap()
-        assertSingleHeaderRow(app)
+        assertFloatingPhotoControls(app)
         XCTAssertGreaterThanOrEqual(app.buttons["app.status"].frame.height, 44)
         XCTAssertFalse(app.buttons["app.connect"].exists)
-        XCTAssertLessThanOrEqual(app.buttons["app.status"].frame.maxY, app.buttons["recipe.control"].frame.minY)
+        XCTAssertFalse(app.buttons["app.status"].frame.intersects(app.buttons["recipe.control"].frame))
         app.buttons["drawer.toggle"].tap()
         wait { app.buttons["drawer.toggle"].value as? String == "Expanded" }
         let bottom = max(app.buttons["recipe.control"].frame.maxY, app.buttons["workspace.versions"].frame.maxY)

@@ -68,7 +68,6 @@ struct ExportProgressView: View {
 
 struct AppWorkspaceView: View {
     let model: AppModel
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var statusPresented = false
     var body: some View {
         WorkspaceView(state: model.state, sources: model.sources, thumbnails: model.environment.thumbnails,
@@ -109,21 +108,16 @@ struct AppWorkspaceView: View {
     }
     private var statusButton: some View {
         Button { statusPresented = true } label: {
-            if dynamicTypeSize.isAccessibilitySize {
-                Image(systemName: model.exportEvent == nil ? "info.circle" : "arrow.up.doc")
-                    .font(.system(size: 24)).frame(minWidth: 44, minHeight: 44)
-            } else {
-                Label(statusTitle, systemImage: model.exportEvent == nil ? "info.circle" : "arrow.up.doc")
-                    .lineLimit(1).font(.caption).frame(minHeight: 44).contentShape(Rectangle())
-            }
-        }.accessibilityLabel(statusLabel).accessibilityIdentifier("app.status")
+            Image(systemName: statusSymbol)
+                .font(.system(size: 20, weight: .semibold)).frame(width: 44, height: 44).contentShape(Circle())
+        }.buttonStyle(.plain).foregroundStyle(.primary)
+            .glassEffect(.regular.interactive(), in: .circle)
+            .accessibilityLabel(statusLabel).accessibilityHint("Show app details")
+            .accessibilityIdentifier("app.status")
     }
-    private var statusTitle: String {
-        switch statusLabel {
-        case "Photos · Camera disconnected": "Disconnected"
-        case "Photos · Camera ready": "Ready"
-        default: statusLabel
-        }
+    private var statusSymbol: String {
+        if case .ready = model.state.cameraState { "camera" }
+        else { "info.circle" }
     }
     private var statusLabel: String {
         if model.isLoadingLibrary { return "Reading Photos…" }
