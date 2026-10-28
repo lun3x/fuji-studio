@@ -170,6 +170,7 @@ actor FixtureCamera: CameraServing {
     private var shouldFailRenderWithoutDisconnect = false
     private var renderBarrier: FixtureBarrier?
     private var connectBarrier: FixtureBarrier?
+    private var importBarrier: FixtureBarrier?
     private var connectionFailure: CameraServiceError?
     private var disconnectBarrier: FixtureBarrier?
     private(set) var cancelledRenders = 0
@@ -201,8 +202,10 @@ actor FixtureCamera: CameraServing {
     func failRender() { shouldFailRender = true }
     func failRenderWithoutDisconnect() { shouldFailRenderWithoutDisconnect = true }
     func failImport() { shouldFailImport = true }
+    func holdImport(_ barrier: FixtureBarrier) { importBarrier = barrier }
     func importRecipes() async throws -> [RecipeSnapshot] {
         importCount += 1; emit(.busy(session)); await Task.yield(); defer { emit(.ready(session)) }
+        if let importBarrier { await importBarrier.wait() }
         if shouldFailImport { throw CameraServiceError.recipeImportFailed(restorationConfirmed: true) }
         return snapshots.map { s in RecipeSnapshot(id: UUID(), slot: s.slot, name: s.name, importedName: s.importedName,
             importedSettings: s.importedSettings, settingsDigest: s.settingsDigest,

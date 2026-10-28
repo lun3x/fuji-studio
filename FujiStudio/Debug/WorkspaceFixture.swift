@@ -41,11 +41,7 @@ private struct WorkspaceFixtureView: View {
                 imageStatus: "Generated fixture has no RAW display; original JPEG remains available.",
                 onAction: { state.reduce($0) }, onRefreshRecipes: { refreshCount += 1 }, onExport: { exportCount += 1 },
                 statusControl: {
-                    Button {} label: {
-                        Image(systemName: "camera").font(.system(size: 20, weight: .semibold)).frame(width: 44, height: 44)
-                    }.buttonStyle(.plain).foregroundStyle(.primary)
-                        .glassEffect(.regular.interactive(), in: .circle)
-                        .accessibilityLabel("Generated status").accessibilityIdentifier("app.status")
+                    CameraStatusControl(state: .ready, label: "Generated status", onTap: {})
                 })
                 .frame(width: compact ? proxy.size.width - 32 : proxy.size.width,
                     height: compact ? max(360, proxy.size.height * 0.65) : proxy.size.height)

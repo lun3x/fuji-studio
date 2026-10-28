@@ -175,7 +175,6 @@ import XCTest
             XCTAssertGreaterThanOrEqual(control.frame.minX, app.frame.minX, file: file, line: line)
             XCTAssertLessThanOrEqual(control.frame.maxX, app.frame.maxX, file: file, line: line)
         }
-        XCTAssertEqual(status.frame.width, 44, accuracy: 1, file: file, line: line)
         XCTAssertEqual(status.frame.minX, viewer.frame.minX + 16, accuracy: 1, file: file, line: line)
         XCTAssertEqual(status.frame.minY, viewer.frame.minY + 8, accuracy: 1, file: file, line: line)
         XCTAssertEqual(versions.frame.maxX, viewer.frame.maxX - 16, accuracy: 1, file: file, line: line)
@@ -189,12 +188,41 @@ import XCTest
         app.cells["grid.source-0"].tap()
         XCTAssertTrue(app.scrollViews["viewer.image"].waitForExistence(timeout: 5))
         assertFloatingPhotoControls(app)
+        XCTAssertEqual(app.buttons["app.status"].frame.width, app.buttons["workspace.versions"].frame.width, accuracy: 1)
+        XCTAssertEqual(app.buttons["app.status"].frame.height, app.buttons["workspace.versions"].frame.height, accuracy: 1)
         tap(app.buttons["app.status"], in: app)
         XCTAssertTrue(app.staticTexts["app.access"].waitForExistence(timeout: 5))
         app.buttons["Done"].tap()
         wait { app.buttons["app.status"].label.contains("Camera ready") }
         assertFloatingPhotoControls(app)
         shot(app, "Floating camera icon and right-aligned recipe and versions over photo")
+    }
+    func testCameraIndicatorStaysPreparingThroughoutRecipeImport() {
+        let app = launch(["--fixture-disconnected-camera", "--fixture-held-recipes"])
+        let status = app.buttons["app.status"]
+        guard status.value as? String == "Camera disconnected" else {
+            XCTFail("The disconnected indicator must expose the no-camera state")
+            return
+        }
+        app.cells["grid.source-0"].tap()
+        let versions = app.buttons["workspace.versions"]
+        XCTAssertTrue(versions.waitForExistence(timeout: 5))
+        let frame = status.frame
+        XCTAssertEqual(frame.width, versions.frame.width, accuracy: 1)
+        XCTAssertEqual(frame.height, versions.frame.height, accuracy: 1)
+        shot(app, "Crossed-out camera before connection")
+        app.buttons["fixture.plugInCamera"].tap()
+        wait { status.value as? String == "Preparing camera" }
+        for _ in 0..<3 {
+            app.buttons["fixture.cycleRecipeCamera"].tap()
+            XCTAssertEqual(status.value as? String, "Preparing camera", "Busy/ready updates must not interrupt recipe-loading presentation")
+            XCTAssertEqual(status.frame, frame)
+        }
+        shot(app, "Spinning camera while recipes download")
+        app.buttons["fixture.finishRecipes"].tap()
+        wait { status.value as? String == "Camera ready" }
+        XCTAssertEqual(status.frame, frame)
+        shot(app, "Ready camera after recipe download")
     }
     func testFloatingVersionsMenuReclaimsPhotoSpaceAndSwitchesWithoutExport() {
         let app = launch()

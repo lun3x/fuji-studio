@@ -107,17 +107,8 @@ struct AppWorkspaceView: View {
         }
     }
     private var statusButton: some View {
-        Button { statusPresented = true } label: {
-            Image(systemName: statusSymbol)
-                .font(.system(size: 20, weight: .semibold)).frame(width: 44, height: 44).contentShape(Circle())
-        }.buttonStyle(.plain).foregroundStyle(.primary)
-            .glassEffect(.regular.interactive(), in: .circle)
-            .accessibilityLabel(statusLabel).accessibilityHint("Show app details")
-            .accessibilityIdentifier("app.status")
-    }
-    private var statusSymbol: String {
-        if case .ready = model.state.cameraState { "camera" }
-        else { "info.circle" }
+        CameraStatusControl(state: CameraIndicatorState(camera: model.state.cameraState,
+            refreshingRecipes: model.isRefreshing), label: statusLabel) { statusPresented = true }
     }
     private var statusLabel: String {
         if model.isLoadingLibrary { return "Reading Photos…" }

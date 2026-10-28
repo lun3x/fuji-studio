@@ -23,6 +23,7 @@ struct WorkspaceView<StatusControl: View>: View {
     var onViewportChanged: (GridViewport) -> Void = { _ in }
     @State private var drawerHeaderHeight: CGFloat = 0
     @State private var statusHeight: CGFloat = 0
+    @State private var cameraControlHeight: CGFloat = 0
     @State private var recipeFrame: CGRect = .zero
     @State private var photoActionFrame: CGRect = .zero
     @State private var scrollRequest: GridScrollRequest?
@@ -34,7 +35,7 @@ struct WorkspaceView<StatusControl: View>: View {
             let width = max(1, size.width - safe.leading - safe.trailing)
             let photoTop = safe.top
             let controlTop = photoTop + 8
-            let controlBottom = controlTop + max(44, recipeFrame.height, photoActionFrame.height)
+            let controlBottom = controlTop + max(44, cameraControlHeight, recipeFrame.height, photoActionFrame.height)
             let controlFrame = CGRect(x: safe.leading + 16, y: controlTop, width: max(1, width - 32), height: controlBottom - controlTop)
             // Only a real image-status message reserves space below the image. The two
             // photo controls and camera indicator float over it in every layout.
@@ -73,6 +74,7 @@ struct WorkspaceView<StatusControl: View>: View {
                 GlassEffectContainer(spacing: 8) {
                     HStack(alignment: .top, spacing: 8) {
                         statusControl()
+                            .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { cameraControlHeight = $0 }
                         Spacer(minLength: 0)
                         recipeControl
                         photoActionControl
