@@ -59,6 +59,11 @@ Release and signed phone builds passed, and the refined build is installed on
 the phone. See the [selection validation](docs/validation/photos-selection.md)
 for the exact gate boundaries and screenshot evidence.
 
+Pulling down past the top of the expanded photo grid now drags the tray down.
+Release uses the divider's detents and spring; reversing past full expansion
+returns the remaining movement to normal photo scrolling. Browse and Select
+keep the viewed photo and checked set through the gesture.
+
 The native workspace composes the real Photos reader/writer, X-T5 camera
 service, preview/export coordinators and durable local catalog. The workspace layout
 at `2e45055b` passed the complete simulator gate: **442 passed, 3 established

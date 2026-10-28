@@ -284,7 +284,27 @@ final class WorkspaceLayoutTests: XCTestCase {
         XCTAssertEqual(app.buttons["workspace.versions"].value as? String, "Original camera JPEG")
         shot(app, "Workspace AX5 collapsed, zoom and versions usable")
     }
-    func testHeaderDragChangesDetentWhileGridScrollDoesNot() {
+    func testPullingPhotosDownAtTopCollapsesTrayWithoutChangingSelection() {
+        let app = launch(["--fixture-drawer-trace"])
+        let header = app.buttons["drawer.toggle"], grid = app.collectionViews["photoGrid"]
+        for selecting in [false, true] {
+            if selecting { app.buttons["workspace.select"].tap(); tile(app, 1).tap() }
+            header.tap(); waitForDetent(app, expanded: true)
+            let before = drawerTrace(app)
+            let viewed = app.staticTexts["fixture.viewed"].label, checks = countLabel(app)
+            let start = grid.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.15))
+            start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: grid.frame.height * 0.75)),
+                withVelocity: .slow, thenHoldForDuration: 0.3)
+            XCTAssertEqual(header.value as? String, "Collapsed")
+            waitForDetent(app, expanded: false)
+            assertTrajectory(Array(drawerTrace(app).dropFirst(max(0, before.count - 1))), opening: false)
+            XCTAssertEqual(app.staticTexts["fixture.viewed"].label, viewed)
+            XCTAssertEqual(countLabel(app), checks)
+            XCTAssertEqual(app.staticTexts["fixture.exportCount"].label, "Export requests: 0")
+        }
+        shot(app, "Photo pull collapses tray and keeps selection")
+    }
+    func testHeaderDragChangesDetentWhileScrollingFurtherIntoPhotosDoesNot() {
         let app = launch()
         let header = app.buttons["drawer.toggle"]
         let begin = header.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3))
@@ -296,6 +316,42 @@ final class WorkspaceLayoutTests: XCTestCase {
         header.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.3))
             .press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.85)))
         XCTAssertEqual(header.value as? String, "Collapsed")
+    }
+    func testShortPhotoPullSpringsBackAndScrollHandsOffOnlyAfterReachingTop() {
+        let app = launch(["--fixture-drawer-trace"])
+        let header = app.buttons["drawer.toggle"], grid = app.collectionViews["photoGrid"]
+        header.tap(); waitForDetent(app, expanded: true)
+        var before = drawerTrace(app)
+        var start = grid.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.2))
+        start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: 70)),
+            withVelocity: XCUIGestureVelocity(rawValue: 120), thenHoldForDuration: 0.3)
+        waitForDetent(app, expanded: true)
+        let partial = Array(drawerTrace(app).dropFirst(max(0, before.count - 1)))
+        XCTAssertGreaterThan(partial.count, 6)
+        XCTAssertGreaterThan((partial.max() ?? 0) - (partial.first ?? 0), 40, "The drawer must follow the finger before release")
+        XCTAssertEqual(partial.first ?? -1, partial.last ?? -2, accuracy: 0.5)
+        for (previous, next) in zip(partial, partial.dropFirst()) {
+            XCTAssertLessThanOrEqual(abs(next - previous), 30, "A short pull must spring back without a height reset")
+        }
+        // Leave 140 points of photo content above the viewport, then scroll back 60.
+        start = grid.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.65))
+        start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -140)),
+            withVelocity: XCUIGestureVelocity(rawValue: 200), thenHoldForDuration: 0.3)
+        XCTAssertFalse(tile(app, 0).isHittable)
+        before = drawerTrace(app)
+        start = grid.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.2))
+        start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: 60)),
+            withVelocity: XCUIGestureVelocity(rawValue: 120), thenHoldForDuration: 0.3)
+        XCTAssertEqual(header.value as? String, "Expanded")
+        XCTAssertEqual(drawerTrace(app).last ?? -1, before.last ?? -2, accuracy: 0.5)
+        // One longer pull consumes the remaining scroll distance and then moves the tray.
+        before = drawerTrace(app)
+        start = grid.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.15))
+        start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: grid.frame.height * 0.75)),
+            withVelocity: .slow, thenHoldForDuration: 0.3)
+        XCTAssertEqual(header.value as? String, "Collapsed")
+        waitForDetent(app, expanded: false)
+        assertTrajectory(Array(drawerTrace(app).dropFirst(max(0, before.count - 1))), opening: false)
     }
     private func drawerTrace(_ app: XCUIApplication) -> [Double] {
         (app.otherElements["fixture.nativeMetrics"].value as? String ?? "").split(separator: ",").compactMap { Double($0) }
