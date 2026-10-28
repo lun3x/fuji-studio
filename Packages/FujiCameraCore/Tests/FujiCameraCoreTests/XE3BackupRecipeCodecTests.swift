@@ -4,10 +4,10 @@ import Testing
 @testable import FujiCameraCore
 
 struct XE3BackupRecipeCodecTests {
-  @Test(.enabled(if:ProcessInfo.processInfo.environment["FUJI_XE3_PRIVATE_BACKUP"] != nil))
+  @Test(.enabled(if: ProcessInfo.processInfo.environment["FUJI_XE3_PRIVATE_BACKUP"] != nil))
   func restoredPrivateBackupHasSevenRenderableBanks() throws {
-    let path=try #require(ProcessInfo.processInfo.environment["FUJI_XE3_PRIVATE_BACKUP"])
-    let result=try decode(Data(contentsOf:URL(fileURLWithPath:path)))
+    let path = try #require(ProcessInfo.processInfo.environment["FUJI_XE3_PRIVATE_BACKUP"])
+    let result = try decode(Data(contentsOf: URL(fileURLWithPath: path)))
     #expect(result.recipes.count == 7)
     for recipe in result.recipes { #expect(XE3RecipeCodec.assess(recipe).issues.isEmpty) }
   }
@@ -31,15 +31,64 @@ struct XE3BackupRecipeCodecTests {
     #expect(changed.recipes[1].settingsDigest == original.recipes[1].settingsDigest)
     #expect(try XE3RecipeCodec.decode(original.recipes[0]).whiteBalanceRed == -4)
   }
-  @Test func neutralUncalibratedWBIsStillUnsupported() throws {
+  @Test(arguments: [UInt8(2), 3, 4, 5, 6])
+  func calibratedPresetFreezesItsIndependentShiftPair(_ rawMode: UInt8) throws {
+    let cases: [UInt8: (Int, WhiteBalanceMode, Int, Int)] = [
+      2: (445, .shade, 1, 2), 3: (447, .fluorescent1, 3, 4),
+      4: (449, .fluorescent2, 5, 6), 5: (451, .fluorescent3, 7, 8),
+      6: (453, .incandescent, -1, -2),
+    ]
+    let (offset, mode, red, blue) = try #require(cases[rawMode])
+    var data = syntheticXE3Backup()
+    data[3909 - 33] = rawMode
+    data[offset] = UInt8(9 - red)
+    data[offset + 1] = UInt8(9 - blue)
+    let snapshot = try decode(data).recipes[0]
+    #expect(XE3RecipeCodec.assess(snapshot).issues.isEmpty)
+    let previouslyBlocked = snapshot.recordingIssues([
+      .unvalidatedDependency("shared white-balance shift")
+    ])
+    if case .unsupported = previouslyBlocked.renderingSupport(using: RecipeCodecRegistry()) {
+      Issue.record("Frozen old observations must be reassessed against the verified mapping")
+    }
+    #expect(previouslyBlocked.settingsDigest == snapshot.settingsDigest)
+    let settings = try XE3RecipeCodec.decode(snapshot)
+    #expect(settings.whiteBalance == mode)
+    #expect(settings.whiteBalanceRed == red && settings.whiteBalanceBlue == blue)
+    #expect(
+      snapshot.importedSettings.first { $0.code == 13 }?.raw
+        == Data([UInt8(truncatingIfNeeded: offset), UInt8(offset >> 8)]))
+    _ = try XE3WorkingProfile.make(
+      baseline: xe3Baseline(), settings: settings, source: xe3Metadata())
+    data[offset] = 9
+    data[offset + 1] = 9
+    let changed = try decode(data).recipes[0]
+    #expect(changed.settingsDigest != snapshot.settingsDigest)
+    #expect(try XE3RecipeCodec.decode(snapshot).whiteBalanceRed == red)
+    #expect(try XE3RecipeCodec.decode(snapshot).whiteBalanceBlue == blue)
+  }
+  @Test func customMeasuredWBRemainsOpaqueAndUnsupported() throws {
+    var data = syntheticXE3Backup()
+    data[3909 - 33] = 9
+    let snapshot = try decode(data).recipes[0]
+    #expect(!XE3RecipeCodec.assess(snapshot).issues.isEmpty)
+    #expect(snapshot.importedSettings.first { $0.code == 14 }?.raw == data.subdata(in: 433..<457))
+    #expect(snapshot.importedSettings.allSatisfy { ![5, 6, 13].contains($0.code) })
+    #expect(throws: CameraServiceError.unsupportedSettings) { try XE3RecipeCodec.decode(snapshot) }
+  }
+  @Test func verifiedPairFromAnotherModeStillCannotBeSubstituted() throws {
     var data = syntheticXE3Backup()
     data[3909 - 33] = 2
     let snapshot = try decode(data).recipes[0]
+    var fields = Dictionary(
+      uniqueKeysWithValues: snapshot.importedSettings.map { ($0.code, $0.raw) })
+    fields[13] = Data([0xbb, 1])  // verified Daylight pair443, but this bank requests Shade
+    let mismatched = try XE3RecipeCodec.recipe(
+      slot: 1, nameData: snapshot.importedName, properties: fields, context: snapshot.cameraContext,
+      importedAt: snapshot.importedAt)
     #expect(
-      XE3RecipeCodec.assess(snapshot).issues.contains(
+      XE3RecipeCodec.assess(mismatched).issues.contains(
         .unvalidatedDependency("shared white-balance shift")))
-    #expect(try XE3RecipeCodec.decode(snapshot).whiteBalanceRed == 0)
-    #expect(snapshot.importedSettings.first { $0.code == 13 }?.raw == Data([0xbd, 1]))
   }
   @Test func unknownValuesRemainPassiveAndComplete() throws {
     for offset in [3909, 3909 - 33, 3909 + 3, 3909 + 7, 3909 - 7] {

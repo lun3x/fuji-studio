@@ -5,6 +5,20 @@ import Testing
 @testable import FujiStudio
 
 struct PhoneRecipeDraftTests {
+  @Test(arguments: WhiteBalanceMode.allCases)
+  func calibratedXE3PresetsRemainRenderableAfterOfflineEdits(_ mode: WhiteBalanceMode) throws {
+    let phone = try fixtureXE3Recipe().copiedToPhone()
+    var draft = PhoneRecipeDraft(recipe: phone)
+    draft.setValue(.whiteBalance(mode), for: .whiteBalance)
+    draft.setValue(.integer(1), for: .whiteBalanceRed)
+    draft.setValue(.integer(2), for: .whiteBalanceBlue)
+    let snapshot = try draft.makeSnapshot()
+    #expect(RecipeCodecRegistry().assess(snapshot).issues.isEmpty)
+    let settings = try RecipeCodecRegistry().requireSettings(snapshot)
+    #expect(settings.whiteBalance == mode)
+    #expect(settings.whiteBalanceRed == 1 && settings.whiteBalanceBlue == 2)
+    #expect(snapshot.copiedFromRecipeID == phone.id)
+  }
   @Test func xe3UsesDiscreteKelvinWholeToneStepsAndNoGrainSize() throws {
     let phone = try fixtureXE3Recipe(unknown: true).copiedToPhone()
     var draft = PhoneRecipeDraft(recipe: phone)

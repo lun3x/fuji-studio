@@ -397,7 +397,7 @@ Original sensor viewing remains independent of conversion source-class admission
 A further manual controlled experiment verifies Underwater shared shifts: Red
 0→+1 changes byte455 from9→8; restoring Red and changing Blue0→+1 changes byte456
 from9→8. Every backup read occurred once in a fresh session with confirmed close.
-The user restored Underwater0/0 and Colour Temperature6300K, Red−4/Blue−2. The final
+The user restored Underwater0/0 and Colour Temperature 6300 K, Red−4/Blue−2. The final
 5660-byte backup is identical to this experiment's baseline, including the full
 WB table and recipe area. The sanitized proof is
 `Packages/FujiCameraCore/Tests/FujiCameraCoreTests/Fixtures/XE3/1.30/underwater-wb-controlled-diff.json`.
@@ -454,7 +454,42 @@ now offers precisely the 31 native values.
 A fresh backup after these runs confirms the entire 24-byte WB table and all
 seven bank records/names match the earlier restored baseline. Four bytes outside
 those regions changed (675, 3800, 3802, 3804); their semantics are unclassified.
-Every session was closed. Five remaining preset shift pairs are being calibrated
-with manual user changes and will remain blocked until verified and restored.
-Custom measured-WB gains remain unsupported. Physical iPhone acceptance remains
+Every session was closed. The five remaining preset shift pairs have now been
+verified and restored in the controlled follow-up below. Custom measured-WB gains
+remain unsupported. Physical iPhone acceptance remains
 an independent gate in [the adapter validation record](fujifilm-usb-adapters.md).
+
+## Remaining preset WB calibration and shared-core acceptance
+
+The user set distinct Red/Blue values without saving a bank: Shade +1/+2,
+Fluorescent 1 +3/+4, Fluorescent 2 +5/+6, Fluorescent 3 +7/+8 and Incandescent −1/−2.
+One fresh read changed exactly bytes 445–454 within the WB table. These are five
+pairs, in that order, encoded as `rawByte = 9 - signedShift`. Every bank byte from
+3876 to the end of the 5660-byte backup stayed unchanged.
+
+After user restoration, the complete WB table 433..<457 and bank region matched
+the baseline. WB selector/Kelvin index 431/432 returned to 8/6 (Temperature 6300 K),
+with its shifts −4/−2. Four unclassified bytes outside those regions differed:
+691,3800,3802,3804. The full private backup is never a public fixture.
+
+Five frozen phone snapshots were produced by the actual backup decoder from the
+controlled backup. A local copy's bank 1 mode byte selected each preset; this was
+an offline diagnostic, with no camera bank writes. All five rendered through
+`FujiCameraService` with the frozen tagged shifts after the camera was restored.
+Each returned 6000×4000 FINE/orientation 8, exact profile readback, qualified settings,
+unchanged original source, one trigger/delete, verified empty view and close.
+Independent ExifTool checks matched WB tags 0x0200/0x0300/0x0301/0x0302/0x0400 and
+fine-tune values 20/40,60/80,100/120,140/160,−20/−40 respectively.
+
+A final fresh backup after these conversions again matched the WB selector,
+entire WB table and all bank bytes. All backup reads occurred once in fresh
+sessions with confirmed closure; no saved settings were written by the probes.
+Public proofs: `preset-wb-controlled-diff.json` and
+`preset-wb-shared-core-renders.json` in the canonical XE3/1.30 fixtures.
+
+The adapter now admits all nine known WB modes. Custom measured-WB gains remain
+unsupported. Core 101 tests, laptop CLI 6, iOS 468 Swift tests plus 19 XCTest unit tests
+and the two affected UI cases pass. Tests retain rejection of custom WB and
+swapped dependency pairs, freeze imported shifts, reassess old passive snapshots,
+and cover offline phone edits for all nine modes. One earlier Shade edit test
+was updated from its former unverified expectation to the measured support.

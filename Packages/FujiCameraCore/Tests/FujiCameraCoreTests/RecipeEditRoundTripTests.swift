@@ -12,8 +12,8 @@ struct RecipeEditRoundTripTests {
     let shade = try codecs.encodeEditedValues(
       [.whiteBalance: .whiteBalance(.shade)], preserving: original)
     #expect(shade.importedSettings.first { $0.code == 13 }?.raw == Data([0xbd, 1]))
-    #expect(
-      codecs.assess(shade).issues.contains(.unvalidatedDependency("shared white-balance shift")))
+    #expect(codecs.assess(shade).issues.isEmpty)
+    #expect(try codecs.requireSettings(shade).whiteBalance == .shade)
     #expect(try codecs.editableValues(shade)[.whiteBalanceRed] == .integer(-4))
   }
   @Test func mixedModelOfflineEditPreservesUnknownBytes() throws {

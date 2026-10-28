@@ -18,7 +18,9 @@ enum XE3NativeRecipeFields {
     10000, 9100, 8300, 7700, 7100, 6700, 6300, 5900, 5600, 5300, 5000, 4800, 4500, 4300, 4200, 4000,
     3800, 3700, 3600, 3400, 3300, 3200, 3100, 3000, 2950, 2850, 2800, 2700, 2650, 2550, 2500,
   ]
-  static let verifiedShiftOffsets: Set<Int> = [433, 441, 443, 455]
+  // Each preset pair was verified by controlled backup changes and restoration.
+  // Custom measured-WB dependencies remain unvalidated.
+  static let verifiedShiftOffsets: Set<Int> = [433, 441, 443, 445, 447, 449, 451, 453, 455]
   static let shiftOffsets: [UInt8: Int] = [
     0: 433, 1: 443, 2: 445, 3: 447, 4: 449, 5: 451, 6: 453, 7: 455, 8: 441,
   ]

@@ -6,3 +6,9 @@ contains pixel statistics and qualified JPEG metadata comparisons.
 `kelvin-preset-sweep.json` is diagnostic-only independent native Kelvin evidence;
 its arbitrary 5310 K negative remains unsupported. No source hashes, recipe names,
 serials, full backups, operation IDs or photographs are included.
+
+`preset-wb-controlled-diff.json` records the five distinct preset tags and full
+WB/bank restoration; `preset-wb-shared-core-renders.json` independently checks five
+frozen phone snapshots through the shipping service and qualified ExifTool tags.
+The snapshots locally select each preset from the controlled backup; no saved
+camera bank is changed. Full backups and original images remain private.

@@ -78,10 +78,9 @@ That includes 467 Swift tests/57 suites, 19 XCTest unit tests and 62 UI cases
 Release builds passed. Core 99/16 and native Mac CLI 6/3 remain green; those modules
 were unchanged by the app recovery fix.
 
-Two review minors are deferred: persist known JPEG mismatch diagnostics before
-cleanup so an interruption retains them, and distinguish the five pending WB
-preset dependencies in renderable capability choices. Snapshot admission already
-blocks unverified dependency execution; the current seven imported banks pass.
+One review minor remains deferred: persist known JPEG mismatch diagnostics before
+cleanup so an interruption retains them. The WB capability discrepancy is resolved
+by the completed controlled calibration and shared-core conversions below.
 
 ## Physical iPhone gates
 
@@ -107,11 +106,32 @@ physical regression. Existing simulated-transport results do not replace it.
 The latest Release is installed and ready to open manually. Its two launch
 attempts were refused solely by the iOS lock screen; the earlier build's normal
 launch succeeded after user unlock. The camera remains idle with every Mac
-session confirmed closed. The five-preset controlled WB question is still pending;
-the last measured WB table and all bank records were unchanged after conversion.
+session confirmed closed. The five-preset controlled WB calibration and restoration are complete;
+the WB selector, complete table and all bank bytes are unchanged after conversion.
 
 Software implementation, review fixes and laptop acceptance for the current seven
-banks are verified. The five additional WB dependencies and physical iPhone/X-T5
-acceptance remain outstanding. The workbench and private evidence are retained at
+banks are verified. All nine known WB modes are verified; custom measured-WB gains and physical
+iPhone/X-T5 acceptance remain outside the completed gates. The workbench and private evidence are retained at
 `/tmp/fuji-usb-adapters-20261028` for that continuation; only this task's simulator
 is removed after final verification.
+
+## Completed preset WB follow-up
+
+The user tagged Shade/Fluorescent1/2/3/Incandescent with distinct R/B values.
+Exactly five pairs 445/447/449/451/453 matched. User restoration returned the full
+WB table and every bank byte to baseline; Temperature 6300 K remained −4/−2.
+Five frozen phone snapshots rendered through the shipping service after restoration,
+with independently matching Fuji WB/fine-tune metadata, exact readback,
+6000×4000 FINE/orientation 8, one trigger/delete, empty view and confirmed close.
+The final backup again proved WB selector/table/banks unchanged. Four unclassified
+bytes outside those regions differ from baseline; full-backup equality is not
+claimed. Private images/backups are retained only in ignored storage.
+
+The production change only adds the five measured dependency offsets to the
+explicit verified set. Custom measured WB and substituted mode/pair combinations
+remain rejected. Core 101/16, laptop CLI 6/3, iOS 468 Swift tests/57 suites plus 19
+XCTest unit tests, and two affected UI cases pass. The earlier 545-pass full suite
+is the baseline before this bounded mapping change. Release follow-up is pending.
+The public controlled/restored and conversion proofs are in
+`Fixtures/XE3/1.30/preset-wb-*.json`. The active follow-up workbench is
+`/tmp/fuji-xe3-wb-presets-20261028`.

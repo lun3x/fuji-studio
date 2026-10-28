@@ -1,0 +1,217 @@
+{
+  "model": "X-E3",
+  "firmware": "1.30",
+  "method": "User tagged each of five preset R/B pairs with distinct values, then restored originals; no custom-bank saves. Each state read once in a fresh closed session.",
+  "encoding": "rawByte = 9 - signedShift",
+  "backupBytes": 5660,
+  "WBTableRange": [
+    433,
+    457
+  ],
+  "bankByteRange": [
+    3876,
+    5660
+  ],
+  "pairs": [
+    {
+      "mode": "shade",
+      "redOffset": 445,
+      "blueOffset": 446,
+      "beforeRaw": [
+        12,
+        11
+      ],
+      "taggedRaw": [
+        8,
+        7
+      ],
+      "beforeShift": [
+        -3,
+        -2
+      ],
+      "taggedShift": [
+        1,
+        2
+      ],
+      "restoredRaw": [
+        12,
+        11
+      ],
+      "restoredShift": [
+        -3,
+        -2
+      ]
+    },
+    {
+      "mode": "fluorescent1",
+      "redOffset": 447,
+      "blueOffset": 448,
+      "beforeRaw": [
+        7,
+        14
+      ],
+      "taggedRaw": [
+        6,
+        5
+      ],
+      "beforeShift": [
+        2,
+        -5
+      ],
+      "taggedShift": [
+        3,
+        4
+      ],
+      "restoredRaw": [
+        7,
+        14
+      ],
+      "restoredShift": [
+        2,
+        -5
+      ]
+    },
+    {
+      "mode": "fluorescent2",
+      "redOffset": 449,
+      "blueOffset": 450,
+      "beforeRaw": [
+        9,
+        9
+      ],
+      "taggedRaw": [
+        4,
+        3
+      ],
+      "beforeShift": [
+        0,
+        0
+      ],
+      "taggedShift": [
+        5,
+        6
+      ],
+      "restoredRaw": [
+        9,
+        9
+      ],
+      "restoredShift": [
+        0,
+        0
+      ]
+    },
+    {
+      "mode": "fluorescent3",
+      "redOffset": 451,
+      "blueOffset": 452,
+      "beforeRaw": [
+        9,
+        9
+      ],
+      "taggedRaw": [
+        2,
+        1
+      ],
+      "beforeShift": [
+        0,
+        0
+      ],
+      "taggedShift": [
+        7,
+        8
+      ],
+      "restoredRaw": [
+        9,
+        9
+      ],
+      "restoredShift": [
+        0,
+        0
+      ]
+    },
+    {
+      "mode": "incandescent",
+      "redOffset": 453,
+      "blueOffset": 454,
+      "beforeRaw": [
+        9,
+        9
+      ],
+      "taggedRaw": [
+        10,
+        11
+      ],
+      "beforeShift": [
+        0,
+        0
+      ],
+      "taggedShift": [
+        -1,
+        -2
+      ],
+      "restoredRaw": [
+        9,
+        9
+      ],
+      "restoredShift": [
+        0,
+        0
+      ]
+    }
+  ],
+  "taggedWBTableChangedOffsets": [
+    445,
+    446,
+    447,
+    448,
+    449,
+    450,
+    451,
+    452,
+    453,
+    454
+  ],
+  "taggedBankBytesUnchanged": true,
+  "restoredWBTableMatchesBaseline": true,
+  "restoredBankBytesMatchBaseline": true,
+  "restoredWBSelectorAndKelvinIndexMatch": true,
+  "restoredTemperature": {
+    "kelvin": 6300,
+    "red": -4,
+    "blue": -2
+  },
+  "otherRestoredBackupDifferences": [
+    691,
+    3800,
+    3802,
+    3804
+  ],
+  "otherChangedByteMeaning": "unclassified; outside verified WB table and bank region",
+  "sessions": {
+    "tagged": {
+      "backupReads": 1,
+      "closeConfirmed": true,
+      "savedSettingsWritten": false
+    },
+    "restored-001": {
+      "backupReads": 1,
+      "closeConfirmed": true,
+      "savedSettingsWritten": false
+    }
+  },
+  "customMeasuredWBGains": "unsupported",
+  "postConversionVerification": {
+    "WBTableMatchesBaseline": true,
+    "allBankBytesMatchBaseline": true,
+    "selectedWBAndKelvinMatchBaseline": true,
+    "closeConfirmed": true,
+    "savedSettingsWritten": false,
+    "backupReads": 1
+  },
+  "postConversionOtherDifferences": [
+    691,
+    3800,
+    3802,
+    3804
+  ]
+}

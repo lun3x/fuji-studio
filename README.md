@@ -56,7 +56,8 @@ and deletion preserves saved photos and export history. The pencil opens a nativ
 editor with Name, Look, White balance, and Tone and detail sections. Save applies
 the draft; Cancel discards it. Editing works offline, and saving the selected
 recipe refreshes its preview when a camera is connected. Choices follow each recipe's model capabilities. X-E3 offers its 15 films, whole
-tone steps, strength-only grain and 31 verified discrete Kelvin values. X-T5
+tone steps, strength-only grain, nine calibrated WB modes and 31 verified
+discrete Kelvin values. Custom measured-WB gains remain unsupported. X-T5
 retains its measured rendering domain, with all grain combinations saveable. Grain effect and Grain size are separate controls; Off greys out size
 and remembers it. Weak grain and Strong with Large size are not yet supported
 for camera conversion. Existing unsupported values are preserved until
