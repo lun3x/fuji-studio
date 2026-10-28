@@ -12,6 +12,7 @@ struct VersionMenu: View {
     @Environment(\.timeZone) private var timeZone
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.workspaceOrientation) private var orientation
 
     private var options: VersionList {
         VersionList(source: source, saved: saved, selected: selected, timeZone: timeZone,
@@ -34,7 +35,7 @@ struct VersionMenu: View {
         .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named("workspace")) }, action: onControlFrameChanged)
         .onChange(of: source.id) { _, _ in presented = false }
         .onDisappear { presented = false; onControlFrameChanged(.zero) }
-        .popover(isPresented: $presented, arrowEdge: .top) {
+        .popover(isPresented: $presented, arrowEdge: orientation.popoverEdge) {
             options.environment(\.dynamicTypeSize, dynamicTypeSize)
                 .background { PopoverEscapeHandler(onDismiss: { presented = false }).frame(width: 1, height: 1) }
                 .presentationCompactAdaptation(.popover)

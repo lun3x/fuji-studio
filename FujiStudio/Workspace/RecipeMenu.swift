@@ -14,6 +14,7 @@ struct RecipeMenu: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.workspaceOrientation) private var orientation
 
     init(current: RecipeSnapshot?, snapshots: [RecipeSnapshot], refreshState: RecipeRefreshState, isCameraConnected: Bool,
          onSelect: @escaping (Int?) -> Void, onRefresh: @escaping () -> Void,
@@ -40,7 +41,7 @@ struct RecipeMenu: View {
         .accessibilityHint(isCameraConnected ? "Choose a cached camera recipe or import recipes" : "Connect a camera to choose or import recipes")
         .accessibilityIdentifier("recipe.control")
         .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named("workspace")) }, action: onControlFrameChanged)
-        .popover(isPresented: $presented, arrowEdge: .top) {
+        .popover(isPresented: $presented, arrowEdge: orientation.popoverEdge) {
             options.environment(\.dynamicTypeSize, dynamicTypeSize)
                 .background { PopoverEscapeHandler(onDismiss: { presented = false }).frame(width: 1, height: 1) }
                 .presentationCompactAdaptation(.popover)

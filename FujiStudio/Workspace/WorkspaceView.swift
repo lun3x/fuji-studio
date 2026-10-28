@@ -23,19 +23,21 @@ struct WorkspaceView<StatusControl: View>: View {
     var onViewportChanged: (GridViewport) -> Void = { _ in }
     @State private var drawerHeaderHeight: CGFloat = 0
     @State private var statusHeight: CGFloat = 0
-    @State private var cameraControlHeight: CGFloat = 0
-    @State private var recipeFrame: CGRect = .zero
-    @State private var photoActionFrame: CGRect = .zero
+    @State private var controlHeight: CGFloat = 0
     @State private var scrollRequest: GridScrollRequest?
+    @State private var orientation = WorkspaceOrientation.portrait
 
     var body: some View {
         GeometryReader { proxy in
-            let safe = proxy.safeAreaInsets
-            let size = CGSize(width: proxy.size.width + safe.leading + safe.trailing, height: proxy.size.height + safe.top + safe.bottom)
+            let windowSafe = proxy.safeAreaInsets
+            let windowSize = CGSize(width: proxy.size.width + windowSafe.leading + windowSafe.trailing,
+                height: proxy.size.height + windowSafe.top + windowSafe.bottom)
+            let safe = orientation.layoutInsets(windowSafe)
+            let size = orientation.layoutSize(windowSize)
             let width = max(1, size.width - safe.leading - safe.trailing)
             let photoTop = safe.top
             let controlTop = photoTop + 8
-            let controlBottom = controlTop + max(44, cameraControlHeight, recipeFrame.height, photoActionFrame.height)
+            let controlBottom = controlTop + max(44, controlHeight)
             let controlFrame = CGRect(x: safe.leading + 16, y: controlTop, width: max(1, width - 32), height: controlBottom - controlTop)
             // Only a real image-status message reserves space below the image. The two
             // photo controls and camera indicator float over it in every layout.
@@ -45,9 +47,12 @@ struct WorkspaceView<StatusControl: View>: View {
             let detents = DrawerGeometry.detents(container: size, safeArea: safe, headerHeight: drawerHeaderHeight,
                 grid: gridMetrics, recipeControlFrame: controlFrame)
             let viewerHeight = max(1, size.height - detents.collapsedHeight - photoTop)
+            let viewerSize = orientation.layoutSize(CGSize(width: width, height: viewerHeight))
             ZStack(alignment: .topLeading) {
                 Color(uiColor: .systemBackground)
                 viewer
+                    .frame(width: viewerSize.width, height: viewerSize.height)
+                    .rotationEffect(orientation.contentAngle)
                     .frame(width: width, height: viewerHeight)
                     .clipped().offset(x: safe.leading, y: photoTop)
                 VStack(spacing: 0) {
@@ -63,29 +68,47 @@ struct WorkspaceView<StatusControl: View>: View {
                         }, grid: { onDrawerDrag in
                             PhotoGrid(sources: sources, checkedSourceIDs: state.checkedSourceIDs, isSelecting: state.isSelecting,
                                 viewedSourceID: state.viewedSourceID, thumbnails: thumbnails, scrollRequest: scrollRequest,
-                                gridMetrics: gridMetrics, bottomInset: safe.bottom, allowsDrawerCollapse: state.drawerDetent == .expanded,
+                                gridMetrics: gridMetrics, bottomInset: safe.bottom,
+                                contentRotation: orientation.contentRotation, allowsDrawerCollapse: state.drawerDetent == .expanded,
                                 onSourceTapped: { onAction(.sourceTapped($0)) },
                                 onCheckedChanged: { onAction(.checkedSourcesReplaced($0)) }, onViewportChanged: onViewportChanged,
                                 onDrawerDrag: onDrawerDrag)
-                                .overlay(alignment: .top) { selectionControls.padding(12) }
+                                .anchorPreference(key: TrayBoundsKey.self, value: .bounds) { $0 }
                         })
                         .frame(width: width)
                 }.frame(width: width, height: size.height).offset(x: safe.leading)
-                GlassEffectContainer(spacing: 8) {
-                    HStack(alignment: .top, spacing: 8) {
-                        statusControl()
-                            .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { cameraControlHeight = $0 }
-                        Spacer(minLength: 0)
-                        recipeControl
-                        photoActionControl
-                    }
-                }.padding(.horizontal, 16).frame(width: width, alignment: .leading)
-                    .offset(x: safe.leading, y: controlTop).zIndex(10)
             }
             .coordinateSpace(name: "workspace")
             .frame(width: size.width, height: size.height)
-            .offset(x: -safe.leading, y: -safe.top)
+            .rotationEffect(orientation.canvasAngle)
+            .frame(width: windowSize.width, height: windowSize.height)
+            .overlayPreferenceValue(TrayBoundsKey.self) { anchor in
+                GeometryReader { overlay in
+                    if let anchor {
+                        let frame = overlay[anchor]
+                        selectionControls.padding(12)
+                            .frame(width: frame.width, height: frame.height, alignment: orientation.trayControlAlignment)
+                            .position(x: frame.midX, y: frame.midY)
+                    }
+                }
+            }
+            .overlay(alignment: .topLeading) {
+                let frame = orientation.windowFrame(controlFrame, in: size)
+                GlassEffectContainer(spacing: 8) {
+                    DeviceAnchoredRow(orientation: orientation, spacing: 8) {
+                        statusControl()
+                        recipeControl
+                        photoActionControl
+                    }
+                }
+                .onGeometryChange(for: CGFloat.self, of: { orientation.layoutSize($0.size).height }) { controlHeight = $0 }
+                .frame(width: frame.width, height: frame.height)
+                .offset(x: frame.minX, y: frame.minY)
+            }
+            .environment(\.workspaceOrientation, orientation)
+            .offset(x: -windowSafe.leading, y: -windowSafe.top)
         }
+        .background { WorkspaceOrientationReader { orientation = $0 } }
     }
     @ViewBuilder private var viewer: some View {
         if let source = sources.first(where: { $0.id == state.viewedSourceID }) {
@@ -103,8 +126,7 @@ struct WorkspaceView<StatusControl: View>: View {
     private var recipeControl: some View {
         RecipeMenu(current: state.selectedRecipe, snapshots: state.recipes, refreshState: state.recipeRefreshState,
             isCameraConnected: state.isCameraConnected,
-            onSelect: { onAction(.recipeSelected(slot: $0)) }, onRefresh: onRefreshRecipes,
-            onControlFrameChanged: { recipeFrame = $0 })
+            onSelect: { onAction(.recipeSelected(slot: $0)) }, onRefresh: onRefreshRecipes)
     }
     private var exportButton: some View {
         Button(action: onExport) {
@@ -124,17 +146,15 @@ struct WorkspaceView<StatusControl: View>: View {
                     onVersionSelected: { onAction(.versionSelected($0)) })
             }
         }
-        .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named("workspace")) }) { photoActionFrame = $0 }
     }
     private var selectionControls: some View {
         GlassEffectContainer(spacing: 12) {
-            HStack(alignment: .top) {
+            DeviceAnchoredRow(orientation: orientation, spacing: 12, leadingItems: state.isSelecting ? 1 : 0) {
                 if state.isSelecting {
                     count.padding(.horizontal, 12).frame(minHeight: 44)
                         .glassEffect(.regular, in: .capsule)
                         .allowsHitTesting(false)
                 }
-                Spacer(minLength: 12)
                 selectionButton
             }
         }
@@ -159,5 +179,12 @@ struct WorkspaceView<StatusControl: View>: View {
             .accessibilityLabel("\(state.checkedSourceIDs.count) selected")
             .accessibilityIdentifier("workspace.count")
             .font(.caption).monospacedDigit().lineLimit(1).fixedSize()
+    }
+}
+
+private struct TrayBoundsKey: PreferenceKey {
+    static var defaultValue: Anchor<CGRect>? { nil }
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+        value = nextValue() ?? value
     }
 }
