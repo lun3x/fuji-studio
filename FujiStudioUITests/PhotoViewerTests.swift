@@ -15,6 +15,13 @@ final class PhotoViewerTests: XCTestCase {
         return text.split(separator: ",").compactMap { Double($0) }
     }
     private func image(_ app: XCUIApplication) -> XCUIElement { app.descendants(matching: .any)["viewer.image"] }
+    private func assertLoadingFrame(_ actual: CGRect, _ expected: CGRect, file: StaticString = #filePath, line: UInt = #line) {
+        // Accessibility rounds rotated drawing bounds to screen pixels.
+        XCTAssertEqual(actual.midX, expected.midX, accuracy: 1, file: file, line: line)
+        XCTAssertEqual(actual.midY, expected.midY, accuracy: 1, file: file, line: line)
+        XCTAssertEqual(actual.width, expected.width, accuracy: 1, file: file, line: line)
+        XCTAssertEqual(actual.height, expected.height, accuracy: 1, file: file, line: line)
+    }
     private func selectVersion(_ identifier: String, in app: XCUIApplication) {
         app.buttons["workspace.versions"].tap()
         XCTAssertTrue(app.buttons[identifier].waitForExistence(timeout: 5))
@@ -38,20 +45,55 @@ final class PhotoViewerTests: XCTestCase {
         XCTAssertEqual(viewer.frame, frame)
         XCTAssertEqual(loading.frame.midX, frame.midX, accuracy: 1)
         XCTAssertEqual(loading.frame.midY, frame.midY, accuracy: 1)
+        let indicatorFrame = loading.frame
         advance.tap()
-        XCTAssertTrue(app.staticTexts["viewer.loading.progress"].waitForExistence(timeout: 3))
-        XCTAssertEqual(app.staticTexts["viewer.loading.progress"].value as? String, "25%")
+        XCTAssertTrue(loading.wait(for: \.label, toEqual: "Downloading original", timeout: 3))
+        XCTAssertEqual(loading.value as? String, "25%")
+        XCTAssertFalse(app.staticTexts["25%"].exists)
+        XCTAssertFalse(app.staticTexts["viewer.loading.progress"].exists)
         XCTAssertEqual(viewer.frame, frame)
+        assertLoadingFrame(loading.frame, indicatorFrame)
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = "Preview download overlay"; attachment.lifetime = .keepAlways; add(attachment)
         advance.tap()
         XCTAssertTrue(loading.exists)
+        XCTAssertEqual(loading.label, "Loading preview")
         XCTAssertFalse(app.staticTexts["viewer.loading.progress"].exists)
+        assertLoadingFrame(loading.frame, indicatorFrame)
         advance.tap()
         XCTAssertTrue(loading.waitForNonExistence(timeout: 3))
         XCTAssertEqual(viewer.frame, frame)
         let after = try requiredValues(app)
         for i in 0..<3 { XCTAssertEqual(after[i], zoom[i], accuracy: 0.01) }
+    }
+
+    func testLoadingRingWithoutImage() {
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launchArguments = ["--viewer-fixture", "--viewer-loading-controls"]
+        app.launch()
+        XCTAssertTrue(image(app).waitForExistence(timeout: 10))
+        selectVersion("version.raw", in: app)
+        let advance = app.buttons["fixture.loading"]
+        let loading = app.descendants(matching: .any)["viewer.loading"]
+        advance.tap()
+        XCTAssertTrue(loading.waitForExistence(timeout: 3))
+        XCTAssertFalse(image(app).exists)
+        XCTAssertEqual(loading.label, "Loading preview")
+        let frame = loading.frame
+        advance.tap()
+        XCTAssertTrue(loading.wait(for: \.label, toEqual: "Downloading original", timeout: 3))
+        XCTAssertEqual(loading.value as? String, "25%")
+        assertLoadingFrame(loading.frame, frame)
+        XCTAssertFalse(app.staticTexts["25%"].exists)
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "Download ring without an image"; attachment.lifetime = .keepAlways; add(attachment)
+        advance.tap()
+        XCTAssertEqual(loading.label, "Loading preview")
+        assertLoadingFrame(loading.frame, frame)
+        advance.tap()
+        XCTAssertTrue(loading.waitForNonExistence(timeout: 3))
+        XCTAssertTrue(app.descendants(matching: .any)["viewer.unavailable"].exists)
     }
 
     func testZoomPersistsAcrossMatchingVersionsAndResetsForNewSource() throws {
