@@ -45,6 +45,9 @@ private struct WorkspaceFixtureView: View {
                         state.reduce(.phoneRecipesLoaded(state.phoneRecipes + [recipe.copiedToPhone()]))
                     }
                     return true
+                }, onDeletePhoneRecipe: { id in
+                    guard state.phoneRecipes.contains(where: { $0.id == id }) else { return false }
+                    state.reduce(.phoneRecipeDeleted(id)); return true
                 }, onExport: { exportCount += 1 },
                 statusControl: {
                     Button {} label: {

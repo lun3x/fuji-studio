@@ -63,3 +63,21 @@ workspace and push the development bookmark at each checkpoint.
 
 Approved direction: the user's instruction to start with copying and saving,
 with editing deferred. Implementation follows that reduced scope.
+
+## Follow-up: deletion and disconnected selection
+
+The user subsequently requested phone recipe deletion and greyed-out phone rows
+when disconnected, matching camera recipes. This follow-up supersedes the earlier
+offline-selection behavior and the deletion exclusion.
+
+Each phone row has a separate, accessible trash icon. Deletion is available
+offline and requires an in-app confirmation identifying the recipe. It removes
+only local chooser membership; immutable snapshots, saved photos and frozen
+export history are retained. Deleting the selected recipe clears selection and
+invalidates its pending preview. Deleting another recipe preserves the selection;
+failed persistence leaves the row/selection intact with a retryable error.
+
+The phone selection button is greyed out and disabled under the same connection
+rule as camera rows. Disconnecting clears either kind of selected recipe; a new
+connection does not automatically reselect it. Copying cached recipes and
+deleting phone recipes remain possible offline. Editing remains deferred.

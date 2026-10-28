@@ -201,7 +201,8 @@ private struct WorkspaceHostingHarness: View {
     let store: WorkspaceHostingStore
     var body: some View {
         WorkspaceView(state: store.state, sources: store.sources, thumbnails: store.thumbnails,
-            onAction: { store.state.reduce($0) }, onRefreshRecipes: {}, onCopyRecipeToPhone: { _ in false }, onExport: {},
+            onAction: { store.state.reduce($0) }, onRefreshRecipes: {}, onCopyRecipeToPhone: { _ in false },
+            onDeletePhoneRecipe: { _ in false }, onExport: {},
             statusControl: { EmptyView() })
     }
 }
@@ -233,7 +234,7 @@ final class RecipeMenuRoutingTests: XCTestCase {
         let menu = RecipeMenu(current: store.state.selectedRecipe, snapshots: store.state.recipes, phoneSnapshots: [], refreshState: .fresh,
             isCameraConnected: store.state.isCameraConnected,
             onSelect: { store.selections.append($0); store.state.reduce(.recipeSelected(slot: $0)) },
-            onSelectPhone: { _ in }, onCopyToPhone: { _ in false }, onRefresh: {}, initiallyPresented: true)
+            onSelectPhone: { _ in }, onCopyToPhone: { _ in false }, onDeletePhone: { _ in false }, onRefresh: {}, initiallyPresented: true)
         let host = UIHostingController(rootView: menu)
         let window = UIWindow(windowScene: scene)
         window.rootViewController = host; window.makeKeyAndVisible()

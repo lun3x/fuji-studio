@@ -46,8 +46,11 @@ sets out the hardware feasibility gates, native app tasks, and acceptance checks
 The recipe selector has Camera and Phone tabs. The copy icon beside an imported
 camera recipe saves its exact name/settings on the phone and opens the Phone tab
 without changing the current recipe. Repeated taps reuse the saved copy of that
-import. Copies survive restarts and camera refreshes and can be saved/selected
-offline; preview and export still require a compatible connected camera. Editing
+import. Copies survive restarts and camera refreshes and can be saved or deleted
+offline. Both Camera and Phone recipe selection are greyed out while disconnected;
+disconnecting clears the selection. Phone rows have a trash icon with confirmation,
+and deletion preserves saved photos and export history. Preview and export still
+require a compatible connected camera. Editing
 is deferred so this first increment can focus on the copy/save UX. See the
 [phone recipe design](docs/superpowers/specs/2026-10-28-phone-recipes-design.md).
 

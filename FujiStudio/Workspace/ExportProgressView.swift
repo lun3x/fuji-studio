@@ -79,6 +79,7 @@ struct AppWorkspaceView: View {
             savedVersions: model.savedVersions, exportPending: model.isSubmitting, previewLoading: model.isLoadingPreview,
             onAction: model.send, onRefreshRecipes: { Task { await model.refreshRecipes() } },
             onCopyRecipeToPhone: model.copyRecipeToPhone,
+            onDeletePhoneRecipe: model.deletePhoneRecipe,
             onExport: { Task { await model.export() } },
             statusControl: { statusButton })
         .sheet(isPresented: $statusPresented) {

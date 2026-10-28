@@ -10,15 +10,15 @@
 
 ## Task 1 — persistence and state
 
-- [ ] Integrate latest main and verify a clean baseline with Scripts/test-ios.sh --fast on a new task-owned simulator.
-- [ ] Add failing catalog tests: durable deletion, repeated deletion, recopy after deletion, and preserved frozen job/version history.
-- [ ] Add failing reducer/model tests: offline selection rejected; disconnect clears selection; selected deletion invalidates preview; unrelated deletion preserves it; failed deletion keeps state and history.
-- [ ] Implement deletePhoneRecipe(id:) in the catalog/model, phoneRecipeDeleted in the reducer, and matching connection gating. Update catalog test doubles.
-- [ ] Run the unit gate and push a checkpoint with Jujutsu.
+- [x] Integrate latest main and verify a clean baseline with Scripts/test-ios.sh --fast on a new task-owned simulator.
+- [x] Add failing catalog tests: durable deletion, repeated deletion, recopy after deletion, and preserved frozen job/version history.
+- [x] Add failing reducer/model tests: offline selection rejected; disconnect clears selection; selected deletion invalidates preview; unrelated deletion preserves it; failed deletion keeps state and history.
+- [x] Implement deletePhoneRecipe(id:) in the catalog/model, phoneRecipeDeleted in the reducer, and matching connection gating. Update catalog test doubles.
+- [x] Run the unit gate and push a checkpoint with Jujutsu.
 
 ## Task 2 — native controls and verification
 
-- [ ] Add/adjust UI cases for offline dimmed/disabled phone rows with enabled deletion, cancel/confirm, selected deletion, recopy, connection transitions and largest text; observe failures before implementing.
-- [ ] Add separate accessible delete controls, confirmation and failure feedback; forward through the workspace and deterministic fixture.
+- [x] Add/adjust UI cases for offline dimmed/disabled phone rows with enabled deletion, cancel/confirm, selected deletion, recopy, connection transitions and largest text; observe failures before implementing.
+- [x] Add separate accessible delete controls, confirmation and failure feedback; forward through the workspace and deterministic fixture.
 - [ ] Run affected UI cases, then the complete Scripts/test-ios.sh suite, a Release build and one fresh read-only review. Inspect screenshots.
 - [ ] Push/update the existing PR and validation record, install the verified signed build on the user's phone, and clean up the task simulator.
