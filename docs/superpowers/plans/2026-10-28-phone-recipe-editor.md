@@ -32,5 +32,5 @@ Retain stable preset identity across snapshot changes; reject stale drafts and e
 
 ## Task 3 — completion
 
-- [ ] Run the complete Scripts/test-ios.sh gate, Release build and independent review; fix substantive findings with tests.
-- [ ] Update PR #16/validation documentation, install the verified signed build on the phone, and remove the task simulator.
+- [x] Run the complete Scripts/test-ios.sh gate, Release build and independent review; fix substantive editor findings with tests. Full run: 503 passed, 3 native-gate skips, 1 timing-sensitive inactive-startup assertion; isolated rerun later passed without an app change. See the validation record; the full run is not green.
+- [x] Update PR #16/validation documentation, install the verified signed build on the phone, and remove the task simulator.
