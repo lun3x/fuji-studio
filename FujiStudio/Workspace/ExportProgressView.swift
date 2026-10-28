@@ -119,7 +119,7 @@ struct AppWorkspaceView: View {
         if let event = model.exportEvent { return "\(event.recipeLabel) · \(event.summary.completed) saved · \(ExportProgressView.status(event))" }
         if model.message != nil || model.connectionError != nil { return "Action needed" }
         if model.state.libraryAccess == .denied || model.state.libraryAccess == .restricted { return "Photos access needed" }
-        if model.isRefreshing { return "Importing seven recipes…" }
+        if model.isRefreshing { return "Importing camera recipes…" }
         switch model.state.cameraState {
         case .authorizationDenied: return "Camera access needed"
         case .wrongMode: return "Check camera USB mode"
@@ -139,14 +139,14 @@ struct AppWorkspaceView: View {
     }
     private var cameraMessage: String {
         switch model.state.cameraState {
-        case .ready: "X-T5 ready for conversion."
-        case .busy: "X-T5 is processing the current operation."
+        case .ready: "\(model.state.currentCameraExecutionContext?.model ?? "Camera") ready for conversion."
+        case .busy: "The camera is processing the current operation."
         case .authorizationRequired: "Allow camera control to read recipes and convert RAWs over USB. This does not take new pictures."
         case .authorizationDenied: "Camera control is denied. Allow it in Settings, then return to Fuji Studio to connect automatically."
-        case .wrongMode: "Set the X-T5 USB connection mode to USB RAW CONV./BACKUP RESTORE. Use a USB data cable."
+        case .wrongMode: "Set the camera USB connection mode to USB RAW CONV./BACKUP RESTORE. Use a USB data cable."
         case .recoverableError: "Camera connection interrupted. Check its USB mode and data cable. Fuji Studio reconnects automatically."
-        case .opening, .discovering, .sessionOpen: "Connecting and verifying the X-T5…"
-        case .disconnected: "Plug in an X-T5 with a USB data cable in USB RAW CONV./BACKUP RESTORE mode. Fuji Studio connects automatically and retries every three seconds while active. Browsing originals and saved versions works without the camera."
+        case .opening, .discovering, .sessionOpen: "Connecting and verifying the camera…"
+        case .disconnected: "Plug in a supported Fujifilm camera with a USB data cable in USB RAW CONV./BACKUP RESTORE mode. Fuji Studio connects automatically and retries every three seconds while active. Browsing originals and saved versions works without the camera."
         }
     }
 }

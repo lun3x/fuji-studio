@@ -292,6 +292,7 @@ actor ExportCoordinator {
     private func render(_ raw: PreparedRAW, recipe: RecipeSnapshot, jobID: UUID, index: Int) async throws -> CameraJPEG {
         try checkStop()
         let context = try await validateCamera(recipe)
+        guard raw.metadata.cameraModel == context.model else { throw ResourceError.incompatibleCamera(raw.metadata.cameraModel) }
         let key = RenderKey(sourceID: raw.sourceID, sourceRevision: raw.sourceRevision, sourceSHA256: raw.sha256,
             settingsDigest: recipe.settingsDigest, cameraContext: context, width: raw.metadata.recordedGeometry.width,
             height: raw.metadata.recordedGeometry.height, orientation: raw.metadata.orientation,

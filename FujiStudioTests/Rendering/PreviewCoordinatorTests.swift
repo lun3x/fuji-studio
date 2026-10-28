@@ -4,6 +4,19 @@ import Testing
 @testable import FujiStudio
 
 struct PreviewCoordinatorTests {
+    @Test func modelSwitchCannotReusePreviewOrRunOtherModelConversion() async throws {
+        let f=try RenderFixture();defer { f.remove() }
+        let reader=RenderLibrary(f),camera=RenderCamera(f),cache=try f.cache()
+        try await cache.store(f.jpeg(),key:f.key())
+        let xe3=CameraExecutionContext(model:"X-E3",firmware:"1.30",capability:XE3Support.identifier,supportVersion:XE3Support.identifier,sessionIdentity:UUID(),generation:2)
+        await camera.changeContext(xe3)
+        let coordinator=PreviewCoordinator(pool:reader.pool(),camera:camera,scheduler:ImmediateCameraScheduler(),cache:cache,
+            rawRenderer:try RawDisplayRenderer(directory:f.root.appendingPathComponent("display")),storedDisplay:{ _,_,_ in throw RawDisplayError.unavailable })
+        await coordinator.request(source:f.source,recipe:f.recipe)
+        #expect(await camera.calls == 0)
+        #expect(await coordinator.displayedVersion == nil)
+        #expect(await cache.lookup(f.key()) != nil)
+    }
     @Test func latePreviewCannotReplaceManualOriginalAndKeepsExternalRequestIdentity() async throws {
         let f = try RenderFixture(); defer { f.remove() }
         let cache = try f.cache(), latch = RenderLatch(), camera = RenderCamera(f, latch: latch), reader = RenderLibrary(f)

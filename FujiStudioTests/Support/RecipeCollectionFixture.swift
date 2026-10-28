@@ -28,8 +28,9 @@ func fixtureCollection(
         ? XE3Support.identifier : XT5WorkingProfile.supportVersion,
       sessionIdentity: recipeContext?.sessionIdentity ?? UUID(),
       generation: recipeContext?.sessionGeneration ?? 1)
+  let lookup=recipeContext ?? context.map { RecipeCameraContext(model:$0.model,firmware:$0.firmware,capability:$0.capability,sessionIdentity:$0.sessionIdentity,sessionGeneration:$0.generation) }
   let baseline =
-    recipeContext.flatMap { try? RecipeCodecRegistry().capabilities(for: $0) }
+    lookup.flatMap { try? RecipeCodecRegistry().capabilities(for: $0) }
     ?? RecipeCodecRegistry.xt5Capabilities
   let capabilities = CameraCapabilities(
     bankSlots: slots ?? baseline.bankSlots, settings: baseline.settings,

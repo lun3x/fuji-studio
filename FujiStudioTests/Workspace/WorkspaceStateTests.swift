@@ -42,7 +42,7 @@ struct WorkspaceStateTests {
         let request = try #require(preview(in: state.reduce(.phoneRecipeSelected(copy.id))))
         #expect(request.recipe == copy.snapshot)
         state.reduce(.previewCompleted(request: request, key: f.key(request)))
-        #expect(state.reduce(.recipesRefreshed(try f.refreshedRecipes())).isEmpty)
+        #expect(state.reduce(.recipesLoaded(try f.refreshedRecipes(),slots:RecipeCodecRegistry.xt5Capabilities.bankSlots)).isEmpty)
         #expect(state.selectedRecipe == copy.snapshot)
         #expect(state.displayedVersion == .preview(f.key(request)))
         #expect(state.canExport)
@@ -115,7 +115,7 @@ struct WorkspaceStateTests {
         let f = try WorkspaceFixture()
         var state = WorkspaceState(sources: [f.source("viewed")], access: .full)
         state.reduce(.sourceTapped("viewed"))
-        state.reduce(.recipesRefreshed(f.recipes))
+        state.reduce(.recipesLoaded(f.recipes,slots:RecipeCodecRegistry.xt5Capabilities.bankSlots))
         for slot in 1...7 {
             #expect(state.reduce(.recipeSelected(slot: slot)).isEmpty)
             #expect(state.selectedRecipe == nil)
@@ -271,7 +271,7 @@ struct WorkspaceStateTests {
         let submittedJob = ExportJob(id: UUID(), submittedAt: Date(), recipeSnapshot: original,
             items: state.effectiveSources.map { ExportItem(source: $0, operationID: UUID()) }, state: .queued)
         let refreshed = try f.refreshedRecipes()
-        let effects = state.reduce(.recipesRefreshed(refreshed))
+        let effects = state.reduce(.recipesLoaded(refreshed,slots:RecipeCodecRegistry.xt5Capabilities.bankSlots))
         let new = try #require(preview(in: effects))
         #expect(state.selectedRecipe?.id == refreshed[2].id)
         #expect(state.selectedRecipe?.name == original.name)
@@ -293,12 +293,12 @@ struct WorkspaceStateTests {
         #expect(state.recipeRefreshState == .stale("USB disconnected"))
         #expect(state.selectedRecipe?.id == old[2].id)
         for invalid in [Array(old.prefix(6)), Array(repeating: old[0], count: 7)] {
-            #expect(state.reduce(.recipesRefreshed(invalid)).isEmpty)
+            #expect(state.reduce(.recipesLoaded(invalid,slots:RecipeCodecRegistry.xt5Capabilities.bankSlots)).isEmpty)
             #expect(state.recipes == old)
             #expect(state.selectedRecipe?.id == old[2].id)
             if case .stale = state.recipeRefreshState {} else { Issue.record("Invalid refresh must be stale") }
         }
-        state.reduce(.recipesRefreshed(try f.refreshedRecipes()))
+        state.reduce(.recipesLoaded(try f.refreshedRecipes(),slots:RecipeCodecRegistry.xt5Capabilities.bankSlots))
         #expect(state.recipeRefreshState == .fresh)
     }
 
@@ -347,7 +347,7 @@ struct WorkspaceStateTests {
         state.reduce(.sourceTapped("viewed"))
         var recipes = f.recipes
         recipes[2] = f.copy(recipes[2], settings: [], digest: "unsupported")
-        #expect(state.reduce(.recipesRefreshed(recipes)).isEmpty)
+        #expect(state.reduce(.recipesLoaded(recipes,slots:RecipeCodecRegistry.xt5Capabilities.bankSlots)).isEmpty)
         #expect(state.selectedRecipe?.id == recipes[2].id)
         #expect(state.exportDisabledReason == .unsupportedRecipe([.unsupportedMeasuredDomain]))
         #expect(state.exportDisabledReason?.message.isEmpty == false)
@@ -599,7 +599,7 @@ private struct WorkspaceFixture {
     }
     func state(sources: [PhotoSource]? = nil) -> WorkspaceState {
         var state = WorkspaceState(sources: sources ?? [source("viewed"), source("next")], access: .full)
-        state.reduce(.recipesRefreshed(recipes))
+        state.reduce(.recipesLoaded(recipes,slots:RecipeCodecRegistry.xt5Capabilities.bankSlots))
         state.reduce(.cameraChanged(.ready(session), context: context))
         state.reduce(.recipeSelected(slot: 3))
         return state

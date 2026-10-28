@@ -163,7 +163,9 @@ public actor FujiCameraService: CameraServing {
       supportVersion: support.supportVersion, sessionIdentity: UUID(),
       generation: nativeSession.generation)
   }
-  private func reopenForImport(epoch: UInt64) async throws -> CameraExecutionContext {
+  private func reopenForImport(epoch: UInt64, attachment: UUID) async throws
+    -> CameraExecutionContext
+  {
     // Retire public affinity before native close callbacks can arrive. Only this owner
     // opens again, and a real detach is checked by currentSession on every command.
     let previousGeneration = nativeSession?.generation
@@ -174,7 +176,9 @@ public actor FujiCameraService: CameraServing {
     try Task.checkCancellation()
     guard epoch == admissionEpoch, !stopRequested else { throw CameraServiceError.cancelled }
     let opened = try await openVerified(epoch: epoch)
-    guard opened.generation != previousGeneration else {
+    guard opened.generation != previousGeneration,
+      nativeSession?.connection.attachmentIdentity == attachment
+    else {
       throw CameraServiceError.unsupportedContext
     }
     return opened
@@ -240,10 +244,12 @@ public actor FujiCameraService: CameraServing {
         throw CameraServiceError.notReady
       }
       let operationEpoch: UInt64
+      let attachment = nativeSession?.connection.attachmentIdentity
       if adapter.recipeImportSessionPolicy == .freshBeforeAndAfter {
+        guard let attachment else { throw CameraServiceError.unsupportedContext }
         admissionEpoch &+= 1
         operationEpoch = admissionEpoch
-        execution = try await reopenForImport(epoch: operationEpoch)
+        execution = try await reopenForImport(epoch: operationEpoch, attachment: attachment)
         guard verifiedSupport == support else { throw CameraServiceError.unsupportedContext }
       } else {
         operationEpoch = epoch
@@ -259,7 +265,8 @@ public actor FujiCameraService: CameraServing {
         Set(result.recipes.map(\.id)).count == result.recipes.count
       else { throw CameraServiceError.unsupportedContext }
       if adapter.recipeImportSessionPolicy == .freshBeforeAndAfter {
-        execution = try await reopenForImport(epoch: operationEpoch)
+        guard let attachment else { throw CameraServiceError.unsupportedContext }
+        execution = try await reopenForImport(epoch: operationEpoch, attachment: attachment)
         guard verifiedSupport == support else { throw CameraServiceError.unsupportedContext }
         context = execution
       }

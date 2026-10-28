@@ -129,9 +129,10 @@ final class WorkspaceFixture {
                 properties: values.mapValues { Data([UInt8(truncatingIfNeeded: $0), UInt8(truncatingIfNeeded: $0 >> 8)]) }, context: context, importedAt: Date(timeIntervalSince1970: 0))
         }
         var state = WorkspaceState(sources: sources, access: .full)
-        state.reduce(.recipesRefreshed(recipes))
+        state.reduce(.recipesLoaded(recipes,slots:RecipeCodecRegistry.xt5Capabilities.bankSlots))
         state.reduce(.cameraChanged(.ready(CameraSession(generation: 1, connection: .init(name: "Generated fixture", usbVendorID: 0, usbProductID: 0))), context: CameraExecutionContext(model: context.model, firmware: context.firmware, capability: context.capability,
             supportVersion: XT5WorkingProfile.supportVersion, sessionIdentity: context.sessionIdentity, generation: 1)))
+        if let execution=state.currentCameraExecutionContext { state.reduce(.cameraSupportVerified(execution,try fixtureCameraSupport(execution))) }
         state.reduce(.recipeSelected(slot: 3))
         state.reduce(.sourceTapped("source-0")); self.state = state
     }

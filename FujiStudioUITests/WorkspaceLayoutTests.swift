@@ -171,7 +171,7 @@ final class WorkspaceLayoutTests: XCTestCase {
         for slot in 1...7 {
             XCTAssertTrue(app.buttons["recipe.slot.\(slot)"].label.contains("C\(slot) \(names[slot - 1])"))
         }
-        XCTAssertTrue(app.buttons["recipe.slot.7"].label.contains("conversion unsupported"))
+        XCTAssertTrue(app.buttons["recipe.slot.7"].label.contains("Conversion is unavailable"))
 
         // Stay inside the app's safe area; a screen-relative point can hit the system status bar.
         shot(app, "Recipe C3 native popover")
@@ -209,9 +209,11 @@ final class WorkspaceLayoutTests: XCTestCase {
         XCTAssertEqual(app.staticTexts["fixture.refreshCount"].label, "Refresh requests: 1")
         XCTAssertTrue(app.buttons["recipe.control"].label.contains("C3"))
         openRecipeMenu(app)
-        app.buttons["recipe.slot.7"].tap()
-        XCTAssertTrue(app.buttons["recipe.control"].label.contains("C7"))
-        XCTAssertFalse(app.buttons["workspace.export"].isEnabled)
+        XCTAssertFalse(app.buttons["recipe.slot.7"].isEnabled)
+        XCTAssertTrue(app.buttons["recipe.copy.7"].isEnabled)
+        app.buttons["recipe.none"].tap()
+        XCTAssertEqual(app.buttons["recipe.control"].label,"No recipe selected")
+        XCTAssertFalse(app.buttons["workspace.export"].exists)
 
     }
     func testDarkExpandedAndAccessibleHeaderAlternatives() {

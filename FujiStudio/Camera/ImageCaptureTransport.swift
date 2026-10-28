@@ -48,6 +48,8 @@ import FujiCameraCore
     #endif
     private var browser: ICDeviceBrowser?
     private var camera: ICCameraDevice?
+    private weak var attachmentCamera: ICDevice?
+    private var attachmentIdentity: UUID?
     private weak var detachedCamera: ICDevice?
     private var cameraDelegate: SessionDelegate?
     private var events: (@MainActor @Sendable (CameraDriverEvent) -> Void)?
@@ -282,6 +284,9 @@ import FujiCameraCore
             return
         }
         let current = run
+        if attachmentCamera !== camera || attachmentIdentity == nil {
+            attachmentCamera=camera;attachmentIdentity=UUID()
+        }
         let delegate = SessionDelegate(owner: self, run: current)
         self.camera = camera; cameraDelegate = delegate; camera.delegate = delegate; opening = true
         events?(.opening)
@@ -299,7 +304,7 @@ import FujiCameraCore
         if closing { closeCamera(); return }
         if let error { events?(.failed(.sessionFailure("\((error as NSError).domain):\((error as NSError).code)"))); return }
         guard let camera, camera.hasOpenSession else { events?(.failed(.notConnected)); return }
-        events?(.opened(CameraConnection(name: camera.name ?? "Fujifilm camera", usbVendorID: Int(camera.usbVendorID), usbProductID: Int(camera.usbProductID))))
+        events?(.opened(CameraConnection(name: camera.name ?? "Fujifilm camera", usbVendorID: Int(camera.usbVendorID), usbProductID: Int(camera.usbProductID),attachmentIdentity:attachmentIdentity)))
     }
     func deviceBrowser(_ browser: ICDeviceBrowser, didRemove device: ICDevice, moreGoing: Bool) {
         recordLifecycle("browser.didRemove current=\(browser === self.browser) selected=\(device === camera) more=\(moreGoing)")
@@ -310,6 +315,11 @@ import FujiCameraCore
     }
     func didRemove(_ device: ICDevice) {
         recordLifecycle("device.didRemove selected=\(device === camera)")
+        // Discovery outlives logical sessions. Removal while closed must still retire
+        // continuity, including when the same framework object is later re-added.
+        if device === attachmentCamera {
+            attachmentCamera=nil;attachmentIdentity=nil;detachedCamera=device
+        }
         guard device === camera else { return }
         // Device removal can precede the browser cache update. Do not select this cached
         // instance again until a fresh browser didAdd establishes its return.

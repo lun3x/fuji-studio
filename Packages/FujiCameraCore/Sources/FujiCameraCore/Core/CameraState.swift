@@ -4,10 +4,13 @@ public struct CameraConnection: Sendable, Equatable {
   public let name: String
   public let usbVendorID: Int
   public let usbProductID: Int
-  public init(name: String, usbVendorID: Int, usbProductID: Int) {
+  /// Process-local physical attachment continuity; never a persistent camera identity.
+  public let attachmentIdentity: UUID?
+  public init(name: String, usbVendorID: Int, usbProductID: Int, attachmentIdentity: UUID? = nil) {
     self.name = name
     self.usbVendorID = usbVendorID
     self.usbProductID = usbProductID
+    self.attachmentIdentity = attachmentIdentity
   }
 
 }

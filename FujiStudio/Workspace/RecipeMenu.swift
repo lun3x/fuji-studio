@@ -6,6 +6,9 @@ import UIKit
 struct RecipeMenu: View {
     let current: RecipeSnapshot?
     let snapshots: [RecipeSnapshot]
+    let slots:[RecipeSlot]
+    let canImport:Bool
+    let executionReason:(RecipeSnapshot)->String?
     let phoneSnapshots: [PhoneRecipe]
     let refreshState: RecipeRefreshState
     let isCameraConnected: Bool
@@ -32,12 +35,14 @@ struct RecipeMenu: View {
     @Environment(\.workspaceOrientation) private var orientation
 
     init(current: RecipeSnapshot?, snapshots: [RecipeSnapshot], phoneSnapshots: [PhoneRecipe],
+         slots:[RecipeSlot],canImport:Bool,executionReason:@escaping (RecipeSnapshot)->String?,
          refreshState: RecipeRefreshState, isCameraConnected: Bool,
          onSelect: @escaping (Int?) -> Void, onSelectPhone: @escaping (UUID) -> Void,
          onCopyToPhone: @escaping (UUID) async -> Bool, onDeletePhone: @escaping (UUID) async -> Bool,
          onEditPhone: @escaping (PhoneRecipeDraft) async throws -> Void,
          onRefresh: @escaping () -> Void, initiallyPresented: Bool = false) {
         self.current = current; self.snapshots = snapshots; self.refreshState = refreshState
+        self.slots=slots;self.canImport=canImport;self.executionReason=executionReason
         self.phoneSnapshots = phoneSnapshots; self.onSelectPhone = onSelectPhone; self.onCopyToPhone = onCopyToPhone
         self.onDeletePhone = onDeletePhone
         self.onEditPhone = onEditPhone
@@ -114,8 +119,10 @@ struct RecipeMenu: View {
                     .font(.callout).foregroundStyle(.red).padding()
                     .accessibilityIdentifier("recipe.copy.error")
             }
-            ForEach(1...7, id: \.self) { slot in
+            ForEach(slots) { declared in
+                let slot=declared.id
                 let recipe = snapshots.first { $0.slot == slot }
+                let reason=recipe.flatMap(executionReason)
                 HStack(spacing: 0) {
                     Button { choose(slot) } label: {
                         HStack(alignment: .firstTextBaseline) {
@@ -123,16 +130,14 @@ struct RecipeMenu: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(recipe?.name ?? "Not imported")
                                     .accessibilityLabel("C\(slot) \(recipe?.name ?? "Not imported")")
-                                if let recipe, case .unsupported = recipe.renderingSupport(using: RecipeCodecRegistry()) {
-                                    Text("Cached · conversion unsupported").font(.caption).foregroundStyle(.secondary)
-                                }
+                                if let reason { Text(reason).font(.caption).foregroundStyle(.secondary) }
                             }
                             Spacer(minLength: 8)
                             if current?.id == recipe?.id, recipe != nil { Image(systemName: "checkmark").accessibilityHidden(true) }
                         }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                             .padding(.leading).padding(.vertical, 4).padding(.trailing, 8).contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain).disabled(!isCameraConnected || recipe == nil)
+                    .buttonStyle(.plain).disabled(reason != nil || recipe == nil)
                     .foregroundStyle(isCameraConnected && recipe != nil ? .primary : .tertiary)
                     .accessibilityIdentifier("recipe.slot.\(slot)")
                     .accessibilityAddTraits(current?.id == recipe?.id && recipe != nil ? .isSelected : [])
@@ -155,8 +160,8 @@ struct RecipeMenu: View {
             row(title: snapshots.isEmpty ? "Import recipes" : "Refresh recipes", selected: false, identifier: "recipe.refresh") {
                 presented = false; onRefresh()
             }
-            .disabled(!isCameraConnected)
-            .foregroundStyle(isCameraConnected ? .primary : .tertiary)
+            .disabled(!canImport)
+            .foregroundStyle(canImport ? .primary : .tertiary)
         }
     }
 
@@ -182,24 +187,23 @@ struct RecipeMenu: View {
     }
 
     private func phoneRow(_ recipe: PhoneRecipe) -> some View {
-        HStack(spacing: 0) {
+        let reason=executionReason(recipe.snapshot)
+        return HStack(spacing: 0) {
             Button { presented = false; onSelectPhone(recipe.id) } label: {
                 HStack {
                     Image(systemName: "iphone")
                         .foregroundStyle(isCameraConnected ? .secondary : .tertiary).accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(recipe.snapshot.name)
-                        if case .unsupported = recipe.snapshot.renderingSupport(using: RecipeCodecRegistry()) {
-                            Text("Conversion unsupported").font(.caption)
-                                .foregroundStyle(isCameraConnected ? .secondary : .tertiary)
-                        }
+                        Text(recipe.snapshot.cameraContext.model).font(.caption).foregroundStyle(.secondary)
+                        if let reason { Text(reason).font(.caption).foregroundStyle(.secondary) }
                     }
                     Spacer(minLength: 8)
                     if current?.id == recipe.snapshot.id { Image(systemName: "checkmark").accessibilityHidden(true) }
                 }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                     .padding(.leading).padding(.trailing, 8).padding(.vertical, 4).contentShape(Rectangle())
             }
-            .buttonStyle(.plain).disabled(!isCameraConnected)
+            .buttonStyle(.plain).disabled(reason != nil)
             .foregroundStyle(isCameraConnected ? .primary : .tertiary)
             .accessibilityIdentifier("recipe.phone.\(recipe.id.uuidString)")
             .accessibilityAddTraits(current?.id == recipe.snapshot.id ? .isSelected : [])

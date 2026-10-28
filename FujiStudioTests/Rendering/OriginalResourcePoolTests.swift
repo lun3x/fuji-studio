@@ -4,6 +4,21 @@ import Testing
 @testable import FujiStudio
 
 struct OriginalResourcePoolTests {
+    @Test func decodeFailureDoesNotRevokeCameraConversion() async throws {
+        let f=try RenderFixture();defer { f.remove() }
+        let reader=RenderLibrary(f)
+        let pool=OriginalResourcePool(reader:reader,prepare:{ local in
+            PreparedRAW(fileURL:local.fileURL,sha256:local.checksum,sourceID:local.token.assetID,sourceRevision:local.token.sourceRevision,
+                metadata:.init(cameraModel:"X-E3",containerGeometry:.init(width:6160,height:4032),recordedGeometry:.init(width:6000,height:4000),recordedAspect:.init(width:3,height:2),cropTop:16,cropLeft:16,orientation:1,compression:.uncompressed,bitDepth:14,rafVersion:"0130"))
+        })
+        let renderer=try RawDisplayRenderer(directory:f.root.appendingPathComponent("xe3-display"))
+        await #expect(throws:RawDisplayError.unavailable) { try await pool.withPreparedRAW(source:f.source) { try await renderer.render($0) } }
+        #expect(await pool.compatibility(for:f.source) == .supported(model:"X-E3"))
+        let recipe=try fixtureXE3Recipe(),receipt=fixtureCollection([recipe],slots:[.init(id:4,label:"C4")])
+        let support=receipt.support
+        let compatibility=try await pool.withPreparedRAW(source:f.source) { raw in SourceCompatibility.assess(raw.metadata,for:support) }
+        #expect(compatibility == .supported(model:"X-E3"))
+    }
     @Test func waitingLeaseDoesNotMaterializeAndCleanupSpansSuspendedUse() async throws {
         let f = try RenderFixture(); defer { f.remove() }
         let reader = RenderLibrary(f), gate = SerialCameraGate(), latch = RenderLatch()

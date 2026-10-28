@@ -34,8 +34,11 @@ import Observation
         let writer: FixtureWriter
         let platform: FixturePlatform
     }
-    static func make(access: LibraryAccess = .full, uncertain: Bool = false, cameraOverride: (any CameraServing)? = nil) async throws -> Bundle {
+    static func make(access: LibraryAccess = .full, uncertain: Bool = false, cameraOverride: (any CameraServing)? = nil,cameraModel:String="X-T5",slotCount:Int=7,mixedModels:Bool=false,undecodableRAW:Bool=false) async throws -> Bundle {
         let images = try WorkspaceFixture()
+        let allRecipes=cameraModel == "X-E3" ? try fixtureXE3Snapshots() : images.state.recipes
+        let cachedRecipes=Array(allRecipes.prefix(slotCount))
+        let slots=cachedRecipes.map { RecipeSlot(id:$0.slot,label:"C\($0.slot)") }
         let originals = Array(images.sources.prefix(3)).enumerated().map { offset, s in
             var raw = s.originalResources.raf; raw.sourceRevision = s.resourceRevision
             var jpeg = s.originalResources.jpeg; jpeg?.sourceRevision = s.resourceRevision
@@ -49,13 +52,13 @@ import Observation
                 try FileRenderCache(directory: root.appendingPathComponent("cache"), pinnedDirectory: root.appendingPathComponent("pins"), validateJPEG: { _ in }),
                 try RawDisplayRenderer(directory: root.appendingPathComponent("raw-display")))
         }.value
-        let reader = FixtureLibrary(sources: originals, image: images.file, root: root, access: access)
-        let camera = FixtureCamera(recipes: images.state.recipes, image: images.file, root: root)
+        let reader = FixtureLibrary(sources: originals, image: images.file, root: root, access: access,undecodableRAW:undecodableRAW)
+        let camera = FixtureCamera(recipes: cachedRecipes, image: images.file, root: root,declaredSlots:slots)
         let selectedCamera: any CameraServing = cameraOverride ?? camera
         let writer = FixtureWriter(reader: reader, uncertain: uncertain)
         let pool = OriginalResourcePool(reader: reader, prepare: { local in
             PreparedRAW(fileURL: local.fileURL, sha256: local.checksum, sourceID: local.token.assetID, sourceRevision: local.token.sourceRevision,
-                metadata: RAWMetadata(cameraModel: "X-T5", containerGeometry: PixelSize(width: 1800, height: 1200), recordedGeometry: PixelSize(width: 1800, height: 1200), recordedAspect: PixelSize(width: 3, height: 2), cropTop: 0, cropLeft: 0, orientation: 1))
+                metadata: RAWMetadata(cameraModel: cameraModel, containerGeometry: PixelSize(width: 1800, height: 1200), recordedGeometry: PixelSize(width: 1800, height: 1200), recordedAspect: PixelSize(width: 3, height: 2), cropTop: 0, cropLeft: 0, orientation: 1))
         })
         let scheduler = CameraWorkScheduler()
         let resolver = VersionImageResolver(library: reader, catalog: storage.0, pool: pool, rawRenderer: storage.2, cache: storage.1)
@@ -65,6 +68,7 @@ import Observation
         let platform = FixturePlatform()
         // Cached recipes exercise useful disconnected browsing, without selecting a recipe.
         try await storage.0.replaceRecipes(try await camera.cachedRecipeCollection())
+        if mixedModels,let other=images.state.recipes.first { _ = try await storage.0.copyRecipeToPhone(other) }
         return Bundle(environment: AppEnvironment(reader: reader, camera: selectedCamera, catalog: storage.0, originals: pool, preview: preview,
             resolver: resolver, exports: exports, cache: storage.1, thumbnails: images.thumbnails, platform: platform),
             reader: reader, camera: camera, writer: writer, platform: platform)
@@ -94,8 +98,8 @@ actor FixtureLibrary: PhotoLibraryReading {
     private(set) var materializations = 0
     private var observers: [AsyncStream<LibraryChange>.Continuation] = []
     private(set) var rawReads = 0, changeSubscriptions = 0, discoveryRequests = 0
-    init(sources: [PhotoSource], image: DisplayFileLease, root: URL, access: LibraryAccess) {
-        index = sources; self.image = image; self.root = root; self.access = access
+    init(sources: [PhotoSource], image: DisplayFileLease, root: URL, access: LibraryAccess,undecodableRAW:Bool=false) {
+        index = sources; self.image = image; self.root = root; self.access = access;self.undecodableRAW=undecodableRAW
     }
     func requestAccess() -> LibraryAccess { access }
     func setAccess(_ value: LibraryAccess) { access = value }
@@ -104,6 +108,7 @@ actor FixtureLibrary: PhotoLibraryReading {
     func limitDiscovery(_ count: Int) { discoveryLimit = count }
     func holdMaterialize(_ id: String, barrier: FixtureBarrier) { materializeBarriers[id] = barrier }
     func failMaterialize(_ id: String, error: ResourceError) { materializeFailures[id] = error }
+    private var undecodableRAW=false
     func replaceOriginal(_ id: String, revision: String) throws -> Data {
         guard let i = index.firstIndex(where: { $0.id == id }) else { throw ResourceError.inaccessibleAsset(id) }
         let old = index[i]
@@ -145,7 +150,7 @@ actor FixtureLibrary: PhotoLibraryReading {
         return AsyncStream { observers.append($0) }
     }
     func materialize(_ resource: ResourceToken, progress: @escaping @Sendable (Double) -> Void) async throws -> LocalResource {
-        let bytes = try revisionBytes[resource.sourceRevision] ?? Data(contentsOf: image.fileURL)
+        let bytes = resource.format == .raf && undecodableRAW ? Data(repeating:42,count:256) : try revisionBytes[resource.sourceRevision] ?? Data(contentsOf: image.fileURL)
         if let barrier = materializeBarriers[resource.assetID] { await barrier.wait() }
         try Task.checkCancellation()
         if let error = materializeFailures[resource.assetID] { throw error }
@@ -165,10 +170,16 @@ actor FixtureCamera: CameraServing {
     func support(for expected: CameraExecutionContext) throws -> VerifiedCameraSupport {
         let current = try executionContext()
         guard current == expected else { throw CameraServiceError.unsupportedContext }
-        return try fixtureCameraSupport(current)
+        return try declaredSupport(current)
     }
 
     private let snapshots: [RecipeSnapshot], image: DisplayFileLease, root: URL
+    private let declaredSlots:[RecipeSlot]
+    private func declaredSupport(_ context:CameraExecutionContext) throws -> VerifiedCameraSupport {
+        let base=try fixtureCameraSupport(context),c=base.capabilities
+        return .init(adapterID:base.adapterID,model:base.model,firmware:base.firmware,capability:base.capability,capabilityOrigin:base.capabilityOrigin,supportVersion:base.supportVersion,
+            capabilities:.init(bankSlots:declaredSlots,settings:c.settings,recipeImport:c.recipeImport,sourceConstraints:c.sourceConstraints))
+    }
     private var context: CameraExecutionContext
     private var state: CameraState = .disconnected
     private var observers: [AsyncStream<CameraState>.Continuation] = []
@@ -182,10 +193,12 @@ actor FixtureCamera: CameraServing {
     private var disconnectBarrier: FixtureBarrier?
     private(set) var cancelledRenders = 0
     private(set) var subscriptions = 0, importCount = 0, connectCount = 0, disconnectCount = 0, renderCount = 0
-    var session: CameraSession { CameraSession(generation: context.generation, connection: CameraConnection(name: "Fixture X-T5", usbVendorID: 0, usbProductID: 0)) }
-    init(recipes: [RecipeSnapshot], image: DisplayFileLease, root: URL) {
+    var session: CameraSession { CameraSession(generation: context.generation, connection: CameraConnection(name: "Fixture \(context.model)", usbVendorID: 0, usbProductID: 0)) }
+    init(recipes: [RecipeSnapshot], image: DisplayFileLease, root: URL,declaredSlots:[RecipeSlot]?=nil) {
         snapshots = recipes; self.image = image; self.root = root
-        context = CameraExecutionContext(model: "X-T5", firmware: "4.31", capability: "X-T5_0200", supportVersion: XT5WorkingProfile.supportVersion, sessionIdentity: UUID(), generation: 0)
+        self.declaredSlots=declaredSlots ?? recipes.map { .init(id:$0.slot,label:"C\($0.slot)") }
+        let first=recipes.first?.cameraContext
+        context = CameraExecutionContext(model:first?.model ?? "X-T5",firmware:first?.firmware ?? "4.31",capability:first?.capability ?? "X-T5_0200",supportVersion:first?.model == "X-E3" ? XE3Support.identifier : XT5WorkingProfile.supportVersion,sessionIdentity:UUID(),generation:0)
     }
     func executionContext() throws -> CameraExecutionContext {
         switch state { case .ready, .busy: return context; default: throw CameraServiceError.notReady }
@@ -214,13 +227,16 @@ actor FixtureCamera: CameraServing {
         guard let first=snapshots.first?.cameraContext else { throw CatalogError.invalidRecipeCollection }
         let cached=CameraExecutionContext(model:first.model,firmware:first.firmware,capability:first.capability,
             supportVersion:try RecipeCodecRegistry().supportVersion(for:first),sessionIdentity:first.sessionIdentity,generation:first.sessionGeneration)
-        let support=try fixtureCameraSupport(cached)
+        let support=try declaredSupport(cached)
         return .init(recipes:snapshots,declaredSlots:support.capabilities.bankSlots,context:cached,support:support)
     }
     func importRecipes() async throws -> ImportedRecipeCollection {
         importCount += 1; emit(.busy(session)); await Task.yield(); defer { emit(.ready(session)) }
         if let importBarrier { await importBarrier.wait() }
         if shouldFailImport { throw CameraServiceError.recipeImportFailed(restorationConfirmed: true) }
+        if context.model == "X-E3" {
+            context = .init(model:context.model,firmware:context.firmware,capability:context.capability,supportVersion:context.supportVersion,sessionIdentity:UUID(),generation:context.generation+2)
+        }
         let recipes = snapshots.map { s in RecipeSnapshot(id: UUID(), slot: s.slot, name: s.name, importedName: s.importedName,
             importedSettings: s.importedSettings, settingsDigest: s.settingsDigest,
             cameraContext: RecipeCameraContext(model: context.model, firmware: context.firmware, capability: context.capability, sessionIdentity: context.sessionIdentity, sessionGeneration: context.generation), importedAt: Date(), renderingIssues: s.renderingIssues) }
@@ -240,7 +256,7 @@ actor FixtureCamera: CameraServing {
         let key = RenderKey(sourceID: raw.sourceID, sourceRevision: raw.sourceRevision, sourceSHA256: raw.sha256, settingsDigest: recipe.settingsDigest, cameraContext: context, width: 1800, height: 1200, orientation: 1, policy: policy, quality: .fullResolutionFine)
         return CameraJPEG(fileURL: url, sourceID: raw.sourceID, sourceRevision: raw.sourceRevision, sourceSHA256: raw.sha256,
             recipeSnapshotID: recipe.id, settingsDigest: recipe.settingsDigest, cameraContext: context, operationID: UUID(), width: 1800, height: 1200, orientation: 1, quality: .fullResolutionFine,
-            effectiveRecipe: EffectiveRecipeReport(supportVersion: XT5WorkingProfile.supportVersion, requested: normalized, dormantGrainSizeNotSerialized: false, inactiveKelvinPreserved: false, lensOptimizerRequested: true, lensOptimizerEffective: true, lensOptimizerAdjusted: false, evidence: "Synthetic UI fixture; not camera evidence"),
+            effectiveRecipe: EffectiveRecipeReport(supportVersion: context.supportVersion, requested: normalized, dormantGrainSizeNotSerialized: false, inactiveKelvinPreserved: false, lensOptimizerRequested: true, lensOptimizerEffective: true, lensOptimizerAdjusted: false, evidence: "Synthetic UI fixture; not camera evidence"),
             baselineSHA256: "synthetic", candidateSHA256: "synthetic", outputSHA256: try ResourceChecksum.sha256(url), key: key)
     }
 }

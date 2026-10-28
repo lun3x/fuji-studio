@@ -32,6 +32,11 @@ import Observation
     @ObservationIgnored private var displayIntent: UInt64 = 0
     @ObservationIgnored private var cameraEventGeneration: UInt64 = 0
     @ObservationIgnored private var importedSessions: Set<UUID> = []
+    @ObservationIgnored private var recipeImportTask:Task<ImportedRecipeCollection,Error>?
+    @ObservationIgnored private var recipeRequestToken:UUID?
+    @ObservationIgnored private var recipeLifecycleRevision:UInt64 = 0
+    @ObservationIgnored private var pendingImportReady:CameraSession?
+    @ObservationIgnored private var pendingImportTerminal:CameraState?
     @ObservationIgnored private var contextTask: Task<Void, Never>?
     @ObservationIgnored private var versionRefreshTask: Task<Void, Never>?
     @ObservationIgnored private var versionRefreshSource: SourceID?
@@ -105,7 +110,8 @@ import Observation
         startAutomaticConnection()
         do {
             let recipes = try await environment.catalog.latestRecipes()
-            if !recipes.isEmpty { reduce(.recipesRefreshed(recipes)) }
+            let slots = try await environment.catalog.latestRecipeSlots()
+            reduce(.recipesLoaded(recipes,slots:slots))
         } catch { message = Self.explain(error) }
         do { reduce(.phoneRecipesLoaded(try await environment.catalog.phoneRecipes())) }
         catch { message = Self.explain(error) }
@@ -134,6 +140,7 @@ import Observation
         case .phoneRecipeDeleted: previousRecipe != nil && state.selectedRecipe == nil
         case .phoneRecipeUpdated: previousRecipe != state.selectedRecipe
         case .cameraChanged: displayRequest != nil && previousRecipe != nil && state.selectedRecipe == nil
+        case .recipeImportStarted: displayRequest != nil
         default: false
         }
         if request != nil || explicitDisplay || previousSource != state.viewedSourceID || previousVersion != state.displayedVersion || previousRevision != state.viewedSourceRevision {
@@ -310,6 +317,13 @@ import Observation
         if cameraAuthorizationDenied, event == .disconnected { return }
         cameraEventGeneration &+= 1
         let token = cameraEventGeneration
+        if isRefreshing {
+            switch event {
+            case .ready(let session):pendingImportReady=session;return
+            case .busy,.opening,.discovering,.sessionOpen,.authorizationRequired:return
+            default:pendingImportTerminal=event;return
+            }
+        }
         switch event {
         case .ready(let session), .busy(let session):
             if let context = state.currentCameraExecutionContext, context.generation == session.generation {
@@ -324,10 +338,13 @@ import Observation
             contextTask = Task { [weak self] in
                 do {
                     let context = try await camera.executionContext()
+                    let support = try await camera.support(for:context)
                     guard !Task.isCancelled, let self, self.cameraEventGeneration == token, !self.isSuspended,
                           context.generation == session.generation else { return }
                     self.reduce(.cameraChanged(event, context: context))
-                    if self.importedSessions.insert(context.sessionIdentity).inserted { await self.refreshRecipes() }
+                    self.reduce(.cameraSupportVerified(context,support))
+                    if support.capabilities.recipeImport == .supported,
+                        self.importedSessions.insert(context.sessionIdentity).inserted { await self.refreshRecipes() }
                 } catch { }
             }
         default:
@@ -342,7 +359,7 @@ import Observation
 
     func connect() async {
         guard !Task.isCancelled, !isConnecting, foreground, !isSuspended,
-              !cameraAuthorizationDenied, state.currentCameraExecutionContext == nil else { return }
+              !cameraAuthorizationDenied, !isRefreshing, state.currentCameraExecutionContext == nil else { return }
         // READY may precede the asynchronous execution-context lookup.
         switch state.cameraState { case .ready, .busy: return; default: break }
         isConnecting = true
@@ -383,20 +400,59 @@ import Observation
     }
 
     func refreshRecipes() async {
-        guard !isRefreshing, !isSuspended, state.activeJobID == nil, !isSubmitting else { return }
-        guard let expected = state.currentCameraExecutionContext else {
-            reduce(.recipeRefreshFailed("Connect the X-T5 to import its seven recipes.")); return
+        guard !isSuspended, state.activeJobID == nil, !isSubmitting else { return }
+        let operation:Task<ImportedRecipeCollection,Error>
+        if let active=recipeImportTask { operation=active }
+        else {
+            guard state.currentCameraExecutionContext != nil else {
+                reduce(.recipeRefreshFailed("Connect a supported Fujifilm camera to import recipes."));return
+            }
+            guard state.cameraSupport?.capabilities.recipeImport == .supported else {
+                reduce(.recipeRefreshFailed("Recipe import is unavailable for this camera."));return
+            }
+            let camera=environment.camera
+            pendingImportReady=nil;pendingImportTerminal=nil
+            reduce(.recipeImportStarted)
+            operation=Task { try await camera.importRecipes() }
+            recipeImportTask=operation
         }
-        isRefreshing = true
-        defer { isRefreshing = false }
+        // Concurrent refresh callers share one owned read. Only the newest caller can
+        // commit/adopt its receipt; a second tap never repeats the backup transaction.
+        let request=UUID(),lifecycle=recipeLifecycleRevision
+        recipeRequestToken=request;isRefreshing=true
+        defer {
+            if recipeRequestToken == request {
+                isRefreshing=false;recipeImportTask=nil;recipeRequestToken=nil;pendingImportReady=nil;pendingImportTerminal=nil
+            }
+        }
         do {
-            let collection = try await environment.camera.importRecipes()
-            let recipes = collection.recipes
-            guard !isSuspended, state.currentCameraExecutionContext == expected else { return }
+            let collection=try await operation.value
+            guard recipeRequestIsCurrent(request,lifecycle:lifecycle) else { return }
+            guard try await environment.camera.executionContext() == collection.context else { throw CameraServiceError.unsupportedContext }
+            guard recipeRequestIsCurrent(request,lifecycle:lifecycle) else { return }
+            let support=try await environment.camera.support(for:collection.context)
+            guard support == collection.support,recipeRequestIsCurrent(request,lifecycle:lifecycle) else { return }
             try await environment.catalog.replaceRecipes(collection)
-            guard !isSuspended, state.currentCameraExecutionContext == expected else { return }
-            reduce(.recipesRefreshed(recipes))
-        } catch { reduce(.recipeRefreshFailed(Self.explain(error))) }
+            guard recipeRequestIsCurrent(request,lifecycle:lifecycle) else { return }
+            guard try await environment.camera.executionContext() == collection.context else { throw CameraServiceError.unsupportedContext }
+            guard recipeRequestIsCurrent(request,lifecycle:lifecycle) else { return }
+            importedSessions.insert(collection.context.sessionIdentity)
+            reduce(.recipesImported(collection))
+            if let ready=pendingImportReady,ready.generation == collection.context.generation {
+                reduce(.cameraChanged(.ready(ready),context:collection.context))
+            }
+        } catch {
+            if recipeRequestIsCurrent(request,lifecycle:lifecycle) {
+                if let terminal=pendingImportTerminal {
+                    if terminal == .authorizationDenied { cameraAuthorizationDenied=true }
+                    reduce(.cameraChanged(terminal,context:nil))
+                }
+                reduce(.recipeRefreshFailed(Self.explain(error)))
+            }
+        }
+    }
+    private func recipeRequestIsCurrent(_ request:UUID,lifecycle:UInt64) -> Bool {
+        recipeRequestToken == request && recipeLifecycleRevision == lifecycle && !isSuspended && !Task.isCancelled
     }
 
     func copyRecipeToPhone(id: UUID) async -> Bool {
@@ -524,6 +580,7 @@ import Observation
         if phase == .inactive { foreground = false; stopAutomaticConnection(); restoreIdle(); return }
         let revision = sceneRevision
         if phase == .background {
+            recipeLifecycleRevision &+= 1
             state.reduce(.previewInterrupted); isLoadingPreview = false
             foreground = false; isSuspended = true; restoreIdle()
             stopAutomaticConnection()
@@ -653,10 +710,10 @@ import Observation
         case ResourceError.inaccessibleAsset: "This photo is no longer accessible. Manage Photos access to include it."
         case ResourceError.insufficientStorage, CameraServiceError.storage, RenderCacheError.storage: "There is not enough storage to prepare this photo. Free some space and retry."
         case ResourceError.retrievalFailed: "The original could not be downloaded. Check your connection and iCloud Photos, then retry."
-        case ResourceError.incompatibleCamera, CameraServiceError.unsupportedSource: "This RAW is not supported by the connected X-T5."
-        case CameraServiceError.unsupportedContext: "Use an X-T5 with supported firmware 4.31 in USB RAW CONV./BACKUP RESTORE mode."
+        case ResourceError.incompatibleCamera, CameraServiceError.unsupportedSource: "This RAW is not supported by the connected camera."
+        case CameraServiceError.unsupportedContext: "Use a supported Fujifilm camera and firmware in USB RAW CONV./BACKUP RESTORE mode."
         case CameraServiceError.uncertainOperation, CameraServiceError.closeUnconfirmed: "The camera operation could not be confirmed. Reconnect to reconcile before starting more work."
-        case CameraServiceError.recipeImportFailed: "Recipe import failed. The previous seven recipes are retained. Reconnect before retrying."
+        case CameraServiceError.recipeImportFailed: "Recipe import failed. The previous collection is retained. Reconnect before retrying."
         case is CameraServiceError: "Camera connection interrupted. Check USB RAW CONV./BACKUP RESTORE mode and a USB data cable, then reconnect."
         case is CatalogError: "The local catalog could not be updated. Existing exports and recovery records are retained."
         default: "The operation could not finish. Your existing versions are retained. Try again when the source and camera are available."

@@ -232,7 +232,8 @@ final class RecipeMenuRoutingTests: XCTestCase {
         XCTAssertTrue(store.selections.isEmpty)
     }
     private func routePresentation(store: RecipeRoutingStore, scene: UIWindowScene, lateResponder: WeakRecipeResponder? = nil) async throws -> WeakRecipeResponder {
-        let menu = RecipeMenu(current: store.state.selectedRecipe, snapshots: store.state.recipes, phoneSnapshots: [], refreshState: .fresh,
+        let menu = RecipeMenu(current: store.state.selectedRecipe, snapshots: store.state.recipes, phoneSnapshots: [],
+            slots:store.state.recipeSlots,canImport:false,executionReason:store.state.recipeExecutionReason,refreshState: .fresh,
             isCameraConnected: store.state.isCameraConnected,
             onSelect: { store.selections.append($0); store.state.reduce(.recipeSelected(slot: $0)) },
             onSelectPhone: { _ in }, onCopyToPhone: { _ in false }, onDeletePhone: { _ in false },
@@ -303,7 +304,7 @@ final class RecipeMenuRoutingTests: XCTestCase {
             RecipeSnapshot(id: UUID(), slot: slot, name: "Generated \(slot)", importedName: Data(), importedSettings: [],
                 settingsDigest: "generated", cameraContext: context, importedAt: Date(timeIntervalSince1970: 0), renderingIssues: [])
         }
-        state.reduce(.recipesRefreshed(recipes))
+        state.reduce(.recipesLoaded(recipes,slots:RecipeCodecRegistry.xt5Capabilities.bankSlots))
         state.reduce(.cameraChanged(.ready(CameraSession(generation: 1,
             connection: .init(name: "Generated", usbVendorID: 0, usbProductID: 0))), context: nil))
         state.reduce(.recipeSelected(slot: 3))

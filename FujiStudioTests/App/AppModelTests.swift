@@ -4,6 +4,76 @@ import Testing
 @testable import FujiStudio
 
 @MainActor struct AppModelTests {
+    @Test func temporaryInactiveSceneDoesNotDiscardOwnedImport() async throws {
+        let camera=try ReceiptCamera(),f=try await FixtureEnvironment.make(cameraOverride:camera)
+        let catalog=HeldVersionCatalog(base:f.environment.catalog),barrier=FixtureBarrier()
+        let model=model(f.environment,catalog:catalog)
+        await model.start(automaticallyConnect:false)
+        await catalog.holdRecipeSave(barrier);await model.connect();await barrier.entered()
+        await model.sceneChanged(.inactive);await barrier.release()
+        await eventually { !model.isRefreshing }
+        #expect(model.state.recipes.allSatisfy { $0.cameraContext.model == "X-E3" })
+        #expect(model.state.currentCameraExecutionContext?.generation == 3)
+        #expect(await camera.importCount == 1)
+    }
+    @Test func secondRefreshSupersedesFirstWithoutRepeatingBackup() async throws {
+        let camera=try ReceiptCamera(),f=try await FixtureEnvironment.make(cameraOverride:camera),barrier=FixtureBarrier()
+        await camera.holdImport(barrier)
+        let model=AppModel(environment:f.environment)
+        await model.start(automaticallyConnect:false);await model.connect();await barrier.entered()
+        var entered=false
+        let newer=Task { entered=true;await model.refreshRecipes() }
+        while !entered { await Task.yield() }
+        await barrier.release();await newer.value
+        await eventually { !model.isRefreshing && model.state.currentCameraExecutionContext?.generation == 3 }
+        #expect(await camera.importCount == 1)
+        #expect(model.state.recipes.allSatisfy { $0.cameraContext.model == "X-E3" && $0.cameraContext.sessionGeneration == 3 })
+    }
+    @Test func delayedCloseDuringOwnedImportCannotDiscardVerifiedReceipt() async throws {
+        let camera=try ReceiptCamera(),f=try await FixtureEnvironment.make(cameraOverride:camera),barrier=FixtureBarrier()
+        await camera.holdImport(barrier)
+        let model=AppModel(environment:f.environment)
+        await model.start(automaticallyConnect:false);await model.connect();await barrier.entered()
+        await camera.delayedClosedEvent();await barrier.release()
+        await eventually { !model.isRefreshing && model.state.currentCameraExecutionContext?.generation == 3 }
+        #expect(await camera.importCount == 1)
+        #expect(model.state.recipes.allSatisfy { $0.cameraContext.model == "X-E3" })
+    }
+    @Test func backgroundDuringReceiptCommitCannotPublishAfterLifecycleChanges() async throws {
+        let camera=try ReceiptCamera(),f=try await FixtureEnvironment.make(cameraOverride:camera)
+        let catalog=HeldVersionCatalog(base:f.environment.catalog),barrier=FixtureBarrier()
+        let model=model(f.environment,catalog:catalog)
+        await model.start(automaticallyConnect:false);let before=model.state.recipes
+        await catalog.holdRecipeSave(barrier);await model.connect();await barrier.entered()
+        await model.sceneChanged(.background)
+        await barrier.release();await eventually { !model.isRefreshing }
+        #expect(model.state.recipes == before)
+        #expect(model.state.currentCameraExecutionContext == nil)
+    }
+    @Test func ownedReopenAdoptsReceiptExactlyOnce() async throws {
+        let camera=try ReceiptCamera(),f=try await FixtureEnvironment.make(cameraOverride:camera)
+        let model=AppModel(environment:f.environment)
+        await model.start(automaticallyConnect:false);await model.connect()
+        await eventually { model.state.currentCameraExecutionContext?.generation == 3 && !model.isRefreshing }
+        #expect(model.state.recipes.count == 7)
+        #expect(model.state.recipes.allSatisfy { $0.cameraContext.model == "X-E3" && $0.cameraContext.sessionGeneration == 3 })
+        await camera.repeatFinalReady()
+        for _ in 0..<30 { await Task.yield() }
+        #expect(await camera.importCount == 1)
+        #expect(try await f.environment.catalog.latestRecipes() == model.state.recipes)
+    }
+    @Test func detachDuringCatalogSaveCannotPublishOldContext() async throws {
+        let camera=try ReceiptCamera(),f=try await FixtureEnvironment.make(cameraOverride:camera)
+        let catalog=HeldVersionCatalog(base:f.environment.catalog),barrier=FixtureBarrier()
+        let model=model(f.environment,catalog:catalog)
+        await model.start(automaticallyConnect:false)
+        let previous=model.state.recipes
+        await catalog.holdRecipeSave(barrier);await model.connect();await barrier.entered()
+        await camera.disconnect();await eventually { model.state.currentCameraExecutionContext == nil }
+        await barrier.release();await eventually { !model.isRefreshing }
+        #expect(model.state.recipes == previous)
+        #expect(model.state.currentCameraExecutionContext == nil)
+    }
     @Test func savingWhilePreviewIsPendingSupersedesItsDisplayIntent() async throws {
         let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment), barrier = FixtureBarrier()
         defer { Task { await barrier.release() } }
@@ -852,6 +922,8 @@ import Testing
 /// Delegates to the same actual disk catalog; only the captured version-list return is delayed.
 private actor HeldVersionCatalog: CatalogStoring {
     let base: any CatalogStoring
+    private var recipeSaveBarrier:FixtureBarrier?
+    func holdRecipeSave(_ barrier:FixtureBarrier) { recipeSaveBarrier=barrier }
     private var phoneSavesFail = false
     private var phoneDeletesFail = false
     func failPhoneDeletes() { phoneDeletesFail = true }
@@ -884,7 +956,10 @@ private actor HeldVersionCatalog: CatalogStoring {
         return result
     }
     func upsertSources(_ sources: [PhotoSource]) async throws { try await base.upsertSources(sources) }
-    func replaceRecipes(_ snapshots: ImportedRecipeCollection) async throws { try await base.replaceRecipes(snapshots) }
+    func replaceRecipes(_ snapshots: ImportedRecipeCollection) async throws {
+        try await base.replaceRecipes(snapshots)
+        if let barrier=recipeSaveBarrier { recipeSaveBarrier=nil;await barrier.wait() }
+    }
     func latestRecipeSlots() async throws -> [RecipeSlot] { try await base.latestRecipeSlots() }
     func recipes(camera: CameraExecutionContext) async throws -> [RecipeSnapshot] { try await base.recipes(camera: camera) }
     func latestRecipes() async throws -> [RecipeSnapshot] { try await base.latestRecipes() }

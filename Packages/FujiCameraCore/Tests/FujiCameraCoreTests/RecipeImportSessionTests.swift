@@ -4,6 +4,18 @@ import Testing
 @testable import FujiCameraCore
 
 struct RecipeImportSessionTests {
+  @Test(arguments: ["close1", "close2"])
+  func replacementDuringClosedBoundaryCannotAdoptAnotherAttachment(_ boundary: String) async throws
+  {
+    let f = try ImportSessionFixture(replaceAt: boundary)
+    defer { f.remove() }
+    try await f.service.connect()
+    await #expect(throws: CameraServiceError.unsupportedContext) {
+      try await f.service.importRecipes()
+    }
+    #expect(await f.wire.backupReads == (boundary == "close1" ? 0 : 1))
+    await #expect(throws: CameraServiceError.self) { try await f.service.executionContext() }
+  }
   @Test(arguments: ["close1", "close2", "identity2", "identity3", "generation"])
   func failedTransitionsCannotPublishReceiptOrRepeatRead(_ failure: String) async throws {
     let f = try ImportSessionFixture(failure: failure)
@@ -35,15 +47,21 @@ struct RecipeImportSessionTests {
     #expect(await f.wire.writes == 0)
     #expect(await states.next() == .disconnected)
     #expect(await states.next() == .opening)
-    guard case .ready(let firstSession) = await states.next() else { Issue.record("Missing initial ready");return }
+    guard case .ready(let firstSession) = await states.next() else {
+      Issue.record("Missing initial ready")
+      return
+    }
     #expect(firstSession.generation == 1)
     #expect(await states.next() == .busy(firstSession))
-    guard case .ready(let finalSession) = await states.next() else { Issue.record("Only final ready may follow owned import");return }
+    guard case .ready(let finalSession) = await states.next() else {
+      Issue.record("Only final ready may follow owned import")
+      return
+    }
     #expect(finalSession.generation == 3)
     await f.service.disconnect()
   }
-  @Test(arguments:["open2","backup","open3"])
-  func physicalDetachDuringOwnedReopenRevokesAdmission(_ point:String) async throws {
+  @Test(arguments: ["open2", "backup", "open3"])
+  func physicalDetachDuringOwnedReopenRevokesAdmission(_ point: String) async throws {
     let f = try ImportSessionFixture(hold: point)
     defer { f.remove() }
     try await f.service.connect()
@@ -106,11 +124,14 @@ struct RecipeImportSessionTests {
 }
 struct ImportSessionFixture: Sendable {
   let root: URL, wire: ImportSessionWire, service: FujiCameraService
-  init(hold: String? = nil, gate: SerialCameraGate = SerialCameraGate(), failure: String? = nil)
+  init(
+    hold: String? = nil, gate: SerialCameraGate = SerialCameraGate(), failure: String? = nil,
+    replaceAt: String? = nil
+  )
     throws
   {
     root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    wire = ImportSessionWire(hold: hold, failure: failure)
+    wire = ImportSessionWire(hold: hold, failure: failure, replaceAt: replaceAt)
     service = FujiCameraService(
       session: wire,
       journal: try CameraOperationJournal(directory: root, filePolicy: TestJournalFilePolicy()),
@@ -119,13 +140,15 @@ struct ImportSessionFixture: Sendable {
   func remove() { try? FileManager.default.removeItem(at: root) }
 }
 actor ImportSessionWire: CameraSessionTransport {
-  let barrier = FixtureBarrier(), hold: String?, failure: String?
+  let barrier = FixtureBarrier(), hold: String?, failure: String?, replaceAt: String?
+  var attachmentIdentity = UUID()
   var generation: UInt64 = 0, connected = false, detached = false, backupReads = 0, writes = 0,
     events: [String] = []
   var observers: [AsyncStream<CameraState>.Continuation] = []
-  init(hold: String?, failure: String? = nil) {
+  init(hold: String?, failure: String? = nil, replaceAt: String? = nil) {
     self.hold = hold
     self.failure = failure
+    self.replaceAt = replaceAt
   }
   func states() -> AsyncStream<CameraState> {
     let pair = AsyncStream<CameraState>.makeStream()
@@ -146,6 +169,7 @@ actor ImportSessionWire: CameraSessionTransport {
     await checkpoint("close\(generation)")
     if failure == "close\(generation)" { throw PTPError.timeout }
     connected = false
+    if replaceAt == "close\(generation)" { attachmentIdentity = UUID() }
     observers.forEach { $0.yield(.disconnected) }
   }
   func detach() {
@@ -157,7 +181,9 @@ actor ImportSessionWire: CameraSessionTransport {
     guard connected && !detached else { throw PTPError.notConnected }
     return .init(
       generation: failure == "generation" ? 1 : generation,
-      connection: .init(name: "X-E3", usbVendorID: 0x04cb, usbProductID: 0x02d6))
+      connection: .init(
+        name: "X-E3", usbVendorID: 0x04cb, usbProductID: 0x02d6,
+        attachmentIdentity: attachmentIdentity))
   }
   func execute(_ command: PTPCommand, data: Data?) async throws -> PTPReply {
     _ = try currentSession()

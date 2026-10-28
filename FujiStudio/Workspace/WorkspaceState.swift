@@ -32,7 +32,10 @@ enum WorkspaceAction: Sendable {
     case phoneRecipeDeleted(UUID)
     case phoneRecipeUpdated(PhoneRecipe)
     case phoneRecipesLoaded([PhoneRecipe])
-    case recipesRefreshed([RecipeSnapshot])
+    case recipesLoaded([RecipeSnapshot],slots:[RecipeSlot])
+    case recipesImported(ImportedRecipeCollection)
+    case recipeImportStarted
+    case cameraSupportVerified(CameraExecutionContext,VerifiedCameraSupport)
     case recipeRefreshFailed(String)
     /// Complete accessible metadata index after removals or an authorization change.
     case libraryUpdated(sources: [PhotoSource], access: LibraryAccess)
@@ -55,10 +58,10 @@ enum WorkspaceExportDisabledReason: Sendable, Equatable {
         case .noSources: "Choose a photo to export."
         case .noRecipe: "Choose a recipe to export."
         case .activeJob: "Wait for the current export to finish."
-        case .cameraNotReady: "Connect an X-T5 and wait for it to be ready."
+        case .cameraNotReady: "Connect a supported Fujifilm camera and wait for it to be ready."
         case .cameraContextUnavailable: "Verify the connected camera before exporting."
         case .recipeCameraMismatch: "Refresh recipes from the connected camera."
-        case .incompatibleSource(_, let model): "This RAW was captured by \(model) and cannot be converted by the X-T5."
+        case .incompatibleSource(_, let model): "This RAW was captured by \(model) and cannot be converted by the connected camera."
         case .unsupportedRecipe: "This recipe contains settings the current camera conversion profile cannot render."
         }
     }
@@ -72,6 +75,8 @@ struct WorkspaceState: Sendable {
     private(set) var checkedSourceIDs: Set<SourceID> = []
     private(set) var drawerDetent: DrawerDetent = .collapsed
     private(set) var recipes: [RecipeSnapshot] = []
+    private(set) var recipeSlots:[RecipeSlot] = []
+    private(set) var cameraSupport:VerifiedCameraSupport?
     private(set) var phoneRecipes: [PhoneRecipe] = []
     private(set) var recipeRefreshState: RecipeRefreshState = .fresh
     private(set) var currentCameraExecutionContext: CameraExecutionContext?
@@ -116,7 +121,7 @@ struct WorkspaceState: Sendable {
     /// Camera busy state and export progress never change source eligibility.
     var eligibleSourceIDs: Set<SourceID> {
         Set(sources.values.compactMap { source in
-            if case .incompatible = source.compatibility { return nil }
+            if incompatibleModel(source) != nil { return nil }
             return source.id
         })
     }
@@ -126,7 +131,7 @@ struct WorkspaceState: Sendable {
         guard !effective.isEmpty else { return .noSources }
         guard let recipe = selectedRecipe else { return .noRecipe }
         for source in effective {
-            if case .incompatible(let model) = source.compatibility {
+            if let model = incompatibleModel(source) {
                 return .incompatibleSource(sourceID: source.id, model: model)
             }
         }
@@ -221,12 +226,40 @@ struct WorkspaceState: Sendable {
                 return requestPreview()
             }
 
-        case .recipesRefreshed(let refreshed):
-            guard refreshed.count == 7, Set(refreshed.map(\.slot)) == Set(1...7),
-                  Set(refreshed.map(\.id)).count == 7, refreshed.allSatisfy({ !$0.isPhoneRecipe }) else {
-                recipeRefreshState = .stale("Recipe refresh must contain seven distinct snapshots for C1–C7.")
+        case .recipeImportStarted:
+            currentCameraExecutionContext=nil
+            cameraState = .opening
+            invalidatePreview()
+
+        case .cameraSupportVerified(let context,let support):
+            guard context == currentCameraExecutionContext,context.model == support.model,
+                context.firmware == support.firmware,context.capability == support.capability,
+                context.supportVersion == support.supportVersion else { return [] }
+            cameraSupport=support
+
+        case .recipesImported(let collection):
+            let execution=collection.context,support=collection.support
+            guard collection.declaredSlots == support.capabilities.bankSlots,
+                support.model == execution.model,support.firmware == execution.firmware,
+                support.capability == execution.capability,support.supportVersion == execution.supportVersion,
+                collection.recipes.allSatisfy({ $0.cameraContext.model == execution.model && $0.cameraContext.firmware == execution.firmware && $0.cameraContext.capability == execution.capability && $0.cameraContext.sessionIdentity == execution.sessionIdentity && $0.cameraContext.sessionGeneration == execution.generation }) else { return [] }
+            let ids=collection.declaredSlots.map(\.id)
+            guard Set(ids).count == ids.count,collection.recipes.count == ids.count,
+                Set(collection.recipes.map(\.slot)) == Set(ids),Set(collection.recipes.map(\.id)).count == ids.count,
+                collection.recipes.allSatisfy({ !$0.isPhoneRecipe }) else { return [] }
+            currentCameraExecutionContext=execution;cameraSupport=support
+            if !belongsToExecution(cameraState,context:execution) { cameraState = .opening }
+            invalidatePreview()
+            return reduce(.recipesLoaded(collection.recipes,slots:collection.declaredSlots))
+
+        case .recipesLoaded(let refreshed,let slots):
+            let ids=slots.map(\.id)
+            guard Set(ids).count == ids.count,refreshed.count == ids.count,Set(refreshed.map(\.slot)) == Set(ids),
+                  Set(refreshed.map(\.id)).count == refreshed.count,refreshed.allSatisfy({ !$0.isPhoneRecipe }) else {
+                recipeRefreshState = .stale("Recipe refresh must contain every declared camera slot exactly once.")
                 return []
             }
+            recipeSlots=slots
             recipes = refreshed.sorted { $0.slot < $1.slot }
             recipeRefreshState = .fresh
             if let selectedRecipe, !selectedRecipe.isPhoneRecipe {
@@ -262,6 +295,7 @@ struct WorkspaceState: Sendable {
             let continuesExecution = context == currentCameraExecutionContext &&
                 belongsToExecution(cameraState, context: context) && belongsToExecution(state, context: context)
             cameraState = state
+            if currentCameraExecutionContext != context { cameraSupport=nil }
             currentCameraExecutionContext = context
             if !isCameraConnected, selectedRecipe != nil {
                 return reduce(.recipeSelected(slot: nil))
@@ -336,10 +370,23 @@ struct WorkspaceState: Sendable {
         return [.requestPreview(request)]
     }
 
+    private func incompatibleModel(_ source:PhotoSource) -> String? {
+        switch source.compatibility {
+        case .incompatible(let model):return model
+        case .supported(let model):return currentCameraExecutionContext.map { $0.model != model ? model : nil } ?? nil
+        case .unknown:return nil
+        }
+    }
+    func recipeExecutionReason(_ recipe:RecipeSnapshot) -> String? {
+        if let context=currentCameraExecutionContext,!matches(recipe:recipe,context:context) { return "Requires a compatible \(recipe.cameraContext.model) camera." }
+        if case .unsupported = recipe.renderingSupport(using:RecipeCodecRegistry()) { return "Conversion is unavailable for these settings." }
+        guard currentCameraExecutionContext != nil,isCameraConnected else { return "Connect a supported Fujifilm camera." }
+        return nil
+    }
     private func matches(recipe: RecipeSnapshot, context: CameraExecutionContext) -> Bool {
         let imported = recipe.cameraContext
         return imported.model == context.model && imported.firmware == context.firmware &&
-            imported.capability == context.capability && context.supportVersion == XT5WorkingProfile.supportVersion
+            imported.capability == context.capability && context.supportVersion == (try? RecipeCodecRegistry().supportVersion(for:imported))
     }
 
     private func belongsToExecution(_ state: CameraState, context: CameraExecutionContext?) -> Bool {

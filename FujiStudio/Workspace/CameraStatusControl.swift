@@ -7,6 +7,12 @@ enum CameraIndicatorState: String {
     case ready = "Camera ready"
 
     init(camera: CameraState, refreshingRecipes: Bool) {
+        if refreshingRecipes {
+            switch camera {
+            case .opening,.discovering,.sessionOpen,.ready,.busy:self = .preparing;return
+            default:break
+            }
+        }
         switch camera {
         case .ready, .busy:
             // Recipe import emits busy/ready updates within one connected session.
