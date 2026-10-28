@@ -311,3 +311,73 @@ decode a bank and its shared shifts, upload a RAF, patch only known D185 fields,
 verify readback, render/download/validate/clean the new JPEG and confirm closure.
 It never selects or writes a saved camera bank. Optional `--dynamic-range` is an
 explicit diagnostic override recorded in the output, not a silent source policy.
+
+## Complete backup-to-render path
+
+All seven decoded banks rendered successfully on the same supplied DR400 RAW:
+exact candidate readback, 6000×4000 FINE JPEG, verified owned-output cleanup,
+and confirmed closure. Native 6300 K and 7100 K were also verified through the
+Kelvin banks. `bank-renders.json` omits private recipe names and source identity.
+
+Three independent capture-reference checks exercise the decoded banks rather
+than copying the RAF's original D185 settings:
+
+| Decoded bank | Reference class | Mean absolute RGB error | Maximum | Metadata mismatches |
+| --- | --- | ---: | ---: | ---: |
+| C3 | Original compressed source, effective capture DR200 | 1.204906611 | 11 | 0 |
+| C4 | Uncompressed DR400, 6300 K, Weak grain | 8.781235708 | 58 | 0 |
+| C6 | Uncompressed DR400, Daylight, NR -3, sharpness +1 | 1.341980819 | 13 | 0 |
+
+C3's saved bank requests DR400, whereas that original capture developed at DR200.
+The reference-reproduction run explicitly overrides the bank to **DR200**, and
+records that diagnostic override. It does not establish an automatic adjustment
+policy for the app. C4/C6 use the actual decoded bank DR400 without overrides.
+The C4 comparison is consistent with the independently measured Weak-grain
+repeat residual; C3/C6 are consistent with the grain-off repeat residual.
+
+A private eight-tile contact sheet places the seven camera-rendered recipes
+beside the original camera JPEG. It is under ignored `.build/xe3-wire/`, together
+with original per-command journals, profile readbacks, output ownership evidence
+and full-resolution JPEGs. No private photographs or whole backups are committed.
+
+## Concrete app handoff
+
+The experiment supplies the native transport and data transformations required
+for a model adapter. The app changes should follow these measured boundaries:
+
+1. **Model admission:** use X-E3 / 1.30, mode 6, and the required advertised
+   operation codes. Do not require the absent D186/D187 capability strings or
+   D18C–D1A4 bank properties. Validate FF129505/601 after each actual RAW upload;
+   a support-version identifier in app code must not pretend to be a camera-
+   reported capability string.
+2. **Source admission:** accept the two observed RAF container/crop classes and
+   orientations 1/8. Keep source model compatibility separate from native RAW
+   display availability; both compression classes convert through the camera.
+   The metadata reader can retain its checksum and embedded-model checks.
+3. **Recipe snapshots:** decode seven bank records, names, mode-specific shared
+   WB shifts and Kelvin indices. Freeze those dependencies into phone copies
+   and settings digests. Retain original bytes/provenance; do not fabricate the
+   X-T5's nonexistent PTP recipe properties for the older body.
+4. **Rendering:** patch a fresh 601-byte frame, preserve opaque/header fields,
+   enforce model-specific known settings, verify exact readback and validate
+   effective JPEG settings. WB preset selection must set 553=2. Support Weak
+   grain without adding a grain-size control. Kelvin choices must be discrete.
+5. **Output ownership:** accept observed association 7/2055 and zero ObjectInfo
+   dimensions, then validate actual JPEG model/geometry/orientation/FINE quality.
+   Retain the existing whole-operation serial gate, journaling, exact cleanup,
+   session identity and uncertain-operation handling.
+6. **UI / source display:** derive labels/choices from the connected model.
+   Original RAW viewing of these compressed files currently fails on the Mac;
+   preserve an honest unavailable state and the existing separately identified
+   camera-JPEG/version choices. Do not silently substitute the thumbnail as RAW.
+7. **Validation:** portable fixtures now cover three distinct D185 baselines,
+   seven originals, 41 core control trials, seven additional NR levels, the
+   invalid-Kelvin fallback, controlled/restored WB bytes and seven bank renders.
+   iPhone transport/rendering and interruption/recovery remain separate gates.
+   The application source has not yet been changed by this laptop spike.
+
+A final fresh-session backup after all bank renders confirms that the 24-byte WB
+shift table and all seven decoded bank snapshots/names remain identical to the
+pre-experiment reference. Only the previously unclassified backup byte 691
+differs. The final native session closed successfully; no camera process is
+left running by the spike.

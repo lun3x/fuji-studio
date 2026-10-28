@@ -1,0 +1,26 @@
+[
+  {
+    "slot": 3,
+    "dynamicRangeOverride": 200,
+    "meanAbsoluteRGBError": 1.204906611111111,
+    "maximumRGBError": 11,
+    "metadataMismatches": {},
+    "quantizationTablesEqual": true
+  },
+  {
+    "slot": 4,
+    "dynamicRangeOverride": null,
+    "meanAbsoluteRGBError": 8.781235708333334,
+    "maximumRGBError": 58,
+    "metadataMismatches": {},
+    "quantizationTablesEqual": true
+  },
+  {
+    "slot": 6,
+    "dynamicRangeOverride": null,
+    "meanAbsoluteRGBError": 1.3419808194444445,
+    "maximumRGBError": 13,
+    "metadataMismatches": {},
+    "quantizationTablesEqual": true
+  }
+]
