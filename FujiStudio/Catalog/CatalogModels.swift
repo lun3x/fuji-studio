@@ -26,6 +26,15 @@ import SwiftData
     init(snapshotIDs: Data) { key = "latest"; self.snapshotIDs = snapshotIDs }
 }
 
+@Model final class CatalogPhoneRecipeRecord {
+    @Attribute(.unique) var sourceSnapshotID: UUID
+    @Attribute(.unique) var snapshotID: UUID
+    var savedAt: Date
+    init(sourceSnapshotID: UUID, snapshotID: UUID) {
+        self.sourceSnapshotID = sourceSnapshotID; self.snapshotID = snapshotID; savedAt = Date()
+    }
+}
+
 @Model final class CatalogJobRecord {
     @Attribute(.unique) var jobID: UUID
     var submittedAt: Date

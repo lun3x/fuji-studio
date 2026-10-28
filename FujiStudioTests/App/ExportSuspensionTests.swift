@@ -114,6 +114,8 @@ actor SaveBoundaryCatalog: CatalogStoring {
     func replaceRecipes(_ snapshots: [RecipeSnapshot]) async throws { try await base.replaceRecipes(snapshots) }
     func recipes(camera: CameraExecutionContext) async throws -> [RecipeSnapshot] { try await base.recipes(camera: camera) }
     func latestRecipes() async throws -> [RecipeSnapshot] { try await base.latestRecipes() }
+    func phoneRecipes() async throws -> [RecipeSnapshot] { try await base.phoneRecipes() }
+    func copyRecipeToPhone(_ recipe: RecipeSnapshot) async throws -> RecipeSnapshot { try await base.copyRecipeToPhone(recipe) }
     func versions(sourceID: SourceID) async throws -> [SavedVersion] { try await base.versions(sourceID: sourceID) }
     func job(id: UUID) async throws -> ExportJob { try await base.job(id: id) }
     func unfinishedJobs() async throws -> [ExportJob] { try await base.unfinishedJobs() }
