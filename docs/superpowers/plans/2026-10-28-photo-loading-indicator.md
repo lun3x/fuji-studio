@@ -40,6 +40,9 @@
 - [x] Extend `testLoadingOverlayPreservesPhotoFrameAndZoom` to measure the actual indicator frame across download and processing, and assert no visible percentage.
 - [x] Run the focused regression against the old spinner and observe the position failure.
 - [x] Implement the fixed-frame ring with clockwise download fill and a rotating processing arc; preserve accessibility labels and percent values for assistive technology. Pause animation for Reduce Motion.
-- [ ] Run the focused viewer suite, including no-image loading; inspect screenshot attachments and check the Reduce Motion branch during review.
-- [ ] Run `Scripts/test-ios.sh` on the task's simulator and inspect the final result.
-- [ ] Review the change, record validation, and push the active bookmark with `jj`.
+- [x] Run the focused viewer suite, including no-image loading; inspect screenshot attachments and check the Reduce Motion branch during review.
+- [x] Run `Scripts/test-ios.sh` on the task's simulator and inspect the final result.
+- [x] Review the change, record validation, and push the active bookmark with `jj`.
+
+Validation: 517 passed, 3 established native-gate skips, 0 failures. See
+`docs/validation/photo-loading-ring.md` for evidence and remaining device limits.
