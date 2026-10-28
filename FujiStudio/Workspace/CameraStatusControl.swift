@@ -24,11 +24,17 @@ struct CameraStatusControl: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
+    @ScaledMetric(relativeTo: .headline) private var slashWidth: CGFloat = 1.8
 
     var body: some View {
         Button(action: onTap) {
-            Image(systemName: state == .disconnected ? "camera.slash" : "camera")
+            Image(systemName: "camera")
                 .font(.headline)
+                .overlay {
+                    if state == .disconnected {
+                        CameraDisconnectedSlash().stroke(style: StrokeStyle(lineWidth: slashWidth, lineCap: .round))
+                    }
+                }
                 .symbolEffect(.rotate.wholeSymbol, options: .repeating,
                     isActive: state == .preparing && !reduceMotion)
                 .frame(minWidth: 44, minHeight: 44).contentShape(Capsule())
@@ -40,5 +46,14 @@ struct CameraStatusControl: View {
         .overlay { if contrast == .increased { Capsule().stroke(.primary, lineWidth: 1).allowsHitTesting(false) } }
         .accessibilityLabel(label).accessibilityValue(state.rawValue)
         .accessibilityHint("Show app details").accessibilityIdentifier("app.status")
+    }
+}
+
+private struct CameraDisconnectedSlash: Shape {
+    func path(in rect: CGRect) -> Path {
+        Path { path in
+            path.move(to: CGPoint(x: rect.minX - 1, y: rect.minY - 3))
+            path.addLine(to: CGPoint(x: rect.maxX + 1, y: rect.maxY + 3))
+        }
     }
 }

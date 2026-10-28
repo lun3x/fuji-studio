@@ -207,6 +207,7 @@ import XCTest
         app.cells["grid.source-0"].tap()
         let versions = app.buttons["workspace.versions"]
         XCTAssertTrue(versions.waitForExistence(timeout: 5))
+        wait { app.scrollViews["viewer.image"].exists && !app.descendants(matching: .any)["viewer.loading"].exists }
         let frame = status.frame
         XCTAssertEqual(frame.width, versions.frame.width, accuracy: 1)
         XCTAssertEqual(frame.height, versions.frame.height, accuracy: 1)
