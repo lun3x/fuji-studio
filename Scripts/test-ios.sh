@@ -34,8 +34,8 @@ for selector in "$@"; do
 done
 
 xcodegen generate
-# Inspected with xcrun simctl list devices available (iOS 27.1, iPhone Duo).
-destination="${FUJI_STUDIO_DESTINATION:-platform=iOS Simulator,id=5277B203-F40D-4AEF-98E9-164D7C653887}"
+# Use iPhone 15 Pro by default; task-specific simulators can override this.
+destination="${FUJI_STUDIO_DESTINATION:-platform=iOS Simulator,name=iPhone 15 Pro}"
 mkdir -p .build/TestResults
 result=".build/TestResults/$(date +%Y%m%d-%H%M%S)-$$.xcresult"
 args=(-project FujiStudio.xcodeproj -scheme FujiStudio -destination "$destination" -derivedDataPath .build/DerivedData -resultBundlePath "$result")

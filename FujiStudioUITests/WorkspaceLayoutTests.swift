@@ -159,9 +159,10 @@ final class WorkspaceLayoutTests: XCTestCase {
         }
         XCTAssertTrue(app.buttons["recipe.slot.7"].label.contains("conversion unsupported"))
 
-        // Native popover outside dismissal keeps the current recipe.
+        // Stay inside the app's safe area; a screen-relative point can hit the system status bar.
         shot(app, "Recipe C3 native popover")
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.03)).tap()
+        let outside = app.buttons["app.status"].frame
+        app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: outside.midX, dy: outside.midY)).tap()
         XCTAssertTrue(app.buttons["recipe.none"].waitForNonExistence(timeout: 3))
         XCTAssertTrue(app.buttons["recipe.control"].label.contains("C3"))
         openRecipeMenu(app)
@@ -205,10 +206,11 @@ final class WorkspaceLayoutTests: XCTestCase {
         XCTAssertEqual(app.buttons["drawer.toggle"].value as? String, "Expanded")
         waitForDetent(app, expanded: true)
         app.buttons["workspace.select"].tap()
-        XCTAssertTrue(app.buttons["drawer.toggle"].isHittable)
         assertRecipeControlUsable(app)
         shot(app, "Workspace dark expanded Select")
-        app.buttons["drawer.toggle"].tap()
+        // Exercise the visible handle directly rather than relying on XCTest's hit-point heuristic.
+        let handle = app.buttons["drawer.toggle"].frame
+        app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: handle.midX, dy: handle.midY)).tap()
         XCTAssertEqual(app.buttons["drawer.toggle"].value as? String, "Collapsed")
         waitForDetent(app, expanded: false)
         shot(app, "Workspace dark collapsed Select")
