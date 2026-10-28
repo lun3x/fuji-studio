@@ -5,6 +5,22 @@ import Testing
 @testable import FujiStudio
 
 @MainActor struct CatalogPayloadUpgradeTests {
+    @Test func previousCollectionGainsDeclarationWithoutChangingSnapshots() async throws {
+        let f=try RenderFixture();defer { f.remove() }
+        let store=f.root.appendingPathComponent("v2.store")
+        let schema=Schema([CatalogSourceRecord.self,CatalogRecipeRecord.self,CatalogCollectionRecord.self,CatalogJobRecord.self,CatalogOperationRecord.self,CatalogVersionRecord.self,CatalogPhoneRecipeRecord.self,CatalogFormatRecord.self])
+        let container=try ModelContainer(for:schema,configurations:[ModelConfiguration("FujiStudioLocal",schema:schema,url:store,cloudKitDatabase:.none)])
+        let context=ModelContext(container);context.autosaveEnabled=false
+        let recipes=(1...7).map { slot in RecipeSnapshot(id:UUID(),slot:slot,name:f.recipe.name,importedName:f.recipe.importedName,importedSettings:f.recipe.importedSettings,settingsDigest:f.recipe.settingsDigest,cameraContext:f.recipe.cameraContext,importedAt:f.recipe.importedAt,renderingIssues:f.recipe.renderingIssues) }
+        for recipe in recipes { context.insert(CatalogRecipeRecord(snapshotID:recipe.id,payload:try JSONEncoder().encode(recipe))) }
+        context.insert(CatalogCollectionRecord(snapshotIDs:try JSONEncoder().encode(recipes.map(\.id))))
+        context.insert(CatalogFormatRecord(version:2));try context.save()
+        let reopened=try SwiftDataCatalog(storeURL:store)
+        #expect(try await reopened.latestRecipes() == recipes)
+        #expect(try await reopened.latestRecipeSlots().map(\.id) == Array(1...7))
+        _ = try SwiftDataCatalog(storeURL:store)
+        #expect(try await reopened.latestRecipes() == recipes)
+    }
     @Test func currentPayloadUpgradePreservesFrozenHistory() async throws {
         let f = try RenderFixture()
         let store = f.root.appendingPathComponent("migration.store")

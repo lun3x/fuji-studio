@@ -118,7 +118,7 @@ extension ExportCoordinatorTests {
         #expect(paused.items[1].state == .queued)
         // Refreshing the source metadata and recipe collection cannot change submitted labels/date.
         await f.reader.changeCaptureDate()
-        try await f.catalog.replaceRecipes(f.refreshedRecipes())
+        try await f.catalog.replaceRecipes(fixtureCollection(f.refreshedRecipes()))
         try await engine.resume(jobID: id)
         let final = await terminal(&events, id)
         #expect(final?.summary.completed == 2)
@@ -250,7 +250,8 @@ private actor FaultCatalog: CatalogStoring {
     var enumerations = 0
     init(base: SwiftDataCatalog, boundary: CrashBoundary) { self.base = base; self.boundary = boundary }
     func upsertSources(_ sources: [PhotoSource]) async throws { try await base.upsertSources(sources) }
-    func replaceRecipes(_ snapshots: [RecipeSnapshot]) async throws { try await base.replaceRecipes(snapshots) }
+    func replaceRecipes(_ snapshots: ImportedRecipeCollection) async throws { try await base.replaceRecipes(snapshots) }
+    func latestRecipeSlots() async throws -> [RecipeSlot] { try await base.latestRecipeSlots() }
     func recipes(camera: CameraExecutionContext) async throws -> [RecipeSnapshot] { try await base.recipes(camera: camera) }
     func latestRecipes() async throws -> [RecipeSnapshot] { try await base.latestRecipes() }
     func updatePhoneRecipe(_ draft: PhoneRecipeDraft) async throws -> PhoneRecipe { try await base.updatePhoneRecipe(draft) }

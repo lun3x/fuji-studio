@@ -112,7 +112,8 @@ actor SaveBoundaryCatalog: CatalogStoring {
         if !held && match { held = true; await barrier.wait() }
     }
     func upsertSources(_ sources: [PhotoSource]) async throws { try await base.upsertSources(sources) }
-    func replaceRecipes(_ snapshots: [RecipeSnapshot]) async throws { try await base.replaceRecipes(snapshots) }
+    func replaceRecipes(_ snapshots: ImportedRecipeCollection) async throws { try await base.replaceRecipes(snapshots) }
+    func latestRecipeSlots() async throws -> [RecipeSlot] { try await base.latestRecipeSlots() }
     func recipes(camera: CameraExecutionContext) async throws -> [RecipeSnapshot] { try await base.recipes(camera: camera) }
     func latestRecipes() async throws -> [RecipeSnapshot] { try await base.latestRecipes() }
     func updatePhoneRecipe(_ draft: PhoneRecipeDraft) async throws -> PhoneRecipe { try await base.updatePhoneRecipe(draft) }

@@ -19,6 +19,9 @@ enum XE3NativeRecipeFields {
     3800, 3700, 3600, 3400, 3300, 3200, 3100, 3000, 2950, 2850, 2800, 2700, 2650, 2550, 2500,
   ]
   static let verifiedShiftOffsets: Set<Int> = [433, 441, 443, 455]
+  static let shiftOffsets: [UInt8: Int] = [
+    0: 433, 1: 443, 2: 445, 3: 447, 4: 449, 5: 451, 6: 453, 7: 455, 8: 441,
+  ]
   static func digest(_ fields: [UInt16: Data]) -> String {
     var bytes = Data("xe3.imported-settings.v1\0".utf8)
     for code in fields.keys.sorted() {
@@ -109,7 +112,9 @@ public enum XE3RecipeCodec {
       var issues = Set(p.keys).subtracting(XE3NativeRecipeFields.required).sorted().map(
         RecipeRenderingIssue.unmappedProperty)
       let offset = Int(p[13]![0]) | Int(p[13]![1]) << 8
-      if !XE3NativeRecipeFields.verifiedShiftOffsets.contains(offset) {
+      if !XE3NativeRecipeFields.verifiedShiftOffsets.contains(offset)
+        || XE3NativeRecipeFields.shiftOffsets[p[4]![0]] != offset
+      {
         issues.append(.unvalidatedDependency("shared white-balance shift"))
       }
       do { try XE3Capabilities.validate(settings) } catch {
@@ -136,6 +141,8 @@ public enum XE3RecipeCodec {
     put(UInt8([100: 1, 200: 2, 400: 3][settings.dynamicRange]!), 2)
     put(try key(XE3NativeRecipeFields.grains, settings.grain.strength), 3)
     put(try key(XE3NativeRecipeFields.whiteBalances, settings.whiteBalance), 4)
+    let offset = XE3NativeRecipeFields.shiftOffsets[p[4]![0]]!
+    p[13] = Data([UInt8(truncatingIfNeeded: offset), UInt8(offset >> 8)])
     put(UInt8(9 - settings.whiteBalanceRed), 5)
     put(UInt8(9 - settings.whiteBalanceBlue), 6)
     if settings.whiteBalance == .temperature, let kelvin = settings.kelvin {

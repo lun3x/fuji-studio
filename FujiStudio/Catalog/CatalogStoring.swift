@@ -3,7 +3,8 @@ import Foundation
 
 protocol CatalogStoring: Sendable {
     func upsertSources(_ sources: [PhotoSource]) async throws
-    func replaceRecipes(_ snapshots: [RecipeSnapshot]) async throws
+    func replaceRecipes(_ collection: ImportedRecipeCollection) async throws
+    func latestRecipeSlots() async throws -> [RecipeSlot]
     func recipes(camera: CameraExecutionContext) async throws -> [RecipeSnapshot]
     func latestRecipes() async throws -> [RecipeSnapshot]
     func phoneRecipes() async throws -> [PhoneRecipe]

@@ -29,33 +29,55 @@ actor SwiftDataCatalog: ModelActor, CatalogStoring {
         }
     }
 
-    func replaceRecipes(_ snapshots: [RecipeSnapshot]) throws {
-        guard snapshots.count == 7, Set(snapshots.map(\.slot)) == Set(1...7),
-              Set(snapshots.map(\.id)).count == 7,
-              let context = snapshots.first?.cameraContext,
-              snapshots.allSatisfy({ $0.cameraContext == context && !$0.isPhoneRecipe }) else {
+    func replaceRecipes(_ collection: ImportedRecipeCollection) throws {
+        let snapshots=collection.recipes,slots=collection.declaredSlots,execution=collection.context,support=collection.support
+        let ids=slots.map(\.id)
+        guard slots == support.capabilities.bankSlots,Set(ids).count == ids.count,
+              ids.allSatisfy({ $0 > 0 }),snapshots.count == ids.count,
+              Set(snapshots.map(\.slot)) == Set(ids),Set(snapshots.map(\.id)).count == snapshots.count,
+              support.model == execution.model,support.firmware == execution.firmware,
+              support.capability == execution.capability,support.supportVersion == execution.supportVersion,
+              snapshots.allSatisfy({ Self.matches($0.cameraContext,execution) && !$0.isPhoneRecipe }) else {
             throw CatalogError.invalidRecipeCollection
         }
-        let ordered = snapshots.sorted { $0.slot < $1.slot }
+        let ordered=snapshots.sorted { $0.slot < $1.slot }
         try write {
             for snapshot in ordered { try retain(snapshot) }
-            let data = try encode(ordered.map(\.id))
-            if let current = try modelContext.fetch(FetchDescriptor<CatalogCollectionRecord>()).first {
-                current.snapshotIDs = data
-            } else { modelContext.insert(CatalogCollectionRecord(snapshotIDs: data)) }
+            let data=try encode(ordered.map(\.id)),declaration=try encode(RecipeCollectionDeclaration(slots:slots,context:execution))
+            if let current=try modelContext.fetch(FetchDescriptor<CatalogCollectionRecord>()).first {
+                current.snapshotIDs=data;current.declaration=declaration
+            } else {
+                let current=CatalogCollectionRecord(snapshotIDs:data);current.declaration=declaration;modelContext.insert(current)
+            }
         }
+    }
+    func latestRecipeSlots() throws -> [RecipeSlot] {
+        try read {
+            guard let current=try modelContext.fetch(FetchDescriptor<CatalogCollectionRecord>()).first else { return [] }
+            guard let data=current.declaration else { throw CatalogError.invalidRecipeCollection }
+            return try decode(RecipeCollectionDeclaration.self,data).slots
+        }
+    }
+    private static func matches(_ recipe:RecipeCameraContext,_ execution:CameraExecutionContext) -> Bool {
+        recipe.model == execution.model && recipe.firmware == execution.firmware && recipe.capability == execution.capability && recipe.sessionIdentity == execution.sessionIdentity && recipe.sessionGeneration == execution.generation
     }
 
     func latestRecipes() throws -> [RecipeSnapshot] {
         try read {
             guard let current = try modelContext.fetch(FetchDescriptor<CatalogCollectionRecord>()).first else { return [] }
             let ids = try decode([UUID].self, current.snapshotIDs)
-            return try ids.map { id in
+            let recipes = try ids.map { id in
                 guard let record = try recipeRecord(id) else {
                     throw CatalogError.durableFailure("Active recipe snapshot is missing")
                 }
                 return try decode(RecipeSnapshot.self, record.payload)
             }
+            guard let data=current.declaration else { throw CatalogError.invalidRecipeCollection }
+            let declaration=try decode(RecipeCollectionDeclaration.self,data)
+            guard recipes.count == declaration.slots.count,Set(ids).count == ids.count,
+                Set(recipes.map(\.slot)) == Set(declaration.slots.map(\.id)),
+                recipes.allSatisfy({ Self.matches($0.cameraContext,declaration.context) && !$0.isPhoneRecipe }) else { throw CatalogError.invalidRecipeCollection }
+            return recipes
         }
     }
 
@@ -68,7 +90,12 @@ actor SwiftDataCatalog: ModelActor, CatalogStoring {
 
     /// The actor serializes repeat taps; membership and the immutable snapshot save atomically.
     func copyRecipeToPhone(_ recipe: RecipeSnapshot) throws -> PhoneRecipe {
-        guard !recipe.isPhoneRecipe, (1...7).contains(recipe.slot) else { throw CatalogError.invalidRecipeCollection }
+        guard !recipe.isPhoneRecipe else { throw CatalogError.invalidRecipeCollection }
+        let active=try latestRecipes(),slots=try latestRecipeSlots()
+        let declared:Bool
+        if active.contains(where: { $0.id == recipe.id }) { declared=slots.contains { $0.id == recipe.slot } }
+        else { declared=(try? RecipeCodecRegistry().capabilities(for:recipe.cameraContext).bankSlots.contains { $0.id == recipe.slot }) == true }
+        guard declared else { throw CatalogError.invalidRecipeCollection }
         let sourceID = recipe.id
         let request = FetchDescriptor<CatalogPhoneRecipeRecord>(predicate: #Predicate { $0.sourceSnapshotID == sourceID })
         if let existing = try read({ try modelContext.fetch(request).first }) { return try read { try phoneSnapshot(existing) } }

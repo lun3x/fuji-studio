@@ -24,7 +24,13 @@ import SwiftData
 @Model final class CatalogCollectionRecord {
     @Attribute(.unique) var key: String
     var snapshotIDs: Data
+    var declaration: Data? = nil
     init(snapshotIDs: Data) { key = "latest"; self.snapshotIDs = snapshotIDs }
+}
+
+struct RecipeCollectionDeclaration: Codable, Sendable, Equatable {
+    let slots: [RecipeSlot]
+    let context: CameraExecutionContext
 }
 
 @Model final class CatalogPhoneRecipeRecord {

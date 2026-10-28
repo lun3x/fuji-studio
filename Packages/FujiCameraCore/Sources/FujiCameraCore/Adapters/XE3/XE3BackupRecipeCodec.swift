@@ -9,7 +9,6 @@ public enum XE3BackupRecipeCodec {
     guard backup.count == 5660, backup.prefix(8) == Data("FUJIFILM".utf8),
       backup[20..<52].prefix(while: { $0 != 0 }) == Data("X-E3".utf8)
     else { throw RecipeImportError.incompletePropertyBlock }
-    let offsets = [0: 433, 1: 443, 2: 445, 3: 447, 4: 449, 5: 451, 6: 453, 7: 455, 8: 441]
     let recipes = try (0..<7).map { index -> RecipeSnapshot in
       let base = 3909 + 256 * index
       let name = Data(backup[(base + 69)..<(base + 85)])
@@ -20,7 +19,7 @@ public enum XE3BackupRecipeCodec {
       ] {
         fields[UInt16(id)] = Data([backup[base + offset]])
       }
-      if let offset = offsets[Int(backup[base - 33])] {
+      if let offset = XE3NativeRecipeFields.shiftOffsets[backup[base - 33]] {
         fields[5] = Data([backup[offset]])
         fields[6] = Data([backup[offset + 1]])
         fields[13] = Data([UInt8(truncatingIfNeeded: offset), UInt8(offset >> 8)])

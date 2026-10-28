@@ -8,10 +8,10 @@ struct CatalogTests {
         let disk = try CatalogTestDisk(), f = try CatalogFixture(), profile = try ProductionProfileFixture()
         let catalog = try SwiftDataCatalog(storeURL: disk.url)
         let cameras = f.recipes()
-        try await catalog.replaceRecipes(cameras)
+        try await catalog.replaceRecipes(fixtureCollection(cameras))
         let original = try await catalog.copyRecipeToPhone(profile.bank)
         var draft = PhoneRecipeDraft(recipe: original); draft.name = "My Provia"
-        draft.setValue(1, for: .film)
+        draft.setValue(.film(.provia), for: .film)
         let updated = try await catalog.updatePhoneRecipe(draft)
         #expect(updated.id == original.id)
         #expect(updated.snapshot.id != original.snapshot.id)
@@ -43,7 +43,7 @@ struct CatalogTests {
         let disk = try CatalogTestDisk(), f = try CatalogFixture()
         let catalog = try SwiftDataCatalog(storeURL: disk.url)
         let originals = f.recipes()
-        try await catalog.replaceRecipes(originals)
+        try await catalog.replaceRecipes(fixtureCollection(originals))
         let copy = try await catalog.copyRecipeToPhone(originals[0])
         try await catalog.deletePhoneRecipe(id: copy.id)
         try await catalog.deletePhoneRecipe(id: copy.id)
@@ -98,7 +98,7 @@ struct CatalogTests {
         #expect(copy.snapshot.renderingSupport(using: RecipeCodecRegistry()) == original.renderingSupport(using: RecipeCodecRegistry()))
         #expect(try await catalog.copyRecipeToPhone(original) == copy)
         let refreshed = f.recipes()
-        try await catalog.replaceRecipes(refreshed)
+        try await catalog.replaceRecipes(fixtureCollection(refreshed))
         let reopened = try SwiftDataCatalog(storeURL: disk.url)
         #expect(try await reopened.phoneRecipes() == [copy])
         #expect(try await reopened.latestRecipes() == refreshed)
@@ -113,7 +113,7 @@ struct CatalogTests {
         #expect(a.id != b.id)
         #expect(try await catalog.phoneRecipes().map(\.snapshot.name) == ["Synthetic bank", "New bank"])
         await #expect(throws: CatalogError.invalidRecipeCollection) {
-            try await catalog.replaceRecipes([a.snapshot] + Array(f.recipes().dropFirst()))
+            try await catalog.replaceRecipes(fixtureCollection([a.snapshot] + Array(f.recipes().dropFirst())))
         }
     }
 
@@ -149,13 +149,13 @@ struct CatalogTests {
         let previous = f.recipes()
         do {
             let catalog = try SwiftDataCatalog(storeURL: disk.url)
-            try await catalog.replaceRecipes(previous)
+            try await catalog.replaceRecipes(fixtureCollection(previous))
             for invalid in [Array(f.recipes().prefix(6)), Array(repeating: f.recipe, count: 7),
                             Array(f.recipes().prefix(6)) + [f.recipe(slot: 7, context: .init(
                                 model: "X-T5", firmware: "synthetic", capability: "synthetic",
                                 sessionIdentity: UUID(), sessionGeneration: 1))]] {
                 await #expect(throws: CatalogError.invalidRecipeCollection) {
-                    try await catalog.replaceRecipes(invalid)
+                    try await catalog.replaceRecipes(fixtureCollection(invalid))
                 }
             }
         }
@@ -178,10 +178,10 @@ struct CatalogTests {
         let refreshed = f.recipes()
         do {
             let catalog = try SwiftDataCatalog(storeURL: disk.url)
-            try await catalog.replaceRecipes(previous)
+            try await catalog.replaceRecipes(fixtureCollection(previous))
             try await catalog.saveJob(job)
             try await catalog.confirmSaved(jobID: job.id, operationID: version.operationID, version: version)
-            try await catalog.replaceRecipes(refreshed)
+            try await catalog.replaceRecipes(fixtureCollection(refreshed))
             // A library refresh must not alter an already submitted source/resource/date/location.
             try await catalog.upsertSources([f.changedSource])
         }
@@ -211,9 +211,9 @@ struct CatalogTests {
         candidate[6] = f.recipe(slot: 7, id: previous[6].id, name: "conflicting immutable bytes")
         do {
             let catalog = try SwiftDataCatalog(storeURL: disk.url)
-            try await catalog.replaceRecipes(previous)
+            try await catalog.replaceRecipes(fixtureCollection(previous))
             await #expect(throws: CatalogError.conflictingSnapshot(previous[6].id)) {
-                try await catalog.replaceRecipes(candidate)
+                try await catalog.replaceRecipes(fixtureCollection(candidate))
             }
             #expect(try await catalog.latestRecipes() == previous)
         }
@@ -223,7 +223,7 @@ struct CatalogTests {
         // staged record leaked despite rollback this valid new collection would conflict.
         var clean = f.recipes()
         clean[0] = f.recipe(slot: 1, id: candidate[0].id, name: "after rollback")
-        try await reopened.replaceRecipes(clean)
+        try await reopened.replaceRecipes(fixtureCollection(clean))
         #expect(try await reopened.latestRecipes() == clean)
     }
 
@@ -484,8 +484,8 @@ private struct CatalogTestDisk {
 
 private struct CatalogFixture {
     let recipeID = UUID()
-    let camera = CameraExecutionContext(model: "X-T5", firmware: "synthetic", capability: "synthetic",
-        supportVersion: "synthetic", sessionIdentity: UUID(), generation: 1)
+    let camera = CameraExecutionContext(model: "X-T5", firmware: "4.31", capability: "X-T5_0200",
+        supportVersion: XT5WorkingProfile.supportVersion, sessionIdentity: UUID(), generation: 1)
     let exportTime = Date(timeIntervalSince1970: 2_000)
     let profile: ProductionProfileFixture
     init() throws { profile = try ProductionProfileFixture() }

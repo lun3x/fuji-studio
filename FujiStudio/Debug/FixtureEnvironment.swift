@@ -64,7 +64,7 @@ import Observation
         let exports = ExportCoordinator(reader: reader, camera: selectedCamera, catalog: storage.0, writer: writer, pool: pool, cache: storage.1, scheduler: scheduler)
         let platform = FixturePlatform()
         // Cached recipes exercise useful disconnected browsing, without selecting a recipe.
-        try await storage.0.replaceRecipes(images.state.recipes)
+        try await storage.0.replaceRecipes(try await camera.cachedRecipeCollection())
         return Bundle(environment: AppEnvironment(reader: reader, camera: selectedCamera, catalog: storage.0, originals: pool, preview: preview,
             resolver: resolver, exports: exports, cache: storage.1, thumbnails: images.thumbnails, platform: platform),
             reader: reader, camera: camera, writer: writer, platform: platform)
@@ -210,6 +210,13 @@ actor FixtureCamera: CameraServing {
     func failRenderWithoutDisconnect() { shouldFailRenderWithoutDisconnect = true }
     func failImport() { shouldFailImport = true }
     func holdImport(_ barrier: FixtureBarrier) { importBarrier = barrier }
+    func cachedRecipeCollection() throws -> ImportedRecipeCollection {
+        guard let first=snapshots.first?.cameraContext else { throw CatalogError.invalidRecipeCollection }
+        let cached=CameraExecutionContext(model:first.model,firmware:first.firmware,capability:first.capability,
+            supportVersion:try RecipeCodecRegistry().supportVersion(for:first),sessionIdentity:first.sessionIdentity,generation:first.sessionGeneration)
+        let support=try fixtureCameraSupport(cached)
+        return .init(recipes:snapshots,declaredSlots:support.capabilities.bankSlots,context:cached,support:support)
+    }
     func importRecipes() async throws -> ImportedRecipeCollection {
         importCount += 1; emit(.busy(session)); await Task.yield(); defer { emit(.ready(session)) }
         if let importBarrier { await importBarrier.wait() }

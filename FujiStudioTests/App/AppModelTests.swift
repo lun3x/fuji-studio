@@ -15,7 +15,7 @@ import Testing
         model.send(.sourceTapped("source-0")); await eventually { model.displayFile != nil }
         await f.camera.holdRender(barrier)
         model.send(.phoneRecipeSelected(original.id)); await barrier.entered()
-        var draft = PhoneRecipeDraft(recipe: original); draft.name = "Newest"; draft.setValue(1, for: .film)
+        var draft = PhoneRecipeDraft(recipe: original); draft.name = "Newest"; draft.setValue(.film(.provia), for: .film)
         try await model.updatePhoneRecipe(draft)
         #expect(!model.isLoadingPreview)
         #expect(model.state.displayedVersion == .cameraJPEG)
@@ -32,7 +32,7 @@ import Testing
         let camera = try #require(model.state.recipes.first { $0.slot == 3 })
         #expect(await model.copyRecipeToPhone(id: camera.id))
         let original = try #require(model.state.phoneRecipes.first)
-        var draft = PhoneRecipeDraft(recipe: original); draft.name = "Offline edit"; draft.setValue(1, for: .film)
+        var draft = PhoneRecipeDraft(recipe: original); draft.name = "Offline edit"; draft.setValue(.film(.provia), for: .film)
         try await model.updatePhoneRecipe(draft)
         let updated = try #require(model.state.phoneRecipes.first)
         #expect(updated.id == original.id)
@@ -58,7 +58,7 @@ import Testing
         await eventually { model.preview != nil && model.state.canExport }
         await model.export(); await eventually { model.exportEvent?.terminal == true }
         let saved = try await f.environment.catalog.versions(sourceID: "source-0")
-        var draft = PhoneRecipeDraft(recipe: original); draft.name = "Edited look"; draft.setValue(1, for: .film)
+        var draft = PhoneRecipeDraft(recipe: original); draft.name = "Edited look"; draft.setValue(.film(.provia), for: .film)
         try await model.updatePhoneRecipe(draft)
         let updated = try #require(model.state.phoneRecipes.first)
         await eventually { model.preview?.settingsDigest == updated.snapshot.settingsDigest && !model.isLoadingPreview }
@@ -884,7 +884,8 @@ private actor HeldVersionCatalog: CatalogStoring {
         return result
     }
     func upsertSources(_ sources: [PhotoSource]) async throws { try await base.upsertSources(sources) }
-    func replaceRecipes(_ snapshots: [RecipeSnapshot]) async throws { try await base.replaceRecipes(snapshots) }
+    func replaceRecipes(_ snapshots: ImportedRecipeCollection) async throws { try await base.replaceRecipes(snapshots) }
+    func latestRecipeSlots() async throws -> [RecipeSlot] { try await base.latestRecipeSlots() }
     func recipes(camera: CameraExecutionContext) async throws -> [RecipeSnapshot] { try await base.recipes(camera: camera) }
     func latestRecipes() async throws -> [RecipeSnapshot] { try await base.latestRecipes() }
     func saveJob(_ job: ExportJob) async throws { try await base.saveJob(job) }

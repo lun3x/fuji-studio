@@ -8,7 +8,7 @@ struct WorkspaceStateTests {
         let f = try WorkspaceFixture(), phone = f.recipes[2].copiedToPhone()
         var state = f.state(); state.reduce(.sourceTapped("viewed")); state.reduce(.phoneRecipesLoaded([phone]))
         let old = try #require(preview(in: state.reduce(.phoneRecipeSelected(phone.id))))
-        var draft = PhoneRecipeDraft(recipe: phone); draft.name = "Edited"; draft.setValue(1, for: .film)
+        var draft = PhoneRecipeDraft(recipe: phone); draft.name = "Edited"; draft.setValue(.film(.provia), for: .film)
         let updated = PhoneRecipe(id: phone.id, snapshot: try draft.makeSnapshot())
         let new = try #require(preview(in: state.reduce(.phoneRecipeUpdated(updated))))
         #expect(state.phoneRecipes == [updated])
