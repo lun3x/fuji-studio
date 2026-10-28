@@ -35,6 +35,10 @@ struct WorkspaceView<StatusControl: View>: View {
             let safe = orientation.layoutInsets(windowSafe)
             let size = orientation.layoutSize(windowSize)
             let width = max(1, size.width - safe.leading - safe.trailing)
+            // Photos fill the landscape screen; only the floating controls avoid
+            // the home indicator. Insetting the whole tray leaves a bottom strip.
+            let trayWidth = orientation == .portrait ? width : size.width
+            let trayLeading = orientation == .portrait ? safe.leading : 0
             let photoTop = safe.top
             let controlTop = photoTop + 8
             let controlBottom = controlTop + max(44, controlHeight)
@@ -43,7 +47,7 @@ struct WorkspaceView<StatusControl: View>: View {
             // photo controls and camera indicator float over it in every layout.
             let statusReserve = imageGeometry != nil && imageStatus != nil && imageLoading == nil ? statusHeight + 8 : 0
             let available = size.height - safe.bottom - drawerHeaderHeight - controlFrame.maxY - DrawerGeometry.controlClearance - statusReserve - 44
-            let gridMetrics = DrawerGeometry.gridMetrics(width: width, availableGridHeight: available)
+            let gridMetrics = DrawerGeometry.gridMetrics(width: trayWidth, availableGridHeight: available)
             let detents = DrawerGeometry.detents(container: size, safeArea: safe, headerHeight: drawerHeaderHeight,
                 grid: gridMetrics, recipeControlFrame: controlFrame)
             let viewerHeight = max(1, size.height - detents.collapsedHeight - photoTop)
@@ -75,8 +79,8 @@ struct WorkspaceView<StatusControl: View>: View {
                                 onDrawerDrag: onDrawerDrag)
                                 .anchorPreference(key: TrayBoundsKey.self, value: .bounds) { $0 }
                         })
-                        .frame(width: width)
-                }.frame(width: width, height: size.height).offset(x: safe.leading)
+                        .frame(width: trayWidth)
+                }.frame(width: trayWidth, height: size.height).offset(x: trayLeading)
             }
             .coordinateSpace(name: "workspace")
             .frame(width: size.width, height: size.height)
@@ -87,6 +91,8 @@ struct WorkspaceView<StatusControl: View>: View {
                     if let anchor {
                         let frame = overlay[anchor]
                         selectionControls.padding(12)
+                            .padding(.top, orientation == .portrait ? 0 : windowSafe.top)
+                            .padding(.bottom, orientation == .portrait ? 0 : windowSafe.bottom)
                             .frame(width: frame.width, height: frame.height, alignment: orientation.trayControlAlignment)
                             .position(x: frame.midX, y: frame.midY)
                     }

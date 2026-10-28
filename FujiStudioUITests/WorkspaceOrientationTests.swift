@@ -16,8 +16,19 @@ final class WorkspaceOrientationTests: XCTestCase {
         app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: frame.midX, dy: frame.midY)).tap()
     }
 
+    private func assertTrayFillsScreenHeight(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
+        let window = app.windows.firstMatch.frame
+        let grid = app.collectionViews["photoGrid"].frame
+        let handle = app.buttons["drawer.toggle"].frame
+        XCTAssertEqual(grid.minY, window.minY, accuracy: 0.5, file: file, line: line)
+        XCTAssertEqual(grid.maxY, window.maxY, accuracy: 0.5,
+            "Photos must extend through the home-indicator area without a bottom strip", file: file, line: line)
+        XCTAssertEqual(handle.minY, window.minY, accuracy: 0.5, file: file, line: line)
+        XCTAssertEqual(handle.maxY, window.maxY, accuracy: 0.5, file: file, line: line)
+    }
+
     func testTrayAndControlsStayAtPhysicalDeviceEdgesInBothLandscapeDirections() {
-        let app = launch()
+        let app = launch(["--fixture-dark"])
         defer { XCUIDevice.shared.orientation = .portrait }
 
         for (orientation, trayOnLeft) in [(UIDeviceOrientation.landscapeRight, true), (.landscapeLeft, false)] {
@@ -33,6 +44,10 @@ final class WorkspaceOrientationTests: XCTestCase {
             }, object: nil)
             XCTAssertEqual(XCTWaiter.wait(for: [atEdge], timeout: 5), .completed,
                 "The photo tray must stay beside the charging-port edge")
+            assertTrayFillsScreenHeight(app)
+            let bottomPhoto = app.cells["grid.source-\(trayOnLeft ? 2 : 0)"].frame
+            XCTAssertEqual(bottomPhoto.maxY, window.maxY, accuracy: 0.5)
+            XCTAssertLessThanOrEqual(app.buttons["workspace.select"].frame.maxY, window.maxY - 20)
             let recipe = app.buttons["recipe.control"].frame
             let status = app.buttons["app.status"].frame
             let export = app.buttons["workspace.export"].frame
@@ -70,6 +85,7 @@ final class WorkspaceOrientationTests: XCTestCase {
             let start = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
             start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: distance, dy: 0)))
             XCTAssertEqual(handle.value as? String, "Expanded")
+            assertTrayFillsScreenHeight(app)
             XCTAssertEqual(app.staticTexts["workspace.count"].label, selected)
             XCTAssertEqual(app.staticTexts["fixture.viewed"].label, viewed)
             let expanded = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
