@@ -41,6 +41,8 @@ private struct AppEntryView: View {
     @State private var fixturePreviewBlocked = false
     @State private var fixtureDisconnectedCamera: FixtureCamera?
     @State private var fixturePhotoBarrier: FixtureBarrier?
+    @State private var fixtureRecipeBarrier: FixtureBarrier?
+    @State private var fixtureRecipeCamera: FixtureCamera?
     #endif
     var body: some View {
         Group {
@@ -70,6 +72,14 @@ private struct AppEntryView: View {
                     if let barrier = fixtureSaveBarrier {
                         Button("Finish fixture save") { Task { await barrier.release(); fixtureSaveBarrier = nil } }
                             .accessibilityIdentifier("fixture.finishSave").accessibilityValue(model.environment.platform.idleTimerDisabled ? "Awake" : "Idle timer restored").buttonStyle(.bordered)
+                    }
+                    if let barrier = fixtureRecipeBarrier, let camera = fixtureRecipeCamera {
+                        HStack {
+                            Button("Cycle recipe camera status") { Task { await camera.cycleBusyReady() } }
+                                .accessibilityIdentifier("fixture.cycleRecipeCamera")
+                            Button("Finish recipe import") { Task { await barrier.release(); fixtureRecipeBarrier = nil } }
+                                .accessibilityIdentifier("fixture.finishRecipes")
+                        }.font(.caption).buttonStyle(.bordered)
                     }
                     if let barrier = fixturePhotoBarrier {
                         Button("Finish fixture photo") { Task { await barrier.release(); fixturePhotoBarrier = nil } }
@@ -111,6 +121,10 @@ private struct AppEntryView: View {
                     if flags.contains("--fixture-held-save") {
                         let barrier = FixtureBarrier(); fixtureSaveBarrier = barrier
                         await bundle.writer.holdSave(barrier)
+                    }
+                    if flags.contains("--fixture-held-recipes") {
+                        let barrier = FixtureBarrier(); fixtureRecipeBarrier = barrier; fixtureRecipeCamera = bundle.camera
+                        await bundle.camera.holdImport(barrier)
                     }
                     if flags.contains("--fixture-held-preview") {
                         let barrier = FixtureBarrier(); fixturePreviewBarrier = barrier; fixturePreviewCamera = bundle.camera

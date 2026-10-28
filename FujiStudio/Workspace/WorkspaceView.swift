@@ -23,7 +23,7 @@ struct WorkspaceView<StatusControl: View>: View {
     var onViewportChanged: (GridViewport) -> Void = { _ in }
     @State private var drawerHeaderHeight: CGFloat = 0
     @State private var statusHeight: CGFloat = 0
-    @State private var toolbarHeight: CGFloat = 0
+    @State private var cameraControlHeight: CGFloat = 0
     @State private var recipeFrame: CGRect = .zero
     @State private var photoActionFrame: CGRect = .zero
     @State private var scrollRequest: GridScrollRequest?
@@ -33,12 +33,12 @@ struct WorkspaceView<StatusControl: View>: View {
             let safe = proxy.safeAreaInsets
             let size = CGSize(width: proxy.size.width + safe.leading + safe.trailing, height: proxy.size.height + safe.top + safe.bottom)
             let width = max(1, size.width - safe.leading - safe.trailing)
-            let toolbarTop = safe.top + 8
-            let photoTop = toolbarTop + toolbarHeight + 8
-            let controlBottom = photoTop + max(44, recipeFrame.height, photoActionFrame.height)
-            let controlFrame = CGRect(x: safe.leading + 16, y: toolbarTop, width: max(1, width - 32), height: controlBottom - toolbarTop)
+            let photoTop = safe.top
+            let controlTop = photoTop + 8
+            let controlBottom = controlTop + max(44, cameraControlHeight, recipeFrame.height, photoActionFrame.height)
+            let controlFrame = CGRect(x: safe.leading + 16, y: controlTop, width: max(1, width - 32), height: controlBottom - controlTop)
             // Only a real image-status message reserves space below the image. The two
-            // photo controls float over it in every layout; there are no version/zoom rows.
+            // photo controls and camera indicator float over it in every layout.
             let statusReserve = imageGeometry != nil && imageStatus != nil && imageLoading == nil ? statusHeight + 8 : 0
             let available = size.height - safe.bottom - drawerHeaderHeight - controlFrame.maxY - DrawerGeometry.controlClearance - statusReserve - 44
             let gridMetrics = DrawerGeometry.gridMetrics(width: width, availableGridHeight: available)
@@ -72,18 +72,15 @@ struct WorkspaceView<StatusControl: View>: View {
                         .frame(width: width)
                 }.frame(width: width, height: size.height).offset(x: safe.leading)
                 GlassEffectContainer(spacing: 8) {
-                    toolbar
-                        .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { toolbarHeight = $0 }
-                }.padding(.horizontal, 12).frame(width: width)
-                    .offset(x: safe.leading, y: toolbarTop).zIndex(10)
-                GlassEffectContainer(spacing: 8) {
                     HStack(alignment: .top, spacing: 8) {
-                        recipeControl
+                        statusControl()
+                            .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { cameraControlHeight = $0 }
                         Spacer(minLength: 0)
+                        recipeControl
                         photoActionControl
                     }
                 }.padding(.horizontal, 16).frame(width: width, alignment: .leading)
-                    .offset(x: safe.leading, y: photoTop).zIndex(10)
+                    .offset(x: safe.leading, y: controlTop).zIndex(10)
             }
             .coordinateSpace(name: "workspace")
             .frame(width: size.width, height: size.height)
@@ -101,12 +98,6 @@ struct WorkspaceView<StatusControl: View>: View {
                 onStatusHeightChanged: { statusHeight = $0 })
         } else {
             ContentUnavailableView("Choose a photo", systemImage: "photo.on.rectangle")
-        }
-    }
-    private var toolbar: some View {
-        HStack(alignment: .center, spacing: 8) {
-            statusControl().buttonStyle(.bordered).frame(minWidth: 44).layoutPriority(-1)
-            Spacer(minLength: 0)
         }
     }
     private var recipeControl: some View {
