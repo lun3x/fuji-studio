@@ -5,13 +5,14 @@ import UIKit
 struct RecipeMenu: View {
     let current: RecipeSnapshot?
     let snapshots: [RecipeSnapshot]
-    let phoneSnapshots: [RecipeSnapshot]
+    let phoneSnapshots: [PhoneRecipe]
     let refreshState: RecipeRefreshState
     let isCameraConnected: Bool
     var onSelect: (Int?) -> Void
     var onSelectPhone: (UUID) -> Void
     var onCopyToPhone: (UUID) async -> Bool
     var onDeletePhone: (UUID) async -> Bool
+    var onEditPhone: (PhoneRecipeDraft) async throws -> Void
     var onRefresh: () -> Void
     var onControlFrameChanged: (CGRect) -> Void = { _ in }
     @State private var presented: Bool
@@ -19,24 +20,27 @@ struct RecipeMenu: View {
     @State private var collection: Collection
     @State private var copyingID: UUID?
     @State private var copyFailed = false
-    @State private var pendingDeletion: RecipeSnapshot?
+    @State private var pendingDeletion: PhoneRecipe?
     @State private var deletionPresented = false
     @State private var deletingID: UUID?
     @State private var deletionFailed = false
+    @State private var editingRecipe: PhoneRecipe?
     private var isMutating: Bool { copyingID != nil || deletingID != nil }
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.colorSchemeContrast) private var contrast
 
-    init(current: RecipeSnapshot?, snapshots: [RecipeSnapshot], phoneSnapshots: [RecipeSnapshot],
+    init(current: RecipeSnapshot?, snapshots: [RecipeSnapshot], phoneSnapshots: [PhoneRecipe],
          refreshState: RecipeRefreshState, isCameraConnected: Bool,
          onSelect: @escaping (Int?) -> Void, onSelectPhone: @escaping (UUID) -> Void,
          onCopyToPhone: @escaping (UUID) async -> Bool, onDeletePhone: @escaping (UUID) async -> Bool,
+         onEditPhone: @escaping (PhoneRecipeDraft) async throws -> Void,
          onRefresh: @escaping () -> Void,
          onControlFrameChanged: @escaping (CGRect) -> Void = { _ in }, initiallyPresented: Bool = false) {
         self.current = current; self.snapshots = snapshots; self.refreshState = refreshState
         self.phoneSnapshots = phoneSnapshots; self.onSelectPhone = onSelectPhone; self.onCopyToPhone = onCopyToPhone
         self.onDeletePhone = onDeletePhone
+        self.onEditPhone = onEditPhone
         self.isCameraConnected = isCameraConnected
         self.onSelect = onSelect; self.onRefresh = onRefresh; self.onControlFrameChanged = onControlFrameChanged
         _presented = State(initialValue: initiallyPresented)
@@ -87,11 +91,14 @@ struct RecipeMenu: View {
             .accessibilityIdentifier("recipe.options")
         }
         .frame(idealWidth: 340, maxHeight: 520)
+        .sheet(item: $editingRecipe) { recipe in
+            PhoneRecipeEditor(recipe: recipe, onSave: onEditPhone)
+        }
         .alert("Delete phone recipe?", isPresented: $deletionPresented, presenting: pendingDeletion) { recipe in
             Button("Delete", role: .destructive) { deleteFromPhone(recipe) }
             Button("Cancel", role: .cancel) {}
         } message: { recipe in
-            Text("“\(recipe.name)” will be removed from Phone recipes. Saved photos are kept.")
+            Text("“\(recipe.snapshot.name)” will be removed from Phone recipes. Saved photos are kept.")
         }
     }
 
@@ -131,13 +138,13 @@ struct RecipeMenu: View {
                         Button { copyToPhone(recipe) } label: {
                             Group {
                                 if copyingID == recipe.id { ProgressView() }
-                                else { Image(systemName: phoneSnapshots.contains { $0.copiedFromRecipeID == recipe.id } ? "checkmark.circle" : "doc.on.doc") }
+                                else { Image(systemName: phoneSnapshots.contains { $0.id == recipe.id } ? "checkmark.circle" : "doc.on.doc") }
                             }.frame(width: 44, height: 44).contentShape(Rectangle())
                         }
                         .buttonStyle(.plain).padding(.trailing, 8)
                         .disabled(isMutating)
                         .accessibilityLabel("Copy C\(slot) \(recipe.name) to phone")
-                        .accessibilityHint(phoneSnapshots.contains { $0.copiedFromRecipeID == recipe.id } ? "Already saved. Shows the Phone tab." : "Saves an independent recipe on your phone.")
+                        .accessibilityHint(phoneSnapshots.contains { $0.id == recipe.id } ? "Already saved. Shows the Phone tab." : "Saves an independent recipe on your phone.")
                         .accessibilityIdentifier("recipe.copy.\(slot)")
                     }
                 }
@@ -172,28 +179,36 @@ struct RecipeMenu: View {
         }
     }
 
-    private func phoneRow(_ recipe: RecipeSnapshot) -> some View {
+    private func phoneRow(_ recipe: PhoneRecipe) -> some View {
         HStack(spacing: 0) {
             Button { presented = false; onSelectPhone(recipe.id) } label: {
                 HStack {
                     Image(systemName: "iphone")
                         .foregroundStyle(isCameraConnected ? .secondary : .tertiary).accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(recipe.name)
-                        if case .unsupported = recipe.renderingSupport {
+                        Text(recipe.snapshot.name)
+                        if case .unsupported = recipe.snapshot.renderingSupport {
                             Text("Conversion unsupported").font(.caption)
                                 .foregroundStyle(isCameraConnected ? .secondary : .tertiary)
                         }
                     }
                     Spacer(minLength: 8)
-                    if current?.id == recipe.id { Image(systemName: "checkmark").accessibilityHidden(true) }
+                    if current?.id == recipe.snapshot.id { Image(systemName: "checkmark").accessibilityHidden(true) }
                 }.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                     .padding(.leading).padding(.trailing, 8).padding(.vertical, 4).contentShape(Rectangle())
             }
             .buttonStyle(.plain).disabled(!isCameraConnected)
             .foregroundStyle(isCameraConnected ? .primary : .tertiary)
             .accessibilityIdentifier("recipe.phone.\(recipe.id.uuidString)")
-            .accessibilityAddTraits(current?.id == recipe.id ? .isSelected : [])
+            .accessibilityAddTraits(current?.id == recipe.snapshot.id ? .isSelected : [])
+
+            Button { editingRecipe = recipe } label: {
+                Image(systemName: "pencil").frame(width: 44, height: 44).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).disabled(isMutating)
+            .accessibilityLabel("Edit \(recipe.snapshot.name)")
+            .accessibilityHint("Change the name and settings, including while offline.")
+            .accessibilityIdentifier("recipe.edit.\(recipe.id.uuidString)")
 
             Button { pendingDeletion = recipe; deletionPresented = true } label: {
                 Group {
@@ -202,13 +217,13 @@ struct RecipeMenu: View {
                 }.frame(width: 44, height: 44).padding(.trailing, 8).contentShape(Rectangle())
             }
             .buttonStyle(.plain).foregroundStyle(.red).disabled(isMutating)
-            .accessibilityLabel("Delete \(recipe.name) from phone")
+            .accessibilityLabel("Delete \(recipe.snapshot.name) from phone")
             .accessibilityHint("Removes this saved recipe after confirmation. Saved photos are kept.")
             .accessibilityIdentifier("recipe.delete.\(recipe.id.uuidString)")
         }
     }
 
-    private func deleteFromPhone(_ recipe: RecipeSnapshot) {
+    private func deleteFromPhone(_ recipe: PhoneRecipe) {
         guard !isMutating else { return }
         deletingID = recipe.id; deletionFailed = false
         Task { @MainActor in

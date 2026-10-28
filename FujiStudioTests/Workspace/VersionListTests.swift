@@ -8,7 +8,7 @@ struct VersionListTests {
     @Test func savedPhoneVersionShowsPhoneIdentityInsteadOfItsOriginalCameraSlot() throws {
         let f = try RenderFixture(); defer { f.remove() }
         let recipe = f.recipe(named: "Phone preset").copiedToPhone()
-        let version = saved(f, jpeg: try f.jpeg(), recipe: recipe)
+        let version = saved(f, jpeg: try f.jpeg(), recipe: recipe.snapshot)
         let entry = try #require(VersionList(source: f.source, saved: [version]).entries.last)
         #expect(entry.recipeSlot == nil)
         #expect(entry.isPhoneRecipe)

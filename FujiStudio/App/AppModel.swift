@@ -131,6 +131,7 @@ import Observation
         let explicitDisplay: Bool = switch action {
         case .sourceTapped, .versionSelected, .recipeSelected, .phoneRecipeSelected: true
         case .phoneRecipeDeleted: previousRecipe != nil && state.selectedRecipe == nil
+        case .phoneRecipeUpdated: previousRecipe != state.selectedRecipe
         case .cameraChanged: displayRequest != nil && previousRecipe != nil && state.selectedRecipe == nil
         default: false
         }
@@ -421,6 +422,17 @@ import Observation
         } catch {
             message = Self.explain(error)
             return false
+        }
+    }
+
+    func updatePhoneRecipe(_ draft: PhoneRecipeDraft) async throws {
+        do {
+            let updated = try await environment.catalog.updatePhoneRecipe(draft)
+            reduce(.phoneRecipeUpdated(updated))
+            message = nil
+        } catch {
+            message = (error as? PhoneRecipeEditingError)?.message ?? Self.explain(error)
+            throw error
         }
     }
 

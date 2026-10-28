@@ -3,6 +3,41 @@ import Testing
 @testable import FujiStudio
 
 struct CatalogTests {
+    @Test func editedPhoneRecipeRetainsPresetIdentityAcrossDurableRestart() async throws {
+        let disk = try CatalogTestDisk(), f = try CatalogFixture(), profile = try ProductionProfileFixture()
+        let catalog = try SwiftDataCatalog(storeURL: disk.url)
+        let cameras = f.recipes()
+        try await catalog.replaceRecipes(cameras)
+        let original = try await catalog.copyRecipeToPhone(profile.bank)
+        var draft = PhoneRecipeDraft(recipe: original); draft.name = "My Provia"
+        draft.setValue(1, for: .film)
+        let updated = try await catalog.updatePhoneRecipe(draft)
+        #expect(updated.id == original.id)
+        #expect(updated.snapshot.id != original.snapshot.id)
+        #expect(try updated.snapshot.normalizedSettings.film == .provia)
+        let reopened = try SwiftDataCatalog(storeURL: disk.url)
+        #expect(try await reopened.phoneRecipes() == [updated])
+        #expect(try await reopened.latestRecipes() == cameras)
+        #expect(try await reopened.copyRecipeToPhone(profile.bank) == updated)
+        #expect(try await reopened.updatePhoneRecipe(PhoneRecipeDraft(recipe: updated)) == updated)
+    }
+
+    @Test func staleOrDeletedDraftCannotOverwriteAnotherRevision() async throws {
+        let disk = try CatalogTestDisk(), f = try CatalogFixture()
+        let catalog = try SwiftDataCatalog(storeURL: disk.url)
+        let original = try await catalog.copyRecipeToPhone(f.recipe)
+        var first = PhoneRecipeDraft(recipe: original); first.name = "First edit"
+        let updated = try await catalog.updatePhoneRecipe(first)
+        var stale = PhoneRecipeDraft(recipe: original); stale.name = "Stale edit"
+        await #expect(throws: PhoneRecipeEditingError.staleRecipe) { try await catalog.updatePhoneRecipe(stale) }
+        try await catalog.deletePhoneRecipe(id: updated.id)
+        await #expect(throws: PhoneRecipeEditingError.missingRecipe) { try await catalog.updatePhoneRecipe(PhoneRecipeDraft(recipe: updated)) }
+        let recopied = try await catalog.copyRecipeToPhone(f.recipe)
+        #expect(recopied.snapshot.id != original.snapshot.id)
+        await #expect(throws: PhoneRecipeEditingError.staleRecipe) { try await catalog.updatePhoneRecipe(stale) }
+        #expect(try await catalog.phoneRecipes() == [recopied])
+    }
+
     @Test func deletingPhoneRecipeSurvivesRestartAndAllowsRecopy() async throws {
         let disk = try CatalogTestDisk(), f = try CatalogFixture()
         let catalog = try SwiftDataCatalog(storeURL: disk.url)
@@ -15,10 +50,10 @@ struct CatalogTests {
         #expect(try await reopened.phoneRecipes().isEmpty)
         #expect(try await reopened.latestRecipes() == originals)
         let recopied = try await reopened.copyRecipeToPhone(originals[0])
-        #expect(recopied.id != copy.id)
-        #expect(recopied.importedSettings == copy.importedSettings)
+        #expect(recopied.snapshot.id != copy.snapshot.id)
+        #expect(recopied.snapshot.importedSettings == copy.snapshot.importedSettings)
         #expect(try await reopened.phoneRecipes() == [recopied])
-        try await reopened.deletePhoneRecipe(id: originals[0].id)
+        try await reopened.deletePhoneRecipe(id: originals[1].id)
         #expect(try await reopened.phoneRecipes() == [recopied])
         #expect(try await reopened.latestRecipes() == originals)
     }
@@ -27,19 +62,19 @@ struct CatalogTests {
         let disk = try CatalogTestDisk(), f = try CatalogFixture()
         let catalog = try SwiftDataCatalog(storeURL: disk.url)
         let copy = try await catalog.copyRecipeToPhone(f.recipe)
-        var job = f.job(recipe: copy)
+        var job = f.job(recipe: copy.snapshot)
         let operationID = job.items[0].operationID
         job.items[0].state = .pendingSave(f.pending(operationID: operationID))
-        let version = f.version(operationID: operationID, recipe: copy)
+        let version = f.version(operationID: operationID, recipe: copy.snapshot)
         try await catalog.saveJob(job)
         try await catalog.deletePhoneRecipe(id: copy.id)
-        #expect(try await catalog.job(id: job.id).recipeSnapshot == copy)
+        #expect(try await catalog.job(id: job.id).recipeSnapshot == copy.snapshot)
         #expect(try await catalog.job(id: job.id).items == job.items)
         try await catalog.confirmSaved(jobID: job.id, operationID: operationID, version: version)
         let reopened = try SwiftDataCatalog(storeURL: disk.url)
         #expect(try await reopened.phoneRecipes().isEmpty)
         #expect(try await reopened.versions(sourceID: f.source.id) == [version])
-        #expect(try await reopened.job(id: job.id).recipeSnapshot == copy)
+        #expect(try await reopened.job(id: job.id).recipeSnapshot == copy.snapshot)
         #expect(try await reopened.job(id: job.id).items[0].state == .saved(version.id))
     }
 
@@ -48,25 +83,25 @@ struct CatalogTests {
         let original = f.recipe
         let catalog = try SwiftDataCatalog(storeURL: disk.url)
         let copy = try await catalog.copyRecipeToPhone(original)
-        #expect(copy.id != original.id)
-        #expect(copy.copiedFromRecipeID == original.id)
-        #expect(copy.isPhoneRecipe)
-        #expect(copy.name == original.name)
-        #expect(copy.slot == original.slot)
-        #expect(copy.importedName == original.importedName)
-        #expect(copy.importedSettings == original.importedSettings)
-        #expect(copy.settingsDigest == original.settingsDigest)
-        #expect(copy.cameraContext == original.cameraContext)
-        #expect(copy.importedAt == original.importedAt)
-        #expect(copy.renderingIssues == original.renderingIssues)
-        #expect(copy.renderingSupport == original.renderingSupport)
+        #expect(copy.snapshot.id != original.id)
+        #expect(copy.snapshot.copiedFromRecipeID == original.id)
+        #expect(copy.snapshot.isPhoneRecipe)
+        #expect(copy.snapshot.name == original.name)
+        #expect(copy.snapshot.slot == original.slot)
+        #expect(copy.snapshot.importedName == original.importedName)
+        #expect(copy.snapshot.importedSettings == original.importedSettings)
+        #expect(copy.snapshot.settingsDigest == original.settingsDigest)
+        #expect(copy.snapshot.cameraContext == original.cameraContext)
+        #expect(copy.snapshot.importedAt == original.importedAt)
+        #expect(copy.snapshot.renderingIssues == original.renderingIssues)
+        #expect(copy.snapshot.renderingSupport == original.renderingSupport)
         #expect(try await catalog.copyRecipeToPhone(original) == copy)
         let refreshed = f.recipes()
         try await catalog.replaceRecipes(refreshed)
         let reopened = try SwiftDataCatalog(storeURL: disk.url)
         #expect(try await reopened.phoneRecipes() == [copy])
         #expect(try await reopened.latestRecipes() == refreshed)
-        #expect(try JSONDecoder().decode(RecipeSnapshot.self, from: JSONEncoder().encode(copy)) == copy)
+        #expect(try JSONDecoder().decode(RecipeSnapshot.self, from: JSONEncoder().encode(copy.snapshot)) == copy.snapshot)
     }
 
     @Test func phoneCopiesRemainDistinctWhenTheirCameraSlotIsReused() async throws {
@@ -75,9 +110,9 @@ struct CatalogTests {
         let a = try await catalog.copyRecipeToPhone(f.recipe)
         let b = try await catalog.copyRecipeToPhone(f.recipe(slot: 1, name: "New bank"))
         #expect(a.id != b.id)
-        #expect(try await catalog.phoneRecipes().map(\.name) == ["Synthetic bank", "New bank"])
+        #expect(try await catalog.phoneRecipes().map(\.snapshot.name) == ["Synthetic bank", "New bank"])
         await #expect(throws: CatalogError.invalidRecipeCollection) {
-            try await catalog.replaceRecipes([a] + Array(f.recipes().dropFirst()))
+            try await catalog.replaceRecipes([a.snapshot] + Array(f.recipes().dropFirst()))
         }
     }
 

@@ -20,6 +20,7 @@ struct WorkspaceView<StatusControl: View>: View {
     var onRefreshRecipes: () -> Void
     var onCopyRecipeToPhone: (UUID) async -> Bool
     var onDeletePhoneRecipe: (UUID) async -> Bool
+    var onEditPhoneRecipe: (PhoneRecipeDraft) async throws -> Void
     var onExport: () -> Void
     @ViewBuilder var statusControl: () -> StatusControl
     var onViewportChanged: (GridViewport) -> Void = { _ in }
@@ -115,7 +116,8 @@ struct WorkspaceView<StatusControl: View>: View {
         RecipeMenu(current: state.selectedRecipe, snapshots: state.recipes, phoneSnapshots: state.phoneRecipes, refreshState: state.recipeRefreshState,
             isCameraConnected: state.isCameraConnected,
             onSelect: { onAction(.recipeSelected(slot: $0)) }, onSelectPhone: { onAction(.phoneRecipeSelected($0)) },
-            onCopyToPhone: onCopyRecipeToPhone, onDeletePhone: onDeletePhoneRecipe, onRefresh: onRefreshRecipes,
+            onCopyToPhone: onCopyRecipeToPhone, onDeletePhone: onDeletePhoneRecipe,
+            onEditPhone: onEditPhoneRecipe, onRefresh: onRefreshRecipes,
             onControlFrameChanged: { recipeFrame = $0 })
     }
     private var exportButton: some View {

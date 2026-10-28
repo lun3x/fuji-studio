@@ -29,7 +29,8 @@ enum WorkspaceAction: Sendable {
     case recipeSelected(slot: Int?)
     case phoneRecipeSelected(UUID)
     case phoneRecipeDeleted(UUID)
-    case phoneRecipesLoaded([RecipeSnapshot])
+    case phoneRecipeUpdated(PhoneRecipe)
+    case phoneRecipesLoaded([PhoneRecipe])
     case recipesRefreshed([RecipeSnapshot])
     case recipeRefreshFailed(String)
     /// Complete accessible metadata index after removals or an authorization change.
@@ -70,7 +71,7 @@ struct WorkspaceState: Sendable {
     private(set) var checkedSourceIDs: Set<SourceID> = []
     private(set) var drawerDetent: DrawerDetent = .collapsed
     private(set) var recipes: [RecipeSnapshot] = []
-    private(set) var phoneRecipes: [RecipeSnapshot] = []
+    private(set) var phoneRecipes: [PhoneRecipe] = []
     private(set) var recipeRefreshState: RecipeRefreshState = .fresh
     private(set) var currentCameraExecutionContext: CameraExecutionContext?
     private(set) var cameraState: CameraState = .disconnected
@@ -190,20 +191,34 @@ struct WorkspaceState: Sendable {
 
         case .phoneRecipeSelected(let id):
             guard isCameraConnected, let recipe = phoneRecipes.first(where: { $0.id == id }) else { return [] }
-            selectedRecipe = recipe
+            selectedRecipe = recipe.snapshot
             previewRequiresUserIntent = false
             displayedVersion = originalVersion
             wantsRecipePreview = true
             return requestPreview()
 
         case .phoneRecipeDeleted(let id):
-            guard phoneRecipes.contains(where: { $0.id == id }) else { return [] }
+            guard let recipe = phoneRecipes.first(where: { $0.id == id }) else { return [] }
             phoneRecipes.removeAll { $0.id == id }
-            if selectedRecipe?.id == id { return reduce(.recipeSelected(slot: nil)) }
+            if selectedRecipe?.id == recipe.snapshot.id { return reduce(.recipeSelected(slot: nil)) }
 
         case .phoneRecipesLoaded(let saved):
-            guard saved.allSatisfy(\.isPhoneRecipe), Set(saved.map(\.id)).count == saved.count else { return [] }
+            guard saved.allSatisfy({ $0.snapshot.copiedFromRecipeID == $0.id }), Set(saved.map(\.id)).count == saved.count else { return [] }
             phoneRecipes = saved
+
+        case .phoneRecipeUpdated(let updated):
+            guard let index = phoneRecipes.firstIndex(where: { $0.id == updated.id }),
+                  updated.snapshot.copiedFromRecipeID == updated.id else { return [] }
+            let previous = phoneRecipes[index]
+            guard previous != updated else { return [] }
+            phoneRecipes[index] = updated
+            if selectedRecipe?.id == previous.snapshot.id {
+                selectedRecipe = updated.snapshot
+                previewRequiresUserIntent = false
+                displayedVersion = originalVersion
+                wantsRecipePreview = true
+                return requestPreview()
+            }
 
         case .recipesRefreshed(let refreshed):
             guard refreshed.count == 7, Set(refreshed.map(\.slot)) == Set(1...7),

@@ -3,6 +3,70 @@ import Testing
 @testable import FujiStudio
 
 @MainActor struct AppModelTests {
+    @Test func savingWhilePreviewIsPendingSupersedesItsDisplayIntent() async throws {
+        let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment), barrier = FixtureBarrier()
+        defer { Task { await barrier.release() } }
+        await model.start(automaticallyConnect: false); await model.connect()
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
+        let camera = try #require(model.state.recipes.first { $0.slot == 3 })
+        #expect(await model.copyRecipeToPhone(id: camera.id))
+        let original = try #require(model.state.phoneRecipes.first)
+        model.send(.sourceTapped("source-0")); await eventually { model.displayFile != nil }
+        await f.camera.holdRender(barrier)
+        model.send(.phoneRecipeSelected(original.id)); await barrier.entered()
+        var draft = PhoneRecipeDraft(recipe: original); draft.name = "Newest"; draft.setValue(1, for: .film)
+        try await model.updatePhoneRecipe(draft)
+        #expect(!model.isLoadingPreview)
+        #expect(model.state.displayedVersion == .cameraJPEG)
+        await barrier.release()
+        let updated = try #require(model.state.phoneRecipes.first)
+        await eventually { model.preview?.settingsDigest == updated.snapshot.settingsDigest && !model.isLoadingPreview }
+        #expect(model.state.selectedRecipe == updated.snapshot)
+    }
+
+    @Test func offlineEditIsDurableAndFailedUpdateRetainsExistingPreset() async throws {
+        let f = try await FixtureEnvironment.make(), catalog = HeldVersionCatalog(base: f.environment.catalog)
+        let model = model(f.environment, catalog: catalog)
+        await model.start(automaticallyConnect: false)
+        let camera = try #require(model.state.recipes.first { $0.slot == 3 })
+        #expect(await model.copyRecipeToPhone(id: camera.id))
+        let original = try #require(model.state.phoneRecipes.first)
+        var draft = PhoneRecipeDraft(recipe: original); draft.name = "Offline edit"; draft.setValue(1, for: .film)
+        try await model.updatePhoneRecipe(draft)
+        let updated = try #require(model.state.phoneRecipes.first)
+        #expect(updated.id == original.id)
+        #expect(updated.snapshot.name == "Offline edit")
+        #expect(model.state.selectedRecipe == nil)
+        #expect(try await f.environment.catalog.phoneRecipes() == [updated])
+        await catalog.failPhoneUpdates()
+        var failed = PhoneRecipeDraft(recipe: updated); failed.name = "Must not save"
+        await #expect(throws: CatalogError.self) { try await model.updatePhoneRecipe(failed) }
+        #expect(model.state.phoneRecipes == [updated])
+        #expect(try await f.environment.catalog.phoneRecipes() == [updated])
+        #expect(await f.writer.requests.isEmpty)
+    }
+
+    @Test func editingSelectedRecipeRefreshesPreviewAndKeepsPriorExportSnapshot() async throws {
+        let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment)
+        await model.start(automaticallyConnect: false); await model.connect()
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
+        let camera = try #require(model.state.recipes.first { $0.slot == 3 })
+        #expect(await model.copyRecipeToPhone(id: camera.id))
+        let original = try #require(model.state.phoneRecipes.first)
+        model.send(.sourceTapped("source-0")); model.send(.phoneRecipeSelected(original.id))
+        await eventually { model.preview != nil && model.state.canExport }
+        await model.export(); await eventually { model.exportEvent?.terminal == true }
+        let saved = try await f.environment.catalog.versions(sourceID: "source-0")
+        var draft = PhoneRecipeDraft(recipe: original); draft.name = "Edited look"; draft.setValue(1, for: .film)
+        try await model.updatePhoneRecipe(draft)
+        let updated = try #require(model.state.phoneRecipes.first)
+        await eventually { model.preview?.settingsDigest == updated.snapshot.settingsDigest && !model.isLoadingPreview }
+        #expect(model.state.selectedRecipe == updated.snapshot)
+        #expect(updated.snapshot.settingsDigest != original.snapshot.settingsDigest)
+        #expect(try await f.environment.catalog.versions(sourceID: "source-0") == saved)
+        #expect(saved.first?.recipeSnapshot == original.snapshot)
+    }
+
     @Test func deletingSelectedPhoneRecipeStopsPendingPreviewAndCannotPublishLateResult() async throws {
         let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment), barrier = FixtureBarrier()
         defer { Task { await barrier.release() } }
@@ -45,7 +109,7 @@ import Testing
         await catalog.failPhoneDeletes()
         #expect(!(await model.deletePhoneRecipe(id: copy.id)))
         #expect(model.state.phoneRecipes == [copy])
-        #expect(model.state.selectedRecipe == copy)
+        #expect(model.state.selectedRecipe == copy.snapshot)
         #expect(try await f.environment.catalog.phoneRecipes() == [copy])
         #expect(model.message != nil)
     }
@@ -162,7 +226,7 @@ import Testing
         #expect(model.state.displayedVersion == .cameraJPEG)
         #expect(model.state.phoneRecipes.count == 1)
         let copy = try #require(model.state.phoneRecipes.first)
-        #expect(copy.copiedFromRecipeID == original.id)
+        #expect(copy.snapshot.copiedFromRecipeID == original.id)
         #expect(await model.copyRecipeToPhone(id: original.id))
         #expect(model.state.phoneRecipes == [copy])
         let restarted = AppModel(environment: f.environment)
@@ -197,13 +261,13 @@ import Testing
         model.send(.sourceTapped("source-0"))
         model.send(.phoneRecipeSelected(copy.id))
         await eventually { model.preview != nil && !model.isRefreshing }
-        #expect(model.state.selectedRecipe == copy)
-        #expect(model.preview?.settingsDigest == copy.settingsDigest)
+        #expect(model.state.selectedRecipe == copy.snapshot)
+        #expect(model.preview?.settingsDigest == copy.snapshot.settingsDigest)
         await model.export()
         await eventually { model.exportEvent?.terminal == true }
         let saved = try await f.environment.catalog.versions(sourceID: "source-0")
         #expect(saved.count == 1)
-        #expect(saved.first?.recipeSnapshot == copy)
+        #expect(saved.first?.recipeSnapshot == copy.snapshot)
         #expect(saved.first?.recipeSnapshot.copiedFromRecipeID == original.id)
         #expect(await model.deletePhoneRecipe(id: copy.id))
         #expect(model.state.selectedRecipe == nil)
@@ -795,8 +859,14 @@ private actor HeldVersionCatalog: CatalogStoring {
         try await base.deletePhoneRecipe(id: id)
     }
     func failPhoneSaves() { phoneSavesFail = true }
-    func phoneRecipes() async throws -> [RecipeSnapshot] { try await base.phoneRecipes() }
-    func copyRecipeToPhone(_ recipe: RecipeSnapshot) async throws -> RecipeSnapshot {
+    private var phoneUpdatesFail = false
+    func failPhoneUpdates() { phoneUpdatesFail = true }
+    func updatePhoneRecipe(_ draft: PhoneRecipeDraft) async throws -> PhoneRecipe {
+        if phoneUpdatesFail { throw CatalogError.durableFailure("Synthetic edit failure") }
+        return try await base.updatePhoneRecipe(draft)
+    }
+    func phoneRecipes() async throws -> [PhoneRecipe] { try await base.phoneRecipes() }
+    func copyRecipeToPhone(_ recipe: RecipeSnapshot) async throws -> PhoneRecipe {
         if phoneSavesFail { throw CatalogError.durableFailure("Synthetic phone save failure") }
         return try await base.copyRecipeToPhone(recipe)
     }

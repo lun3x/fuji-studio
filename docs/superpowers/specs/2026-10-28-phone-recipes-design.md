@@ -81,3 +81,28 @@ The phone selection button is greyed out and disabled under the same connection
 rule as camera rows. Disconnecting clears either kind of selected recipe; a new
 connection does not automatically reselect it. Copying cached recipes and
 deleting phone recipes remain possible offline. Editing remains deferred.
+
+## Follow-up: name and settings editor
+
+The user subsequently requested the edit screen, superseding the earlier editing
+exclusion. An accessible pencil beside each phone recipe opens a native form
+with Save and Cancel. Name, Look, White balance, and Tone and detail sections
+expose the settings already supported by the current X-T5 conversion profile.
+Editing and saving work offline; selecting a recipe for rendering still requires
+a connected camera. Cancel discards changes, and validation/persistence failures
+keep the draft open with a visible error.
+
+Phone membership has a stable identity based on its original source snapshot,
+while every saved name/settings revision is an immutable recipe snapshot. Saving
+the selected preset supersedes its pending preview with the new revision. Editing
+an unselected preset does not select it. Camera banks, prior exports and their
+names/settings remain frozen. Stale drafts and updates after deletion are rejected.
+This reuses existing catalog fields without a model-schema migration.
+
+Controls offer the currently validated conversion domains, including film,
+dynamic range, grain, Color Chrome/Blue, white balance/temperature/shifts,
+highlights, shadows, colour, sharpness, noise reduction and clarity. An existing
+unsupported value remains visible and unchanged until explicitly replaced.
+Unsupported camera contexts permit name-only edits. Opening/saving an unchanged
+recipe does not normalize opaque settings or create a new snapshot. This step
+does not add camera capabilities, renderer domains or blank-recipe creation.

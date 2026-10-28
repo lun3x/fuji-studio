@@ -38,7 +38,6 @@ sets out the hardware feasibility gates, native app tasks, and acceptance checks
 
 ## Outside the initial scope
 
-- Editing profile settings.
 - Creating recipes from scratch.
 
 ## Status
@@ -46,12 +45,17 @@ sets out the hardware feasibility gates, native app tasks, and acceptance checks
 The recipe selector has Camera and Phone tabs. The copy icon beside an imported
 camera recipe saves its exact name/settings on the phone and opens the Phone tab
 without changing the current recipe. Repeated taps reuse the saved copy of that
-import. Copies survive restarts and camera refreshes and can be saved or deleted
+import. Copies survive restarts and camera refreshes and can be saved, edited or deleted
 offline. Both Camera and Phone recipe selection are greyed out while disconnected;
 disconnecting clears the selection. Phone rows have a trash icon with confirmation,
-and deletion preserves saved photos and export history. Preview and export still
-require a compatible connected camera. Editing
-is deferred so this first increment can focus on the copy/save UX. See the
+and deletion preserves saved photos and export history. The pencil opens a native
+editor with Name, Look, White balance, and Tone and detail sections. Save applies
+the draft; Cancel discards it. Editing works offline, and saving the selected
+recipe refreshes its preview when a camera is connected. Choices cover the
+current X-T5 renderer's supported settings; existing unsupported values are
+preserved until explicitly changed. Camera banks and previous exports keep
+their original snapshots. Preview and export still require a compatible connected
+camera. See the
 [phone recipe design](docs/superpowers/specs/2026-10-28-phone-recipes-design.md).
 
 The floating top-right photo control shows Image versions when no recipe is

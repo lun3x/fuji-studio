@@ -54,10 +54,11 @@ struct RecipeSnapshot: Sendable, Equatable, Codable, Identifiable {
         self.renderingIssues = renderingIssues; self.copiedFromRecipeID = copiedFromRecipeID
     }
 
-    func copiedToPhone() -> RecipeSnapshot {
-        RecipeSnapshot(id: UUID(), slot: slot, name: name, importedName: importedName,
+    func copiedToPhone() -> PhoneRecipe {
+        let snapshot = RecipeSnapshot(id: UUID(), slot: slot, name: name, importedName: importedName,
             importedSettings: importedSettings, settingsDigest: settingsDigest, cameraContext: cameraContext,
             importedAt: importedAt, renderingIssues: renderingIssues, copiedFromRecipeID: id)
+        return PhoneRecipe(id: id, snapshot: snapshot)
     }
 
     var normalizedSettings: NormalizedRecipeSettings { get throws { try XT5WorkingProfile.normalize(self) } }

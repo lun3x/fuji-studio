@@ -57,15 +57,15 @@ actor SwiftDataCatalog: ModelActor, CatalogStoring {
         }
     }
 
-    func phoneRecipes() throws -> [RecipeSnapshot] {
+    func phoneRecipes() throws -> [PhoneRecipe] {
         try read {
-            let request = FetchDescriptor<CatalogPhoneRecipeRecord>(sortBy: [SortDescriptor(\.savedAt), SortDescriptor(\.snapshotID)])
+            let request = FetchDescriptor<CatalogPhoneRecipeRecord>(sortBy: [SortDescriptor(\.savedAt), SortDescriptor(\.sourceSnapshotID)])
             return try modelContext.fetch(request).map { try phoneSnapshot($0) }
         }
     }
 
     /// The actor serializes repeat taps; membership and the immutable snapshot save atomically.
-    func copyRecipeToPhone(_ recipe: RecipeSnapshot) throws -> RecipeSnapshot {
+    func copyRecipeToPhone(_ recipe: RecipeSnapshot) throws -> PhoneRecipe {
         guard !recipe.isPhoneRecipe, (1...7).contains(recipe.slot) else { throw CatalogError.invalidRecipeCollection }
         let sourceID = recipe.id
         let request = FetchDescriptor<CatalogPhoneRecipeRecord>(predicate: #Predicate { $0.sourceSnapshotID == sourceID })
@@ -73,13 +73,13 @@ actor SwiftDataCatalog: ModelActor, CatalogStoring {
         let copy = recipe.copiedToPhone()
         try write {
             try retain(recipe)
-            try retain(copy)
-            modelContext.insert(CatalogPhoneRecipeRecord(sourceSnapshotID: sourceID, snapshotID: copy.id))
+            try retain(copy.snapshot)
+            modelContext.insert(CatalogPhoneRecipeRecord(sourceSnapshotID: sourceID, snapshotID: copy.snapshot.id))
         }
         return copy
     }
 
-    private func phoneSnapshot(_ membership: CatalogPhoneRecipeRecord) throws -> RecipeSnapshot {
+    private func phoneSnapshot(_ membership: CatalogPhoneRecipeRecord) throws -> PhoneRecipe {
         guard let record = try recipeRecord(membership.snapshotID) else {
             throw CatalogError.durableFailure("Saved phone recipe is missing")
         }
@@ -87,13 +87,13 @@ actor SwiftDataCatalog: ModelActor, CatalogStoring {
         guard recipe.copiedFromRecipeID == membership.sourceSnapshotID else {
             throw CatalogError.durableFailure("Saved phone recipe provenance does not match")
         }
-        return recipe
+        return PhoneRecipe(id: membership.sourceSnapshotID, snapshot: recipe)
     }
 
     /// Remove chooser membership only; immutable snapshots still belong to export history.
     func deletePhoneRecipe(id: UUID) throws {
         try write {
-            let request = FetchDescriptor<CatalogPhoneRecipeRecord>(predicate: #Predicate { $0.snapshotID == id })
+            let request = FetchDescriptor<CatalogPhoneRecipeRecord>(predicate: #Predicate { $0.sourceSnapshotID == id })
             if let membership = try modelContext.fetch(request).first { modelContext.delete(membership) }
         }
     }
@@ -105,6 +105,20 @@ actor SwiftDataCatalog: ModelActor, CatalogStoring {
               observed.capability == camera.capability, observed.sessionIdentity == camera.sessionIdentity,
               observed.sessionGeneration == camera.generation else { return [] }
         return snapshots
+    }
+
+    func updatePhoneRecipe(_ draft: PhoneRecipeDraft) throws -> PhoneRecipe {
+        let id = draft.original.id
+        let snapshot = try draft.makeSnapshot()
+        try write {
+            let request = FetchDescriptor<CatalogPhoneRecipeRecord>(predicate: #Predicate { $0.sourceSnapshotID == id })
+            guard let membership = try modelContext.fetch(request).first else { throw PhoneRecipeEditingError.missingRecipe }
+            guard membership.snapshotID == draft.original.snapshot.id,
+                  try phoneSnapshot(membership) == draft.original else { throw PhoneRecipeEditingError.staleRecipe }
+            try retain(snapshot)
+            membership.snapshotID = snapshot.id
+        }
+        return PhoneRecipe(id: id, snapshot: snapshot)
     }
 
     func versions(sourceID: SourceID) throws -> [SavedVersion] {
@@ -347,6 +361,7 @@ actor SwiftDataCatalog: ModelActor, CatalogStoring {
         } catch {
             modelContext.rollback()
             if let catalogError = error as? CatalogError { throw catalogError }
+            if let editingError = error as? PhoneRecipeEditingError { throw editingError }
             throw CatalogError.durableFailure(String(describing: error))
         }
     }

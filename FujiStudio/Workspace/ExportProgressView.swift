@@ -80,6 +80,7 @@ struct AppWorkspaceView: View {
             onAction: model.send, onRefreshRecipes: { Task { await model.refreshRecipes() } },
             onCopyRecipeToPhone: model.copyRecipeToPhone,
             onDeletePhoneRecipe: model.deletePhoneRecipe,
+            onEditPhoneRecipe: model.updatePhoneRecipe,
             onExport: { Task { await model.export() } },
             statusControl: { statusButton })
         .sheet(isPresented: $statusPresented) {
