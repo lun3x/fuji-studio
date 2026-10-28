@@ -31,7 +31,7 @@ private struct PhotoLoadingRingStyle: ProgressViewStyle {
             ZStack {
                 Circle().strokeBorder(.primary.opacity(0.16), lineWidth: 3)
                 Circle().trim(from: 0, to: progress ?? 0.24)
-                    .stroke(.primary, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                    .stroke(Color(uiColor: .lightGray), style: StrokeStyle(lineWidth: 3, lineCap: .round))
                     .padding(1.5)
                     .rotationEffect(.degrees(rotation - 90))
             }
