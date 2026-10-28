@@ -64,6 +64,8 @@ import XCTest
         let edit = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.edit.")).firstMatch
         XCTAssertTrue(edit.waitForExistence(timeout: 5)); XCTAssertGreaterThanOrEqual(edit.frame.width, 44)
         edit.tap(); XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitForExistence(timeout: 5))
+        XCTAssertGreaterThan(app.textFields["recipe.editor.name"].frame.height, 44,
+                             "The editor must inherit the largest accessibility text size")
         shot(app, "Phone editor at largest text")
         XCTAssertTrue(app.buttons["recipe.editor.save"].isHittable)
         XCTAssertTrue(app.buttons["recipe.editor.cancel"].isHittable)

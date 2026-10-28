@@ -93,6 +93,7 @@ struct RecipeMenu: View {
         .frame(idealWidth: 340, maxHeight: 520)
         .sheet(item: $editingRecipe) { recipe in
             PhoneRecipeEditor(recipe: recipe, onSave: onEditPhone)
+                .environment(\.dynamicTypeSize, dynamicTypeSize)
         }
         .alert("Delete phone recipe?", isPresented: $deletionPresented, presenting: pendingDeletion) { recipe in
             Button("Delete", role: .destructive) { deleteFromPhone(recipe) }
