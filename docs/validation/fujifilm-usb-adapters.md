@@ -49,8 +49,8 @@ See [the protocol record](xe3-laptop-protocol.md) for full measurements.
 
 ## Software gates
 
-Validated implementation revision: **`5f2192b5d38c`**. Later documentation
-checkpoints do not change production code. Simulator: task-isolated iPhone 15 Pro,
+Full-suite baseline implementation: **`5f2192b5d38c`**. The measured WB
+follow-up implementation is **`3ea81052d5a3`**, with its targeted checks below. Simulator: task-isolated iPhone 15 Pro,
 iOS 27.0. Latest signed phone artifact: version 0.1/build 1, iPhoneOS 27.1 SDK.
 
 The first complete simulator run passed **543 tests, three established skips,
@@ -103,9 +103,9 @@ X-T5/iPhone: no X-T5 body is currently attached. Firmware4.31 admission, selecto
 restoration, preview/export, model switching and strict LMO output admission need
 physical regression. Existing simulated-transport results do not replace it.
 
-The latest Release is installed and ready to open manually. Its two launch
-attempts were refused solely by the iOS lock screen; the earlier build's normal
-launch succeeded after user unlock. The camera remains idle with every Mac
+The earlier Release was installed and its launch attempts were refused solely
+by the iOS lock screen; the pre-fix build's normal launch succeeded after unlock.
+The current WB follow-up installation is recorded below. The camera remains idle with every Mac
 session confirmed closed. The five-preset controlled WB calibration and restoration are complete;
 the WB selector, complete table and all bank bytes are unchanged after conversion.
 
@@ -131,7 +131,14 @@ The production change only adds the five measured dependency offsets to the
 explicit verified set. Custom measured WB and substituted mode/pair combinations
 remain rejected. Core 101/16, laptop CLI 6/3, iOS 468 Swift tests/57 suites plus 19
 XCTest unit tests, and two affected UI cases pass. The earlier 545-pass full suite
-is the baseline before this bounded mapping change. Release follow-up is pending.
+is the baseline before this bounded mapping change. Both follow-up simulator and signed phone Release builds passed.
 The public controlled/restored and conversion proofs are in
 `Fixtures/XE3/1.30/preset-wb-*.json`. The active follow-up workbench is
 `/tmp/fuji-xe3-wb-presets-20261028`.
+
+The signed `3ea81052d5a3` Release (version 0.1/build 1, iPhoneOS 27.1 SDK) passed
+`codesign --verify --deep --strict` and installed on Louisphone. Its normal launch
+was refused solely by the iOS lock screen. The user has been asked to connect the
+idle X-E3 to the phone and confirm actual seven-bank import; that physical result
+is pending. No new camera operation is scheduled on the Mac. Only this follow-up's
+simulator `BE837DC6-2B5F-4A3B-AE4A-C9973FD9B654` was shut down/deleted.
