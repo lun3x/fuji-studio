@@ -4,7 +4,7 @@ import SwiftUI
 
 struct DrawerGeometryTests {
     // Omitting the header/safe area or using a prototype drawer height breaks the actual one-row viewport.
-    @Test(arguments: [(CGFloat(390), CGFloat(162)), (414, 170)])
+    @Test(arguments: [(CGFloat(390), CGFloat(162 + 2.0 / 3)), (CGFloat(414), CGFloat(170 + 2.0 / 3))])
     func collapsedViewportExposesNextRowCueBelowFullWidthTiles(width: CGFloat, gridHeight: CGFloat) {
         let grid = DrawerGeometry.gridMetrics(width: width, availableGridHeight: 500)
         #expect(grid.columns == 3)
@@ -20,15 +20,15 @@ struct DrawerGeometryTests {
     }
     @Test func adaptiveLandscapeRowsClearMeasuredControlsAndHeader() {
         let grid = DrawerGeometry.gridMetrics(width: 800, availableGridHeight: 70)
-        // Eleven columns of 70 pt squares fill the width and fit the viewport.
-        #expect(grid.columns == 11)
-        #expect(abs(grid.tileWidth - 70) < 0.001)
-        #expect(abs(grid.height(rows: 1) - 70) < 0.001)
+        // Twelve columns with 2 pt gaps fill the width and fit the viewport.
+        #expect(grid.columns == 12)
+        #expect(abs(grid.tileWidth - 778.0 / 12) < 0.001)
+        #expect(abs(grid.height(rows: 1) - 778.0 / 12) < 0.001)
         let result = DrawerGeometry.detents(container: CGSize(width: 800, height: 390),
             safeArea: EdgeInsets(top: 0, leading: 0, bottom: 21, trailing: 0), headerHeight: 100,
             grid: grid, recipeControlFrame: CGRect(x: 16, y: 100, width: 80, height: 44))
         #expect(result.expandedTop >= 152)
-        #expect(abs(result.collapsedHeight - 191) < 0.001)
+        #expect(abs(result.collapsedHeight - (121 + 778.0 / 12)) < 0.001)
         #expect(result.expandedHeight >= result.collapsedHeight)
     }
     @Test func dragClampsAndSnapsWithoutDependingOnPhotoSelection() {
@@ -151,7 +151,7 @@ final class WorkspaceHostingTests: XCTestCase {
         let peek = nextRow.frame.intersection(collection.bounds)
         XCTAssertGreaterThan(peek.height, 0, "The next row must be visible as a scrolling cue")
         XCTAssertLessThan(peek.height, grid.metrics.tileWidth)
-        XCTAssertEqual(peek.height, window.safeAreaInsets.bottom - 3, accuracy: 0.5)
+        XCTAssertEqual(peek.height, window.safeAreaInsets.bottom - 2, accuracy: 0.5)
         store.state.reduce(.drawerMoved(.expanded)); try await settle(host)
         XCTAssertEqual(collection.convert(collection.bounds, to: window).maxY, window.bounds.maxY, accuracy: 0.5)
         XCTAssertEqual(collection.contentInset.bottom, window.safeAreaInsets.bottom, accuracy: 0.5)
