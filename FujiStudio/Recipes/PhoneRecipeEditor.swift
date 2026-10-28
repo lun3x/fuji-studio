@@ -28,10 +28,10 @@ struct PhoneRecipeEditor: View {
                         Section { Text(PhoneRecipeEditingError.unsupportedContext.message).foregroundStyle(.secondary) }
                     } else {
                         Section {
-                            setting(.film); setting(.dynamicRange); setting(.grain)
+                            setting(.film); setting(.dynamicRange); grainSettings
                             setting(.colorChrome); setting(.colorChromeBlue)
                         } header: { Text("Look") } footer: {
-                            Text("Choices match the settings currently supported for X-T5 conversion. Existing unsupported values are kept until you change them.")
+                            Text("Grain size is remembered while Off. Weak and Strong/Large grain can be saved but aren’t supported for camera conversion yet. Existing unsupported values are kept until you change them.")
                         }
                         Section("White balance") {
                             setting(.whiteBalance)
@@ -76,6 +76,28 @@ struct PhoneRecipeEditor: View {
             .onChange(of: draft) { error = nil }
         }
         .interactiveDismissDisabled(saving || draft.hasChanges)
+    }
+    @ViewBuilder private var grainSettings: some View {
+        if draft.value(for: .grain) != nil {
+            Picker("Grain effect", selection: Binding(get: { draft.grain?.effect },
+                set: { if let effect = $0 { draft.setGrainEffect(effect) } })) {
+                if draft.grain == nil { Text("Keep current unsupported value").tag(Optional<PhoneRecipeGrain.Effect>.none) }
+                ForEach(PhoneRecipeGrain.Effect.allCases) { Text($0.rawValue).tag(Optional($0)) }
+            }
+            .pickerStyle(.menu)
+            .accessibilityIdentifier("recipe.editor.setting.grainEffect")
+            Picker("Grain size", selection: Binding(get: { draft.grain?.size },
+                set: { if let size = $0 { draft.setGrainSize(size) } })) {
+                if draft.grain == nil { Text("Unavailable").tag(Optional<PhoneRecipeGrain.Size>.none) }
+                ForEach(PhoneRecipeGrain.Size.allCases) { Text($0.rawValue).tag(Optional($0)) }
+            }
+            .pickerStyle(.menu)
+            .disabled(draft.grain == nil || draft.grain?.effect == .off)
+            .accessibilityIdentifier("recipe.editor.setting.grainSize")
+        } else {
+            LabeledContent("Grain effect", value: "Unavailable")
+            LabeledContent("Grain size", value: "Unavailable")
+        }
     }
     @ViewBuilder private func setting(_ field: PhoneRecipeSetting) -> some View {
         if let value = draft.value(for: field) {

@@ -1,6 +1,38 @@
 import XCTest
 
 @MainActor final class AppFlowTests: XCTestCase {
+    func testPhoneEditorGrainEffectAndSizeSaveIndependently() {
+        let app = launch(["--fixture-disconnected-camera"])
+        tap(app.buttons["recipe.control"], in: app); app.buttons["recipe.copy.3"].tap()
+        let edit = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.edit.")).firstMatch
+        XCTAssertTrue(edit.waitForExistence(timeout: 5)); edit.tap()
+        let effect = app.buttons["recipe.editor.setting.grainEffect"]
+        let size = app.buttons["recipe.editor.setting.grainSize"]
+        XCTAssertTrue(effect.waitForExistence(timeout: 5))
+        reveal(effect, in: app); effect.tap(); app.buttons["Weak"].tap()
+        XCTAssertTrue(size.isEnabled)
+        size.tap(); app.buttons["Large"].tap()
+        effect.tap(); app.buttons["Off"].tap()
+        XCTAssertFalse(size.isEnabled); XCTAssertTrue(size.label.contains("Large"))
+        shot(app, "Grain Off disables size and retains Large")
+        effect.tap(); app.buttons["Strong"].tap()
+        XCTAssertTrue(size.isEnabled); XCTAssertTrue(size.label.contains("Large"))
+        app.buttons["recipe.editor.save"].tap()
+        XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitForNonExistence(timeout: 5))
+        edit.tap(); reveal(effect, in: app)
+        XCTAssertTrue(effect.label.contains("Strong")); XCTAssertTrue(size.label.contains("Large"))
+        effect.tap(); app.buttons["Off"].tap(); app.buttons["recipe.editor.save"].tap()
+        XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitForNonExistence(timeout: 5))
+        edit.tap(); reveal(effect, in: app)
+        XCTAssertTrue(effect.label.contains("Off")); XCTAssertFalse(size.isEnabled)
+        XCTAssertTrue(size.label.contains("Large"))
+        effect.tap(); app.buttons["Weak"].tap()
+        XCTAssertTrue(size.isEnabled); XCTAssertTrue(size.label.contains("Large"))
+        size.tap(); app.buttons["Small"].tap()
+        XCTAssertTrue(effect.label.contains("Weak")); XCTAssertTrue(size.label.contains("Small"))
+        app.buttons["recipe.editor.cancel"].tap()
+    }
+
     private func replaceText(_ field: XCUIElement, with value: String) {
         field.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.5)).tap()
         let current = field.value as? String ?? ""
@@ -66,6 +98,10 @@ import XCTest
         edit.tap(); XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitForExistence(timeout: 5))
         XCTAssertGreaterThan(app.textFields["recipe.editor.name"].frame.height, 44,
                              "The editor must inherit the largest accessibility text size")
+        let effect = app.buttons["recipe.editor.setting.grainEffect"]
+        reveal(effect, in: app); effect.tap(); app.buttons["Off"].tap()
+        let size = app.buttons["recipe.editor.setting.grainSize"]
+        reveal(size, in: app); XCTAssertFalse(size.isEnabled)
         shot(app, "Phone editor at largest text")
         XCTAssertTrue(app.buttons["recipe.editor.save"].isHittable)
         XCTAssertTrue(app.buttons["recipe.editor.cancel"].isHittable)

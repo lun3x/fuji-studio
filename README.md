@@ -52,8 +52,11 @@ and deletion preserves saved photos and export history. The pencil opens a nativ
 editor with Name, Look, White balance, and Tone and detail sections. Save applies
 the draft; Cancel discards it. Editing works offline, and saving the selected
 recipe refreshes its preview when a camera is connected. Choices cover the
-current X-T5 renderer's supported settings; existing unsupported values are
-preserved until explicitly changed. Camera banks and previous exports keep
+current X-T5 renderer's supported settings, with all grain combinations also
+saveable. Grain effect and Grain size are separate controls; Off greys out size
+and remembers it. Weak grain and Strong with Large size are not yet supported
+for camera conversion. Existing unsupported values are preserved until
+explicitly changed. Camera banks and previous exports keep
 their original snapshots. Preview and export still require a compatible connected
 camera. See the
 [phone recipe design](docs/superpowers/specs/2026-10-28-phone-recipes-design.md).

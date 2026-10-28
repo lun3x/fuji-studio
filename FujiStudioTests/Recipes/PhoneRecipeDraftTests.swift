@@ -3,6 +3,50 @@ import Testing
 @testable import FujiStudio
 
 struct PhoneRecipeDraftTests {
+    @Test func grainControlsPreserveEachOtherAndRememberSizeWhileOff() throws {
+        let original = try ProductionProfileFixture().bank.copiedToPhone()
+        var draft = PhoneRecipeDraft(recipe: original)
+        #expect(draft.grain == PhoneRecipeGrain(effect: .strong, size: .small))
+        draft.setGrainSize(.large); #expect(draft.value(for: .grain) == 5)
+        draft.setGrainEffect(.weak); #expect(draft.value(for: .grain) == 4)
+        draft.setGrainEffect(.off); #expect(draft.value(for: .grain) == 7)
+        draft.setGrainSize(.small); #expect(draft.value(for: .grain) == 7)
+        let saved = PhoneRecipe(id: original.id, snapshot: try draft.makeSnapshot())
+        var reopened = PhoneRecipeDraft(recipe: saved)
+        #expect(reopened.grain == PhoneRecipeGrain(effect: .off, size: .large))
+        reopened.setGrainEffect(.strong); #expect(reopened.value(for: .grain) == 5)
+        reopened.setGrainSize(.small); #expect(reopened.value(for: .grain) == 3)
+    }
+
+    @Test(arguments: [UInt16(1), 99])
+    func legacyAndUnknownGrainStayUnchangedUntilExplicitlyEdited(_ raw: UInt16) throws {
+        let f = try ProductionProfileFixture()
+        var properties = f.properties; properties[0xD195] = raw
+        let original = try f.bank(properties).copiedToPhone()
+        var draft = PhoneRecipeDraft(recipe: original)
+        #expect(try draft.makeSnapshot() == original.snapshot)
+        draft.setGrainSize(.large)
+        if raw == 1 { draft.setGrainEffect(.off) }
+        #expect(!draft.hasChanges)
+        #expect(try draft.makeSnapshot() == original.snapshot)
+        draft.setGrainEffect(.weak)
+        #expect(draft.value(for: .grain) == 2)
+        #expect(try draft.makeSnapshot().importedSettings.first { $0.code == 0xD195 }?.raw == ProtocolProbeFixtures.word(2))
+    }
+
+    @Test(arguments: [UInt16(2), 3, 4, 5, 6, 7])
+    func allGrainCombinationsCanBeSavedWithoutChangingOtherSettings(_ raw: UInt16) throws {
+        let original = try ProductionProfileFixture().bank.copiedToPhone()
+        var draft = PhoneRecipeDraft(recipe: original)
+        draft.setValue(raw, for: .grain)
+        let snapshot = try draft.makeSnapshot()
+        #expect(PhoneRecipeDraft(recipe: PhoneRecipe(id: original.id, snapshot: snapshot)).value(for: .grain) == raw)
+        #expect(snapshot.importedSettings.filter { $0.code != 0xD195 } == original.snapshot.importedSettings.filter { $0.code != 0xD195 })
+        if [2, 4, 5].contains(raw) {
+            #expect(throws: RecipeImportError.self) { try snapshot.requireRenderable() }
+        } else { try snapshot.requireRenderable() }
+    }
+
     @Test func untouchedPaddedNameDoesNotCreateARevision() throws {
         let source = try ProductionProfileFixture().bank
         let camera = try XT5RecipeCodec.recipe(slot: source.slot,
@@ -68,10 +112,14 @@ struct PhoneRecipeDraftTests {
         }
         var invalid = PhoneRecipeDraft(recipe: original); invalid.setValue(200, for: .dynamicRange)
         #expect(throws: PhoneRecipeEditingError.self) { try invalid.makeSnapshot() }
+        for raw: UInt16 in [0, 8, 99] {
+            var draft = PhoneRecipeDraft(recipe: original); draft.setValue(raw, for: .grain)
+            #expect(throws: PhoneRecipeEditingError.self) { try draft.makeSnapshot() }
+        }
         #expect(try original.snapshot.normalizedSettings.dynamicRange == 400)
     }
 
-    @Test(arguments: PhoneRecipeSetting.allCases.filter { $0 != .kelvin })
+    @Test(arguments: PhoneRecipeSetting.allCases.filter { $0 != .kelvin && $0 != .grain })
     func offeredSettingsRemainInsideRendererSupport(_ setting: PhoneRecipeSetting) throws {
         let original = try ProductionProfileFixture().bank.copiedToPhone()
         for choice in setting.choices {

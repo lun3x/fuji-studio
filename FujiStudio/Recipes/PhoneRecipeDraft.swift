@@ -35,6 +35,15 @@ struct PhoneRecipeDraft: Sendable, Equatable {
     }
     private var initialTemperature: String { Self.word(.kelvin, in: original.snapshot).map(String.init) ?? "" }
     func value(for setting: PhoneRecipeSetting) -> UInt16? { changedValues[setting] ?? Self.word(setting, in: original.snapshot) }
+    var grain: PhoneRecipeGrain? { value(for: .grain).flatMap(PhoneRecipeGrain.init(rawValue:)) }
+    mutating func setGrainEffect(_ effect: PhoneRecipeGrain.Effect) {
+        guard grain?.effect != effect else { return }
+        setValue(PhoneRecipeGrain(effect: effect, size: grain?.size ?? .small).rawValue, for: .grain)
+    }
+    mutating func setGrainSize(_ size: PhoneRecipeGrain.Size) {
+        guard let grain, grain.effect != .off, grain.size != size else { return }
+        setValue(PhoneRecipeGrain(effect: grain.effect, size: size).rawValue, for: .grain)
+    }
     mutating func setValue(_ value: UInt16, for setting: PhoneRecipeSetting) {
         if value == Self.word(setting, in: original.snapshot) { changedValues[setting] = nil }
         else { changedValues[setting] = value }

@@ -54,7 +54,7 @@ enum PhoneRecipeSetting: String, CaseIterable, Sendable, Identifiable {
             [(1,"PROVIA / Standard"),(11,"Classic Chrome"),(12,"ACROS"),(14,"ACROS + R"),(15,"ACROS + G")].map { Choice(value: $0.0, label: $0.1) }
         case .dynamicRange: [Choice(value: 100, label: "100%"), Choice(value: 400, label: "400%")]
         case .grain:
-            [Choice(value: 6, label: "Off · Small"), Choice(value: 7, label: "Off · Large"), Choice(value: 3, label: "Strong · Small")]
+            PhoneRecipeGrain.combinations.map { Choice(value: $0.rawValue, label: "\($0.effect.rawValue) · \($0.size.rawValue)") }
         case .colorChrome, .colorChromeBlue:
             [Choice(value: 1, label: "Off"), Choice(value: 2, label: "Weak"), Choice(value: 3, label: "Strong")]
         case .whiteBalance: [Choice(value: 2, label: "Auto"), Choice(value: 32775, label: "Colour temperature")]
@@ -70,7 +70,8 @@ enum PhoneRecipeSetting: String, CaseIterable, Sendable, Identifiable {
         }
     }
     func accepts(_ value: UInt16) -> Bool {
-        self == .kelvin ? (2500...10000).contains(value) : choices.contains { $0.value == value }
+        if self == .grain { return PhoneRecipeGrain(rawValue: value) != nil }
+        return self == .kelvin ? (2500...10000).contains(value) : choices.contains { $0.value == value }
     }
     private func signedChoices(_ range: ClosedRange<Int>) -> [Choice] {
         range.map { Choice(value: UInt16(bitPattern: Int16($0)), label: signedLabel($0)) }
