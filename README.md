@@ -3,7 +3,11 @@
 An iOS app for developing Fujifilm RAW photos with a connected camera's own
 conversion engine and saved profiles.
 
-The initial target is a Fujifilm X-T5 connected over USB-C to an iPhone 15 Pro.
+The USB implementation uses model adapters for Fujifilm X-T5 firmware4.31 and
+X-E3 firmware1.30. Shared Swift code owns import, conversion, output validation
+and cleanup on iOS and in the native macOS runner. See the
+[adapter validation record](docs/validation/fujifilm-usb-adapters.md) for measured
+support and the independent physical iPhone gates.
 
 ## Design specification
 
@@ -51,9 +55,9 @@ disconnecting clears the selection. Phone rows have a trash icon with confirmati
 and deletion preserves saved photos and export history. The pencil opens a native
 editor with Name, Look, White balance, and Tone and detail sections. Save applies
 the draft; Cancel discards it. Editing works offline, and saving the selected
-recipe refreshes its preview when a camera is connected. Choices cover the
-current X-T5 renderer's supported settings, with all grain combinations also
-saveable. Grain effect and Grain size are separate controls; Off greys out size
+recipe refreshes its preview when a camera is connected. Choices follow each recipe's model capabilities. X-E3 offers its15 films, whole
+tone steps, strength-only grain and31 verified discrete Kelvin values. X-T5
+retains its measured rendering domain, with all grain combinations saveable. Grain effect and Grain size are separate controls; Off greys out size
 and remembers it. Weak grain and Strong with Large size are not yet supported
 for camera conversion. Existing unsupported values are preserved until
 explicitly changed. Camera banks and previous exports keep
@@ -84,7 +88,7 @@ Release uses the divider's detents and spring; reversing past full expansion
 returns the remaining movement to normal photo scrolling. Browse and Select
 keep the viewed photo and checked set through the gesture.
 
-The native workspace composes the real Photos reader/writer, X-T5 camera
+The native workspace composes the real Photos reader/writer, Fujifilm camera
 service, preview/export coordinators and durable local catalog. The workspace layout
 at `2e45055b` passed the complete simulator gate: **442 passed, 3 established
 native-gate skips, 0 failures**, exit 0. Its unsigned Release simulator build

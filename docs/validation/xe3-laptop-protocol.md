@@ -1,25 +1,26 @@
 # X-E3 laptop protocol investigation — 2026-10-28
 
-This is a laptop-only protocol spike on X-E3 firmware **1.30**, using the public
-macOS ImageCaptureCore API. The iPhone application has not been changed. Camera
+This record begins with the protocol spike on X-E3 firmware **1.30**, using public
+macOS ImageCaptureCore. The final section records acceptance through the shared
+Swift core now used by the iOS application and native laptop runner. Camera
 settings and C1–C7 are not written. Original RAF/JPEG files stay untouched.
 Private images, complete backups, names, source hashes and operation journals
 remain under the isolated workspace's ignored `.build/xe3-wire/` directory.
 
 ## Reproduction tools
 
-`Scripts/CameraProbe/run.sh` compiles the native probe with the application's
+`Scripts/CameraProbe/run-diagnostic.sh` compiles the historical native probe with the application's
 actual `PTPTypes.swift` and `PTPCodec.swift`. The selector callback validates the
 original command echo and context before decoding the framework-managed reply.
 ImageCaptureCore owns the wire transaction ID; it must not be compared with the
 caller's logical ID. Errors/deadlines stop the run without retrying a mutation.
 
 ```sh
-Scripts/CameraProbe/run.sh --raw /path/to/source.RAF \
+Scripts/CameraProbe/run-diagnostic.sh --raw /path/to/source.RAF \
   --output /absolute/path/to/new-private-run --trigger 1 --cleanup
 
 # A measured film-only candidate, patching a fresh per-source baseline:
-Scripts/CameraProbe/run.sh --raw /path/to/source.RAF \
+Scripts/CameraProbe/run-diagnostic.sh --raw /path/to/source.RAF \
   --output /absolute/path/to/new-private-film-run \
   --trigger 1 --set 541:1 --cleanup
 
@@ -374,7 +375,7 @@ for a model adapter. The app changes should follow these measured boundaries:
    seven originals, 41 core control trials, seven additional NR levels, the
    invalid-Kelvin fallback, controlled/restored WB bytes and seven bank renders.
    iPhone transport/rendering and interruption/recovery remain separate gates.
-   The application source has not yet been changed by this laptop spike.
+   The historical spike preceded the shared-core application implementation below.
 
 A final fresh-session backup after all bank renders confirms that the 24-byte WB
 shift table and all seven decoded bank snapshots/names remain identical to the
@@ -418,10 +419,42 @@ through the actual core service, and refusal to delete a changed payload.
 The shared-core suite also checks the seven supplied RAFs, the real C4 camera JPEG
 and all seven decoded banks in the restored private backup.
 
-The first live shared-core import attempted on October28 timed out during
-connection with confirmed closure. macOS `SPUSBHostDataType` listed no Fujifilm
-USB device. The user has been asked to power on/reconnect the camera. The
-seven-source/seven-bank live shared-core matrix, new Kelvin candidates and final
-post-conversion settings comparison remain pending this connection. Earlier
-successful spike runs are historical protocol evidence and do not substitute for
-this matrix. No live shared-core render has been claimed from a mock test.
+The first live import timed out with confirmed closure because macOS saw no
+Fujifilm USB device. After the user powered on/reconnected the camera, a fresh
+import passed: one backup read between three verified native sessions, final
+native generation5, seven complete snapshots and no rendering issues. No saved
+setting was written. The failed run remains in private evidence.
+
+Eleven shared-core conversions passed: C1–C7 over all seven supplied sources,
+an explicit C3 DR200 frozen snapshot, a C4 repeat, and C4 edited to10000/2500K.
+Each produced6000×4000 FINE with the source orientation, exact profile readback,
+qualified effective-setting evidence, one owned delete, empty-view verification
+and confirmed close. All seven original RAF checksums remain unchanged.
+The public summary is `shared-core-renders.json` in the canonical XE3 fixtures.
+
+| Reference comparison | Mean absolute RGB error | Maximum | Metadata differences |
+| --- | ---: | ---: | ---: |
+| C3, explicit DR200 snapshot / capture JPEG | 1.173604306 | 12 | 0 |
+| C4 / capture JPEG | 8.781701056 | 59 | 0 |
+| C6 / capture JPEG | 1.342001750 | 12 | 0 |
+| C4 / independent shared-core repeat | 8.780505819 | 61 | 0 |
+
+Quantization tables match in all four cases. C4's weak-grain residual is the same
+scale as its independent repeat; exact pixels are not an admission requirement.
+Normal imported C3 continues to request DR400. Only the named reference diagnostic
+uses DR200. See `shared-core-reference-comparisons.json`.
+
+The native preset sweep independently verified every remaining Kelvin index
+against qualified Fuji ColorTemperature metadata: all31 native choices render
+exactly as requested. A5310K negative trial read back exactly but rendered2500K;
+it remains rejected before upload. `kelvin-preset-sweep.json` distinguishes this
+diagnostic evidence from the shared-core endpoint conversions. The app picker
+now offers precisely the31 native values.
+
+A fresh backup after these runs confirms the entire24-byte WB table and all
+seven bank records/names match the earlier restored baseline. Four bytes outside
+those regions changed (675,3800,3802,3804); their semantics are unclassified.
+Every session was closed. Five remaining preset shift pairs are being calibrated
+with manual user changes and will remain blocked until verified and restored.
+Custom measured-WB gains remain unsupported. Physical iPhone acceptance remains
+an independent gate in [the adapter validation record](fujifilm-usb-adapters.md).

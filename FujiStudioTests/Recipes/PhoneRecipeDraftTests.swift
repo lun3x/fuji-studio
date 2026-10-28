@@ -12,7 +12,7 @@ struct PhoneRecipeDraftTests {
     #expect(draft.grain?.size == nil)
     #expect(
       draft.choices(for: .kelvin).map(\.value)
-        == [5000, 6300, 7100].map(RecipeSettingValue.integer))
+        == XE3NativeRecipeFields.kelvin.sorted().map(RecipeSettingValue.integer))
     #expect(draft.choices(for: .colorChrome).isEmpty && draft.choices(for: .clarity).isEmpty)
     #expect(
       draft.choices(for: .highlight).map(\.value)

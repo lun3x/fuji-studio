@@ -4,7 +4,9 @@ public enum XE3Support {
   public static let identifier = "xe3-1.30-FF129505-v1"
 }
 public enum XE3Capabilities {
-  public static let verifiedKelvin: Set<Int> = [5000, 6300, 7100]
+  // Every native preset was checked against the camera JPEG's Fuji ColorTemperature.
+  // Arbitrary values (for example 5310) read back unchanged but render as 2500 K.
+  public static let verifiedKelvin: Set<Int> = Set(XE3NativeRecipeFields.kelvin)
   public static let measured: CameraCapabilities = {
     func choices(_ values: [RecipeSettingValue]) -> SettingCapability {
       let list = values.map { SettingChoice(value: $0, label: $0.label) }
