@@ -69,17 +69,16 @@ struct VersionList: View {
                                     Text(subtitle).font(.caption).foregroundStyle(.secondary)
                                 }
                             }.fixedSize(horizontal: false, vertical: true)
-                            if entry.recipeSlot != nil || entry.isPhoneRecipe {
-                                Group {
-                                    if entry.isPhoneRecipe { Image(systemName: "iphone") }
-                                    else if let slot = entry.recipeSlot { Text("C\(slot)") }
-                                }
+                            if entry.isPhoneRecipe {
+                                Image(systemName: "iphone")
                                     .font(.caption.monospaced().weight(.semibold))
                                     .foregroundStyle(.secondary)
                                     .padding(.horizontal, 6).padding(.vertical, 3)
                                     .background(Color(uiColor: .secondarySystemFill), in: RoundedRectangle(cornerRadius: 4))
                                     .fixedSize()
                                     .accessibilityHidden(true)
+                            } else if let slot = entry.recipeSlot {
+                                RecipeSlotBadge(slot: slot)
                             }
                         }.frame(maxWidth: .infinity, minHeight: 44, alignment: .trailing)
                             .padding(.horizontal).padding(.vertical, 8).contentShape(Rectangle())

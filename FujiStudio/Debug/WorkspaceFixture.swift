@@ -53,13 +53,7 @@ private struct WorkspaceFixtureView: View {
                     state.reduce(.phoneRecipeUpdated(updated))
                 }, onExport: { exportCount += 1 },
                 statusControl: {
-                    Button {} label: {
-                        if flags.contains("--fixture-accessibility") || nativeDynamicTypeSize.isAccessibilitySize {
-                            Image(systemName: "info.circle").frame(minWidth: 44, minHeight: 44)
-                        } else {
-                            Label("Generated status", systemImage: "info.circle").font(.caption).lineLimit(1).frame(minHeight: 44)
-                        }
-                    }.accessibilityLabel("Generated status").accessibilityIdentifier("app.status")
+                    CameraStatusControl(state: .ready, label: "Generated status", onTap: {})
                 })
                 .frame(width: compact ? proxy.size.width - 32 : proxy.size.width,
                     height: compact ? max(360, proxy.size.height * 0.65) : proxy.size.height)
