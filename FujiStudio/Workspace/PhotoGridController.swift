@@ -41,6 +41,10 @@ final class PhotoGridController: UIViewController, UICollectionViewDelegate, UIC
         collectionView.accessibilityIdentifier = "photoGrid"
         collectionView.alwaysBounceVertical = true
         collectionView.contentInsetAdjustmentBehavior = .never
+        // Our tray supplies its own glass controls. Automatic scroll-edge blur can
+        // cover an entire row of photos when the collection view is rotated.
+        for edge in [collectionView.topEdgeEffect, collectionView.bottomEdgeEffect,
+                     collectionView.leftEdgeEffect, collectionView.rightEdgeEffect] { edge.isHidden = true }
         collectionView.delegate = self; collectionView.prefetchDataSource = self
         collectionView.register(PhotoGridCell.self, forCellWithReuseIdentifier: "photo")
         dataSource = UICollectionViewDiffableDataSource<Int, SourceID>(collectionView: collectionView) { [weak self] collection, path, id in
