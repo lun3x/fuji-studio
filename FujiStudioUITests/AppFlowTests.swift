@@ -154,6 +154,68 @@ import XCTest
         for slot in 1...7 { XCTAssertTrue(app.buttons["recipe.slot.\(slot)"].isEnabled) }
         XCTAssertTrue(app.buttons["recipe.refresh"].isEnabled)
     }
+
+    func testOfflineCameraCopyAppearsOnPhoneWithoutChangingRecipeAndCanBeSelected() {
+        let app = launch()
+        app.cells["grid.source-0"].tap()
+        tap(app.buttons["recipe.control"], in: app)
+        let tabs = app.segmentedControls["recipe.collection"]
+        XCTAssertTrue(tabs.waitForExistence(timeout: 5))
+        tabs.buttons["Phone"].tap()
+        XCTAssertTrue(app.staticTexts["recipe.phone.empty"].waitForExistence(timeout: 5))
+        shot(app, "Phone recipes empty state")
+        tabs.buttons["Camera"].tap()
+        let copy = app.buttons["recipe.copy.3"]
+        XCTAssertTrue(copy.isEnabled, "Copying cached recipes works offline")
+        XCTAssertFalse(app.buttons["recipe.slot.3"].isEnabled)
+        copy.tap()
+        let phone = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.phone.")).firstMatch
+        XCTAssertTrue(phone.waitForExistence(timeout: 5))
+        XCTAssertTrue(tabs.buttons["Phone"].isSelected)
+        XCTAssertFalse(phone.isSelected)
+        XCTAssertTrue(app.buttons["recipe.none"].isSelected)
+        XCTAssertEqual(app.buttons["recipe.control"].label, "No recipe selected")
+        shot(app, "Camera recipe saved on phone without changing selection")
+        tabs.buttons["Camera"].tap()
+        copy.tap()
+        XCTAssertTrue(phone.waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.phone.")).count, 1)
+        phone.tap()
+        XCTAssertFalse(app.scrollViews["recipe.options"].exists)
+        XCTAssertTrue(app.buttons["recipe.control"].label.contains("Phone recipe Mountain greens"))
+        tap(app.buttons["recipe.control"], in: app)
+        XCTAssertTrue(tabs.buttons["Phone"].isSelected)
+        XCTAssertTrue(phone.isSelected)
+        tap(app.buttons["recipe.none"], in: app)
+        app.buttons["app.connect"].tap()
+        wait { app.buttons["app.status"].label.contains("Camera ready") }
+        tap(app.buttons["recipe.control"], in: app)
+        tabs.buttons["Phone"].tap()
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.phone.")).count, 1)
+        phone.tap()
+        XCTAssertTrue(app.buttons["workspace.export"].waitForExistence(timeout: 5))
+        wait { app.buttons["workspace.export"].isEnabled }
+        shot(app, "Saved phone recipe selected with camera ready")
+    }
+
+    func testPhoneRecipeCopyAndSelectionAtLargestText() {
+        let app = launch(["--fixture-accessibility"])
+        tap(app.buttons["recipe.control"], in: app)
+        let copy = app.buttons["recipe.copy.1"]
+        XCTAssertTrue(copy.waitForExistence(timeout: 5))
+        XCTAssertGreaterThanOrEqual(copy.frame.width, 44)
+        XCTAssertGreaterThanOrEqual(copy.frame.height, 44)
+        shot(app, "Camera recipe copy controls at largest text")
+        copy.tap()
+        let phone = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.phone.")).firstMatch
+        XCTAssertTrue(phone.waitForExistence(timeout: 5))
+        XCTAssertGreaterThanOrEqual(phone.frame.height, 44)
+        XCTAssertGreaterThanOrEqual(app.buttons["recipe.none"].frame.minY, app.scrollViews["recipe.options"].frame.minY,
+            "Switching collections starts at the top even after the camera list scrolls")
+        shot(app, "Phone recipe at largest text")
+        phone.tap()
+        XCTAssertTrue(app.buttons["recipe.control"].label.contains("Phone recipe Soft daylight"))
+    }
     private func assertSingleHeaderRow(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
         let status = app.buttons["app.status"], connect = app.buttons["app.connect"]
         for control in [status, connect] {

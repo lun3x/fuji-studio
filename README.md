@@ -21,6 +21,8 @@ sets out the hardware feasibility gates, native app tasks, and acceptance checks
 ## Initial scope
 
 - Import existing conversion profiles from the connected camera.
+- Copy imported camera recipes into a durable Phone collection and select them
+  independently of C1–C7, including after camera refreshes.
 - Access photos already imported into the iPhone's Photos library using an SD
   card reader.
 - Support both standalone RAW photos and paired RAW+JPEG library items.
@@ -37,9 +39,17 @@ sets out the hardware feasibility gates, native app tasks, and acceptance checks
 ## Outside the initial scope
 
 - Editing profile settings.
-- Creating new profiles.
+- Creating recipes from scratch.
 
 ## Status
+
+The recipe selector has Camera and Phone tabs. The copy icon beside an imported
+camera recipe saves its exact name/settings on the phone and opens the Phone tab
+without changing the current recipe. Repeated taps reuse the saved copy of that
+import. Copies survive restarts and camera refreshes and can be saved/selected
+offline; preview and export still require a compatible connected camera. Editing
+is deferred so this first increment can focus on the copy/save UX. See the
+[phone recipe design](docs/superpowers/specs/2026-10-28-phone-recipes-design.md).
 
 The floating top-right photo control shows Image versions when no recipe is
 selected and becomes an Export icon when a recipe is selected. Export no longer

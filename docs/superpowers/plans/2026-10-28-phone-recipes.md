@@ -36,11 +36,11 @@
 - `WorkspaceAction.phoneRecipesLoaded([RecipeSnapshot])`, `.phoneRecipeSelected(UUID)` and `WorkspaceState.phoneRecipes`.
 - `AppModel.copyRecipeToPhone(id: UUID) async -> Bool` persists before publishing; leaves selection unchanged.
 
-- [ ] Write tests proving exact copy/provenance and repeat-save idempotence through durable reopen and camera refresh; prove phone identity selection, offline reconnect, unsupported admission, and unchanged selection on copy.
-- [ ] Run the targeted tests and observe failure from missing phone behavior.
-- [ ] Implement immutable copies, separate catalog membership and atomic persistence, reducer selection and model load/save/error paths. Update protocol test doubles explicitly.
-- [ ] Run all unit tests, including phone export with a frozen snapshot and a forced persistence failure.
-- [ ] Commit and push the development bookmark.
+- [x] Write tests proving exact copy/provenance and repeat-save idempotence through durable reopen and camera refresh; prove phone identity selection, offline reconnect, unsupported admission, and unchanged selection on copy.
+- [x] Run the targeted tests and observe failure from missing phone behavior.
+- [x] Implement immutable copies, separate catalog membership and atomic persistence, reducer selection and model load/save/error paths. Update protocol test doubles explicitly.
+- [x] Run all unit tests, including phone export with a frozen snapshot and a forced persistence failure.
+- [x] Commit and push the development bookmark.
 
 ### Task 2: Recipe chooser UX and verification
 
@@ -51,7 +51,7 @@
 - WorkspaceView forwards phone copy/select callbacks; AppWorkspaceView binds the model method.
 - VersionList derives phone labels from `RecipeSnapshot.isPhoneRecipe`.
 
-- [ ] Add a UI test for empty Phone tab, offline cached copy, automatic Phone-tab reveal without selection, selection/dismissal, repeat-copy reuse, relaunch persistence and camera refresh independence; observe failure.
-- [ ] Implement native segmented tabs, separate accessible copy buttons, inline save errors and saving state, phone rows/indicator, and saved-version phone badges.
+- [x] Add a UI test for empty Phone tab, offline cached copy, automatic Phone-tab reveal without selection, selection/dismissal, repeat-copy reuse, relaunch persistence and camera refresh independence; observe failure. Restart persistence is exercised by catalog reopen and fresh-model integration tests because UI fixtures intentionally use a fresh catalog for each launch.
+- [x] Implement native segmented tabs, separate accessible copy buttons, inline save errors and saving state, phone rows/indicator, and saved-version phone badges.
 - [ ] Run relevant UI suites and all unit tests; inspect normal and large-text screenshots; build Release for the simulator.
 - [ ] Request one fresh whole-branch review, address substantive findings with regression tests, then commit/push and create a draft PR. Shut down/delete the task simulator.

@@ -199,7 +199,7 @@ private struct WorkspaceHostingHarness: View {
     let store: WorkspaceHostingStore
     var body: some View {
         WorkspaceView(state: store.state, sources: store.sources, thumbnails: store.thumbnails,
-            onAction: { store.state.reduce($0) }, onRefreshRecipes: {}, onExport: {},
+            onAction: { store.state.reduce($0) }, onRefreshRecipes: {}, onCopyRecipeToPhone: { _ in false }, onExport: {},
             statusControl: { EmptyView() }, connectionControl: { EmptyView() })
     }
 }
@@ -228,9 +228,10 @@ final class RecipeMenuRoutingTests: XCTestCase {
         XCTAssertTrue(store.selections.isEmpty)
     }
     private func routePresentation(store: RecipeRoutingStore, scene: UIWindowScene, lateResponder: WeakRecipeResponder? = nil) async throws -> WeakRecipeResponder {
-        let menu = RecipeMenu(current: store.state.selectedRecipe, snapshots: store.state.recipes, refreshState: .fresh,
+        let menu = RecipeMenu(current: store.state.selectedRecipe, snapshots: store.state.recipes, phoneSnapshots: [], refreshState: .fresh,
             isCameraConnected: store.state.isCameraConnected,
-            onSelect: { store.selections.append($0); store.state.reduce(.recipeSelected(slot: $0)) }, onRefresh: {}, initiallyPresented: true)
+            onSelect: { store.selections.append($0); store.state.reduce(.recipeSelected(slot: $0)) },
+            onSelectPhone: { _ in }, onCopyToPhone: { _ in false }, onRefresh: {}, initiallyPresented: true)
         let host = UIHostingController(rootView: menu)
         let window = UIWindow(windowScene: scene)
         window.rootViewController = host; window.makeKeyAndVisible()

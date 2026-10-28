@@ -9,8 +9,9 @@ struct VersionList: View {
         let accessibilityIdentifier: String
         var subtitle: String? = nil
         var recipeSlot: Int? = nil
+        var isPhoneRecipe = false
         var accessibilityLabel: String {
-            let title = recipeSlot.map { "C\($0) \(label)" } ?? label
+            let title = isPhoneRecipe ? "Phone recipe \(label)" : recipeSlot.map { "C\($0) \(label)" } ?? label
             return subtitle.map { title + ", " + $0 } ?? title
         }
     }
@@ -34,7 +35,7 @@ struct VersionList: View {
         format.calendar = Calendar(identifier: .gregorian)
         format.timeZone = timeZone
         format.dateFormat = "dd/MM/yy HH:mm"
-        let labels = own.map { "C\($0.recipeSnapshot.slot) \($0.recipeSnapshot.name)" }
+        let labels = own.map { $0.recipeSnapshot.displayLabel }
         let timestamps = own.map { format.string(from: $0.exportedAt) }
         for (index, version) in own.enumerated() {
             let base = labels[index]
@@ -45,7 +46,8 @@ struct VersionList: View {
             result.append(Entry(id: .saved(version.id), label: version.recipeSnapshot.name,
                 accessibilityIdentifier: "version.saved.\(version.id.uuidString)",
                 subtitle: timestamps[index] + ordinal + availability,
-                recipeSlot: version.recipeSnapshot.slot))
+                recipeSlot: version.recipeSnapshot.isPhoneRecipe ? nil : version.recipeSnapshot.slot,
+                isPhoneRecipe: version.recipeSnapshot.isPhoneRecipe))
         }
         return result
     }
@@ -67,8 +69,11 @@ struct VersionList: View {
                                     Text(subtitle).font(.caption).foregroundStyle(.secondary)
                                 }
                             }.fixedSize(horizontal: false, vertical: true)
-                            if let slot = entry.recipeSlot {
-                                Text("C\(slot)")
+                            if entry.recipeSlot != nil || entry.isPhoneRecipe {
+                                Group {
+                                    if entry.isPhoneRecipe { Image(systemName: "iphone") }
+                                    else if let slot = entry.recipeSlot { Text("C\(slot)") }
+                                }
                                     .font(.caption.monospaced().weight(.semibold))
                                     .foregroundStyle(.secondary)
                                     .padding(.horizontal, 6).padding(.vertical, 3)
