@@ -159,6 +159,11 @@ private struct AppEntryView: View {
                 #endif
             } catch { self.error = AppModel.explain(error) }
         }.onChange(of: phase, initial: true) { _, value in
+            #if DEBUG
+            // This fixture drives scene changes through its explicit controls.
+            // Native activation must not override its injected inactive startup.
+            if fixture && ProcessInfo.processInfo.arguments.contains("--fixture-initial-inactive") { return }
+            #endif
             latestScenePhase = value
             Task { await model?.sceneChanged(value) }
         }

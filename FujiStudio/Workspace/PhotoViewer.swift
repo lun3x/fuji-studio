@@ -190,6 +190,8 @@ struct PhotoViewer: View {
     var status: String? = nil
     var statusIsFailure = false
     var statusVisible = true
+    /// Landscape status floats above the image instead of shortening its viewport.
+    var statusOverlayInsets: EdgeInsets? = nil
     var onStatusHeightChanged: (CGFloat) -> Void = { _ in }
     @State private var control = ZoomControl()
     @State private var statusPresented = false
@@ -239,7 +241,14 @@ struct PhotoViewer: View {
                     displayFile: displayFile, detail: detail, control: control)
                     .saturation(loading == nil ? 1 : 0)
                     .overlay { if loading != nil { loadingOverlay } }
-                if status != nil && loading == nil {
+                    .overlay(alignment: .bottom) {
+                        if let statusOverlayInsets, status != nil, loading == nil, statusVisible {
+                            imageStatus.padding(8)
+                                .background(.regularMaterial, in: .rect(cornerRadius: 8))
+                                .padding(statusOverlayInsets)
+                        }
+                    }
+                if statusOverlayInsets == nil && status != nil && loading == nil {
                     if statusVisible { imageStatus }
                     else { imageStatus.hidden() }
                 }

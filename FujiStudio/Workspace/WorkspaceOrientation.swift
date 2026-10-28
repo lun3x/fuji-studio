@@ -3,7 +3,7 @@ import UIKit
 
 /// The tray and floating controls use the device's portrait coordinates even when
 /// the window rotates. Their contents use the window's upright coordinates.
-enum WorkspaceOrientation: Equatable {
+enum WorkspaceOrientation: Sendable, Equatable {
     case portrait, landscapeLeft, landscapeRight
 
     init(_ orientation: UIInterfaceOrientation) {
@@ -71,6 +71,7 @@ struct DeviceAnchoredRow: Layout {
     let orientation: WorkspaceOrientation
     var spacing: CGFloat
     var leadingItems = 1
+    var reversesAxis = false
 
     private func sizes(_ subviews: Subviews) -> [CGSize] {
         subviews.map { orientation.layoutSize($0.sizeThatFits(.unspecified)) }
@@ -89,7 +90,8 @@ struct DeviceAnchoredRow: Layout {
             - CGFloat(max(0, sizes.count - leadingItems - 1)) * spacing
         for (index, subview) in subviews.enumerated() {
             let size = sizes[index]
-            let x = index < leadingItems ? leading : trailing
+            let position = index < leadingItems ? leading : trailing
+            let x = reversesAxis ? canvas.width - position - size.width : position
             let frame = orientation.windowFrame(CGRect(x: x, y: 0, width: size.width, height: size.height), in: canvas)
             subview.place(at: CGPoint(x: bounds.minX + frame.midX, y: bounds.minY + frame.midY),
                 anchor: .center, proposal: ProposedViewSize(orientation.layoutSize(size)))

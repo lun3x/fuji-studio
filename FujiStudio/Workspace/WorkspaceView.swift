@@ -29,36 +29,42 @@ struct WorkspaceView<StatusControl: View>: View {
 
     var body: some View {
         GeometryReader { proxy in
+            let orientation = self.orientation
             let windowSafe = proxy.safeAreaInsets
             let windowSize = CGSize(width: proxy.size.width + windowSafe.leading + windowSafe.trailing,
                 height: proxy.size.height + windowSafe.top + windowSafe.bottom)
             let safe = orientation.layoutInsets(windowSafe)
             let size = orientation.layoutSize(windowSize)
-            let width = max(1, size.width - safe.leading - safe.trailing)
-            // Photos fill the landscape screen; only the floating controls avoid
-            // the home indicator. Insetting the whole tray leaves a bottom strip.
-            let trayWidth = orientation == .portrait ? width : size.width
-            let trayLeading = orientation == .portrait ? safe.leading : 0
+            let controlWidth = max(1, size.width - safe.leading - safe.trailing)
+            // Both photo surfaces fill the landscape screen. Only floating
+            // controls and status messages avoid the home indicator.
+            let contentWidth = orientation == .portrait ? controlWidth : size.width
+            let contentLeading = orientation == .portrait ? safe.leading : 0
             let photoTop = safe.top
             let controlTop = photoTop + 8
             let controlBottom = controlTop + max(44, controlHeight)
-            let controlFrame = CGRect(x: safe.leading + 16, y: controlTop, width: max(1, width - 32), height: controlBottom - controlTop)
+            let controlFrame = CGRect(x: safe.leading + 16, y: controlTop, width: max(1, controlWidth - 32), height: controlBottom - controlTop)
             // Only a real image-status message reserves space below the image. The two
             // photo controls and camera indicator float over it in every layout.
-            let statusReserve = imageGeometry != nil && imageStatus != nil && imageLoading == nil ? statusHeight + 8 : 0
+            let statusReserve = orientation == .portrait && imageGeometry != nil && imageStatus != nil && imageLoading == nil ? statusHeight + 8 : 0
             let available = size.height - safe.bottom - drawerHeaderHeight - controlFrame.maxY - DrawerGeometry.controlClearance - statusReserve - 44
-            let gridMetrics = DrawerGeometry.gridMetrics(width: trayWidth, availableGridHeight: available)
+            let gridMetrics = DrawerGeometry.gridMetrics(width: contentWidth, availableGridHeight: available)
             let detents = DrawerGeometry.detents(container: size, safeArea: safe, headerHeight: drawerHeaderHeight,
                 grid: gridMetrics, recipeControlFrame: controlFrame)
             let viewerHeight = max(1, size.height - detents.collapsedHeight - photoTop)
-            let viewerSize = orientation.layoutSize(CGSize(width: width, height: viewerHeight))
+            let viewerSize = orientation.layoutSize(CGSize(width: contentWidth, height: viewerHeight))
+            let controlSideInset = max(44, controlHeight) + 16
+            let statusOverlayInsets: EdgeInsets? = orientation == .portrait ? nil : EdgeInsets(top: 0,
+                leading: orientation == .landscapeRight ? controlSideInset : 12,
+                bottom: windowSafe.bottom + 8,
+                trailing: orientation == .landscapeLeft ? controlSideInset : 12)
             ZStack(alignment: .topLeading) {
                 Color(uiColor: .systemBackground)
-                viewer
+                viewer(statusOverlayInsets: statusOverlayInsets)
                     .frame(width: viewerSize.width, height: viewerSize.height)
                     .rotationEffect(orientation.contentAngle)
-                    .frame(width: width, height: viewerHeight)
-                    .clipped().offset(x: safe.leading, y: photoTop)
+                    .frame(width: contentWidth, height: viewerHeight)
+                    .clipped().offset(x: contentLeading, y: photoTop)
                 VStack(spacing: 0) {
                     Spacer(minLength: 0)
                     PhotoDrawer(detent: Binding(get: { state.drawerDetent }, set: { onAction(.drawerMoved($0)) }),
@@ -79,8 +85,8 @@ struct WorkspaceView<StatusControl: View>: View {
                                 onDrawerDrag: onDrawerDrag)
                                 .anchorPreference(key: TrayBoundsKey.self, value: .bounds) { $0 }
                         })
-                        .frame(width: trayWidth)
-                }.frame(width: trayWidth, height: size.height).offset(x: trayLeading)
+                        .frame(width: contentWidth)
+                }.frame(width: contentWidth, height: size.height).offset(x: contentLeading)
             }
             .coordinateSpace(name: "workspace")
             .frame(width: size.width, height: size.height)
@@ -116,7 +122,7 @@ struct WorkspaceView<StatusControl: View>: View {
         }
         .background { WorkspaceOrientationReader { orientation = $0 } }
     }
-    @ViewBuilder private var viewer: some View {
+    @ViewBuilder private func viewer(statusOverlayInsets: EdgeInsets?) -> some View {
         if let source = sources.first(where: { $0.id == state.viewedSourceID }) {
             PhotoViewer(sourceID: imageIdentity?.sourceID ?? source.id,
                 version: imageIdentity?.version ?? state.displayedVersion ?? .raw, imageURL: imageURL,
@@ -124,6 +130,7 @@ struct WorkspaceView<StatusControl: View>: View {
                 loading: imageLoading,
                 status: imageStatus, statusIsFailure: imageStatusIsFailure,
                 statusVisible: state.drawerDetent == .collapsed,
+                statusOverlayInsets: statusOverlayInsets,
                 onStatusHeightChanged: { statusHeight = $0 })
         } else {
             ContentUnavailableView("Choose a photo", systemImage: "photo.on.rectangle")
@@ -155,7 +162,8 @@ struct WorkspaceView<StatusControl: View>: View {
     }
     private var selectionControls: some View {
         GlassEffectContainer(spacing: 12) {
-            DeviceAnchoredRow(orientation: orientation, spacing: 12, leadingItems: state.isSelecting ? 1 : 0) {
+            DeviceAnchoredRow(orientation: orientation, spacing: 12, leadingItems: state.isSelecting ? 1 : 0,
+                reversesAxis: orientation == .landscapeLeft) {
                 if state.isSelecting {
                     count.padding(.horizontal, 12).frame(minHeight: 44)
                         .glassEffect(.regular, in: .capsule)

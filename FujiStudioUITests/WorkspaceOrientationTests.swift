@@ -47,7 +47,13 @@ final class WorkspaceOrientationTests: XCTestCase {
             assertTrayFillsScreenHeight(app)
             let bottomPhoto = app.cells["grid.source-\(trayOnLeft ? 2 : 0)"].frame
             XCTAssertEqual(bottomPhoto.maxY, window.maxY, accuracy: 0.5)
-            XCTAssertLessThanOrEqual(app.buttons["workspace.select"].frame.maxY, window.maxY - 20)
+            let select = app.buttons["workspace.select"].frame
+            XCTAssertLessThan(select.maxY, window.midY, "Select belongs at the top in either landscape direction")
+            XCTAssertGreaterThanOrEqual(select.minY, window.minY + 8)
+            let photo = app.scrollViews["viewer.image"].frame
+            XCTAssertEqual(photo.minY, window.minY, accuracy: 0.5)
+            XCTAssertEqual(photo.maxY, window.maxY, accuracy: 0.5,
+                "The main photo viewport must include the home-indicator area")
             let recipe = app.buttons["recipe.control"].frame
             let status = app.buttons["app.status"].frame
             let export = app.buttons["workspace.export"].frame
@@ -86,6 +92,7 @@ final class WorkspaceOrientationTests: XCTestCase {
             start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: distance, dy: 0)))
             XCTAssertEqual(handle.value as? String, "Expanded")
             assertTrayFillsScreenHeight(app)
+            XCTAssertLessThan(app.buttons["workspace.select"].frame.maxY, app.windows.firstMatch.frame.midY)
             XCTAssertEqual(app.staticTexts["workspace.count"].label, selected)
             XCTAssertEqual(app.staticTexts["fixture.viewed"].label, viewed)
             let expanded = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
@@ -118,6 +125,7 @@ final class WorkspaceOrientationTests: XCTestCase {
                 grid.frame.height > grid.frame.width
             }, object: nil)
             XCTAssertEqual(XCTWaiter.wait(for: [rotated], timeout: 5), .completed)
+            XCTAssertLessThan(app.buttons["workspace.select"].frame.maxY, app.windows.firstMatch.frame.midY)
             tap(app.buttons["workspace.select"], in: app)
             XCTAssertEqual(app.buttons["workspace.select"].label, "Cancel selection")
             tap(app.buttons["recipe.control"], in: app)
