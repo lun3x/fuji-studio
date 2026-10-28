@@ -6,9 +6,9 @@ import Testing
 struct XT5ProductionCameraServiceTests {
     @Test func importFailureReportsRestorationWithoutPretendingStorageFailed() {
         var evidence=XT5BankImportEvidence();evidence.restoration = .unconfirmed
-        #expect(XT5CameraService.failure(XT5BankImportFailure(evidence:evidence)) == .recipeImportFailed(restorationConfirmed:false))
+        #expect(XT5Adapter.importFailure(XT5BankImportFailure(evidence:evidence)) == .recipeImportFailed(restorationConfirmed:false))
         evidence.restoration = .verified
-        #expect(XT5CameraService.failure(XT5BankImportFailure(evidence:evidence)) == .recipeImportFailed(restorationConfirmed:true))
+        #expect(XT5Adapter.importFailure(XT5BankImportFailure(evidence:evidence)) == .recipeImportFailed(restorationConfirmed:true))
     }
     @Test func renderUsesFrozenRecipeFreshBaselineAndReturnsOnlyAfterOwnedCleanup() async throws {
         let f=try ProductionOperationFixture();defer { f.remove() }
@@ -18,7 +18,7 @@ struct XT5ProductionCameraServiceTests {
         let result=try await service.render(raw:f.raw,recipe:f.profile.bank,policy:.fullSizeFineRecordedGeometry)
         #expect(result.recipeSnapshotID == f.profile.bank.id && result.settingsDigest == f.profile.bank.settingsDigest)
         #expect(result.cameraContext.sessionIdentity != f.profile.bank.cameraContext.sessionIdentity)
-        #expect(result.quality == .fullResolutionFine && result.effectiveRecipe.lensOptimizerAdjusted)
+        #expect(result.quality == .fullResolutionFine && !result.effectiveRecipe.lensOptimizerAdjusted)
         #expect(result.fileURL == journal.operationDirectory(result.operationID).appendingPathComponent("output.JPG"))
         #expect(try Data(contentsOf:result.fileURL) == Data([1,2,3,4]))
         #expect(try journal.load(result.operationID).phase == .completed)
@@ -78,10 +78,10 @@ struct XT5ProductionCameraServiceTests {
         for missing in [false,true] {
             let f=try ProductionOperationFixture();defer { f.remove() }
             let wire=ProductionSession(fixture:f),journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"), filePolicy: IOSCameraJournalFilePolicy())
-            let service=XT5CameraService(session:wire,journal:journal,pollWait:{},validateJPEG:{ _,m in
+            let service=FujiCameraService(session:wire,journal:journal,pollWait:{},registry:FujiCameraRegistry(adapters:[XT5Adapter(validateJPEG:{ _,m in
                 if !missing { throw FujiJPEGValidationError.notFine }
-                return XT5ValidatedJPEGMetadata(width:m.recordedGeometry.width,height:m.recordedGeometry.height,orientation:m.orientation,make:"FUJIFILM",model:"X-T5",quality:.fine,lensOptimizer:nil)
-            })
+                return ValidatedJPEGMetadata(width:m.recordedGeometry.width,height:m.recordedGeometry.height,orientation:m.orientation,make:"FUJIFILM",model:"X-T5",quality:.fine,lensOptimizer:nil)
+            })]))
             try await service.connect()
             await #expect(throws:CameraServiceError.self) { try await service.render(raw:f.raw,recipe:f.profile.bank,policy:.fullSizeFineRecordedGeometry) }
             #expect(await wire.deletes.isEmpty)
@@ -161,7 +161,7 @@ struct XT5ProductionCameraServiceTests {
         let f=try ProductionOperationFixture();defer { f.remove() }
         let wire=ProductionSession(fixture:f),journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"), filePolicy: IOSCameraJournalFilePolicy())
         let service=makeService(wire,journal);try await service.connect()
-        let refreshed=try await service.importRecipes()
+        let refreshed=try await service.importRecipes().recipes
         let current=try #require(refreshed.first { $0.slot == 7 })
         #expect(current.settingsDigest != f.profile.bank.settingsDigest)
         #expect(current.renderingIssues.isEmpty)
@@ -187,10 +187,10 @@ struct XT5ProductionCameraServiceTests {
         await #expect(throws:CameraServiceError.self) { try await service.render(raw:f.raw,recipe:f.profile.bank,policy:.fullSizeFineRecordedGeometry) }
         await service.disconnect()
     }
-    private func makeService(_ wire:ProductionSession,_ journal:CameraOperationJournal,gate:SerialCameraGate=SerialCameraGate())->XT5CameraService {
-        XT5CameraService(session:wire,journal:journal,gate:gate,pollWait:{},settle:{ _ in },validateJPEG:{ _,m in
-            XT5ValidatedJPEGMetadata(width:m.recordedGeometry.width,height:m.recordedGeometry.height,orientation:m.orientation,make:"FUJIFILM",model:"X-T5",quality:.fine,lensOptimizer:false)
-        })
+    private func makeService(_ wire:ProductionSession,_ journal:CameraOperationJournal,gate:SerialCameraGate=SerialCameraGate())->FujiCameraService {
+        FujiCameraService(session:wire,journal:journal,gate:gate,pollWait:{},settle:{ _ in },registry:FujiCameraRegistry(adapters:[XT5Adapter(validateJPEG:{ _,m in
+            ValidatedJPEGMetadata(width:m.recordedGeometry.width,height:m.recordedGeometry.height,orientation:m.orientation,make:"FUJIFILM",model:"X-T5",quality:.fine,lensOptimizer:true)
+        })]))
     }
 }
 

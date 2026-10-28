@@ -390,7 +390,7 @@ import Observation
         isRefreshing = true
         defer { isRefreshing = false }
         do {
-            let recipes = try await environment.camera.importRecipes()
+            let recipes = try await environment.camera.importRecipes().recipes
             guard !isSuspended, state.currentCameraExecutionContext == expected else { return }
             try await environment.catalog.replaceRecipes(recipes)
             guard !isSuspended, state.currentCameraExecutionContext == expected else { return }

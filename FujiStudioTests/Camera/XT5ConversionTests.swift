@@ -29,7 +29,7 @@ struct XT5ConversionTests {
     }
     @Test func unsupportedBodyMakesNoVendorReads() async throws {
         let wire = ProbeWire(model: "X100VI")
-        await #expect(throws: XT5ProtocolError.unsupportedCamera) { try await XT5ProtocolProbe(transport: wire).readEvidence() }
+        await #expect(throws: PTPDatasetError.unsupportedCamera) { try await XT5ProtocolProbe(transport: wire).readEvidence() }
         #expect(await wire.commands.count == 1)
     }
     @Test func unadvertisedPropertiesAreNeverRequested() async throws {
@@ -207,7 +207,7 @@ struct XT5DirectValueProbeTests {
         #expect(report.candidateUSBMode == 6)
         #expect(await wire.commands.count == 2)
         let missing = DirectValueWire(operations: [0x1001,0x1014])
-        await #expect(throws: XT5ProtocolError.missingReadOperations) { try await XT5ProtocolProbe(transport: missing).readDirectValues() }
+        await #expect(throws: PTPDatasetError.missingReadOperations) { try await XT5ProtocolProbe(transport: missing).readDirectValues() }
         #expect(await missing.commands.count == 1)
     }
 }

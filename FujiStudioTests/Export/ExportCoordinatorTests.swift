@@ -361,6 +361,12 @@ actor BatchReader: PhotoLibraryReading {
 }
 
 actor BatchCamera: CameraServing {
+    func support(for expected: CameraExecutionContext) throws -> VerifiedCameraSupport {
+        let current = fixture.context
+        guard current == expected else { throw CameraServiceError.unsupportedContext }
+        return try fixtureCameraSupport(current)
+    }
+
     let fixture: RenderFixture
     var sources: [SourceID] = [], recipes: [UUID] = []
     var firstError: CameraServiceError?
@@ -371,7 +377,7 @@ actor BatchCamera: CameraServing {
     func executionContext() -> CameraExecutionContext { fixture.context }
     func states() -> AsyncStream<CameraState> { AsyncStream { $0.finish() } }
     func connect() {}
-    func importRecipes() -> [RecipeSnapshot] { [] }
+    func importRecipes() throws -> ImportedRecipeCollection { throw CameraServiceError.unsupportedContext }
     func disconnect() {}
     func render(raw: PreparedRAW, recipe: RecipeSnapshot, policy: OutputPolicy) async throws -> CameraJPEG {
         sources.append(raw.sourceID); recipes.append(recipe.id)

@@ -1,10 +1,11 @@
 import Foundation
 
 public protocol CameraServing: Sendable {
+  func support(for context: CameraExecutionContext) async throws -> VerifiedCameraSupport
   func executionContext() async throws -> CameraExecutionContext
   func states() async -> AsyncStream<CameraState>
   func connect() async throws
-  func importRecipes() async throws -> [RecipeSnapshot]
+  func importRecipes() async throws -> ImportedRecipeCollection
   func render(raw: PreparedRAW, recipe: RecipeSnapshot, policy: OutputPolicy) async throws
     -> CameraJPEG
   func disconnect() async

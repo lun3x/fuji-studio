@@ -161,7 +161,7 @@ public actor XT5BankImporter {
       XT5BankImportUpdate(
         evidence: evidence, snapshots: snapshots, verificationSnapshots: verificationSnapshots))
     do {
-      let info = try XT5RecipeCodec.deviceInfo(await send(0x1001))
+      let info = try PTPDatasets.deviceInfo(await send(0x1001))
       guard info.manufacturer == "FUJIFILM", info.model == "X-T5", info.firmware == "4.31" else {
         throw XT5BankImportIssue.unsupportedContext
       }
@@ -173,7 +173,7 @@ public actor XT5BankImporter {
         throw XT5BankImportIssue.unsupportedContext
       }
       for code: UInt16 in [0xD186, 0xD187] {
-        let key = try XT5RecipeCodec.value(await send(0x1015, property: code), type: 0xffff).string
+        let key = try PTPDatasets.value(await send(0x1015, property: code), type: 0xffff).string
         guard key == "X-T5_0200" else { throw XT5BankImportIssue.unsupportedContext }
       }
       commandStage = "initial selector"
@@ -286,7 +286,7 @@ public actor XT5BankImporter {
   }
   private func readBank(_ slot: Int, context: RecipeCameraContext) async throws -> RecipeSnapshot {
     let name = try await send(0x1015, property: 0xD18D)
-    guard name.count <= 511 else { throw XT5ProtocolError.oversized }
+    guard name.count <= 511 else { throw PTPDatasetError.oversized }
     var properties: [UInt16: Data] = [:]
     for code in UInt16(0xD18E)...0xD1A4 {
       let bytes = try await send(0x1015, property: code)
@@ -348,7 +348,7 @@ public actor XT5BankImporter {
     return safeError(error)
   }
   public static func safeError(_ error: any Error) -> String {
-    if let error = error as? XT5ProtocolError { return String(describing: error) }
+    if let error = error as? PTPDatasetError { return String(describing: error) }
     if let error = error as? PTPError {
       switch error {
       case .responseCode(let code): return "PTP response \(String(format: "0x%04X", code))"

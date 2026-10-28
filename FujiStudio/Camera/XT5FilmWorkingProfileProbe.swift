@@ -67,7 +67,7 @@ actor XT5FilmWorkingProfileProbe {
         return report
     }
     private func write(_ data: Data, name: String, directory: URL) throws {
-        guard data.count <= 65_536 else { throw XT5ProtocolError.oversized }
+        guard data.count <= 65_536 else { throw PTPDatasetError.oversized }
         do { try data.write(to: directory.appendingPathComponent(name), options: [.atomic,.completeFileProtection]) }
         catch { throw XT5RawBaselineIssue.artifactWriteFailed }
     }

@@ -12,7 +12,7 @@ import Testing
         let operation = try ProductionOperationFixture(); defer { operation.remove() }
         let fails = scenario == .failedClose || scenario == .failedCloseInBackground
         let wire = ProductionSession(fixture: operation, mode: fails ? .closeFails : .normal)
-        let service = XT5CameraService(session: wire, journal: try CameraOperationJournal(directory: operation.directory.appendingPathComponent("journal"), filePolicy: IOSCameraJournalFilePolicy()))
+        let service = FujiCameraService(session: wire, journal: try CameraOperationJournal(directory: operation.directory.appendingPathComponent("journal"), filePolicy: IOSCameraJournalFilePolicy()))
         let fixture = try await FixtureEnvironment.make(cameraOverride: service)
         let model = AppModel(environment: fixture.environment)
         // Keep stream consumption out of this ordering: background itself supplies the UI
@@ -107,7 +107,7 @@ import Testing
     @Test func bankProofRequiresFreshImportFromCurrentSession() async throws {
         let f = try await FixtureEnvironment.make()
         try await f.camera.connect()
-        let banks = try await f.camera.importRecipes(), context = try await f.camera.executionContext()
+        let banks = try await f.camera.importRecipes().recipes, context = try await f.camera.executionContext()
         var state = WorkspaceState()
         state.reduce(.recipesRefreshed(banks))
         state.reduce(.cameraChanged(.ready(await f.camera.session), context: context))

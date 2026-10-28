@@ -62,7 +62,7 @@ import UIKit
             return (catalog, cache, journal, renderer)
         }.value
         let reader = PhotoLibraryReader()
-        let camera = XT5CameraService(session: ImageCaptureSessionTransport(), journal: storage.2)
+        let camera = FujiCameraService(session: ImageCaptureSessionTransport(), journal: storage.2)
         let pool = OriginalResourcePool(reader: reader)
         let scheduler = CameraWorkScheduler()
         let resolver = VersionImageResolver(library: reader, catalog: storage.0, pool: pool, rawRenderer: storage.3, cache: storage.1)

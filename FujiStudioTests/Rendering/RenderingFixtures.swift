@@ -60,6 +60,12 @@ actor RenderLibrary: PhotoLibraryReading {
 }
 
 actor RenderCamera: CameraServing {
+    func support(for expected: CameraExecutionContext) throws -> VerifiedCameraSupport {
+        let current = fixture.context
+        guard current == expected else { throw CameraServiceError.unsupportedContext }
+        return try fixtureCameraSupport(current)
+    }
+
     let fixture: RenderFixture
     let latch: RenderLatch?
     var calls = 0
@@ -70,7 +76,7 @@ actor RenderCamera: CameraServing {
     func states() -> AsyncStream<CameraState> { AsyncStream { $0.finish() } }
     func connect() {}
     func disconnect() {}
-    func importRecipes() -> [RecipeSnapshot] { [fixture.recipe] }
+    func importRecipes() throws -> ImportedRecipeCollection { let support=try support(for:fixture.context);return .init(recipes:[fixture.recipe],declaredSlots:support.capabilities.bankSlots,context:fixture.context,support:support) }
     func executionContext() -> CameraExecutionContext { current }
     func changeContext(_ value: CameraExecutionContext) { current = value }
     func render(raw: PreparedRAW, recipe: RecipeSnapshot, policy: OutputPolicy) async throws -> CameraJPEG {

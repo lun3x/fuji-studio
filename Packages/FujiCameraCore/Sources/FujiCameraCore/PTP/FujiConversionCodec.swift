@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 
 /// Standard ObjectInfo field order used by pinned libfuji's vendor 900C RAF upload. No profile
 /// offsets, conversion triggers, response-handle ownership assumptions or deletion logic.
-public enum XT5ConversionCodec {
+public enum FujiConversionCodec {
   public static func uploadInfo(byteCount: Int) throws -> Data {
     guard byteCount > 0, byteCount <= PTPCodec.maximumDataBytes,
       let count = UInt32(exactly: byteCount)
@@ -22,7 +22,7 @@ public enum XT5ConversionCodec {
     return bytes
   }
   public static func objectHandles(_ data: Data) throws -> [UInt32] {
-    guard data.count >= 4 else { throw XT5ProtocolError.truncated }
+    guard data.count >= 4 else { throw PTPDatasetError.truncated }
     let bytes = Data(data)
     func word(_ offset: Int) -> UInt32 {
       bytes[offset..<(offset + 4)].enumerated().reduce(0) {
@@ -30,9 +30,9 @@ public enum XT5ConversionCodec {
       }
     }
     let count = Int(word(0))
-    guard count <= 4096 else { throw XT5ProtocolError.oversized }
-    guard data.count >= 4 + count * 4 else { throw XT5ProtocolError.truncated }
-    guard data.count == 4 + count * 4 else { throw XT5ProtocolError.trailingBytes }
+    guard count <= 4096 else { throw PTPDatasetError.oversized }
+    guard data.count >= 4 + count * 4 else { throw PTPDatasetError.truncated }
+    guard data.count == 4 + count * 4 else { throw PTPDatasetError.trailingBytes }
     var result: [UInt32] = []
     for offset in stride(from: 4, to: data.count, by: 4) { result.append(word(offset)) }
     guard Set(result).count == result.count, !result.contains(0), !result.contains(UInt32.max)
@@ -41,7 +41,7 @@ public enum XT5ConversionCodec {
   }
 }
 
-public struct XT5ObjectInfo: Sendable, Equatable, Encodable {
+public struct PTPObjectInfo: Sendable, Equatable, Encodable {
   public let storageID: UInt32, format: UInt16, protection: UInt16, byteCount: UInt32
   public let width: UInt32, height: UInt32, parent: UInt32, associationType: UInt16
   public init(
@@ -59,7 +59,7 @@ public struct XT5ObjectInfo: Sendable, Equatable, Encodable {
   }
 
 }
-public struct XT5StorageInfo: Sendable, Encodable {
+public struct PTPStorageInfo: Sendable, Encodable {
   public let storageType: UInt16, filesystemType: UInt16, access: UInt16
   public let capacity: UInt64, freeBytes: UInt64, freeObjects: UInt32
   public init(
@@ -75,7 +75,7 @@ public struct XT5StorageInfo: Sendable, Encodable {
   }
 
 }
-public struct XT5JPEGObservation: Sendable, Encodable {
+public struct JPEGObservation: Sendable, Encodable {
   public let width: Int, height: Int, orientation: Int?
   public let modelMatches: Bool, recordedGeometryMatches: Bool, orientationMatches: Bool
   public let fineQualityValidated = false
@@ -97,8 +97,8 @@ public enum XT5ConversionProbeIssue: Error, Sendable {
     retainedSourceUnavailable
 }
 
-extension XT5ConversionCodec {
-  public static func objectInfo(_ data: Data) throws -> XT5ObjectInfo {
+extension FujiConversionCodec {
+  public static func objectInfo(_ data: Data) throws -> PTPObjectInfo {
     var r = try DatasetReader(data)
     let storage = try r.u32()
     let format = try r.u16()
@@ -117,13 +117,13 @@ extension XT5ConversionCodec {
     _ = try r.u32()
     for _ in 0..<4 { try r.skipString() }
     try r.finish()
-    return XT5ObjectInfo(
+    return PTPObjectInfo(
       storageID: storage, format: format, protection: protection, byteCount: size, width: width,
       height: height, parent: parent, associationType: association)
   }
-  public static func storageInfo(_ data: Data) throws -> XT5StorageInfo {
+  public static func storageInfo(_ data: Data) throws -> PTPStorageInfo {
     var r = try DatasetReader(data)
-    let result = try XT5StorageInfo(
+    let result = try PTPStorageInfo(
       storageType: r.u16(), filesystemType: r.u16(), access: r.u16(), capacity: r.u64(),
       freeBytes: r.u64(), freeObjects: r.u32())
     try r.skipString()
@@ -135,11 +135,11 @@ extension XT5ConversionCodec {
     let data: Data
     var offset = 0
     init(_ data: Data) throws {
-      guard data.count <= 4096 else { throw XT5ProtocolError.oversized }
+      guard data.count <= 4096 else { throw PTPDatasetError.oversized }
       self.data = Data(data)
     }
     mutating func integer(_ width: Int) throws -> UInt64 {
-      guard width <= data.count - offset else { throw XT5ProtocolError.truncated }
+      guard width <= data.count - offset else { throw PTPDatasetError.truncated }
       defer { offset += width }
       return data[offset..<(offset + width)].enumerated().reduce(0) {
         $0 | UInt64($1.element) << ($1.offset * 8)
@@ -149,21 +149,21 @@ extension XT5ConversionCodec {
     mutating func u32() throws -> UInt32 { UInt32(try integer(4)) }
     mutating func u64() throws -> UInt64 { try integer(8) }
     mutating func skipString() throws {
-      guard offset < data.count else { throw XT5ProtocolError.truncated }
+      guard offset < data.count else { throw PTPDatasetError.truncated }
       let length = 1 + Int(data[offset]) * 2
-      guard length <= data.count - offset else { throw XT5ProtocolError.truncated }
-      _ = try XT5RecipeCodec.value(data.subdata(in: offset..<(offset + length)), type: 0xffff)
+      guard length <= data.count - offset else { throw PTPDatasetError.truncated }
+      _ = try PTPDatasets.value(data.subdata(in: offset..<(offset + length)), type: 0xffff)
       offset += length
     }
     func finish() throws {
-      guard offset == data.count else { throw XT5ProtocolError.trailingBytes }
+      guard offset == data.count else { throw PTPDatasetError.trailingBytes }
     }
   }
 }
 
-extension XT5ConversionCodec {
+extension FujiConversionCodec {
   public static func jpegObservation(_ data: Data, expected: RAWMetadata) throws
-    -> XT5JPEGObservation
+    -> JPEGObservation
   {
     guard data.count >= 4, data.count <= PTPCodec.maximumDataBytes,
       data.prefix(2) == Data([0xff, 0xd8]), data.suffix(2) == Data([0xff, 0xd9]),
@@ -184,7 +184,7 @@ extension XT5ConversionCodec {
     let tiff = p[kCGImagePropertyTIFFDictionary as String] as? [String: Any]
     let model = (tiff?[kCGImagePropertyTIFFModel as String] as? String)?.trimmingCharacters(
       in: .whitespacesAndNewlines)
-    return XT5JPEGObservation(
+    return JPEGObservation(
       width: width, height: height, orientation: orientation,
       modelMatches: model == expected.cameraModel,
       recordedGeometryMatches: width == expected.recordedGeometry.width
@@ -195,7 +195,7 @@ extension XT5ConversionCodec {
 
 /// Quality and source context validated at runtime. Does not encode ownership or publish a file.
 /// Later CameraJPEG construction additionally requires operation provenance and safe cleanup.
-public struct XT5ValidatedJPEGMetadata: Sendable, Equatable {
+public struct ValidatedJPEGMetadata: Sendable, Equatable {
   public let width: Int, height: Int, orientation: Int
   public let make: String, model: String
   public let quality: FujiJPEGQuality
@@ -215,15 +215,15 @@ public struct XT5ValidatedJPEGMetadata: Sendable, Equatable {
 
 }
 
-extension XT5ConversionCodec {
+extension FujiConversionCodec {
   public static func validateFullSizeFineJPEG(_ data: Data, expected: RAWMetadata) throws
-    -> XT5ValidatedJPEGMetadata
+    -> ValidatedJPEGMetadata
   {
     let metadata = try FujiJPEGMetadataReader.read(data)
     try metadata.requireFine(
       width: expected.recordedGeometry.width, height: expected.recordedGeometry.height,
       orientation: expected.orientation, model: expected.cameraModel)
-    let observed: XT5JPEGObservation
+    let observed: JPEGObservation
     do { observed = try jpegObservation(data, expected: expected) } catch {
       throw FujiJPEGValidationError.invalidJPEG
     }
@@ -234,7 +234,7 @@ extension XT5ConversionCodec {
     guard observed.orientationMatches, observed.orientation == metadata.orientation else {
       throw FujiJPEGValidationError.orientationMismatch
     }
-    return XT5ValidatedJPEGMetadata(
+    return ValidatedJPEGMetadata(
       width: metadata.width, height: metadata.height, orientation: metadata.orientation,
       make: metadata.make, model: metadata.model, quality: metadata.quality,
       lensOptimizer: metadata.lensOptimizer)

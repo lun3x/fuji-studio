@@ -317,7 +317,7 @@ enum RetainedRAWProbeSource {
         }
         guard candidates.count == 1, let run = candidates.first else { throw XT5ConversionProbeIssue.retainedSourceUnavailable }
         let data = try Data(contentsOf: run.appendingPathComponent("source-manifest.json"))
-        guard data.count <= 65_536 else { throw XT5ProtocolError.oversized }
+        guard data.count <= 65_536 else { throw PTPDatasetError.oversized }
         let manifest = try JSONDecoder().decode(Manifest.self,from: data)
         guard let role = ResourceRole(rawValue: manifest.resourceRole), role != .adjusted else { throw XT5ConversionProbeIssue.retainedSourceUnavailable }
         let token = ResourceToken(assetID: manifest.sourceID,role: role,contentTypeIdentifier: "com.fuji.raw-image",format: .raf,

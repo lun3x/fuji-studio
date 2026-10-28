@@ -9,7 +9,7 @@ import Testing
         let inputs=try inputs(f),wire=ProductionSession(fixture:f)
         let output=f.directory.appendingPathComponent("documents")
         let runner=XT5ProductionAcceptanceRunner(directory:output,prepare:{ _,_ in inputs },makeService:{ root in
-            XT5CameraService(session:wire,journal:try CameraOperationJournal(directory:root, filePolicy: IOSCameraJournalFilePolicy()),pollWait:{},settle:{ _ in },validateJPEG:{ _,m in Self.validated(m,lmo:false) })
+            FujiCameraService(session:wire,journal:try CameraOperationJournal(directory:root, filePolicy: IOSCameraJournalFilePolicy()),pollWait:{},settle:{ _ in },registry:FujiCameraRegistry(adapters:[XT5Adapter(validateJPEG:{ _,m in Self.validated(m,lmo:true) })]))
         })
         await runner.runIfRequested(arguments:["--xt5-production-acceptance-probe"])
         let report=try evidence(output)
@@ -27,11 +27,11 @@ import Testing
         let f=try ProductionOperationFixture();defer { f.remove() }
         let inputs=try inputs(f),wire=ProductionSession(fixture:f),output=f.directory.appendingPathComponent("documents")
         let runner=XT5ProductionAcceptanceRunner(directory:output,prepare:{ _,_ in inputs },makeService:{ root in
-            XT5CameraService(session:wire,journal:try CameraOperationJournal(directory:root, filePolicy: IOSCameraJournalFilePolicy()),pollWait:{},settle:{ _ in },validateJPEG:{ _,m in Self.validated(m,lmo:true) })
+            FujiCameraService(session:wire,journal:try CameraOperationJournal(directory:root, filePolicy: IOSCameraJournalFilePolicy()),pollWait:{},settle:{ _ in },registry:FujiCameraRegistry(adapters:[XT5Adapter(validateJPEG:{ _,m in Self.validated(m,lmo:false) })]))
         })
         await runner.runIfRequested(arguments:["--xt5-production-acceptance-probe"])
         let report=try evidence(output)
-        #expect(report["complete"] as? Bool == false && report["trialCount"] as? Int == 1)
+        #expect(report["complete"] as? Bool == false && report["trialCount"] as? Int == 0)
         #expect(await wire.triggers == 1);#expect(await wire.closes == 1)
         #expect(await wire.commands.allSatisfy { $0.parameters != [0xD18C] })
     }
@@ -41,12 +41,12 @@ import Testing
         for flag in [nil,"--xt5-raw-baseline-probe","--xt5-paired-baseline-probe","--xt5-bank-import-probe","--camera-reconnect-probe","--xt5-read-only-probe","--xt5-direct-values-probe","--xt5-recipe-batch-probe","--xt5-unchanged-baseline-probe","--xt5-output-recovery-probe","--xt5-output-quarantine-probe","--xt5-trigger-one-probe","--xt5-film-only-probe"] as [String?] {
             var made=false
             let output=f.directory.appendingPathComponent(UUID().uuidString)
-            let runner=XT5ProductionAcceptanceRunner(directory:output,prepare:{ _,_ in inputs },makeService:{ root in made=true;return XT5CameraService(session:wire,journal:try CameraOperationJournal(directory:root, filePolicy: IOSCameraJournalFilePolicy())) })
+            let runner=XT5ProductionAcceptanceRunner(directory:output,prepare:{ _,_ in inputs },makeService:{ root in made=true;return FujiCameraService(session:wire,journal:try CameraOperationJournal(directory:root, filePolicy: IOSCameraJournalFilePolicy())) })
             await runner.runIfRequested(arguments:flag.map { ["--xt5-production-acceptance-probe",$0] } ?? ["FujiStudio"])
             #expect(!made && !FileManager.default.fileExists(atPath:output.path))
         }
         var made=false
-        let runner=XT5ProductionAcceptanceRunner(directory:f.directory.appendingPathComponent("failed"),prepare:{ _,_ in throw CameraServiceError.sourceChanged },makeService:{ root in made=true;return XT5CameraService(session:wire,journal:try CameraOperationJournal(directory:root, filePolicy: IOSCameraJournalFilePolicy())) })
+        let runner=XT5ProductionAcceptanceRunner(directory:f.directory.appendingPathComponent("failed"),prepare:{ _,_ in throw CameraServiceError.sourceChanged },makeService:{ root in made=true;return FujiCameraService(session:wire,journal:try CameraOperationJournal(directory:root, filePolicy: IOSCameraJournalFilePolicy())) })
         await runner.runIfRequested(arguments:["--xt5-production-acceptance-probe"])
         #expect(!made)
     }
@@ -57,5 +57,5 @@ import Testing
         return .init(a:f.raw,b:b,banks:banks)
     }
     private func evidence(_ directory:URL) throws -> [String:Any] { try #require(JSONSerialization.jsonObject(with:Data(contentsOf:directory.appendingPathComponent("xt5-production-acceptance-evidence.json"))) as? [String:Any]) }
-    nonisolated private static func validated(_ m:RAWMetadata,lmo:Bool)->XT5ValidatedJPEGMetadata { .init(width:m.recordedGeometry.width,height:m.recordedGeometry.height,orientation:m.orientation,make:"FUJIFILM",model:"X-T5",quality:.fine,lensOptimizer:lmo) }
+    nonisolated private static func validated(_ m:RAWMetadata,lmo:Bool)->ValidatedJPEGMetadata { .init(width:m.recordedGeometry.width,height:m.recordedGeometry.height,orientation:m.orientation,make:"FUJIFILM",model:"X-T5",quality:.fine,lensOptimizer:lmo) }
 }

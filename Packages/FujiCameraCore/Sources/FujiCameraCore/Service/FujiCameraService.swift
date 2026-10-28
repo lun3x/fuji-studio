@@ -1,14 +1,15 @@
 import Foundation
 
 /// Owns the verified connection, every operation permit, and every output cleanup decision.
-public actor XT5CameraService: CameraServing {
-  public typealias JPEGValidator = @Sendable (Data, RAWMetadata) throws -> XT5ValidatedJPEGMetadata
+public actor FujiCameraService: CameraServing {
   private let session: any CameraSessionTransport
   private let journal: CameraOperationJournal
   private let gate: SerialCameraGate
   private let pollWait: @Sendable () async throws -> Void
   private let settle: @Sendable (Duration) async throws -> Void
-  private let validateJPEG: JPEGValidator
+  private let registry: FujiCameraRegistry
+  private var activeAdapter: (any FujiCameraAdapter)?
+  private var verifiedSupport: VerifiedCameraSupport?
   private var nativeSession: CameraSession?
   private var context: CameraExecutionContext?
   private var needsClose = false, stopRequested = false
@@ -23,16 +24,14 @@ public actor XT5CameraService: CameraServing {
       try await Task.sleep(for: .seconds(1))
     },
     settle: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
-    validateJPEG: @escaping JPEGValidator = {
-      try XT5ConversionCodec.validateFullSizeFineJPEG($0, expected: $1)
-    }
+    registry: FujiCameraRegistry = FujiCameraRegistry()
   ) {
     self.session = session
     self.journal = journal
     self.gate = gate
     self.pollWait = pollWait
     self.settle = settle
-    self.validateJPEG = validateJPEG
+    self.registry = registry
   }
   deinit { monitor?.cancel() }
   public func executionContext() async throws -> CameraExecutionContext {
@@ -124,9 +123,10 @@ public actor XT5CameraService: CameraServing {
       nativeSession = try await session.currentSession()
       try await verifyCapabilities()
       guard let nativeSession else { throw CameraServiceError.notReady }
+      guard let support = verifiedSupport else { throw CameraServiceError.notReady }
       context = CameraExecutionContext(
-        model: "X-T5", firmware: "4.31", capability: "X-T5_0200",
-        supportVersion: XT5WorkingProfile.supportVersion, sessionIdentity: UUID(),
+        model: support.model, firmware: support.firmware, capability: support.capability,
+        supportVersion: support.supportVersion, sessionIdentity: UUID(),
         generation: nativeSession.generation)
       let pending = try journal.unresolved()
       if !pending.isEmpty {
@@ -151,44 +151,64 @@ public actor XT5CameraService: CameraServing {
       throw failure
     }
   }
-  private func verifyCapabilities() async throws {
-    let info = try XT5RecipeCodec.deviceInfo(await send(0x1001).data)
-    guard info.manufacturer == "FUJIFILM", info.model == "X-T5", info.firmware == "4.31",
-      [UInt16(0x1005), 0x1007, 0x1008, 0x1009, 0x100B, 0x1015, 0x1016, 0x900C, 0x900D].allSatisfy(
-        info.operations.contains),
-      ([UInt16(0xD16E), 0xD183, 0xD185, 0xD186, 0xD187, 0xD18C, 0xD18D] + Array(0xD18E...0xD1A4))
-        .allSatisfy(info.properties.contains),
-      try await send(0x1015, [0xD16E]).data == Data([6, 0])
-    else { throw CameraServiceError.unsupportedContext }
-    for code: UInt32 in [0xD186, 0xD187] {
-      guard
-        try XT5RecipeCodec.value(await send(0x1015, [code]).data, type: 0xffff).string
-          == "X-T5_0200"
-      else { throw CameraServiceError.unsupportedContext }
+  private func withIO<T: Sendable>(
+    temporarySelector: TemporaryBankSelector? = nil,
+    _ body: @Sendable (CameraOperationIO) async throws -> T
+  ) async throws -> T {
+    let io = CameraOperationIO(temporarySelector: temporarySelector, settle: settle) {
+      [weak self] opcode, parameters, data in
+      guard let self else { throw CameraServiceError.notReady }
+      return try await self.send(opcode, parameters, data)
+    }
+    do {
+      let result = try await body(io)
+      await io.finish()
+      return result
+    } catch {
+      await io.finish()
+      throw error
     }
   }
-  public func importRecipes() async throws -> [RecipeSnapshot] {
+  private func verifyCapabilities() async throws {
+    let info = try PTPDatasets.deviceInfo(await send(0x1001).data)
+    let adapter = try registry.adapter(for: info)
+    let support = try await withIO { try await adapter.verifyDevice(info, io: $0) }
+    activeAdapter = adapter
+    verifiedSupport = support
+  }
+  public func support(for expected: CameraExecutionContext) async throws -> VerifiedCameraSupport {
+    let epoch = admissionEpoch
+    return try await gate.withExclusiveAccess {
+      let current = try await self.readExecutionContext(epoch: epoch)
+      guard current == expected, let support = await self.currentSupport() else {
+        throw CameraServiceError.unsupportedContext
+      }
+      return support
+    }
+  }
+  private func currentSupport() -> VerifiedCameraSupport? { verifiedSupport }
+  public func importRecipes() async throws -> ImportedRecipeCollection {
     let epoch = admissionEpoch
     do {
       return try await gate.withExclusiveAccess { try await self.importOwned(epoch: epoch) }
     } catch { throw Self.failure(error) }
   }
-  private func importOwned(epoch: UInt64) async throws -> [RecipeSnapshot] {
+  private func importOwned(epoch: UInt64) async throws -> ImportedRecipeCollection {
     let execution = try await admit(epoch: epoch)
     do {
       guard try await handles().isEmpty else { throw CameraServiceError.preexistingObjects }
-      let adapter = ProductionPTPTransport { [weak self] command, data in
-        guard let self else { throw CameraServiceError.notReady }
-        return try await self.send(command.opcode, command.parameters, data)
+      guard let adapter = activeAdapter, let support = verifiedSupport else {
+        throw CameraServiceError.notReady
       }
-      let importer = XT5BankImporter(
-        transport: adapter, sessionGeneration: execution.generation,
-        validateSession: { try await self.validateCurrent() }, settle: settle)
-      let result = try await importer.importRecipesVerified()
-      guard result.evidence.complete else { throw CameraServiceError.unsupportedContext }
       let current = RecipeCameraContext(
         model: execution.model, firmware: execution.firmware, capability: execution.capability,
         sessionIdentity: execution.sessionIdentity, sessionGeneration: execution.generation)
+      let result = try await withIO(temporarySelector: adapter.temporaryBankSelector) {
+        try await adapter.importRecipes(io: $0, support: support, context: current)
+      }
+      guard result.declaredSlots == support.capabilities.bankSlots else {
+        throw CameraServiceError.unsupportedContext
+      }
       let recipes = result.recipes.map { r in
         let issues: [RecipeRenderingIssue]
         switch r.renderingSupport(using: RecipeCodecRegistry()) {
@@ -201,7 +221,8 @@ public actor XT5CameraService: CameraServing {
           cameraContext: current, importedAt: r.importedAt, renderingIssues: issues)
       }
       try await finishReady()
-      return recipes
+      return ImportedRecipeCollection(
+        recipes: recipes, declaredSlots: result.declaredSlots, context: execution, support: support)
     } catch {
       let failure = Self.failure(error)
       if !(await closeUncancelled()) { throw CameraServiceError.closeUnconfirmed }
@@ -221,8 +242,14 @@ public actor XT5CameraService: CameraServing {
   private func renderOwned(
     raw: PreparedRAW, recipe: RecipeSnapshot, policy: OutputPolicy, epoch: UInt64
   ) async throws -> CameraJPEG {
-    try XT5WorkingProfile.validateSource(raw.metadata)
-    _ = try XT5WorkingProfile.normalize(recipe)
+    guard let adapter = activeAdapter, let support = verifiedSupport,
+      recipe.cameraContext.model == support.model,
+      recipe.cameraContext.firmware == support.firmware,
+      recipe.cameraContext.capability == support.capability
+    else { throw CameraServiceError.unsupportedContext }
+    try adapter.validateSource(raw.metadata)
+    _ = try adapter.decodeRecipe(recipe).requireSettings()
+    let dialect = adapter.conversionDialect
     guard try ResourceChecksum.sha256(raw.fileURL) == raw.sha256 else {
       throw CameraServiceError.sourceChanged
     }
@@ -239,17 +266,17 @@ public actor XT5CameraService: CameraServing {
       try journal.save(record)
       do {
         let size = try raw.fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-        let info = try XT5ConversionCodec.uploadInfo(byteCount: size)
+        let info = try dialect.uploadInfo(byteCount: size)
         let payload = try Data(contentsOf: raw.fileURL, options: .mappedIfSafe)
-        guard payload.count == size, XT5WorkingProfile.hash(payload) == raw.sha256 else {
+        guard payload.count == size, ResourceChecksum.sha256(payload) == raw.sha256 else {
           throw CameraServiceError.sourceChanged
         }
-        _ = try await send(0x900C, [0, 0, 0], info)
-        _ = try await send(0x900D, [], payload)
+        _ = try await send(dialect.uploadInfoOpcode, [0, 0, 0], info)
+        _ = try await send(dialect.uploadOpcode, [], payload)
       }
-      let baseline = try await send(0x1015, [0xD185]).data
-      let patch = try XT5WorkingProfile.make(
-        baseline: baseline, recipe: recipe, metadata: raw.metadata)
+      let baseline = try await send(0x1015, [dialect.profileProperty]).data
+      let patch = try adapter.prepareConversion(
+        baseline: baseline, source: raw.metadata, recipe: recipe, support: support, policy: policy)
       record.baselineSHA256 = patch.baselineSHA256
       record.candidateSHA256 = patch.candidateSHA256
       record.phase = .baselineReceived
@@ -258,8 +285,8 @@ public actor XT5CameraService: CameraServing {
       try journal.save(record)
       record.phase = .profileIntent
       try journal.save(record)
-      _ = try await send(0x1016, [0xD185], patch.bytes)
-      let readback = try await send(0x1015, [0xD185]).data
+      _ = try await send(0x1016, [dialect.profileProperty], patch.bytes)
+      let readback = try await send(0x1015, [dialect.profileProperty]).data
       guard readback == patch.bytes else { throw CameraServiceError.profileReadbackMismatch }
       try journal.store(readback, name: "readback.bin", id: record.id)
       record.phase = .profileAccepted
@@ -268,45 +295,53 @@ public actor XT5CameraService: CameraServing {
       record.triggerIntent = true
       record.phase = .triggerIntent
       try journal.save(record)
-      _ = try await send(0x1016, [0xD183], Data([1, 0]))
+      _ = try await send(0x1016, [dialect.triggerProperty], dialect.triggerValue)
       record.triggerAcknowledged = true
       record.phase = .triggerAccepted
       try journal.save(record)
       let handle = try await awaitOutput()
       record.outputHandle = handle
       let object = try await send(0x1008, [handle]).data
-      let info = try XT5ConversionCodec.objectInfo(object)
+      let info = try FujiConversionCodec.objectInfo(object)
       guard info.format == 0x3801, info.protection == 0, info.byteCount > 0,
         info.byteCount <= PTPCodec.maximumDataBytes,
-        [UInt16(0), 2055].contains(info.associationType),
+        dialect.outputAssociationTypes.contains(info.associationType),
         info.width == 0 || info.width == raw.metadata.recordedGeometry.width,
         info.height == 0 || info.height == raw.metadata.recordedGeometry.height
       else { throw CameraServiceError.invalidOutput }
       let storage = try await send(0x1005, [info.storageID]).data
-      let storageInfo = try XT5ConversionCodec.storageInfo(storage)
+      let storageInfo = try FujiConversionCodec.storageInfo(storage)
       guard storageInfo.storageType == 3, storageInfo.filesystemType == 2, storageInfo.access == 2
       else { throw CameraServiceError.ownershipChanged }
       record.objectInfo = object
       record.storageInfo = storage
       try journal.save(record)
       guard try await handles() == [handle] else { throw CameraServiceError.ownershipChanged }
-      let metadata: XT5ValidatedJPEGMetadata
+      let assessment: CameraOutputAssessment
       let outputURL: URL
       do {
         let payload = try await send(0x1009, [handle]).data
         guard payload.count == info.byteCount else { throw CameraServiceError.invalidOutput }
         try await revalidate(
           handle: handle, object: object, storage: storage, storageID: info.storageID)
-        metadata = try validateJPEG(payload, raw.metadata)
-        guard metadata.lensOptimizer != nil else { throw CameraServiceError.invalidOutput }
-        record.outputSHA256 = XT5WorkingProfile.hash(payload)
+        assessment = try adapter.validateOutput(payload, conversion: patch)
+        record.outputSHA256 = ResourceChecksum.sha256(payload)
         outputURL = try journal.store(payload, name: "output.JPG", id: record.id)
       }
+      let metadata = assessment.metadata
       record.outputValidated = true
       record.phase = .captured
       try journal.save(record)
       try await cleanup(record: &record, outputURL: outputURL, info: info)
       try await validateCurrent()
+      let report: EffectiveRecipeReport
+      switch assessment.admission {
+      case .accepted(let accepted): report = accepted
+      case .rejected(let mismatch):
+        record.recipeMismatch = mismatch
+        record.failure = mismatch.summary
+        throw CameraServiceError.invalidOutput
+      }
       let key = RenderKey(
         sourceID: raw.sourceID, sourceRevision: raw.sourceRevision, sourceSHA256: raw.sha256,
         settingsDigest: recipe.settingsDigest, cameraContext: execution,
@@ -318,7 +353,7 @@ public actor XT5CameraService: CameraServing {
         settingsDigest: recipe.settingsDigest,
         cameraContext: execution, operationID: record.id, width: metadata.width,
         height: metadata.height, orientation: metadata.orientation, quality: .fullResolutionFine,
-        effectiveRecipe: patch.effective(lensOptimizer: metadata.lensOptimizer!),
+        effectiveRecipe: report,
         baselineSHA256: patch.baselineSHA256, candidateSHA256: patch.candidateSHA256,
         outputSHA256: record.outputSHA256!, key: key)
       record.result = result
@@ -328,10 +363,10 @@ public actor XT5CameraService: CameraServing {
       return result
     } catch {
       let failure = Self.failure(error)
-      record.failure = Self.safeFailure(failure)
+      record.failure = record.failure ?? Self.safeFailure(failure)
       let closed = await closeUncancelled()
       record.closure = closed ? "confirmed" : "unconfirmed"
-      let uncertain = record.triggerIntent || !closed
+      let uncertain = (record.triggerIntent && !record.emptyViewVerified) || !closed
       record.phase = uncertain ? .uncertain : .aborted
       do { try journal.save(record) } catch {
         throw CameraServiceError.uncertainOperation(record.id)
@@ -340,7 +375,7 @@ public actor XT5CameraService: CameraServing {
       throw failure
     }
   }
-  private func cleanup(record: inout CameraOperationRecord, outputURL: URL, info: XT5ObjectInfo)
+  private func cleanup(record: inout CameraOperationRecord, outputURL: URL, info: PTPObjectInfo)
     async throws
   {
     guard let handle = record.outputHandle, let object = record.objectInfo,
@@ -351,7 +386,7 @@ public actor XT5CameraService: CameraServing {
       handle: handle, object: object, storage: storage, storageID: info.storageID)
     do {
       let live = try await send(0x1009, [handle]).data
-      guard live.count == info.byteCount, XT5WorkingProfile.hash(live) == hash else {
+      guard live.count == info.byteCount, ResourceChecksum.sha256(live) == hash else {
         throw CameraServiceError.ownershipChanged
       }
     }
@@ -386,7 +421,7 @@ public actor XT5CameraService: CameraServing {
     throw CameraServiceError.timeout
   }
   private func handles() async throws -> [UInt32] {
-    try XT5ConversionCodec.objectHandles(await send(0x1007, [UInt32.max, 0, 0]).data)
+    try FujiConversionCodec.objectHandles(await send(0x1007, [UInt32.max, 0, 0]).data)
   }
   private func admit(epoch: UInt64) async throws -> CameraExecutionContext {
     guard epoch == admissionEpoch, !stopRequested, let context, let nativeSession else {
@@ -450,6 +485,8 @@ public actor XT5CameraService: CameraServing {
       needsClose = false
       nativeSession = nil
       context = nil
+      activeAdapter = nil
+      verifiedSupport = nil
       publish(.disconnected)
       return true
     } catch {
@@ -460,14 +497,9 @@ public actor XT5CameraService: CameraServing {
   }
   public static func failure(_ error: any Error) -> CameraServiceError {
     if let error = error as? CameraServiceError { return error }
-    if let error = error as? XT5BankImportFailure {
-      return .recipeImportFailed(
-        restorationConfirmed: error.evidence.restoration == .verified
-          || error.evidence.restoration == .notNeeded)
-    }
     if error is CancellationError { return .cancelled }
     if let error = error as? PTPError { return .transport(error) }
-    if error is FujiJPEGValidationError || error is XT5ProtocolError { return .invalidOutput }
+    if error is FujiJPEGValidationError || error is PTPDatasetError { return .invalidOutput }
     if let error = error as? ResourceError, error == .checksumMismatch { return .sourceChanged }
     return .storage
   }
@@ -477,11 +509,5 @@ public actor XT5CameraService: CameraServing {
     case .uncertainOperation: return "camera operation uncertain"
     default: return String(describing: error)
     }
-  }
-}
-private struct ProductionPTPTransport: PTPTransport {
-  let action: @Sendable (PTPCommand, Data?) async throws -> PTPReply
-  func execute(_ command: PTPCommand, data: Data?) async throws -> PTPReply {
-    try await action(command, data)
   }
 }

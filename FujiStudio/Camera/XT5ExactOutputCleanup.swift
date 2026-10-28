@@ -12,14 +12,14 @@ struct XT5ExactCleanupTarget: Sendable {
     let objectInfo: Data
     let storageInfo: Data
     var attemptURL: URL { quarantineURL.deletingLastPathComponent().appendingPathComponent("exact-cleanup-attempt.json") }
-    func validateLocal(raw: PreparedRAW) throws -> XT5ObjectInfo {
+    func validateLocal(raw: PreparedRAW) throws -> PTPObjectInfo {
         guard handle != 0 && handle != UInt32.max,
               sourceSHA256 == raw.sha256,
               try ResourceChecksum.sha256(raw.fileURL) == sourceSHA256,
               try ResourceChecksum.sha256(quarantineURL) == outputSHA256,
               !FileManager.default.fileExists(atPath: attemptURL.path) else { throw XT5ExactCleanupIssue.invalidPreservedProof }
-        let info = try XT5ConversionCodec.objectInfo(objectInfo)
-        let storage = try XT5ConversionCodec.storageInfo(storageInfo)
+        let info = try FujiConversionCodec.objectInfo(objectInfo)
+        let storage = try FujiConversionCodec.storageInfo(storageInfo)
         guard info.format == 0x3801, info.protection == 0, info.byteCount > 0, info.byteCount <= PTPCodec.maximumDataBytes,
               try quarantineURL.resourceValues(forKeys: [.fileSizeKey]).fileSize == Int(info.byteCount),
               storage.storageType == 3, storage.filesystemType == 2, storage.access == 2 else { throw XT5ExactCleanupIssue.invalidPreservedProof }
@@ -69,17 +69,17 @@ actor XT5ExactOutputCleanup {
             report.deleteAttempted = true
             _ = try await send(0x100B, [target.handle,0], nil)
             report.deleteAcknowledged = true
-            let remaining = try XT5ConversionCodec.objectHandles(await send(0x1007, [UInt32.max,0,0], nil).data)
+            let remaining = try FujiConversionCodec.objectHandles(await send(0x1007, [UInt32.max,0,0], nil).data)
             guard remaining.isEmpty else { throw XT5ExactCleanupIssue.viewNotEmpty }
             report.emptyViewVerified = true
         } catch { report.failure = XT5RawBaselineProbe.safeFailure(error) }
         await onUpdate(report)
         return report
     }
-    private func revalidate(target: XT5ExactCleanupTarget, info: XT5ObjectInfo) async throws {
-        guard try XT5ConversionCodec.objectHandles(await send(0x1007, [UInt32.max,0,0], nil).data) == [target.handle],
+    private func revalidate(target: XT5ExactCleanupTarget, info: PTPObjectInfo) async throws {
+        guard try FujiConversionCodec.objectHandles(await send(0x1007, [UInt32.max,0,0], nil).data) == [target.handle],
               try await send(0x1008, [target.handle], nil).data == target.objectInfo,
               try await send(0x1005, [info.storageID], nil).data == target.storageInfo,
-              try XT5ConversionCodec.objectHandles(await send(0x1007, [UInt32.max,0,0], nil).data) == [target.handle] else { throw XT5ExactCleanupIssue.objectChanged }
+              try FujiConversionCodec.objectHandles(await send(0x1007, [UInt32.max,0,0], nil).data) == [target.handle] else { throw XT5ExactCleanupIssue.objectChanged }
     }
 }

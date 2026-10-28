@@ -162,6 +162,12 @@ actor FixtureLibrary: PhotoLibraryReading {
 }
 
 actor FixtureCamera: CameraServing {
+    func support(for expected: CameraExecutionContext) throws -> VerifiedCameraSupport {
+        let current = try executionContext()
+        guard current == expected else { throw CameraServiceError.unsupportedContext }
+        return try fixtureCameraSupport(current)
+    }
+
     private let snapshots: [RecipeSnapshot], image: DisplayFileLease, root: URL
     private var context: CameraExecutionContext
     private var state: CameraState = .disconnected
@@ -204,13 +210,15 @@ actor FixtureCamera: CameraServing {
     func failRenderWithoutDisconnect() { shouldFailRenderWithoutDisconnect = true }
     func failImport() { shouldFailImport = true }
     func holdImport(_ barrier: FixtureBarrier) { importBarrier = barrier }
-    func importRecipes() async throws -> [RecipeSnapshot] {
+    func importRecipes() async throws -> ImportedRecipeCollection {
         importCount += 1; emit(.busy(session)); await Task.yield(); defer { emit(.ready(session)) }
         if let importBarrier { await importBarrier.wait() }
         if shouldFailImport { throw CameraServiceError.recipeImportFailed(restorationConfirmed: true) }
-        return snapshots.map { s in RecipeSnapshot(id: UUID(), slot: s.slot, name: s.name, importedName: s.importedName,
+        let recipes = snapshots.map { s in RecipeSnapshot(id: UUID(), slot: s.slot, name: s.name, importedName: s.importedName,
             importedSettings: s.importedSettings, settingsDigest: s.settingsDigest,
             cameraContext: RecipeCameraContext(model: context.model, firmware: context.firmware, capability: context.capability, sessionIdentity: context.sessionIdentity, sessionGeneration: context.generation), importedAt: Date(), renderingIssues: s.renderingIssues) }
+        let support=try support(for:context)
+        return .init(recipes:recipes,declaredSlots:support.capabilities.bankSlots,context:context,support:support)
     }
     func render(raw: PreparedRAW, recipe: RecipeSnapshot, policy: OutputPolicy) async throws -> CameraJPEG {
         _ = try executionContext(); renderCount += 1; emit(.busy(session)); await Task.yield()
@@ -264,5 +272,9 @@ actor FixtureWriter: PhotoLibraryWriting {
     var manageCalls = 0
     func openSettings() { settingsCalls += 1 }
     func managePhotos() { manageCalls += 1 }
+}
+func fixtureCameraSupport(_ context: CameraExecutionContext) throws -> VerifiedCameraSupport {
+    let recipeContext=RecipeCameraContext(model:context.model,firmware:context.firmware,capability:context.capability,sessionIdentity:context.sessionIdentity,sessionGeneration:context.generation)
+    return .init(adapterID:.init(rawValue:"fixture"),model:context.model,firmware:context.firmware,capability:context.capability,capabilityOrigin:.applicationDefined,supportVersion:context.supportVersion,capabilities:try RecipeCodecRegistry().capabilities(for:recipeContext))
 }
 #endif

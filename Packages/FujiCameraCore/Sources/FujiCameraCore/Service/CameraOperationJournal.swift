@@ -27,6 +27,7 @@ public struct CameraOperationRecord: Sendable, Codable {
   public var emptyViewVerified = false
   public var closure: String = "notRequested"
   public var failure: String?
+  public var recipeMismatch: RecipeMismatchReport? = nil
   public var result: CameraJPEG?
   public init(
     id: UUID, context: CameraExecutionContext, sourceID: SourceID, sourceRevision: String,
