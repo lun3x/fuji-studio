@@ -105,3 +105,32 @@ new render, persistent malformed metadata, unsafe/changed outputs, ambiguous
 deletion, cancellation, and settling a previously unconfirmed native close.
 These software checks do not prove recovery from firmware that no longer
 enumerates over USB.
+
+### Metadata captured on the updated iPhone build
+
+The user reproduced a red-icon error while the session remained open. Two
+rejected records report JPEG format `0x3801`, protection 0, roughly 25.2 MB,
+unknown ObjectInfo dimensions 0/0, and association `0x0007`. A completed record
+from the same camera/firmware reports association `0x0807`. The shipping X-T5
+dialect accepted only 0 and `0x0807`, explaining this reproducible rejection
+before storage or JPEG download. The original rejected bytes are now retained
+in the journal, with closure honestly recorded as `notRequested`.
+
+The X-T5 dialect now also accepts the observed `0x0007`. Storage identity,
+JPEG geometry/quality/recipe validation, source provenance, and cleanup checks
+remain mandatory; X-E3 is unchanged. The new shared-service regression failed
+with `uncertainOperation` before this correction and passes for both observed
+values afterwards. Unknown association 9 still stops before download/deletion
+and retains the connected error state. All 120 core tests pass.
+
+An initial parallel iOS validation exposed a test synchronization error in
+`explicitCameraResetIsSingleFlightAndDoesNotReplayFailedPreview`: the test
+asserted the camera call count after the UI progress flag was set, before the
+camera API had necessarily entered. The test now waits for its existing held
+reset barrier before checking the unchanged single-flight assertion. A focused
+AppModel run and the subsequent complete unit run pass. Earlier interrupted
+full runs are not counted as final full-suite validation.
+
+The corrected signed Release bundle passed strict codesign verification and was
+installed and launched normally on the physical iPhone. Physical revalidation
+and the final complete iOS suite are recorded below when finished.

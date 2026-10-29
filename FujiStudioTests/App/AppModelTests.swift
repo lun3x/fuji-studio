@@ -162,7 +162,8 @@ import Testing
         await eventually { model.cameraError != nil && model.imageStatusIsFailure }
         await f.camera.holdReset(barrier)
         let reset = Task { await model.resetCameraConnection() }
-        await eventually { model.isResettingCamera }
+        await barrier.entered()
+        #expect(model.isResettingCamera)
         #expect(model.state.selectedRecipe?.slot == 1)
         await model.resetCameraConnection()
         #expect(await f.camera.resetCount == 1)

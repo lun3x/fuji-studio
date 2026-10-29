@@ -4,6 +4,21 @@ import Testing
 @testable import FujiStudio
 
 struct XT5ProductionCameraServiceTests {
+    @Test func renderAcceptsBothObservedXT5OutputAssociations() async throws {
+        for mode in [ProductionSession.Mode.normal, .outputAssociationSeven] {
+            let f=try ProductionOperationFixture();defer { f.remove() }
+            let wire=ProductionSession(fixture:f,mode:mode)
+            let journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"), filePolicy: IOSCameraJournalFilePolicy())
+            let service=makeService(wire,journal);try await service.connect()
+            let jpeg=try await service.render(raw:f.raw,recipe:f.profile.bank,policy:.fullSizeFineRecordedGeometry)
+            let record=try journal.load(jpeg.operationID)
+            let info=try FujiConversionCodec.objectInfo(#require(record.objectInfo))
+            #expect(info.associationType == (mode == .normal ? 0x0807 : 0x0007))
+            #expect(record.outputValidated && record.emptyViewVerified && record.phase == .completed)
+            #expect(await wire.closes == 0);#expect(await wire.deletes == [77])
+            await service.disconnect()
+        }
+    }
     @Test func importFailureReportsRestorationWithoutPretendingStorageFailed() {
         var evidence=XT5BankImportEvidence();evidence.restoration = .unconfirmed
         #expect(XT5Adapter.importFailure(XT5BankImportFailure(evidence:evidence)) == .recipeImportFailed(restorationConfirmed:false))
@@ -77,7 +92,7 @@ struct XT5ProductionCameraServiceTests {
         }
     }
     @Test func rejectedMetadataIsRetainedWithoutDownloadingOrDeletingOutput() async throws {
-        for mode in [ProductionSession.Mode.wrongOutputFormat, .malformedOutputInfo, .oversizedOutputInfo, .wrongStorage] {
+        for mode in [ProductionSession.Mode.wrongOutputFormat, .malformedOutputInfo, .oversizedOutputInfo, .wrongStorage, .unexpectedOutputAssociation] {
             let f=try ProductionOperationFixture();defer { f.remove() }
             let wire=ProductionSession(fixture:f,mode:mode)
             let journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"), filePolicy: IOSCameraJournalFilePolicy())
@@ -92,6 +107,7 @@ struct XT5ProductionCameraServiceTests {
             case .wrongOutputFormat: #expect(try FujiConversionCodec.objectInfo(object).format == 0x3802)
             case .malformedOutputInfo: #expect(object == Data([1,2]))
             case .oversizedOutputInfo: #expect(object == Data(repeating:0,count:4096))
+            case .unexpectedOutputAssociation: #expect(try FujiConversionCodec.objectInfo(object).associationType == 9)
             case .wrongStorage:
                 let storage=try #require(record.storageInfo)
                 #expect(try FujiConversionCodec.storageInfo(storage).storageType == 4)
@@ -385,7 +401,7 @@ struct XT5ProductionCameraServiceTests {
 }
 
 actor ProductionSession: CameraSessionTransport {
-    enum Mode { case normal,preexisting,profileRejected,readbackMismatch,wrongStorage,replacedHandle,payloadChanged,deleteRejected,nonemptyAfterDelete,staleAfterTrigger,triggerRejected,closeFails,wrongOutputFormat,malformedOutputInfo,oversizedOutputInfo,duplicateOutputHandles,zeroOutputHandle }
+    enum Mode { case normal,preexisting,profileRejected,readbackMismatch,wrongStorage,replacedHandle,payloadChanged,deleteRejected,nonemptyAfterDelete,staleAfterTrigger,triggerRejected,closeFails,wrongOutputFormat,malformedOutputInfo,oversizedOutputInfo,duplicateOutputHandles,zeroOutputHandle,outputAssociationSeven,unexpectedOutputAssociation }
     let fixture:ProductionOperationFixture,holdOpcode:UInt16?
     let holdStates:Bool
     var mode:Mode
@@ -442,6 +458,8 @@ actor ProductionSession: CameraSessionTransport {
             if mode == .wrongOutputFormat { info[4]=2 }
             if mode == .malformedOutputInfo { info=Data([1,2]) }
             if mode == .oversizedOutputInfo { info=Data(repeating:0,count:4097) }
+            if mode == .outputAssociationSeven { info.replaceSubrange(42..<44,with:Data([7,0])) }
+            if mode == .unexpectedOutputAssociation { info.replaceSubrange(42..<44,with:Data([9,0])) }
             bytes=info
         case (0x1005,[0x10001]): var storage=ObjectObservationFixture.storage();storage[0]=mode == .wrongStorage ? 4 : 3;storage[4]=2;bytes=storage
         case (0x1009,[77]): downloadCount += 1;bytes=mode == .payloadChanged && downloadCount > 1 ? Data([4,3,2,1]) : Data([1,2,3,4])

@@ -63,7 +63,8 @@ public struct FujiRAWConversionDialect: Sendable {
   public let outputAssociationTypes: Set<UInt16>
   public static let xt5 = FujiRAWConversionDialect(
     uploadInfoOpcode: 0x900C, uploadOpcode: 0x900D, profileProperty: 0xD185,
-    triggerProperty: 0xD183, triggerValue: Data([1, 0]), outputAssociationTypes: [0, 2055])
+    // Firmware 4.31 reports both 0x0007 and 0x0807 for temporary conversion JPEGs.
+    triggerProperty: 0xD183, triggerValue: Data([1, 0]), outputAssociationTypes: [0, 0x0007, 0x0807])
   public func uploadInfo(byteCount: Int) throws -> Data {
     try FujiConversionCodec.uploadInfo(byteCount: byteCount)
   }
