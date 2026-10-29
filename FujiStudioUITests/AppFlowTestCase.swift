@@ -10,12 +10,12 @@ class AppFlowTestCase: XCTestCase {
     }
 
     func reveal(_ element: XCUIElement, in app: XCUIApplication) {
+        let form = app.descendants(matching: .any)["recipe.editor.form"].firstMatch
         let keyboard = app.keyboards.firstMatch
-        if keyboard.exists, keyboard.buttons["Return"].exists {
-            keyboard.buttons["Return"].tap()
+        if form.exists, keyboard.exists, keyboard.buttons["Return"].exists {
+            app.typeText("\n")
             XCTAssertTrue(keyboard.waitForNonExistence(timeout: 5))
         }
-        let form = app.descendants(matching: .any)["recipe.editor.form"].firstMatch
         let container = form.exists ? form : app
         for _ in 0..<8 { if element.isHittable { return }; container.swipeUp() }
         XCTAssertTrue(element.isHittable)

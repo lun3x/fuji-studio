@@ -92,3 +92,5 @@
 
 - First rebased run interrupted after2real editor failures: baseline missedStrong grain transition and a keyboard-clippedFilm menu(PROVIAabsent). Added the same explicit keyboard precondition plusreveal(Film) to the film/name test, preservingmain's film-before-name-replacement sequence and all assertions. Independentreview accepted scope. Focused2cases passed(128.07seconds,0failures); no claim thattheoriginalfullrunpassed or grainflakewasfixed.
 - Mainstill3083d717afterfreshfetch. Completefinal default-two run restarted with finaltestsource; no timingcomparisonagainst64-testbaseline willbeclaimedfor72-testintegration.
+
+- Second parallel integration attempt failed3editorcases atReturn.tap: existingReturnAXnodewasoffscreen(y1065on852-pointdisplay). Interrupted obsolete run, preservingfailurelogs. Replacededitor-onlyReturncoordinate tapwithapp.typeText(newline), retainingnativekeyboarddisappearance assertion/timeout; formguardleavesoutside-editorcopycallerunchanged. Independentreview acceptedpublicReturneventfor3explicitName-focussequences. Complete72UIcase validation restarted; no assertion removed or test excluded.
