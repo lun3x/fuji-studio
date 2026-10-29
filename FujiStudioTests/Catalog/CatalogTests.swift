@@ -4,6 +4,17 @@ import Testing
 @testable import FujiStudio
 
 struct CatalogTests {
+    @Test func rejectedUnconvertibleEditLeavesSavedPhoneRecipeIntact() async throws {
+        let disk = try CatalogTestDisk()
+        let catalog = try SwiftDataCatalog(storeURL: disk.url)
+        let original = try await catalog.copyRecipeToPhone(ProductionProfileFixture().bank)
+        var draft = PhoneRecipeDraft(recipe: original)
+        draft.setValue(.integer(0), for: .dynamicRange)
+        await #expect(throws: PhoneRecipeEditingError.self) { try await catalog.updatePhoneRecipe(draft) }
+        #expect(try await catalog.phoneRecipes() == [original])
+        let reopened = try SwiftDataCatalog(storeURL: disk.url)
+        #expect(try await reopened.phoneRecipes() == [original])
+    }
     @Test func editedPhoneRecipeRetainsPresetIdentityAcrossDurableRestart() async throws {
         let disk = try CatalogTestDisk(), f = try CatalogFixture(), profile = try ProductionProfileFixture()
         let catalog = try SwiftDataCatalog(storeURL: disk.url)

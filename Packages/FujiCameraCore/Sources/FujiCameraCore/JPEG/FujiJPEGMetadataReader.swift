@@ -424,6 +424,8 @@ public enum FujiJPEGMetadataReader {
         [
           0: .film(.provia), 0x120: .film(.astia), 0x200: .film(.velvia), 0x500: .film(.proNegStd),
           0x501: .film(.proNegHi), 0x600: .film(.classicChrome),
+          0x700: .film(.eterna), 0x800: .film(.classicNeg), 0x900: .film(.eternaBleachBypass),
+          0xa00: .film(.nostalgicNeg), 0xb00: .film(.realaAce),
         ])
       if let saturation = try unsigned(0x1003) {
         let mono: [Int: FilmSimulation] = [

@@ -5,6 +5,7 @@ enum PhoneRecipeEditingError: Error, Sendable, Equatable {
   case emptyName, invalidTemperature, invalidSettings, unsupportedContext, missingRecipe,
     staleRecipe
   case invalidValue(String)
+  case conversionUnavailable
   var message: String {
     switch self {
     case .emptyName: "Enter a name for this recipe."
@@ -17,6 +18,8 @@ enum PhoneRecipeEditingError: Error, Sendable, Equatable {
     case .staleRecipe:
       "This recipe changed while you were editing. Close and reopen the editor to use its latest settings."
     case .invalidValue(let title): "Choose a supported value for \(title.lowercased())."
+    case .conversionUnavailable:
+      "These settings can’t be converted. Replace unsupported values before saving settings."
     }
   }
 }
@@ -62,7 +65,7 @@ struct PhoneRecipeDraft: Sendable, Equatable {
   func choices(for setting: RecipeSettingID) -> [SettingChoice] {
     guard let c = capabilities?.settings[setting], c.support == .supported else { return [] }
     if !c.editableChoices.isEmpty {
-      return c.editableChoices.sorted {
+      return c.editableChoices.filter { c.accepts($0.value, rendering: true) }.sorted {
         guard case .integer(let lhs) = $0.value, case .integer(let rhs) = $1.value else {
           return false
         }
@@ -83,28 +86,34 @@ struct PhoneRecipeDraft: Sendable, Equatable {
     }
     return nil
   }
-  mutating func setGrainEffect(_ effect: GrainStrength) {
-    let size =
-      grain?.size
-      ?? choices(for: .grain).compactMap {
-        if case .grain(let g) = $0.value { return g.size }
-        return nil
-      }.first
-    if effect == .off {
-      rememberedGrainSize = size
-      if let off = choices(for: .grain).first(where: {
-        if case .grain(let grain) = $0.value { return grain.strength == .off }
-        return false
-      }) {
-        setValue(off.value, for: .grain)
-        return
-      }
+  private var grainChoices: [GrainSettings] {
+    choices(for: .grain).compactMap {
+      if case .grain(let grain) = $0.value { return grain }
+      return nil
     }
-    setValue(.grain(.init(strength: effect, size: size)), for: .grain)
+  }
+  var grainEffects: [GrainStrength] {
+    GrainStrength.allCases.filter { effect in grainChoices.contains { $0.strength == effect } }
+  }
+  var grainSizes: [GrainSize] {
+    GrainSize.allCases.filter { size in
+      grainChoices.contains { $0.strength == grain?.strength && $0.size == size }
+    }
+  }
+  mutating func setGrainEffect(_ effect: GrainStrength) {
+    let candidates = grainChoices.filter { $0.strength == effect }
+    guard let selected = candidates.first(where: { $0.size == grain?.size }) ?? candidates.first
+    else { return }
+    if effect == .off {
+      rememberedGrainSize = grain?.size
+    }
+    setValue(.grain(selected), for: .grain)
   }
   mutating func setGrainSize(_ size: GrainSize) {
-    guard let grain, grain.size != nil, grain.strength != .off else { return }
-    setValue(.grain(.init(strength: grain.strength, size: size)), for: .grain)
+    guard let grain, grain.strength != .off,
+      let selected = grainChoices.first(where: { $0.strength == grain.strength && $0.size == size })
+    else { return }
+    setValue(.grain(selected), for: .grain)
   }
   mutating func setValue(_ value: RecipeSettingValue, for setting: RecipeSettingID) {
     if value == initialValues[setting] {
@@ -125,13 +134,15 @@ struct PhoneRecipeDraft: Sendable, Equatable {
     var changes = changedValues
     if temperature != initialTemperature {
       guard let kelvin = Int(temperature.trimmingCharacters(in: .whitespacesAndNewlines)),
-        capabilities?.settings[.kelvin]?.accepts(.integer(kelvin), rendering: false) == true
+        capabilities?.settings[.kelvin]?.accepts(.integer(kelvin), rendering: true) == true
       else { throw PhoneRecipeEditingError.invalidTemperature }
       if .integer(kelvin) != initialValues[.kelvin] { changes[.kelvin] = .integer(kelvin) }
     }
     for (id, value) in changes {
       guard supportsSettingsEditing else { throw PhoneRecipeEditingError.unsupportedContext }
-      guard capabilities?.settings[id]?.accepts(value, rendering: false) == true else {
+      guard capabilities?.settings[id]?.accepts(value, rendering: false) == true,
+        capabilities?.settings[id]?.accepts(value, rendering: true) == true
+      else {
         throw PhoneRecipeEditingError.invalidValue(id.title)
       }
     }
@@ -142,6 +153,9 @@ struct PhoneRecipeDraft: Sendable, Equatable {
     } else {
       do { edited = try codecs.encodeEditedValues(changes, preserving: source) } catch {
         throw PhoneRecipeEditingError.invalidSettings
+      }
+      guard case .supported = codecs.assess(edited).renderingSupport else {
+        throw PhoneRecipeEditingError.conversionUnavailable
       }
     }
     return RecipeSnapshot(

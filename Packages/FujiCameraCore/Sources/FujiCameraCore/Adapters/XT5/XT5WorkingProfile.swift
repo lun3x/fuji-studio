@@ -3,7 +3,7 @@ import Foundation
 
 /// Measured frame structure with replaceable starting settings. Always patches fresh input.
 public struct XT5WorkingProfile: Sendable {
-  public static let supportVersion = "xt5-4.31-0200-structured-frame-v3"
+  public static let supportVersion = "xt5-4.31-0200-structured-frame-v4"
   public static let writableOffsets = [
     533, 541, 545, 549, 553, 557, 561, 565, 569, 573, 577, 581, 585, 589, 593, 609, 617,
   ]
@@ -40,7 +40,7 @@ public struct XT5WorkingProfile: Sendable {
     ]
     guard tuple[0] == 7, [2, 4].contains(tuple[1]), tuple[2] == 1, tuple[3] == 1,
       [100, 400].contains(v(0xD190)), v(0xD191) == 0,
-      [UInt16(1), 11, 12, 14, 15].contains(v(0xD192)),
+      FujiRenderingValues.films[v(0xD192)] != nil,
       v(0xD193) == 0, v(0xD194) == 0, [1, 3, 6, 7].contains(v(0xD195)),
       (1...3).contains(v(0xD196)), (1...3).contains(v(0xD197)), v(0xD198) == 1,
       [UInt16(2), 32775].contains(v(0xD199)), (-9...9).contains(s(0xD19A)),

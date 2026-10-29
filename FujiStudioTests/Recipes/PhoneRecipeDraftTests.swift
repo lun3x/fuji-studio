@@ -5,14 +5,92 @@ import Testing
 @testable import FujiStudio
 
 struct PhoneRecipeDraftTests {
-  @Test func xt5EditorOffersAndReopensEveryDocumentedSelector() throws {
+  @Test func everyOfferedPhoneEditRemainsConvertible() throws {
+    for phone in [
+      try ProductionProfileFixture().bank.copiedToPhone(), try fixtureXE3Recipe().copiedToPhone(),
+    ] {
+      let draft = PhoneRecipeDraft(recipe: phone)
+      for id in RecipeSettingID.allCases {
+        for choice in draft.choices(for: id) {
+          var changed = draft
+          changed.setValue(choice.value, for: id)
+          let snapshot = try changed.makeSnapshot()
+          #expect(
+            RecipeCodecRegistry().assess(snapshot).issues.isEmpty,
+            "Offered \(id): \(choice.label) must remain convertible")
+        }
+      }
+    }
+  }
+  @Test func settingsOutsideConversionDomainCannotBeSaved() throws {
+    let phone = try ProductionProfileFixture().bank.copiedToPhone()
+    for (id, value): (RecipeSettingID, RecipeSettingValue) in [
+      (.dynamicRange, .integer(200)),
+      (.dynamicRange, .integer(0)), (.whiteBalance, .whiteBalance(.daylight)),
+      (.grain, .grain(.init(strength: .weak, size: .small))),
+      (.grain, .grain(.init(strength: .strong, size: .large))),
+    ] {
+      var draft = PhoneRecipeDraft(recipe: phone)
+      #expect(!draft.choices(for: id).contains { $0.value == value })
+      draft.setValue(value, for: id)
+      #expect(throws: PhoneRecipeEditingError.self) { try draft.makeSnapshot() }
+    }
+    var xe3 = PhoneRecipeDraft(recipe: try fixtureXE3Recipe().copiedToPhone())
+    #expect(!xe3.choices(for: .dynamicRange).contains { $0.value == .integer(0) })
+    xe3.setValue(.integer(0), for: .dynamicRange)
+    #expect(throws: PhoneRecipeEditingError.self) { try xe3.makeSnapshot() }
+  }
+  @Test func incompleteRepairCannotSaveButCompleteRepairPreservesOtherFields() throws {
+    let f = try ProductionProfileFixture()
+    var raw = f.properties
+    raw[0xD192] = 99  // Unknown imported film.
+    raw[0xD199] = 4  // Daylight also cannot be converted by the X-T5 adapter.
+    let phone = try f.bank(raw).copiedToPhone()
+    var draft = PhoneRecipeDraft(recipe: phone)
+    draft.setValue(.film(.classicChrome), for: .film)
+    #expect(throws: PhoneRecipeEditingError.self) { try draft.makeSnapshot() }
+    draft.setValue(.whiteBalance(.temperature), for: .whiteBalance)
+    let repaired = try draft.makeSnapshot()
+    #expect(RecipeCodecRegistry().assess(repaired).issues.isEmpty)
+    #expect(
+      repaired.importedSettings.filter { ![0xD192, 0xD199].contains($0.code) }
+        == phone.snapshot.importedSettings.filter { ![0xD192, 0xD199].contains($0.code) })
+  }
+  @Test func uneditableDependencyCannotSlipThroughSettingsSave() throws {
+    let f = try ProductionProfileFixture()
+    var raw = f.properties
+    raw[0xD1A4] = 2
+    let phone = try f.bank(raw).copiedToPhone()
+    var draft = PhoneRecipeDraft(recipe: phone)
+    draft.name = "Renamed"
+    #expect(try draft.makeSnapshot().settingsDigest == phone.snapshot.settingsDigest)
+    draft.setValue(.integer(10), for: .sharpness)
+    #expect(throws: PhoneRecipeEditingError.self) { try draft.makeSnapshot() }
+  }
+  @Test func grainControlsNeverCreateAnUnconvertibleCombination() throws {
+    let f = try ProductionProfileFixture()
+    var raw = f.properties
+    raw[0xD195] = 7  // Off with a dormant Large size.
+    let phone = try f.bank(raw).copiedToPhone()
+    var draft = PhoneRecipeDraft(recipe: phone)
+    draft.setGrainEffect(.strong)
+    #expect(draft.grain == .init(strength: .strong, size: .small))
+    #expect(RecipeCodecRegistry().assess(try draft.makeSnapshot()).issues.isEmpty)
+    draft.setGrainSize(.large)
+    draft.setGrainEffect(.weak)
+    #expect(draft.grain == .init(strength: .strong, size: .small))
+    #expect(RecipeCodecRegistry().assess(try draft.makeSnapshot()).issues.isEmpty)
+  }
+  @Test func xt5EditorOffersAndReopensConvertibleSelectors() throws {
     let phone = try ProductionProfileFixture().bank.copiedToPhone()
     let original = PhoneRecipeDraft(recipe: phone)
     #expect(original.choices(for: .film).count == 20)
-    #expect(original.choices(for: .whiteBalance).count == 14)
+    #expect(
+      original.choices(for: .whiteBalance).map(\.value)
+        == [WhiteBalanceMode.auto, .temperature].map(RecipeSettingValue.whiteBalance))
     #expect(
       original.choices(for: .dynamicRange).map(\.value)
-        == [400, 200, 100, 0].map(RecipeSettingValue.integer))
+        == [400, 100].map(RecipeSettingValue.integer))
     #expect(RecipeSettingID.dynamicRange.label(for: .integer(0)) == "Auto")
     for id in [RecipeSettingID.film, .whiteBalance, .dynamicRange] {
       for choice in original.choices(for: id) {
@@ -57,7 +135,7 @@ struct PhoneRecipeDraftTests {
     #expect(snapshot.copiedFromRecipeID == phone.id)
   }
   @Test func xe3UsesDiscreteKelvinWholeToneStepsAndNoGrainSize() throws {
-    let phone = try fixtureXE3Recipe(unknown: true).copiedToPhone()
+    let phone = try fixtureXE3Recipe().copiedToPhone()
     var draft = PhoneRecipeDraft(recipe: phone)
     #expect(draft.supportsSettingsEditing)
     #expect(draft.grain?.size == nil)
@@ -72,7 +150,6 @@ struct PhoneRecipeDraftTests {
     draft.setGrainEffect(.strong)
     let edited = try draft.makeSnapshot()
     #expect(edited.copiedFromRecipeID == phone.id)
-    #expect(edited.importedSettings.first { $0.code == 99 }?.raw == Data([0xaa, 0xbb]))
     #expect(try RecipeCodecRegistry().editableValues(edited)[.whiteBalanceRed] == .integer(2))
     #expect(
       try RecipeCodecRegistry().editableValues(edited)[.grain]
@@ -80,22 +157,22 @@ struct PhoneRecipeDraftTests {
     draft.temperature = "5310"
     #expect(throws: PhoneRecipeEditingError.invalidTemperature) { try draft.makeSnapshot() }
   }
-  @Test func grainControlsPreserveEachOtherAndRememberSizeWhileOff() throws {
+  @Test func convertibleGrainControlsPreserveOffAndStrongAcrossReopen() throws {
     let original = try ProductionProfileFixture().bank.copiedToPhone()
     var draft = PhoneRecipeDraft(recipe: original)
     #expect(draft.grain == .init(strength: .strong, size: .small))
     draft.setGrainSize(.large)
-    #expect(draft.grain == .init(strength: .strong, size: .large))
+    #expect(draft.grain == .init(strength: .strong, size: .small))
     draft.setGrainEffect(.weak)
-    #expect(draft.grain == .init(strength: .weak, size: .large))
+    #expect(draft.grain == .init(strength: .strong, size: .small))
     draft.setGrainEffect(.off)
     draft.setGrainSize(.small)
-    #expect(draft.grain == .init(strength: .off, size: .large))
+    #expect(draft.grain == .init(strength: .off, size: .small))
     let snapshot = try draft.makeSnapshot()
     #expect(
       snapshot.importedSettings.first { $0.code == 0xD195 }?.raw == ProtocolProbeFixtures.word(1))
     draft.setGrainEffect(.strong)
-    #expect(draft.grain == .init(strength: .strong, size: .large))
+    #expect(draft.grain == .init(strength: .strong, size: .small))
     let saved = PhoneRecipe(id: original.id, snapshot: snapshot)
     var reopened = PhoneRecipeDraft(recipe: saved)
     #expect(reopened.grain == .init(strength: .off, size: .small))
@@ -113,17 +190,16 @@ struct PhoneRecipeDraftTests {
     draft.setGrainSize(.large)
     #expect(!draft.hasChanges)
     #expect(try draft.makeSnapshot() == original.snapshot)
-    draft.setGrainEffect(.weak)
-    #expect(draft.grain == .init(strength: .weak, size: .small))
+    draft.setGrainEffect(.strong)
+    #expect(draft.grain == .init(strength: .strong, size: .small))
     #expect(
       try draft.makeSnapshot().importedSettings.first { $0.code == 0xD195 }?.raw
-        == ProtocolProbeFixtures.word(2))
+        == ProtocolProbeFixtures.word(3))
   }
-  @Test func grainControlEditsUsePublishedWireValues() throws {
+  @Test func convertibleGrainControlEditsUsePublishedWireValues() throws {
     let original = try ProductionProfileFixture().bank.copiedToPhone()
     for (strength, size, wire): (GrainStrength, GrainSize, UInt16) in [
-      (.off, .large, 1), (.weak, .small, 2), (.strong, .small, 3),
-      (.weak, .large, 4), (.strong, .large, 5),
+      (.off, .small, 1), (.strong, .small, 3),
     ] {
       var draft = PhoneRecipeDraft(recipe: original)
       draft.setGrainSize(size)
@@ -165,9 +241,7 @@ struct PhoneRecipeDraftTests {
     #expect(changed.id != original.snapshot.id && changed.copiedFromRecipeID == original.id)
     #expect(try PhoneRecipeDraft(recipe: original).makeSnapshot() == original.snapshot)
     draft.setValue(.integer(10), for: .sharpness)
-    #expect(
-      try draft.makeSnapshot().importedSettings.first { $0.code == 0xD192 }?.raw
-        == ProtocolProbeFixtures.word(99))
+    #expect(throws: PhoneRecipeEditingError.conversionUnavailable) { try draft.makeSnapshot() }
   }
   @Test func changedSettingsProduceValidSnapshotAndPreserveUntouchedValues() throws {
     let original = try ProductionProfileFixture().bank.copiedToPhone()

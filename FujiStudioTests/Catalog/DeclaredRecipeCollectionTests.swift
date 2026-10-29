@@ -18,7 +18,6 @@ struct DeclaredRecipeCollectionTests {
     try await catalog.saveJob(job)
     var draft = PhoneRecipeDraft(recipe: original)
     draft.name = "Offline XE3"
-    draft.setValue(.integer(2), for: .whiteBalanceBlue)
     let edited = try await catalog.updatePhoneRecipe(draft)
     #expect(edited.id == original.id && edited.snapshot.id != original.snapshot.id)
     #expect(edited.snapshot.importedSettings.first { $0.code == 99 }?.raw == Data([0xaa, 0xbb]))
