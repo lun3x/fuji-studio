@@ -197,8 +197,12 @@ The public `control-sweep.json` fixture retains settings/effective metadata only
   Classic Chrome 11; ACROS/Yellow/Red/Green 12/13/14/15. Monochrome and ACROS
   modes are identified by FujiFilm Saturation, not a missing FilmMode tag.
 - Grain codes **1/2/3** mean Off/Weak/Strong.
-- Literal DR **100/200/400** are observed, including a successful 400 request on
-  the original DR200 source. Do not impose an unmeasured source-DR clamp.
+- Literal DR **100/200/400** are observed in readback and JPEG metadata. The
+  earlier 400 request on a DR200 source established protocol acceptance only.
+  The [2026-10-29 phone image audit](xe3-phone-conversion-audit.md) supersedes
+  that source-support inference: exceeding capture DR produces severe colour
+  corruption despite exact readback and matching metadata. Fujifilm documents
+  the capture-DR ceiling; it must be respected when applying recipes.
 - Highlights/shadows at **-2/+4**, colour at **-4/+4**, sharpness at **-4/+4**,
   and the initial intermediate settings use signed values times ten.
 - WB shifts are signed grid steps. Red -9 and blue +9 appear as -180/+180 in
