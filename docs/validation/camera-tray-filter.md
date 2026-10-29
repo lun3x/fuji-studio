@@ -54,6 +54,18 @@ remain upright, and the expanded menu remains usable. Native captures are under
 `.build/camera-filter/native-screens` and `.build/camera-filter/final-screens`;
 app-only screenshot cropping is unreliable across rotation.
 
+## iPhone installation
+
+On 2026-10-29, built feature revision `ed9d2b4c` in Release for the connected
+physical iPhone 15 Pro using the existing automatic-signing team `AZH3P824F3`
+and `Apple Development` identity. The build passed. The exact resulting
+`.build/PhoneInstall/Build/Products/Release-iphoneos/FujiStudio.app` passed
+`codesign --verify --deep --strict`; its bundle and team identifiers matched.
+`devicectl device install app` completed successfully, followed by a normal
+launch of `com.lun3x.FujiStudio` with no fixture/probe arguments. A subsequent
+process query confirmed the installed app was running. Local build, signature,
+install and launch logs are under `.build/camera-filter/phone-*.log`.
+
 ## Bounds
 
 This verifies simulator behavior using generated pixels and synthetic metadata.
