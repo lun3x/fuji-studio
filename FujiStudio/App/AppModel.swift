@@ -61,6 +61,10 @@ import Observation
     }
     @ObservationIgnored private var availableDisplay: AvailableDisplay?
     @ObservationIgnored private var detectedCompatibility: [OriginalIdentity: RAWCompatibility] = [:]
+    @ObservationIgnored private var photoFilterTask: Task<Void, Never>?
+    @ObservationIgnored private var photoFilterWorkerID: UUID?
+    @ObservationIgnored private var photoFilterWorkerCamera: PhotoTrayFilterCamera?
+    @ObservationIgnored private var photoFilterWorkerSources: Set<OriginalIdentity> = []
 
     #if DEBUG
     /// Read-only lifecycle continuity for opt-in acceptance instrumentation.
@@ -84,6 +88,7 @@ import Observation
     deinit {
         streams.forEach { $0.cancel() }; displayTask?.cancel(); contextTask?.cancel(); versionRefreshTask?.cancel()
         automaticConnectionTask?.cancel()
+        photoFilterTask?.cancel()
     }
 
     var progressEvents: [ExportEvent] {
@@ -124,6 +129,7 @@ import Observation
     }
 
     private func reduce(_ action: WorkspaceAction) {
+        defer { refreshPhotoFilterWorker() }
         let previousSource = state.viewedSourceID, previousVersion = state.displayedVersion
         let previousRecipe = state.selectedRecipe
         let previousRevision = state.viewedSourceRevision
@@ -148,6 +154,47 @@ import Observation
             requestDisplay(request)
         }
         // Manual drawer collapse is fulfilled by WorkspaceView after final grid bounds settle.
+    }
+
+    private func cancelPhotoFilterChecks() {
+        photoFilterTask?.cancel(); photoFilterTask = nil; photoFilterWorkerID = nil
+        photoFilterWorkerCamera = nil; photoFilterWorkerSources = []
+    }
+
+    private func refreshPhotoFilterWorker() {
+        guard foreground, !isSuspended, state.photoFilter == .compatibleWithCamera,
+              let camera = state.photoFilterCamera, let support = state.cameraSupport else {
+            cancelPhotoFilterChecks(); return
+        }
+        let identities = Set(sources.map(OriginalIdentity.init))
+        if photoFilterWorkerCamera != camera || photoFilterWorkerSources != identities {
+            cancelPhotoFilterChecks()
+        }
+        guard photoFilterTask == nil, sources.contains(where: state.photoFilterNeedsAssessment) else { return }
+        let id = UUID(), pool = environment.originals
+        photoFilterWorkerID = id; photoFilterWorkerCamera = camera; photoFilterWorkerSources = identities
+        photoFilterTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard self?.photoFilterWorkerID == id,
+                      let source = self?.sources.first(where: { self?.state.photoFilterNeedsAssessment($0) == true }) else { break }
+                let result: PhotoTrayAssessment
+                do {
+                    let assessment = try await pool.assess(source: source, for: support)
+                    result = assessment == .supported(model: support.model) ? .compatible : .incompatible
+                } catch {
+                    if Task.isCancelled || error is CancellationError { break }
+                    result = .unavailable
+                }
+                guard !Task.isCancelled, self?.photoFilterWorkerID == id else { break }
+                self?.reduce(.photoFilterAssessed(source, camera: camera, result: result))
+                // Each source releases the resource permit before the next check, allowing
+                // queued viewer/export work to run. No USB work is needed for assessment.
+                await Task.yield()
+            }
+            if self?.photoFilterWorkerID == id {
+                self?.photoFilterTask = nil; self?.photoFilterWorkerID = nil
+            }
+        }
     }
 
     private func requestDisplay(_ request: WorkspacePreviewRequest?) {
@@ -582,12 +629,13 @@ import Observation
 
     func sceneChanged(_ phase: ScenePhase) async {
         sceneRevision &+= 1
-        if phase == .inactive { foreground = false; stopAutomaticConnection(); restoreIdle(); return }
+        if phase == .inactive { foreground = false; cancelPhotoFilterChecks(); stopAutomaticConnection(); restoreIdle(); return }
         let revision = sceneRevision
         if phase == .background {
             recipeLifecycleRevision &+= 1
             state.reduce(.previewInterrupted); isLoadingPreview = false
             foreground = false; isSuspended = true; restoreIdle()
+            cancelPhotoFilterChecks()
             stopAutomaticConnection()
             displayIntent &+= 1
             displayTask?.cancel(); displayRequest = nil
@@ -621,6 +669,7 @@ import Observation
                     self.requestDisplay(nil)
                 }
                 self.startAutomaticConnection()
+                self.refreshPhotoFilterWorker()
                 self.updateIdle()
             }
         }

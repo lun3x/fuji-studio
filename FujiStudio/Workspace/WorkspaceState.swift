@@ -26,6 +26,8 @@ enum WorkspaceAction: Sendable {
     case select, done
     /// Range sweep membership only; never changes viewed source or preview intent.
     case checkedSourcesReplaced(Set<SourceID>)
+    case photoFilterSelected(PhotoTrayFilter)
+    case photoFilterAssessed(PhotoSource, camera: PhotoTrayFilterCamera, result: PhotoTrayAssessment)
     case versionSelected(VersionID)
     case recipeSelected(slot: Int?)
     case phoneRecipeSelected(UUID)
@@ -73,6 +75,8 @@ struct WorkspaceState: Sendable {
     private(set) var selectedRecipe: RecipeSnapshot?
     private(set) var isSelecting = false
     private(set) var checkedSourceIDs: Set<SourceID> = []
+    private(set) var photoFilter: PhotoTrayFilter = .allPhotos
+    private var photoFilterIndex = PhotoTrayFilterIndex()
     private(set) var drawerDetent: DrawerDetent = .collapsed
     private(set) var recipes: [RecipeSnapshot] = []
     private(set) var recipeSlots:[RecipeSlot] = []
@@ -96,6 +100,33 @@ struct WorkspaceState: Sendable {
     }
 
     var viewedSourceRevision: String? { viewedSourceID.flatMap { sources[$0]?.resourceRevision } }
+
+    var photoFilterCamera: PhotoTrayFilterCamera? {
+        guard isCameraConnected, let support = cameraSupport, let context = currentCameraExecutionContext,
+              context.model == support.model, context.firmware == support.firmware,
+              context.capability == support.capability, context.supportVersion == support.supportVersion else { return nil }
+        return PhotoTrayFilterCamera(support)
+    }
+    var visibleSourceIDs: Set<SourceID> { Set(sources.keys.filter(sourceIsVisible)) }
+    var photoFilterPendingCount: Int {
+        guard photoFilter == .compatibleWithCamera, let camera = photoFilterCamera else { return 0 }
+        return sources.values.filter { photoFilterIndex.result(for: $0, camera: camera) == nil }.count
+    }
+    var photoFilterUnavailableCount: Int {
+        guard photoFilter == .compatibleWithCamera, let camera = photoFilterCamera else { return 0 }
+        return sources.values.filter { photoFilterIndex.result(for: $0, camera: camera) == .unavailable }.count
+    }
+    func photoFilterNeedsAssessment(_ source: PhotoSource) -> Bool {
+        guard photoFilter == .compatibleWithCamera, let camera = photoFilterCamera,
+              sources[source.id] == source else { return false }
+        return photoFilterIndex.result(for: source, camera: camera) == nil
+    }
+    private func sourceIsVisible(_ id: SourceID) -> Bool {
+        guard let source = sources[id] else { return false }
+        guard photoFilter == .compatibleWithCamera else { return true }
+        guard let camera = photoFilterCamera else { return false }
+        return photoFilterIndex.result(for: source, camera: camera) == .compatible
+    }
 
     var isCameraConnected: Bool {
         switch cameraState {
@@ -148,9 +179,14 @@ struct WorkspaceState: Sendable {
 
     @discardableResult
     mutating func reduce(_ action: WorkspaceAction) -> [WorkspaceEffect] {
+        defer {
+            if photoFilter == .compatibleWithCamera, !checkedSourceIDs.isEmpty {
+                checkedSourceIDs = checkedSourceIDs.filter(sourceIsVisible)
+            }
+        }
         switch action {
         case .sourceTapped(let id):
-            guard sources[id] != nil else { return [] }
+            guard sourceIsVisible(id) else { return [] }
             if isSelecting {
                 if !checkedSourceIDs.insert(id).inserted { checkedSourceIDs.remove(id) }
             }
@@ -171,6 +207,16 @@ struct WorkspaceState: Sendable {
 
         case .checkedSourcesReplaced(let ids):
             if isSelecting { checkedSourceIDs = ids.intersection(Set(sources.keys)) }
+
+        case .photoFilterSelected(let filter):
+            guard filter == .allPhotos || photoFilterCamera != nil else { return [] }
+            photoFilter = filter
+
+        case .photoFilterAssessed(let source, let camera, let result):
+            guard camera == photoFilterCamera, let current = sources[source.id],
+                  OriginalIdentity(current) == OriginalIdentity(source),
+                  current.originalResources == source.originalResources else { return [] }
+            photoFilterIndex.record(result, source: current, camera: camera)
 
         case .versionSelected(let version):
             guard viewedSourceID != nil else { return [] }
@@ -277,6 +323,7 @@ struct WorkspaceState: Sendable {
         case .libraryUpdated(let updated, let access):
             let oldViewed = viewedSourceID.flatMap { sources[$0] }
             sources = Self.accessibleIndex(updated, access: access)
+            photoFilterIndex.retain(Array(sources.values))
             libraryAccess = access
             checkedSourceIDs.formIntersection(Set(sources.keys))
             if let id = viewedSourceID, sources[id] == nil {
@@ -295,6 +342,11 @@ struct WorkspaceState: Sendable {
             let continuesExecution = context == currentCameraExecutionContext &&
                 belongsToExecution(cameraState, context: context) && belongsToExecution(state, context: context)
             cameraState = state
+            switch state {
+            case .disconnected, .authorizationDenied, .wrongMode, .recoverableError:
+                photoFilter = .allPhotos
+            default: break
+            }
             if currentCameraExecutionContext != context { cameraSupport=nil }
             currentCameraExecutionContext = context
             if !isCameraConnected, selectedRecipe != nil {

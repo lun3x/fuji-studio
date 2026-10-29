@@ -4,6 +4,54 @@ import Testing
 @testable import FujiStudio
 
 @MainActor struct AppModelTests {
+    @Test func cameraFilterChecksWithoutRenderingAndReusesAssessments() async throws {
+        let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment)
+        await model.start()
+        await eventually { model.state.photoFilterCamera != nil && !model.isRefreshing }
+        #expect(await f.reader.rawReads == 0)
+        #expect(model.state.photoFilter == .allPhotos)
+        model.send(.photoFilterSelected(.compatibleWithCamera))
+        await eventually { model.state.photoFilterPendingCount == 0 }
+        // Generic fixture geometry is deliberately outside the strict camera rules.
+        #expect(model.state.visibleSourceIDs.isEmpty)
+        #expect(await f.reader.rawReads == 3)
+        #expect(await f.camera.renderCount == 0)
+        #expect(await f.writer.requests.isEmpty)
+        model.send(.photoFilterSelected(.allPhotos)); model.send(.photoFilterSelected(.compatibleWithCamera))
+        await eventually { model.state.photoFilterPendingCount == 0 }
+        #expect(await f.reader.rawReads == 3)
+    }
+
+    @Test func disabledFilterCancelsChecksAndRejectsLateOriginals() async throws {
+        let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment), barrier = FixtureBarrier()
+        defer { Task { await barrier.release() } }
+        await model.start()
+        await eventually { model.state.photoFilterCamera != nil && !model.isRefreshing }
+        await f.reader.holdMaterialize("source-0", barrier: barrier)
+        model.send(.photoFilterSelected(.compatibleWithCamera)); await barrier.entered()
+        model.send(.photoFilterSelected(.allPhotos)); await barrier.release()
+        for _ in 0..<30 { await Task.yield() }
+        #expect(model.state.visibleSourceIDs.count == 3)
+        #expect(await f.reader.rawReads == 0)
+        #expect(await f.camera.renderCount == 0)
+    }
+
+    @Test func failedFilterChecksAreVisibleAndBackgroundCancelsWork() async throws {
+        let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment), barrier = FixtureBarrier()
+        defer { Task { await barrier.release() } }
+        await model.start()
+        await eventually { model.state.photoFilterCamera != nil && !model.isRefreshing }
+        await f.reader.failMaterialize("source-0", error: .retrievalFailed("offline"))
+        await f.reader.holdMaterialize("source-1", barrier: barrier)
+        model.send(.photoFilterSelected(.compatibleWithCamera)); await barrier.entered()
+        #expect(model.state.photoFilterUnavailableCount == 1)
+        let background = Task { await model.sceneChanged(.background) }
+        await eventually { model.isSuspended }
+        await barrier.release(); await background.value
+        #expect(model.state.photoFilter == .allPhotos)
+        #expect(await f.reader.rawReads == 0)
+    }
+
     @Test func failedRecipeCommitCanRetryWithoutPhysicalReconnect() async throws {
         let camera = try ReceiptCamera(), f = try await FixtureEnvironment.make(cameraOverride: camera)
         let catalog = HeldVersionCatalog(base: f.environment.catalog)
