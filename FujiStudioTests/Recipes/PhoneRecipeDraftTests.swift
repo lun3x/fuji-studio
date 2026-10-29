@@ -26,11 +26,11 @@ struct PhoneRecipeDraftTests {
     #expect(draft.grain?.size == nil)
     #expect(
       draft.choices(for: .kelvin).map(\.value)
-        == XE3NativeRecipeFields.kelvin.sorted().map(RecipeSettingValue.integer))
+        == XE3NativeRecipeFields.kelvin.sorted(by: >).map(RecipeSettingValue.integer))
     #expect(draft.choices(for: .colorChrome).isEmpty && draft.choices(for: .clarity).isEmpty)
     #expect(
       draft.choices(for: .highlight).map(\.value)
-        == [-20, -10, 0, 10, 20, 30, 40].map(RecipeSettingValue.integer))
+        == [40, 30, 20, 10, 0, -10, -20].map(RecipeSettingValue.integer))
     draft.setValue(.integer(2), for: .whiteBalanceRed)
     draft.setGrainEffect(.strong)
     let edited = try draft.makeSnapshot()
