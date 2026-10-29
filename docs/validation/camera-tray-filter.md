@@ -31,7 +31,14 @@ this device type, so the compatible 27.0 runtime was used. Xcode 27.1 toolchain.
   fell outside both landscape windows. After correction, all 52 AppModel tests
   and the both-landscape status UI regression passed.
 - Unsigned Release simulator build passed for arm64 and x86_64.
-- Complete final unit/UI suite: pending completion at the time of this draft.
+- Complete unit/UI suite at `7c707b09`: **564 passed, 3 established native opt-in
+  skips, 0 failures**, exit 0. This comprises 480 Swift Testing tests, 19 XCTest
+  unit tests and 65 passing UI cases. Result bundle:
+  `.build/TestResults/20261029-093252-3869.xcresult`.
+- The final screenshot/copy follow-up adds full-screen landscape attachments and
+  corrects the singular failure label. Both affected landscape UI cases passed;
+  the final singular-label revision passed the both-orientations case again.
+  The Release build passed again after this copy correction.
 
 An expansion test originally used a moving coordinate; its geometry wait resolves
 that automation issue. An overlapping local test runner invalidated a follow-up
@@ -41,9 +48,11 @@ this task's simulator.
 Local logs, xcresult bundles and generated fixture screenshots are under
 `.build/camera-filter` and `.build/TestResults` in the workspace. Inspected
 screenshots cover the native menu, active X-T5 results, dark X-E3 selection and
-empty state. Landscape geometry assertions pass in both orientations; native
-screen capture is pending for the final visual check because app-only screenshot
-cropping is unreliable across rotation.
+empty state. Full-screen landscape captures were inspected in both orientations:
+the status capsule stays within the tray and beside the filter, the controls
+remain upright, and the expanded menu remains usable. Native captures are under
+`.build/camera-filter/native-screens` and `.build/camera-filter/final-screens`;
+app-only screenshot cropping is unreliable across rotation.
 
 ## Bounds
 
@@ -51,4 +60,5 @@ This verifies simulator behavior using generated pixels and synthetic metadata.
 Physical attachment, real iCloud download timing and very large-library
 performance are not established by these checks. Existing camera compatibility
 rules are unchanged. No physical camera conversion or Photos export was run for
-this feature. The task simulator is shut down and deleted after final validation.
+this feature. The task simulator was shut down and deleted after final validation;
+its absence was verified with `simctl list devices`.

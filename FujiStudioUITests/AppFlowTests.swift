@@ -10,11 +10,17 @@ import XCTest
         defer { XCUIDevice.shared.orientation = .portrait }
         for orientation: UIDeviceOrientation in [.landscapeLeft, .landscapeRight] {
             XCUIDevice.shared.orientation = orientation
-            wait { app.windows.firstMatch.frame.width > app.windows.firstMatch.frame.height }
+            wait {
+                let window = app.windows.firstMatch.frame, tray = app.collectionViews["photoGrid"].frame
+                return window.width > window.height &&
+                    (orientation == .landscapeLeft ? tray.minX > window.midX : tray.maxX < window.midX)
+            }
             let window = app.windows.firstMatch.frame, tray = app.collectionViews["photoGrid"].frame
             XCTAssertTrue(window.contains(status.frame), "Status must fit the window: \(status.frame)")
             XCTAssertTrue(tray.contains(status.frame), "Status must remain inside the tray: \(status.frame)")
             shot(app, "Camera filter failure status \(orientation.rawValue)")
+            let screen = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            screen.name = "Camera filter status full screen \(orientation.rawValue)"; screen.lifetime = .keepAlways; add(screen)
         }
     }
 
@@ -88,6 +94,8 @@ import XCTest
         tap(app.buttons["workspace.filter"], in: app)
         XCTAssertTrue(app.buttons["filter.all"].waitForExistence(timeout: 5))
         shot(app, "Camera filter landscape expanded")
+        let screen = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screen.name = "Camera filter expanded full screen"; screen.lifetime = .keepAlways; add(screen)
         app.buttons["filter.all"].tap()
     }
 

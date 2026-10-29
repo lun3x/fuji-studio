@@ -236,7 +236,7 @@ struct WorkspaceView<StatusControl: View>: View {
             Text("Checking photos · \(state.photoFilterPendingCount) remaining")
                 .accessibilityIdentifier("filter.progress")
         } else if state.photoFilterUnavailableCount > 0 {
-            Text("\(state.photoFilterUnavailableCount) photos couldn’t be checked")
+            Text(state.photoFilterUnavailableCount == 1 ? "1 photo couldn’t be checked" : "\(state.photoFilterUnavailableCount) photos couldn’t be checked")
                 .accessibilityIdentifier("filter.unavailable")
         }
     }

@@ -57,6 +57,6 @@
 
 - [x] Write UI tests for menu labels and optional activation, X-E3/X-T5 results, clearing the filter, selection pruning and empty results. Run a focused new case; expect missing menu failure.
 - [x] Add a circular glass menu opposite Select, blue active tint/checkmark, checking/failure count and an empty-state overlay. Preserve orientation-aware placement, Reduce Transparency support and 44-point targets.
-- [ ] Run affected UI tests. Inspect light/dark, expanded/collapsed and landscape screenshots.
-- [ ] Run complete `Scripts/test-ios.sh` and unsigned Release build. Request a fresh whole-branch code review; fix material findings with regression tests.
-- [ ] Record results, checkpoint and push. Shut down and delete only this task's simulator. Retain the workspace/branch for user review.
+- [x] Run affected UI tests. Inspect light/dark, expanded/collapsed and landscape screenshots.
+- [x] Run complete `Scripts/test-ios.sh` and unsigned Release build. Request a fresh whole-branch code review; fix material findings with regression tests.
+- [x] Record results, checkpoint and push. Shut down and delete only this task's simulator. Retain the workspace/branch for user review.
