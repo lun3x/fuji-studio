@@ -132,5 +132,30 @@ AppModel run and the subsequent complete unit run pass. Earlier interrupted
 full runs are not counted as final full-suite validation.
 
 The corrected signed Release bundle passed strict codesign verification and was
-installed and launched normally on the physical iPhone. Physical revalidation
-and the final complete iOS suite are recorded below when finished.
+installed and launched normally on the physical iPhone. The user retried the
+same photo and recipe and confirmed that the photo now renders successfully.
+This verifies the reproduced metadata-admission case on the physical camera;
+recovery from a firmware state that no longer enumerates over USB remains
+unproven. Final complete iOS validation is recorded below.
+
+### Final validation and delivery
+
+- All 120 shared camera-core tests and 6 laptop-runner tests pass.
+- Complete `Scripts/test-ios.sh` validation on the task's isolated iPhone 15 Pro
+  simulator passed with the current two-worker runner: **604 logical tests,
+  601 passed, zero failed, three existing native-device gates skipped**. The
+  result tree contains 70 passing UI tests plus the three gates, including the
+  new error → status → reset → fresh render flow.
+- Result bundle: `.build/TestResults/20261029-150427-12167.xcresult`.
+- Independent core/UI reviews found no remaining actionable issues after the
+  lifecycle, selection-preservation, and synchronization corrections.
+- The signed physical-iPhone Release bundle passed
+  `codesign --verify --deep --strict`, was installed from
+  `.build/PhoneInstall/Build/Products/Release-iphoneos/FujiStudio.app`, and was
+  launched normally without fixture or test arguments. The user confirmed the
+  formerly failing photo/recipe now renders.
+- The task simulator and both native XCTest worker clones were shut down and
+  deleted. The UI implementer's separate simulator was also deleted. Unrelated
+  simulators were left untouched.
+
+Changes are published in [PR #34](https://github.com/lun3x/fuji-studio/pull/34).
