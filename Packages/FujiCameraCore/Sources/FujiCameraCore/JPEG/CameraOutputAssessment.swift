@@ -28,7 +28,8 @@ public struct CameraOutputAssessment: Sendable {
 
 extension CameraOutputAssessment {
   public static func assess(
-    metadata: ValidatedJPEGMetadata, conversion: PreparedConversion, required: Set<RecipeSettingID>
+    metadata: ValidatedJPEGMetadata, conversion: PreparedConversion, required: Set<RecipeSettingID>,
+    allowLensOptimizerAdjustment: Bool = false
   ) throws -> CameraOutputAssessment {
     guard let lmo = metadata.lensOptimizer else { throw CameraServiceError.invalidOutput }
     func reject(_ field: String, _ requested: String, _ observed: String) -> CameraOutputAssessment
@@ -37,7 +38,7 @@ extension CameraOutputAssessment {
         metadata: metadata,
         admission: .rejected(.init(field: field, requested: requested, observed: observed)))
     }
-    if lmo != conversion.expectedLensOptimizer {
+    if lmo != conversion.expectedLensOptimizer && !allowLensOptimizerAdjustment {
       return reject("lensOptimizer", String(conversion.expectedLensOptimizer), String(lmo))
     }
     var evidence: [RecipeSettingID: SettingEvidence] = [.lensOptimizer: .jpegObserved]
@@ -68,7 +69,7 @@ extension CameraOutputAssessment {
       dormantGrainSizeNotSerialized: conversion.requested.grain.strength == .off,
       inactiveKelvinPreserved: conversion.requested.whiteBalance != .temperature,
       lensOptimizerRequested: conversion.expectedLensOptimizer, lensOptimizerEffective: lmo,
-      lensOptimizerAdjusted: false,
+      lensOptimizerAdjusted: lmo != conversion.expectedLensOptimizer,
       evidence:
         "Exact profile readback and model-qualified JPEG identity/FINE/geometry; evidence source recorded per setting.",
       evidenceBySetting: evidence)

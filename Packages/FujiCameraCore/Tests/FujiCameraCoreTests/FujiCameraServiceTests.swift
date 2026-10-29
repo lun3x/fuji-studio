@@ -261,6 +261,32 @@ actor ProductionSession: CameraSessionTransport {
 }
 
 extension FujiCameraServiceTests {
+    @Test(arguments: [true, false])
+    func xt5LensOptimizerAdjustmentCompletesWithoutDisconnecting(_ effective: Bool) async throws {
+        let f = try ProductionOperationFixture(); defer { f.remove() }
+        let wire = ProductionSession(fixture: f)
+        let journal = try CameraOperationJournal(directory: f.directory.appendingPathComponent("journal"), filePolicy: TestJournalFilePolicy())
+        let adapter = XT5Adapter(validateJPEG: { _, m in
+            ValidatedJPEGMetadata(width: m.recordedGeometry.width, height: m.recordedGeometry.height, orientation: m.orientation, make: "FUJIFILM", model: "X-T5", quality: .fine, lensOptimizer: effective)
+        })
+        let service = FujiCameraService(session: wire, journal: journal, pollWait: {}, registry: FujiCameraRegistry(adapters: [adapter]))
+        try await service.connect()
+        let context = try await service.executionContext()
+        let result = try await service.render(raw: f.raw, recipe: f.profile.bank, policy: .fullSizeFineRecordedGeometry)
+        #expect(result.effectiveRecipe.lensOptimizerRequested)
+        #expect(result.effectiveRecipe.lensOptimizerEffective == effective)
+        #expect(result.effectiveRecipe.lensOptimizerAdjusted == !effective)
+        #expect(result.effectiveRecipe.evidenceBySetting?[.lensOptimizer] == .jpegObserved)
+        let record = try journal.load(result.operationID)
+        #expect(record.phase == .completed && record.emptyViewVerified && record.recipeMismatch == nil)
+        #expect(try await service.executionContext() == context)
+        var states = await service.states().makeAsyncIterator()
+        if case .ready = await states.next() {} else { Issue.record("Successful conversion must keep the camera ready") }
+        #expect(await wire.closes == 0)
+        #expect(await wire.triggers == 1)
+        #expect(await wire.deletes == [77])
+        await service.disconnect()
+    }
     @Test func expiredImportIOCannotSend() async throws {
         let counter=IOCommandCounter()
         let io=CameraOperationIO(temporarySelector:nil) { opcode,parameters,data in
@@ -285,7 +311,7 @@ extension FujiCameraServiceTests {
     @Test func verifiedMismatchCleansOnceWithoutPublishing() async throws {
         let f=try ProductionOperationFixture();defer { f.remove() }
         let wire=ProductionSession(fixture:f),journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"),filePolicy:TestJournalFilePolicy())
-        let adapter=XT5Adapter(validateJPEG:{ _,m in ValidatedJPEGMetadata(width:m.recordedGeometry.width,height:m.recordedGeometry.height,orientation:m.orientation,make:"FUJIFILM",model:"X-T5",quality:.fine,lensOptimizer:false) })
+        let adapter=XT5Adapter(validateJPEG:{ _,m in ValidatedJPEGMetadata(width:m.recordedGeometry.width,height:m.recordedGeometry.height,orientation:m.orientation,make:"FUJIFILM",model:"X-T5",quality:.fine,lensOptimizer:false,rendering:[.film:.film(.velvia)]) })
         let service=FujiCameraService(session:wire,journal:journal,pollWait:{},registry:FujiCameraRegistry(adapters:[adapter]))
         try await service.connect()
         await #expect(throws:CameraServiceError.invalidOutput) { try await service.render(raw:f.raw,recipe:f.profile.bank,policy:.fullSizeFineRecordedGeometry) }

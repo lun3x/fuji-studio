@@ -23,7 +23,7 @@ import Testing
         #expect(await wire.triggers == 3);#expect(await wire.deletes == [77,77,77]);#expect(await wire.closes == 1)
         #expect(!String(decoding:try Data(contentsOf:output.appendingPathComponent("xt5-production-acceptance-evidence.json")),as:UTF8.self).contains(inputs.a.sha256))
     }
-    @Test func unexpectedLMOStopsAfterFirstCapturedOutputWithoutMoreTrials() async throws {
+    @Test func adjustedLMOIsRecordedBeforeStrictProbeStopsWithoutMoreTrials() async throws {
         let f=try ProductionOperationFixture();defer { f.remove() }
         let inputs=try inputs(f),wire=ProductionSession(fixture:f),output=f.directory.appendingPathComponent("documents")
         let runner=XT5ProductionAcceptanceRunner(directory:output,prepare:{ _,_ in inputs },makeService:{ root in
@@ -31,7 +31,13 @@ import Testing
         })
         await runner.runIfRequested(arguments:["--xt5-production-acceptance-probe"])
         let report=try evidence(output)
-        #expect(report["complete"] as? Bool == false && report["trialCount"] as? Int == 0)
+        #expect(report["complete"] as? Bool == false && report["trialCount"] as? Int == 1)
+        let trials = try #require(report["trials"] as? [[String: Any]])
+        let trial = try #require(trials.first)
+        #expect(trial["lensOptimizerRequested"] as? Bool == true)
+        #expect(trial["lensOptimizerEffective"] as? Bool == false)
+        #expect(trial["lensOptimizerAdjusted"] as? Bool == true)
+        #expect(trial["outputCleanupConfirmed"] as? Bool == true)
         #expect(await wire.triggers == 1);#expect(await wire.closes == 1)
         #expect(await wire.commands.allSatisfy { $0.parameters != [0xD18C] })
     }
