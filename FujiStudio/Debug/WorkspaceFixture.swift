@@ -132,7 +132,16 @@ final class WorkspaceFixture {
         state.reduce(.recipesLoaded(recipes,slots:RecipeCodecRegistry.xt5Capabilities.bankSlots))
         state.reduce(.cameraChanged(.ready(CameraSession(generation: 1, connection: .init(name: "Generated fixture", usbVendorID: 0, usbProductID: 0))), context: CameraExecutionContext(model: context.model, firmware: context.firmware, capability: context.capability,
             supportVersion: XT5WorkingProfile.supportVersion, sessionIdentity: context.sessionIdentity, generation: 1)))
-        if let execution=state.currentCameraExecutionContext { state.reduce(.cameraSupportVerified(execution,try fixtureCameraSupport(execution))) }
+        if let execution=state.currentCameraExecutionContext {
+            let support = try fixtureCameraSupport(execution)
+            state.reduce(.cameraSupportVerified(execution, support))
+            if ProcessInfo.processInfo.arguments.contains("--fixture-filter-sources") {
+                for (index, source) in sources.enumerated() {
+                    state.reduce(.photoFilterAssessed(source, camera: PhotoTrayFilterCamera(support),
+                        result: index.isMultiple(of: 3) ? .compatible : .incompatible))
+                }
+            }
+        }
         state.reduce(.recipeSelected(slot: 3))
         state.reduce(.sourceTapped("source-0")); self.state = state
     }

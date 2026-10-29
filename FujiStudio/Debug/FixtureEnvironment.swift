@@ -34,7 +34,7 @@ import Observation
         let writer: FixtureWriter
         let platform: FixturePlatform
     }
-    static func make(access: LibraryAccess = .full, uncertain: Bool = false, cameraOverride: (any CameraServing)? = nil,cameraModel:String="X-T5",slotCount:Int=7,mixedModels:Bool=false,undecodableRAW:Bool=false) async throws -> Bundle {
+    static func make(access: LibraryAccess = .full, uncertain: Bool = false, cameraOverride: (any CameraServing)? = nil,cameraModel:String="X-T5",slotCount:Int=7,mixedModels:Bool=false,undecodableRAW:Bool=false,filterSources:Bool=false) async throws -> Bundle {
         let images = try WorkspaceFixture()
         let allRecipes=cameraModel == "X-E3" ? try fixtureXE3Snapshots() : images.state.recipes
         let cachedRecipes=Array(allRecipes.prefix(slotCount))
@@ -58,7 +58,7 @@ import Observation
         let writer = FixtureWriter(reader: reader, uncertain: uncertain)
         let pool = OriginalResourcePool(reader: reader, prepare: { local in
             PreparedRAW(fileURL: local.fileURL, sha256: local.checksum, sourceID: local.token.assetID, sourceRevision: local.token.sourceRevision,
-                metadata: RAWMetadata(cameraModel: cameraModel, containerGeometry: PixelSize(width: 1800, height: 1200), recordedGeometry: PixelSize(width: 1800, height: 1200), recordedAspect: PixelSize(width: 3, height: 2), cropTop: 0, cropLeft: 0, orientation: 1))
+                metadata: filterSources ? fixtureFilterMetadata(sourceID: local.token.assetID, cameraModel: cameraModel) : RAWMetadata(cameraModel: cameraModel, containerGeometry: PixelSize(width: 1800, height: 1200), recordedGeometry: PixelSize(width: 1800, height: 1200), recordedAspect: PixelSize(width: 3, height: 2), cropTop: 0, cropLeft: 0, orientation: 1))
         })
         let scheduler = CameraWorkScheduler()
         let resolver = VersionImageResolver(library: reader, catalog: storage.0, pool: pool, rawRenderer: storage.2, cache: storage.1)
@@ -73,6 +73,21 @@ import Observation
             resolver: resolver, exports: exports, cache: storage.1, thumbnails: images.thumbnails, platform: platform),
             reader: reader, camera: camera, writer: writer, platform: platform)
     }
+}
+
+/// Mixed RAW metadata for filter validation; pixels remain generated fixture JPEGs.
+private func fixtureFilterMetadata(sourceID: SourceID, cameraModel: String) -> RAWMetadata {
+    let model = sourceID == "source-1" ? (cameraModel == "X-E3" ? "X-T5" : "X-E3") : cameraModel
+    let valid = sourceID != "source-2"
+    if model == "X-E3" {
+        return RAWMetadata(cameraModel: model, containerGeometry: .init(width: 6048, height: 4038),
+            recordedGeometry: .init(width: valid ? 6000 : 3000, height: valid ? 4000 : 2000),
+            recordedAspect: .init(width: 3, height: 2), cropTop: 21, cropLeft: 16, orientation: 1,
+            compression: .lossless, bitDepth: 14, rafVersion: "0130")
+    }
+    return RAWMetadata(cameraModel: model, containerGeometry: .init(width: 7872, height: 5196),
+        recordedGeometry: .init(width: valid ? 7728 : 3000, height: valid ? 5152 : 2000),
+        recordedAspect: .init(width: 3, height: 2), cropTop: 21, cropLeft: 12, orientation: 1)
 }
 
 actor FixtureBarrier {
@@ -107,7 +122,7 @@ actor FixtureLibrary: PhotoLibraryReading {
     func holdDiscovery(_ barrier: FixtureBarrier) { discoveryBarrier = barrier }
     func limitDiscovery(_ count: Int) { discoveryLimit = count }
     func holdMaterialize(_ id: String, barrier: FixtureBarrier) { materializeBarriers[id] = barrier }
-    func failMaterialize(_ id: String, error: ResourceError) { materializeFailures[id] = error }
+    func failMaterialize(_ id: String, error: ResourceError?) { materializeFailures[id] = error }
     private var undecodableRAW=false
     func replaceOriginal(_ id: String, revision: String) throws -> Data {
         guard let i = index.firstIndex(where: { $0.id == id }) else { throw ResourceError.inaccessibleAsset(id) }

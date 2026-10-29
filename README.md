@@ -77,6 +77,16 @@ selected and becomes an Export icon when a recipe is selected. Export no longer
 appears in the top status row. Clear the recipe to browse the original RAW,
 camera JPEG and saved exports; temporary previews are not version-menu entries.
 
+The photo tray includes a floating glass filter menu beside Select (below it in
+either landscape orientation). The selection counter keeps its original corner. Choose
+**Compatible with X-E3** or **Compatible with X-T5**, depending on the verified
+connected camera, to show only RAWs admitted by that camera's existing source
+rules. Filtering is optional; **All Photos** restores the complete tray, and
+disconnecting clears the filter. The current viewer stays open while hidden
+photos leave batch selection. Initial checks retrieve original metadata and
+may need iCloud; matching photos appear incrementally. Choose the compatible
+option again to retry photos that could not be checked.
+
 The photo tray now uses a floating glass Select button at the top right. Select
 becomes an X to cancel the batch; checked thumbnails are greyed with a blue
 checkmark at the bottom right. The floating count appears only in Select mode.

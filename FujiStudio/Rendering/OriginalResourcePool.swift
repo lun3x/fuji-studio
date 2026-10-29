@@ -14,6 +14,7 @@ actor OriginalResourcePool {
     private let gate: SerialCameraGate
     private let prepare: Prepare
     private var detected: [OriginalIdentity: RAWCompatibility] = [:]
+    private var metadata: [OriginalIdentity: RAWMetadata] = [:]
     private var observers: [UUID: AsyncStream<[OriginalIdentity: RAWCompatibility]>.Continuation] = [:]
     init(reader: any PhotoLibraryReading, gate: SerialCameraGate = SerialCameraGate(), prepare: @escaping Prepare = { try RAFMetadataReader().prepare($0) }) {
         self.reader = reader; self.gate = gate; self.prepare = prepare
@@ -27,6 +28,22 @@ actor OriginalResourcePool {
     }
     private func removeObserver(_ id: UUID) { observers[id] = nil }
     func compatibility(for source: PhotoSource) -> RAWCompatibility { detected[OriginalIdentity(source)] ?? source.compatibility }
+    /// Camera-specific admission is separate from model recognition used by original viewing.
+    func assess(source: PhotoSource, for support: VerifiedCameraSupport) async throws -> RAWCompatibility {
+        try Task.checkCancellation()
+        let token = source.originalResources.raf
+        guard token.assetID == source.id, token.sourceRevision == source.resourceRevision,
+              token.format == .raf, token.role != .adjusted else { throw ResourceError.resourceChanged }
+        if let metadata = metadata[OriginalIdentity(source)] {
+            return SourceCompatibility.assess(metadata, for: support)
+        }
+        do {
+            return try await withPreparedRAW(source: source) { SourceCompatibility.assess($0.metadata, for: support) }
+        } catch ResourceError.incompatibleCamera(let model) {
+            return .incompatible(model: model)
+        }
+    }
+    private func remember(_ raw: PreparedRAW, source: PhotoSource) { metadata[OriginalIdentity(source)] = raw.metadata }
     private func record(_ compatibility: RAWCompatibility, source: PhotoSource) {
         let identity = OriginalIdentity(source)
         guard detected[identity] != compatibility else { return }
@@ -56,6 +73,7 @@ actor OriginalResourcePool {
             }
             guard raw.sourceID == source.id, raw.sourceRevision == source.resourceRevision,
                   raw.fileURL == resource.fileURL else { throw ResourceError.resourceChanged }
+            await self.remember(raw, source: source)
             let compatibility=SourceCompatibility.detected(raw.metadata)
             await self.record(compatibility, source: source)
             if case .incompatible(let model)=compatibility { throw ResourceError.incompatibleCamera(model) }
