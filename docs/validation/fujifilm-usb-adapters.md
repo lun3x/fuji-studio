@@ -191,6 +191,7 @@ locked. Independent JPEG-file inspection is pending. The public, sanitized proof
 is `phone-preview-acceptance.json` in the canonical XE3/1.30 fixtures. Full journals,
 catalogs and any image data remain private in ignored storage.
 
-The next requested check is one deliberate C4 export and opening the resulting
-saved portrait, with the phone kept unlocked for readback. Export/history and
-saved-version acceptance are not claimed until that check completes.
+On 2026-10-29 the user deferred the deliberate C4 export and saved-version test.
+Physical seven-bank import and C4 preview remain verified. Export/history,
+saved-version viewing and independent JPEG-file inspection remain pending until
+the user resumes testing.
