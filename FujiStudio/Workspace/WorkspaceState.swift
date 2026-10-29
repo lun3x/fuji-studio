@@ -431,6 +431,17 @@ struct WorkspaceState: Sendable {
 
     func acceptsPreview(_ request: WorkspacePreviewRequest) -> Bool { pendingPreview == request }
 
+    /// The selected recipe is still pending while an earlier camera operation drains.
+    var isAwaitingRecipePreview: Bool {
+        guard !isCameraResetting, !previewSatisfied, wantsRecipePreview,
+              let id = viewedSourceID, let source = sources[id], incompatibleModel(source) == nil,
+              let recipe = selectedRecipe,
+              case .supported = recipe.renderingSupport(using: RecipeCodecRegistry()),
+              let context = currentCameraExecutionContext,
+              belongsToExecution(cameraState, context: context), matches(recipe: recipe, context: context) else { return false }
+        return true
+    }
+
     private var originalVersion: VersionID? {
         guard let id = viewedSourceID, let source = sources[id] else { return nil }
         return source.originalResources.jpeg == nil ? .raw : .cameraJPEG
@@ -448,10 +459,8 @@ struct WorkspaceState: Sendable {
     }
 
     private mutating func requestUnsatisfiedPreview() -> [WorkspaceEffect] {
-        guard !isCameraResetting, !previewSatisfied, pendingPreview == nil,
-              wantsRecipePreview, let id = viewedSourceID, let source = sources[id],
-              eligibleSourceIDs.contains(id), let recipe = selectedRecipe,
-              case .supported = recipe.renderingSupport(using: RecipeCodecRegistry()),
+        guard isAwaitingRecipePreview, pendingPreview == nil,
+              let id = viewedSourceID, let source = sources[id], let recipe = selectedRecipe,
               case .ready(let session) = cameraState,
               let context = currentCameraExecutionContext, context.generation == session.generation,
               matches(recipe: recipe, context: context) else { return [] }

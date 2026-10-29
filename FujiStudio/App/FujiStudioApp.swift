@@ -133,9 +133,10 @@ private struct AppEntryView: View {
                         let barrier = FixtureBarrier(); fixtureRecipeBarrier = barrier; fixtureRecipeCamera = bundle.camera
                         await bundle.camera.holdImport(barrier)
                     }
-                    if flags.contains("--fixture-held-preview") {
+                    if flags.contains("--fixture-held-preview") || flags.contains("--fixture-held-conversion") {
                         let barrier = FixtureBarrier(); fixturePreviewBarrier = barrier; fixturePreviewCamera = bundle.camera
-                        await bundle.reader.holdMaterialize("source-0", barrier: barrier)
+                        if flags.contains("--fixture-held-conversion") { await bundle.camera.holdRender(barrier) }
+                        else { await bundle.reader.holdMaterialize("source-0", barrier: barrier) }
                     }
                     if flags.contains("--fixture-held-photo") {
                         let barrier = FixtureBarrier(); fixturePhotoBarrier = barrier
