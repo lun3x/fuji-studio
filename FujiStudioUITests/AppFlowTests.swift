@@ -155,6 +155,27 @@ import XCTest
         XCTAssertEqual(phoneQuery.count, 1)
     }
 
+    func testPhoneEditorNumericPickerDescendsThroughFractionalAndNegativeValues() {
+        let app = launch(["--fixture-disconnected-camera"])
+        tap(app.buttons["recipe.control"], in: app); app.buttons["recipe.copy.3"].tap()
+        let edit = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.edit.")).firstMatch
+        XCTAssertTrue(edit.waitForExistence(timeout: 5)); edit.tap()
+        let highlights = app.buttons["recipe.editor.setting.highlight"]
+        reveal(highlights, in: app); highlights.tap()
+        let labels = ["+4", "+3.5", "+3", "+2.5", "+2", "+1.5", "+1", "+0.5", "0", "-0.5", "-1", "-1.5", "-2"]
+        XCTAssertTrue(app.buttons[labels[0]].waitForExistence(timeout: 5))
+        for (upper, lower) in zip(labels, labels.dropFirst()) {
+            XCTAssertLessThan(app.buttons[upper].frame.minY, app.buttons[lower].frame.minY)
+        }
+        shot(app, "Highlights descend from positive through zero to negative")
+        app.buttons["+3.5"].tap()
+        app.buttons["recipe.editor.save"].tap()
+        XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitForNonExistence(timeout: 5))
+        edit.tap(); reveal(highlights, in: app)
+        XCTAssertTrue(highlights.label.contains("+3.5"))
+        app.buttons["recipe.editor.cancel"].tap()
+    }
+
     func testPhoneEditorRejectsInvalidTemperatureAndKeepsDraft() {
         let app = launch(["--fixture-disconnected-camera"])
         tap(app.buttons["recipe.control"], in: app); app.buttons["recipe.copy.3"].tap()

@@ -59,9 +59,16 @@ struct PhoneRecipeDraft: Sendable, Equatable {
   }
   func choices(for setting: RecipeSettingID) -> [SettingChoice] {
     guard let c = capabilities?.settings[setting], c.support == .supported else { return [] }
-    if !c.editableChoices.isEmpty { return c.editableChoices }
+    if !c.editableChoices.isEmpty {
+      return c.editableChoices.sorted {
+        guard case .integer(let lhs) = $0.value, case .integer(let rhs) = $1.value else {
+          return false
+        }
+        return lhs > rhs
+      }
+    }
     guard let min = c.minimum, let max = c.maximum, let step = c.step, step > 0 else { return [] }
-    return stride(from: min, through: max, by: step).map {
+    return stride(from: min, through: max, by: step).reversed().map {
       .init(value: .integer($0), label: setting.label(for: .integer($0)))
     }
   }
