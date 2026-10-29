@@ -214,6 +214,7 @@ private actor LiveBindingLibrary: PhotoLibraryReading {
         let source = try source(id: assetID); return [source.originalResources.raf] + (source.originalResources.jpeg.map { [$0] } ?? [])
     }
     func changes() -> AsyncStream<LibraryChange> { AsyncStream { $0.finish() } }
+    func rawMetadata(_ resource: ResourceToken) throws -> RAWMetadata { throw ResourceError.invalidRAF("Metadata is unavailable in this fixture") }
     func materialize(_ token: ResourceToken, progress: @escaping @Sendable (Double) -> Void) throws -> LocalResource {
         let file = root.appendingPathComponent("live-transfer-\(UUID().uuidString)")
         try Data("synthetic live payload".utf8).write(to: file); files.append(file)

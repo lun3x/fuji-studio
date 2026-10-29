@@ -53,13 +53,16 @@ import Observation
                 try FileRenderCache(directory: root.appendingPathComponent("cache"), pinnedDirectory: root.appendingPathComponent("pins"), validateJPEG: { _ in }),
                 try RawDisplayRenderer(directory: root.appendingPathComponent("raw-display")))
         }.value
-        let reader = FixtureLibrary(sources: originals, image: images.file, root: root, access: access,undecodableRAW:undecodableRAW)
+        let metadata: @Sendable (ResourceToken) -> RAWMetadata = { token in
+            filterSources ? fixtureFilterMetadata(sourceID: token.assetID, cameraModel: cameraModel) : RAWMetadata(cameraModel: cameraModel, containerGeometry: PixelSize(width: 1800, height: 1200), recordedGeometry: PixelSize(width: 1800, height: 1200), recordedAspect: PixelSize(width: 3, height: 2), cropTop: 0, cropLeft: 0, orientation: 1)
+        }
+        let reader = FixtureLibrary(sources: originals, image: images.file, root: root, access: access,undecodableRAW:undecodableRAW, metadata: metadata)
         let camera = FixtureCamera(recipes: cachedRecipes, image: images.file, root: root,declaredSlots:slots)
         let selectedCamera: any CameraServing = cameraOverride ?? camera
         let writer = FixtureWriter(reader: reader, uncertain: uncertain)
         let pool = OriginalResourcePool(reader: reader, prepare: { local in
             PreparedRAW(fileURL: local.fileURL, sha256: local.checksum, sourceID: local.token.assetID, sourceRevision: local.token.sourceRevision,
-                metadata: filterSources ? fixtureFilterMetadata(sourceID: local.token.assetID, cameraModel: cameraModel) : RAWMetadata(cameraModel: cameraModel, containerGeometry: PixelSize(width: 1800, height: 1200), recordedGeometry: PixelSize(width: 1800, height: 1200), recordedAspect: PixelSize(width: 3, height: 2), cropTop: 0, cropLeft: 0, orientation: 1))
+                metadata: metadata(local.token))
         })
         let scheduler = CameraWorkScheduler()
         let resolver = VersionImageResolver(library: reader, catalog: storage.0, pool: pool, rawRenderer: storage.2, cache: storage.1)
@@ -114,8 +117,11 @@ actor FixtureLibrary: PhotoLibraryReading {
     private(set) var materializations = 0
     private var observers: [AsyncStream<LibraryChange>.Continuation] = []
     private(set) var rawReads = 0, changeSubscriptions = 0, discoveryRequests = 0
-    init(sources: [PhotoSource], image: DisplayFileLease, root: URL, access: LibraryAccess,undecodableRAW:Bool=false) {
+    private let metadata: @Sendable (ResourceToken) -> RAWMetadata
+    private(set) var metadataReads = 0
+    init(sources: [PhotoSource], image: DisplayFileLease, root: URL, access: LibraryAccess,undecodableRAW:Bool=false, metadata: @escaping @Sendable (ResourceToken) -> RAWMetadata) {
         index = sources; self.image = image; self.root = root; self.access = access;self.undecodableRAW=undecodableRAW
+        self.metadata = metadata
     }
     func requestAccess() -> LibraryAccess { access }
     func setAccess(_ value: LibraryAccess) { access = value }
@@ -176,6 +182,13 @@ actor FixtureLibrary: PhotoLibraryReading {
         materializations += 1
         progress(1)
         return LocalResource(token: resource, fileURL: url, checksum: try ResourceChecksum.sha256(url))
+    }
+    func rawMetadata(_ resource: ResourceToken) async throws -> RAWMetadata {
+        if let barrier = materializeBarriers[resource.assetID] { await barrier.wait() }
+        try Task.checkCancellation()
+        if let error = materializeFailures[resource.assetID] { throw error }
+        metadataReads += 1
+        return metadata(resource)
     }
     func addOutput(_ id: String) {
         outputs[id] = ResourceToken(assetID: id, role: .primaryOriginal, contentTypeIdentifier: "public.jpeg", format: .jpeg, originalFilename: "generated.JPG", discriminator: "jpeg", sourceRevision: "generated")

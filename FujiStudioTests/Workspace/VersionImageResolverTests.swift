@@ -124,6 +124,7 @@ private actor ViewerLibrary: PhotoLibraryReading {
     func source(id: SourceID) throws -> PhotoSource { throw ResourceError.inaccessibleAsset(id) }
     func resources(assetID: String) throws -> [ResourceToken] { requestedAssets.append(assetID); if let failure { throw failure }; return tokens }
     func changes() -> AsyncStream<LibraryChange> { AsyncStream { $0.finish() } }
+    func rawMetadata(_ resource: ResourceToken) throws -> RAWMetadata { throw ResourceError.invalidRAF("Metadata is unavailable in this fixture") }
     func materialize(_ token: ResourceToken, progress: @escaping @Sendable (Double) -> Void) throws -> LocalResource {
         materialized.append(token); progress(0.25)
         let url = original.deletingLastPathComponent().appendingPathComponent(UUID().uuidString + ".JPG")

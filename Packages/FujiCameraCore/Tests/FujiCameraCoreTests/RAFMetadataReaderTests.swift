@@ -6,6 +6,32 @@ import UniformTypeIdentifiers
 import CoreGraphics
 
 struct RAFMetadataReaderTests {
+    @Test func metadataInspectionDoesNotRequireTheSensorPixelPayload() throws {
+        let local = try fixture(model: "X-T5")
+        defer { try? FileManager.default.removeItem(at: local.fileURL) }
+        var prefix = try Data(contentsOf: local.fileURL)
+        let payloadOffset = prefix[100..<104].reduce(0) { ($0 << 8) | Int($1) }
+        let length = 80 * 1024 * 1024
+        prefix.replaceSubrange(104..<108, with: withUnsafeBytes(of: UInt32(length).bigEndian) { Data($0) })
+        let metadata = try #require(try RAFMetadataReader().metadata(in: prefix, fileByteCount: payloadOffset + length))
+        #expect(metadata.cameraModel == "X-T5")
+        #expect(metadata.recordedGeometry == PixelSize(width: 7728, height: 5152))
+        #expect(metadata.orientation == 6 && metadata.cropTop == 22)
+        #expect(try RAFMetadataReader().metadata(in: Data(prefix.prefix(128)), fileByteCount: payloadOffset + length) == nil)
+        #expect(throws: ResourceError.self) { try RAFMetadataReader().metadata(in: prefix, fileByteCount: prefix.count) }
+    }
+
+    @Test(arguments: [UInt32(0), 2]) func metadataInspectionPreservesXE3SensorRules(_ compression: UInt32) throws {
+        let local = try xe3RAFFixture(compression: compression)
+        defer { try? FileManager.default.removeItem(at: local.fileURL) }
+        let bytes = try Data(contentsOf: local.fileURL)
+        let metadata = try #require(try RAFMetadataReader().metadata(in: bytes, fileByteCount: bytes.count))
+        #expect(metadata.bitDepth == 14 && metadata.rafVersion == "0130")
+        #expect(metadata.compression == (compression == 2 ? .lossless : .uncompressed))
+        try XE3SourceRules.validate(metadata)
+        #expect(try RAFMetadataReader().metadata(in: Data(bytes.dropLast(10)), fileByteCount: bytes.count) == nil)
+    }
+
     @Test func verifiesRAFIdentityAndPreservesCropAndOrientationWithoutRAWDecode() throws {
         let local = try fixture(model: "X-T5")
         defer { try? FileManager.default.removeItem(at: local.fileURL) }

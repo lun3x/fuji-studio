@@ -340,6 +340,7 @@ actor BatchReader: PhotoLibraryReading {
     }
     func resources(assetID: String) -> [ResourceToken] { live.filter { $0.id == assetID }.map(\.originalResources.raf) }
     func changes() -> AsyncStream<LibraryChange> { AsyncStream { $0.finish() } }
+    func rawMetadata(_ resource: ResourceToken) throws -> RAWMetadata { throw ResourceError.invalidRAF("Metadata is unavailable in this fixture") }
     func materialize(_ resource: ResourceToken, progress: @escaping @Sendable (Double) -> Void) throws -> LocalResource {
         let file = fixture.root.appendingPathComponent(UUID().uuidString + ".RAF")
         try FileManager.default.copyItem(at: fixture.raw.fileURL, to: file); files.append(file)
