@@ -42,8 +42,8 @@ Files: `FujiStudio/Export/ExportCoordinator.swift`, `FujiStudio/Workspace/Camera
 - [x] Add tests for progress across saved, failed, cancelled, pending, and terminal states; add UI coverage for preview navigation during a held batch and progress visibility.
 - [x] Run tests and confirm missing progress fails.
 - [x] Add a compact linear progress bar inside the existing status button, preserving its hit area and camera indicator. Include processed/total in its accessibility value.
-- [ ] Run affected UI suites and the complete `Scripts/test-ios.sh` suite.
-- [ ] Review the final diff, checkpoint and push, and shut down/delete the task simulator.
+- [x] Run affected UI suites and the complete `Scripts/test-ios.sh` suite.
+- [x] Review the final diff, checkpoint and push, and shut down/delete the task simulator.
 
 ## Execution record
 
@@ -53,4 +53,6 @@ Files: `FujiStudio/Export/ExportCoordinator.swift`, `FujiStudio/Workspace/Camera
 - Baseline: 517 unit tests passed. Regression run failed on the three expected preview-priority cases. After the scheduler fix, 520 unit tests passed (`20261029-165526-66985.xcresult`).
 - The affected export and camera UI suites passed (8 tests passed, 1 existing opt-in native lifecycle test skipped); screenshots verified progress at 0/3, 2/3, and after completion (`20261029-165833-68629.xcresult`).
 - Review identified two admission/handoff races. Regression tests reproduced both: busy photo/recipe changes had no queued preview, and export unpin could remove a cache hit before display ownership. Preview admission now returns an owned display copy, and the reducer queues against its verified busy session. A parallel paired-JPEG fallback preserves immediate original browsing.
-- Final unit iteration: 526 tests passed in 59 suites (`20261029-171037-73574.xcresult`). Independent review found no remaining concrete issues; complete unit/UI validation is running.
+- Final unit iteration: 526 Swift Testing tests plus 19 XCTest unit tests passed (`20261029-171037-73574.xcresult`). Independent review found no remaining concrete issues.
+- Complete `Scripts/test-ios.sh` validation passed: 617 tests passed, 0 failed, 3 existing opt-in tests skipped (`20261029-171137-75093.xcresult`). Skips: native Home background boundary, hardware Escape dismissal, and native device rotation. Task simulator was already shut down by Xcode and has been deleted; its temporary Xcode test workers were automatically removed.
+- Changes are pushed to `codex/export-preview-priority` and available in draft PR #38.
