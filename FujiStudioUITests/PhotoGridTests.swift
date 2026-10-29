@@ -4,7 +4,7 @@ import XCTest
 final class PhotoGridTests: XCTestCase {
     private func launch() -> XCUIApplication {
         let app = XCUIApplication(); app.launchArguments = ["--grid-fixture"]; app.launch()
-        XCTAssertTrue(app.collectionViews["photoGrid"].waitForExistence(timeout: 10)); return app
+        XCTAssertTrue(app.collectionViews["photoGrid"].waitUntilExists(timeout: 10)); return app
     }
     private func tile(_ app: XCUIApplication, _ n: Int) -> XCUIElement { app.cells["grid.source-\(n)"] }
     func testVerticalScrollBothModesAndSelectKeepsTileAndAnchor() {

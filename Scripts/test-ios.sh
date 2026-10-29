@@ -38,10 +38,6 @@ for selector in "$@"; do
 done
 
 workers="${FUJI_STUDIO_TEST_WORKERS-2}"
-if [[ ! "$workers" =~ ^[1-9][0-9]*$ ]]; then
-  echo 'error: FUJI_STUDIO_TEST_WORKERS must be a positive integer.' >&2
-  exit 2
-fi
 diagnostics="${FUJI_STUDIO_TEST_DIAGNOSTICS-never}"
 case "$diagnostics" in
   never|on-failure) ;;
@@ -53,9 +49,14 @@ for selector in "$@"; do
   case "$selector" in FujiStudioUITests|FujiStudioUITests/*) includes_ui=true ;; esac
 done
 
-xcodegen generate
 # Use iPhone 15 Pro by default; task-specific simulators can override this.
 destination="${FUJI_STUDIO_DESTINATION:-platform=iOS Simulator,name=iPhone 15 Pro}"
+if [[ "$destination" == *"Simulator"* && "$includes_ui" == true && ! "$workers" =~ ^[1-9][0-9]*$ ]]; then
+  echo 'error: FUJI_STUDIO_TEST_WORKERS must be a positive integer.' >&2
+  exit 2
+fi
+
+xcodegen generate
 mkdir -p .build/TestResults
 result=".build/TestResults/$(date +%Y%m%d-%H%M%S)-$$.xcresult"
 args=(-project FujiStudio.xcodeproj -scheme FujiStudio -destination "$destination" -derivedDataPath .build/DerivedData -resultBundlePath "$result")

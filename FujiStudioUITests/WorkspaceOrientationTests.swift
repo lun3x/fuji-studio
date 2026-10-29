@@ -7,7 +7,7 @@ final class WorkspaceOrientationTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--workspace-fixture"] + flags
         app.launch()
-        XCTAssertTrue(app.buttons["drawer.toggle"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["drawer.toggle"].waitUntilExists(timeout: 10))
         return app
     }
 
@@ -33,13 +33,13 @@ final class WorkspaceOrientationTests: XCTestCase {
             let app = launch(orientation: orientation)
             tap(app.buttons["recipe.control"], in: app)
             let copy = app.buttons["recipe.copy.1"]
-            XCTAssertTrue(copy.waitForExistence(timeout: 5))
+            XCTAssertTrue(copy.waitUntilExists(timeout: 5))
             copy.tap()
             let edit = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.edit.")).firstMatch
-            XCTAssertTrue(edit.waitForExistence(timeout: 5))
+            XCTAssertTrue(edit.waitUntilExists(timeout: 5))
             edit.tap()
             let editor = app.navigationBars["Edit phone recipe"]
-            XCTAssertTrue(editor.waitForExistence(timeout: 5))
+            XCTAssertTrue(editor.waitUntilExists(timeout: 5))
             XCTAssertTrue(app.textFields["recipe.editor.name"].exists)
             XCTAssertTrue(app.buttons["recipe.editor.save"].isHittable)
             XCTAssertTrue(app.buttons["recipe.editor.cancel"].isHittable)
@@ -128,10 +128,10 @@ final class WorkspaceOrientationTests: XCTestCase {
         }
 
         tap(app.buttons["recipe.control"], in: app)
-        XCTAssertTrue(app.buttons["recipe.none"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["recipe.none"].waitUntilExists(timeout: 5))
         app.buttons["recipe.none"].tap()
         tap(app.buttons["workspace.versions"], in: app)
-        XCTAssertTrue(app.buttons["version.cameraJPEG"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["version.cameraJPEG"].waitUntilExists(timeout: 5))
         app.buttons["version.cameraJPEG"].tap()
         XCTAssertEqual(app.buttons["workspace.versions"].value as? String, "Original camera JPEG")
         XCUIDevice.shared.orientation = .portrait
@@ -152,11 +152,11 @@ final class WorkspaceOrientationTests: XCTestCase {
             tap(app.buttons["workspace.select"], in: app)
             XCTAssertEqual(app.buttons["workspace.select"].label, "Cancel selection")
             tap(app.buttons["recipe.control"], in: app)
-            XCTAssertTrue(app.buttons["recipe.none"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.buttons["recipe.none"].waitUntilExists(timeout: 5))
             app.buttons["recipe.none"].tap()
             tap(app.buttons["workspace.versions"], in: app)
             let jpeg = app.buttons["version.cameraJPEG"]
-            XCTAssertTrue(jpeg.waitForExistence(timeout: 5))
+            XCTAssertTrue(jpeg.waitUntilExists(timeout: 5))
             XCTAssertTrue(jpeg.isHittable)
             jpeg.tap()
             XCTAssertEqual(app.buttons["workspace.versions"].value as? String, "Original camera JPEG")
