@@ -28,9 +28,45 @@ struct XT5WorkingProfileTests {
         #expect(f.bank.id == patch.recipeID && f.bank.settingsDigest == patch.settingsDigest)
         #expect(patch.settings.grain == GrainSettings(strength: .strong, size: .small))
     }
-    @Test func everyChangedFrameByteAndUnobservedSourceGeometryRefuse() throws {
+    @Test func differentStartingSettingsAreFullyReplacedByTheFrozenRecipe() throws {
+        let f = try ProductionProfileFixture()
+        // Independent expected words for this fixture's frozen recipe, including fixed output policy.
+        let expected: [Int: Int32] = [
+            533: 400, 541: 11, 545: 3, 549: 3, 553: 2, 557: 2, 561: -4,
+            565: 3, 569: 6700, 573: -20, 577: 20, 581: 0, 585: 0,
+            589: 32768, 593: 1, 609: 2, 617: 0,
+        ]
+        func word(_ value: Int32) -> Data {
+            Data((0..<4).map { UInt8(truncatingIfNeeded: UInt32(bitPattern: value) >> ($0 * 8)) })
+        }
+        var observed = f.baseline
+        // The four writable differences captured by the phone journal.
+        for (offset, value): (Int, Int32) in [(541, 11), (573, -20), (577, -20), (581, 40)] {
+            observed.replaceSubrange(offset..<offset + 4, with: word(value))
+        }
+        var baselines = [observed]
+        for value in [Int32.min, -1, 0, 1, Int32.max] {
+            var changed = f.baseline
+            for offset in expected.keys {
+                changed.replaceSubrange(offset..<offset + 4, with: word(value))
+            }
+            baselines.append(changed)
+        }
+        let writable = Set(expected.keys.flatMap { Array($0..<$0 + 4) })
+        for baseline in baselines {
+            let patch = try XT5WorkingProfile.make(baseline: baseline, recipe: f.bank, metadata: f.metadata)
+            for (offset, value) in expected {
+                #expect(patch.bytes.subdata(in: offset..<offset + 4) == word(value))
+            }
+            #expect((0..<625).filter { !writable.contains($0) }.allSatisfy { patch.bytes[$0] == baseline[$0] })
+            #expect(patch.baselineSHA256 == ResourceChecksum.sha256(baseline))
+            #expect(patch.recipeID == f.bank.id && patch.settingsDigest == f.bank.settingsDigest)
+        }
+    }
+    @Test func everyChangedStructuralByteAndUnobservedSourceGeometryRefuse() throws {
         let f=try ProductionProfileFixture()
-        for index in 0..<625 {
+        let writable = Set([533,541,545,549,553,557,561,565,569,573,577,581,585,589,593,609,617].flatMap { Array($0..<$0+4) })
+        for index in (0..<625).filter({ !writable.contains($0) }) {
             var changed=f.baseline;changed[index] ^= 1
             #expect(throws: CameraServiceError.unsupportedProfile) { try XT5WorkingProfile.make(baseline:changed,recipe:f.bank,metadata:f.metadata) }
         }

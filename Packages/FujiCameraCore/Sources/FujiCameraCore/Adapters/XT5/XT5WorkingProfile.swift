@@ -1,9 +1,9 @@
 import CryptoKit
 import Foundation
 
-/// Exact measured initial state, not a general _0200 header/count grammar. Always patches fresh input.
+/// Measured frame structure with replaceable starting settings. Always patches fresh input.
 public struct XT5WorkingProfile: Sendable {
-  public static let supportVersion = "xt5-4.31-0200-observed-frame-v2"
+  public static let supportVersion = "xt5-4.31-0200-structured-frame-v3"
   public static let writableOffsets = [
     533, 541, 545, 549, 553, 557, 561, 565, 569, 573, 577, 581, 585, 589, 593, 609, 617,
   ]
@@ -65,7 +65,10 @@ public struct XT5WorkingProfile: Sendable {
       2, 7, 7, 2, 0, 400, 0, 15, 1, 3, 1, 0, 3, -4, 0, 20, 20, 0, 0, 32768, 2, 1, 0, 1, 3, 0, 0, 2,
     ]
     for (i, v) in measured.enumerated() {
-      guard baseline.subdata(in: 513 + i * 4..<517 + i * 4) == word(UInt32(bitPattern: v)) else {
+      let offset = 513 + i * 4
+      // These complete words are replaced below; their starting values cannot reach the camera.
+      if writableOffsets.contains(offset) { continue }
+      guard baseline.subdata(in: offset..<offset + 4) == word(UInt32(bitPattern: v)) else {
         throw CameraServiceError.unsupportedProfile
       }
     }

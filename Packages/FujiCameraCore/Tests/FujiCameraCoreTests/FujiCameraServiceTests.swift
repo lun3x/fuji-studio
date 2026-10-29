@@ -26,7 +26,11 @@ struct FujiCameraServiceTests {
     }
     @Test func renderUsesFrozenRecipeFreshBaselineAndReturnsOnlyAfterOwnedCleanup() async throws {
         let f=try ProductionOperationFixture();defer { f.remove() }
-        let wire=ProductionSession(fixture:f),journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"), filePolicy: TestJournalFilePolicy())
+        var baseline = f.profile.baseline
+        for (offset, bytes) in [(541, Data([11, 0, 0, 0])), (573, Data([0xec, 0xff, 0xff, 0xff])), (577, Data([0xec, 0xff, 0xff, 0xff])), (581, Data([40, 0, 0, 0]))] {
+            baseline.replaceSubrange(offset..<offset + 4, with: bytes)
+        }
+        let wire=ProductionSession(fixture:f,baseline:baseline),journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"), filePolicy: TestJournalFilePolicy())
         let service=makeService(wire,journal)
         try await service.connect()
         let result=try await service.render(raw:f.raw,recipe:f.profile.bank,policy:.fullSizeFineRecordedGeometry)
@@ -36,6 +40,9 @@ struct FujiCameraServiceTests {
         #expect(result.fileURL == journal.operationDirectory(result.operationID).appendingPathComponent("output.JPG"))
         #expect(try Data(contentsOf:result.fileURL) == Data([1,2,3,4]))
         #expect(try journal.load(result.operationID).phase == .completed)
+        #expect(try journal.load(result.operationID).baselineSHA256 == ResourceChecksum.sha256(baseline))
+        #expect(await wire.profile?.subdata(in: 577..<581) == Data([20, 0, 0, 0]))
+        #expect(await wire.profile?.subdata(in: 581..<585) == Data([0, 0, 0, 0]))
         #expect(try journal.unresolved().isEmpty)
         #expect(await wire.deletes == [77]);#expect(await wire.closes == 0)
         let commands=await wire.commands
@@ -61,7 +68,7 @@ struct FujiCameraServiceTests {
         for count in [0, 3, 625] {
             let f = try ProductionOperationFixture(); defer { f.remove() }
             var rejected = count == 625 ? f.profile.baseline : Data(repeating: 0xff, count: count)
-            if count == 625 { rejected[533] ^= 1 }
+            if count == 625 { rejected[513] ^= 1 }
             let wire = ProductionSession(fixture: f, baseline: rejected)
             let journal = try CameraOperationJournal(
                 directory: f.directory.appendingPathComponent("journal"), filePolicy: TestJournalFilePolicy())
