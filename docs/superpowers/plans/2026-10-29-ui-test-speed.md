@@ -18,7 +18,7 @@
 - [x] Balance suites while preserving test method names and assertions, if class scheduling limits throughput.
 - [x] Benchmark bounded worker counts, select the fastest reliable setting, and expose a configurable script override with argument validation.
 - [x] Validate script behavior, run unit tests and affected UI tests during implementation, then the full wrapper suite.
-- [ ] Review the complete diff, document measurements and limitations, push final checkpoint, and remove task simulators (reopened for follow-up validation).
+- [x] Review the complete diff, document measurements and limitations, push final checkpoint, and remove task simulators.
 
 ## Experiment ledger
 - Baseline: original main@origin 34649780, default scheme and runner, iPhone 15 Pro / iOS 27.0. Logs under ignored `.build/Benchmarks/`.
@@ -52,7 +52,7 @@
 ## Follow-up: rotation cleanup
 - [x] Verify trace root cause and review the three deferred cleanup changes.
 - [x] Run the five affected rotation cases: all passed. The prior 60.52-second cleanup idle wait now targets SpringBoard and took 0.026 seconds; full dark geometry test took 11.725 seconds.
-- [ ] Run the full default suite with the cleanup fix, record result, remove the new simulator, and publish final evidence.
+- [x] Run the complete suite with the cleanup fix, record result, remove the new simulator, and publish final evidence. The selected two-worker full control passed; final default argument checks match its flags.
 - Fresh-simulator parallel run with the broad existence shortcuts failed numeric-picker geometry and initial AX5 Select hit-testing, before affected rotation cleanup ran. Reverted every existence/predicate shortcut, removed ElementWaits.swift, and restored the original XCTest polling throughout. Original seven affected cases then all passed (258.11 seconds). Conservation check now verifies all 64 bodies against baseline after only normalizing the three safe deferred cleanup additions.
 - Final validation will erase/reboot the task simulator before running the default full suite, so success cannot depend on warmed UI state. The accepted performance changes are bounded parallelism, feature-class scheduling, verbose-diagnostic opt-in, and the measured rotation-cleanup fix.
 
@@ -77,3 +77,9 @@
 
 - Two-worker cold control PASSED: 843.80 seconds, 548 passed, 3 existing skips, 0 failed. Source8b3d4016, all original immediate assertions unchanged. This is the clean fallback, approximately37% less wall time than the original cold serial baseline.
 - Since three was >5% faster, the single bounded AX5 readiness candidate is now running in an erased-simulator full3test. It records initial and post-wait readiness and retains every original assertion. A full clean faster result is required to retain it; false→true evidence is required before claiming the prior failure was transient.
+
+## Final decision and verification
+- The final three-worker readiness candidate failed the unchanged numeric-picker Save-disappearance assertion before the AX5 candidate executed. Its predefined clean/faster gate was impossible, so it was interrupted; actual process exit was474.21seconds. Cancellation-generated zero-duration failures are not product regressions or completed timings. No retries were used.
+- Reverted the entire AX5 readiness/diagnostic block. Selected the clean two-worker full control:843.80seconds,548passed/3existing-skips/0failed. This is~37% less measured wall time than original1334.88seconds, subject to cold-build and simulator-startup differences. Three/four cold workers had failures; six stalled. Do not claim the rejected475.71second fast-wait result for final source.
+- Runner default-two command-stub check first failed against default-four, then passed after changing the default and README/help. Bash syntax passed. Final UI test source is identical to passing control8b3d4016, and production app/project.yml remain identical to baseline.
+- Final task base and all task-owned native worker clones removed after actual Xcode exit. Unrelated iPhone18Pro remains booted. Evidence in `.build/Benchmarks/final-cleanup-verified.json`; workspace and raw artifacts retained for review. Final checkpoints publish on `codex/ui-test-speed`.

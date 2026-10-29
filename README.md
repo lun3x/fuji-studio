@@ -227,7 +227,7 @@ The script generates the ignored `FujiStudio.xcodeproj` and shared `FujiStudio` 
 FUJI_STUDIO_DESTINATION='platform=iOS Simulator,id=YOUR_SIMULATOR_UUID' Scripts/test-ios.sh
 ```
 
-Simulator UI tests use four isolated Xcode worker clones. Override the worker
+Simulator UI tests use two isolated Xcode worker clones by default. Override the worker
 count for your machine with `FUJI_STUDIO_TEST_WORKERS`; set it to `1` for serial
 execution. Unit-only and physical-device runs ignore this setting. The UI suites
 are divided by feature so that a large test class cannot hold up all workers.
