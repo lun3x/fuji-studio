@@ -23,3 +23,7 @@
 ## Experiment ledger
 - Baseline: original main@origin 34649780, default scheme and runner, iPhone 15 Pro / iOS 27.0. Logs under ignored `.build/Benchmarks/`.
 - Ruling: use inline implementation and a final independent review, because the measurements and modifications are sequential and share one simulator.
+- Runner override: command-stub checks first failed for missing parallel flags, then passed after adding `FUJI_STUDIO_TEST_WORKERS`; validated default 2, override 3, serial 1, focused selectors, unit-only exclusion, phone signing preservation, and invalid-input rejection. `bash -n` passed. Worker default remains provisional until measured.
+- Environment: installed the README-required XcodeGen 2.46.0; created task-local `.venv`. Task simulator: 5E1942C5-ACE1-4824-B263-F2F411298291.
+- Baseline ongoing: grain editor failed at the immediate disabled-size assertion, followed by missing Strong choice; later snapshot shows the correct disabled state. Investigate with focused repeated runs. First native landscape editor passed in 17 seconds; no animation-notification stall observed so far.
+- Next experiment: logs consistently show ~1 second before the first `waitForExistence` poll. Compare immediate existence check with timeout fallback against the original helper behavior, without changing animation settings.
