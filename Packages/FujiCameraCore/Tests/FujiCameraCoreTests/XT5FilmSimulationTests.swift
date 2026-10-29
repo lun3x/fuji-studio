@@ -77,4 +77,38 @@ struct XT5FilmSimulationTests {
       #expect(issue.field == "film")
     }
   }
+
+  @Test func monochromeFilmsUseSaturationCodesAndPreserveTheirFilters() throws {
+    let f = try ProductionProfileFixture()
+    for (film, saturation): (FilmSimulation, UInt16) in [
+      (.monochrome, 0x300), (.monochromeRed, 0x301), (.monochromeYellow, 0x302),
+      (.monochromeGreen, 0x303), (.sepia, 0x310), (.acros, 0x500), (.acrosRed, 0x501),
+      (.acrosYellow, 0x502), (.acrosGreen, 0x503),
+    ] {
+      let fixture = CoreJPEGFixture(
+        lensOptimizer: 1,
+        fields: [
+          (0x1003, 3, 1, Data([UInt8(truncatingIfNeeded: saturation), UInt8(saturation >> 8)]))
+        ])
+      let observed = try FujiJPEGMetadataReader.read(fixture.jpeg)
+      #expect(observed.rendering[.film] == .film(film))
+      #expect(!observed.unrecognized.contains(.film))
+      var requested = try XT5WorkingProfile.normalize(f.bank)
+      requested.film = film
+      let conversion = PreparedConversion(
+        bytes: Data(), requested: requested, source: f.metadata,
+        supportVersion: XT5WorkingProfile.supportVersion, expectedLensOptimizer: true,
+        baselineSHA256: "baseline", candidateSHA256: "candidate")
+      let metadata = ValidatedJPEGMetadata(
+        width: 4, height: 6, orientation: 8, make: "FUJIFILM",
+        model: "X-T5", quality: .fine, lensOptimizer: true, rendering: observed.rendering,
+        unrecognized: observed.unrecognized)
+      let result = try CameraOutputAssessment.assess(
+        metadata: metadata, conversion: conversion, required: [.film])
+      guard case .accepted = result.admission else {
+        Issue.record("Matching monochrome filter must admit \(film)")
+        continue
+      }
+    }
+  }
 }
