@@ -32,9 +32,9 @@
 
 **Interfaces:** Existing `RecipeCodecRegistry.capabilities`, `editableValues`, `encodeEditedValues`, and `PhoneRecipeDraft.choices/makeSnapshot` remain unchanged.
 
-- [ ] Add regression tests for the literal documented film/WB wire tables and all offered choice round trips; run and observe the missing-choice failures.
-- [ ] Expand X-T5 to 20 films, 14 WB modes, and DR Auto/100/200/400. Retain explicit renderable subsets. Restrict X-E3 selectors to its native tables; expose native DR Auto as editable only.
-- [ ] Label DR Auto correctly and validate X-T5 Kelvin in 10 K increments.
-- [ ] Exercise newly offered selectors through the phone draft and UI, including save/reopen.
-- [ ] Run the core suite, focused app/UI suites, and complete iOS suite on the task simulator.
-- [ ] Document the audit, sources, agreements/conflicts, and remaining conversion limits; review, commit, and push checkpoint with Jujutsu.
+- [x] Add regression tests for the literal documented film/WB wire tables and all offered choice round trips; run and observe the missing-choice failures.
+- [x] Expand X-T5 to 20 films, 14 WB modes, and DR Auto/100/200/400. Retain explicit renderable subsets. Restrict X-E3 selectors to its native tables; expose native DR Auto as editable only.
+- [x] Label DR Auto correctly and validate X-T5 Kelvin in 10 K increments.
+- [x] Exercise newly offered selectors through the phone draft and UI, including save/reopen.
+- [x] Run the core suite, focused app/UI suites, and complete iOS suite on the task simulator. The full run was interrupted by simulator shutdown; all remaining UI tests passed on resume. See the validation record.
+- [x] Document the audit, sources, agreements/conflicts, and remaining conversion limits; review, commit, and push checkpoint with Jujutsu.

@@ -67,4 +67,31 @@ Regression tests bind each documented film/WB/DR selector to literal wire bytes,
 round-trip every advertised discrete choice through both model codecs, check
 preservation of untouched native fields, and exercise phone save/reopen,
 model isolation, Kelvin boundaries, and the Auto label. Validation results
-are recorded below after execution.
+are recorded below.
+
+## Validation, 2026-10-29
+
+- Baseline core suite: 101 tests passed.
+- New selector tests first failed against the restricted capabilities. The phone
+  tests also reproduced the old 0% Auto label and acceptance of invalid 1 K steps.
+- Updated core suite: 105 tests passed.
+- Focused phone draft suite: 12 tests passed, including native save/reopen and
+  Kelvin boundary/step checks.
+- Focused X-T5 and X-E3 editor UI tests: two passed on an isolated iPhone 15 Pro
+  simulator with iOS 27.0. The X-T5 test selected REALA ACE, DR200, White Priority
+  WB, Custom 3, and DR Auto, saving and reopening both edits.
+- Laptop consumer package: six tests passed.
+- Independent read-only code review: no actionable findings.
+- Complete iOS unit coverage: 470 Swift Testing tests and 19 XCTest tests passed.
+- Full iOS UI coverage: 32 passed, one existing guarded native-lifecycle test
+  skipped. The full `Scripts/test-ios.sh` run passed all unit tests and 20 UI
+  tests before its simulator shut down during the largest-text grain test.
+  The stalled runner was interrupted; no successful uninterrupted full-run
+  result is claimed. Restarting the task device and running the remaining 13
+  UI selectors produced 12 passes, one skip, and zero failures. Every declared
+  UI selector is accounted for across the two runs, and the interrupted
+  largest-text test passed on resume.
+
+An older invalid-value test used DR200; it now uses invalid DR300. No physical
+camera test or newly validated conversion support is claimed. The isolated
+task simulator was shut down and deleted after validation.
