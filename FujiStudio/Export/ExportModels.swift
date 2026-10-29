@@ -56,7 +56,7 @@ struct PendingSave: Sendable, Codable, Equatable {
 
 enum ExportFailure: Sendable, Codable, Equatable {
     case preparation(String), unsupportedSettings(String), transport(String)
-    case authorization, inaccessible, insufficientStorage, unresolvedSave(String)
+    case unsupportedSource, authorization, inaccessible, insufficientStorage, unresolvedSave(String)
 }
 
 enum ExportItemState: Sendable, Codable, Equatable {

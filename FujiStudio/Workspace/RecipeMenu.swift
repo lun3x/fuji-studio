@@ -138,7 +138,7 @@ struct RecipeMenu: View {
                             .padding(.leading).padding(.vertical, 4).padding(.trailing, 8).contentShape(Rectangle())
                     }
                     .buttonStyle(.plain).disabled(reason != nil || recipe == nil)
-                    .foregroundStyle(isCameraConnected && recipe != nil ? .primary : .tertiary)
+                    .foregroundStyle(reason == nil && recipe != nil ? .primary : .tertiary)
                     .accessibilityIdentifier("recipe.slot.\(slot)")
                     .accessibilityAddTraits(current?.id == recipe?.id && recipe != nil ? .isSelected : [])
                     if let recipe {
@@ -192,7 +192,7 @@ struct RecipeMenu: View {
             Button { presented = false; onSelectPhone(recipe.id) } label: {
                 HStack {
                     Image(systemName: "iphone")
-                        .foregroundStyle(isCameraConnected ? .secondary : .tertiary).accessibilityHidden(true)
+                        .foregroundStyle(reason == nil ? .secondary : .tertiary).accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(recipe.snapshot.name)
                         Text(recipe.snapshot.cameraContext.model).font(.caption).foregroundStyle(.secondary)
@@ -204,7 +204,7 @@ struct RecipeMenu: View {
                     .padding(.leading).padding(.trailing, 8).padding(.vertical, 4).contentShape(Rectangle())
             }
             .buttonStyle(.plain).disabled(reason != nil)
-            .foregroundStyle(isCameraConnected ? .primary : .tertiary)
+            .foregroundStyle(reason == nil ? .primary : .tertiary)
             .accessibilityIdentifier("recipe.phone.\(recipe.id.uuidString)")
             .accessibilityAddTraits(current?.id == recipe.snapshot.id ? .isSelected : [])
 

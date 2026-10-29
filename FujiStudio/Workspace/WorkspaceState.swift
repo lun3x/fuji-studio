@@ -157,15 +157,20 @@ struct WorkspaceState: Sendable {
         })
     }
 
-    var exportDisabledReason: WorkspaceExportDisabledReason? {
-        let effective = effectiveSources
-        guard !effective.isEmpty else { return .noSources }
-        guard let recipe = selectedRecipe else { return .noRecipe }
-        for source in effective {
+    private var incompatibleSelectionReason: WorkspaceExportDisabledReason? {
+        for source in effectiveSources {
             if let model = incompatibleModel(source) {
                 return .incompatibleSource(sourceID: source.id, model: model)
             }
         }
+        return nil
+    }
+
+    var exportDisabledReason: WorkspaceExportDisabledReason? {
+        let effective = effectiveSources
+        guard !effective.isEmpty else { return .noSources }
+        guard let recipe = selectedRecipe else { return .noRecipe }
+        if let reason = incompatibleSelectionReason { return reason }
         if case .unsupported(let issues) = recipe.renderingSupport(using: RecipeCodecRegistry()) { return .unsupportedRecipe(issues) }
         guard activeJobID == nil else { return .activeJob }
         guard case .ready(let session) = cameraState else { return .cameraNotReady }
@@ -233,6 +238,7 @@ struct WorkspaceState: Sendable {
 
         case .recipeSelected(let slot):
             guard slot == nil || isCameraConnected else { return [] }
+            guard slot == nil || incompatibleSelectionReason == nil else { return [] }
             previewRequiresUserIntent = false
             if let slot {
                 guard let recipe = recipes.first(where: { $0.slot == slot }) else { return [] }
@@ -245,7 +251,8 @@ struct WorkspaceState: Sendable {
             return requestPreview()
 
         case .phoneRecipeSelected(let id):
-            guard isCameraConnected, let recipe = phoneRecipes.first(where: { $0.id == id }) else { return [] }
+            guard isCameraConnected, incompatibleSelectionReason == nil,
+                  let recipe = phoneRecipes.first(where: { $0.id == id }) else { return [] }
             selectedRecipe = recipe.snapshot
             previewRequiresUserIntent = false
             displayedVersion = originalVersion
@@ -426,6 +433,13 @@ struct WorkspaceState: Sendable {
     }
 
     private func incompatibleModel(_ source:PhotoSource) -> String? {
+        if let camera = photoFilterCamera,
+           photoFilterIndex.result(for: source, camera: camera) == .incompatible {
+            switch source.compatibility {
+            case .supported(let model), .incompatible(let model): return model
+            case .unknown: return camera.model
+            }
+        }
         switch source.compatibility {
         case .incompatible(let model):return model
         case .supported(let model):return currentCameraExecutionContext.map { $0.model != model ? model : nil } ?? nil
@@ -433,6 +447,7 @@ struct WorkspaceState: Sendable {
         }
     }
     func recipeExecutionReason(_ recipe:RecipeSnapshot) -> String? {
+        if let reason = incompatibleSelectionReason { return reason.message }
         if let context=currentCameraExecutionContext,!matches(recipe:recipe,context:context) { return "Requires a compatible \(recipe.cameraContext.model) camera." }
         if case .unsupported = recipe.renderingSupport(using:RecipeCodecRegistry()) { return "Conversion is unavailable for these settings." }
         guard currentCameraExecutionContext != nil,isCameraConnected else { return "Connect a supported Fujifilm camera." }

@@ -474,6 +474,7 @@ actor ExportCoordinator {
         case ResourceError.authorization, PhotoLibraryWriteError.authorization, PhotoLibraryWriteError.rejected(.authorization): .authorization
         case ResourceError.inaccessibleAsset: .inaccessible
         case ResourceError.insufficientStorage, CameraServiceError.storage, RenderCacheError.storage, PhotoLibraryWriteError.rejected(.insufficientStorage): .insufficientStorage
+        case CameraServiceError.unsupportedSource: .unsupportedSource
         case CameraServiceError.unsupportedSettings, CameraServiceError.unsupportedProfile: .unsupportedSettings(String(describing: error))
         case let error as CameraServiceError where isSessionFailure(error): .transport(String(describing: error))
         default: .preparation(String(describing: error))

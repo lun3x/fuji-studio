@@ -44,6 +44,7 @@ struct ExportProgressView: View {
         case .inaccessible: "An original photo is no longer accessible. Check your Photos selection."
         case .insufficientStorage: "There is not enough storage. Free some space before retrying."
         case .unsupportedSettings: "The selected recipe has unsupported conversion settings."
+        case .unsupportedSource: "An original photo cannot be converted by the connected camera."
         case .transport: "Camera connection interrupted. Check the USB data cable and camera mode."
         case .preparation: "An original could not be prepared. Check its availability and iCloud download, then retry."
         case .unresolvedSave: "Photos has not confirmed this save. Check Photos again before retrying."
