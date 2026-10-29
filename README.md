@@ -61,9 +61,11 @@ discrete Kelvin values. Custom measured-WB gains remain unsupported. X-T5
 offers all 20 films, 14 WB modes, Auto/100/200/400 dynamic range, and
 2500–10000 K in 10 K steps. These choices can be saved offline; camera rendering
 retains its measured domain. See the [option audit](docs/validation/recipe-option-values.md)
-for source mappings and rendering limits. All grain combinations are saveable.
+for source mappings and rendering limits. Weak and Strong grain can be saved
+with Small or Large size.
 Grain effect and Grain size are separate controls; Off greys out size
-and remembers it. Weak grain and Strong with Large size are not yet supported
+and remembers it while editing. Saving Off uses the published size-free value;
+reopening defaults its inactive size to Small. Weak grain and Strong with Large size are not yet supported
 for camera conversion. Existing unsupported values are preserved until
 explicitly changed. Camera banks and previous exports keep
 their original snapshots. Preview and export still require a compatible connected

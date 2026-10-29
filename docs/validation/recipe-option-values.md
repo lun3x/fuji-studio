@@ -24,8 +24,12 @@ capabilities continue to describe the existing validated conversion domain.
   Some newer film constants there are explicitly marked guesses; the fuller
   property reference and camera manual are the basis for the added choices.
 
-The external grain table conflicts with this project's measured X-T5 combined
-strength/size mapping. It is **not** adopted. No existing mapping changes.
+The original option audit left the existing grain codec unchanged. A subsequent
+review found that its active-grain mappings disagreed with both the published
+table and the earlier grain-control documentation. Calling the entire codec
+table "measured" was incorrect: the camera/vendor records establish only
+3 = Strong/Small, 6 = Off/Small, and 7 = Off/Large. The follow-up correction
+below adopts the published writable values and retains those camera readbacks.
 
 ## Existing X-T5 editor fields
 
@@ -33,7 +37,7 @@ strength/size mapping. It is **not** adopted. No existing mapping changes.
 | --- | --- | --- |
 | Film simulation | All 20 simulations, including monochrome filters | Expanded from five |
 | Dynamic range | Auto, 100%, 200%, 400% | Added Auto and 200% |
-| Grain | Off, Weak, Strong × Small, Large | Already complete; preserve measured bytes |
+| Grain | Off; Weak/Strong × Small/Large | Published write values 1–5; see correction below |
 | Color Chrome / FX Blue | Off, Weak, Strong | Already complete |
 | White balance | All 14 modes | Expanded from two |
 | Red / blue WB shift | −9…+9, whole steps | Already complete |
@@ -83,14 +87,16 @@ are recorded below.
 - Laptop consumer package: six tests passed.
 - Independent read-only code review: no actionable findings.
 - Complete iOS unit coverage: 470 Swift Testing tests and 19 XCTest tests passed.
-- Full iOS UI coverage: 32 passed, one existing guarded native-lifecycle test
+- AppFlow UI coverage: 32 passed, one existing guarded native-lifecycle test
   skipped. The full `Scripts/test-ios.sh` run passed all unit tests and 20 UI
   tests before its simulator shut down during the largest-text grain test.
   The stalled runner was interrupted; no successful uninterrupted full-run
   result is claimed. Restarting the task device and running the remaining 13
   UI selectors produced 12 passes, one skip, and zero failures. Every declared
-  UI selector is accounted for across the two runs, and the interrupted
-  largest-text test passed on resume.
+  AppFlow UI selector is accounted for across the two runs, and the interrupted
+  largest-text test passed on resume. This accounted for AppFlowTests only;
+  the other UI suites were not included in that earlier resumed run. The grain
+  correction validation below runs the complete UI target.
 
 An older invalid-value test used DR200; it now uses invalid DR300. No physical
 camera test or newly validated conversion support is claimed. The isolated
@@ -112,3 +118,58 @@ Apple Development signing and team `AZH3P824F3`. The exact
 and launched normally as `com.lun3x.FujiStudio` without fixture/test arguments.
 A subsequent process listing confirmed that installed bundle was running.
 No new physical-camera conversion validation is inferred from installation.
+
+## Grain mapping correction, 2026-10-29
+
+The correction starts from updated main `10c40303`, after PR #27 was merged.
+Both full-recipe and individual-field editing now share one X-T5 grain codec:
+
+| D195 | Meaning | Use |
+| --- | --- | --- |
+| 1 | Off | Canonical value for an explicit Off edit |
+| 2 | Weak / Small | Read and edit |
+| 3 | Strong / Small | Read and edit |
+| 4 | Weak / Large | Read and edit |
+| 5 | Strong / Large | Read and edit |
+| 6 | Off / Small | Observed readback; preserved on unrelated edits |
+| 7 | Off / Large | Observed X-T5 readback; preserved on unrelated edits |
+
+The published table documents 6 as an Off/default readback and does not list 7.
+Keeping the separately measured 7 readback does not authorize writing it as the
+published Off selector. Explicit grain edits use 1–5. The app makes no saved-bank
+camera writes. Unknown bytes and untouched fields retain their original values;
+there is no migration to preserve the previous incorrect interpretation of 1/2/4.
+
+Off has no stored size in the published encoding. The phone draft remembers its
+inactive size while open, but saving Off and reopening defaults that inactive
+control to Small. Active Weak/Strong sizes still survive save/reopen. X-E3 keeps
+its separate native mapping.
+
+Canonical Off retains the existing disabled-grain working profile; the X-T5
+support version advances to v2 so old cache entries cannot represent the revised
+interpretation. Weak and Strong/Large conversion remain unvalidated and refused.
+Regression coverage uses literal wire expectations for both codecs and the
+actual grain-control setters, preserves 6/7 during unrelated edits, and verifies
+the existing Off profile. This is published-selector agreement, not a new
+physical-camera measurement.
+
+Validation of the correction:
+
+- Baseline: 105 core tests passed. New literal wire tests failed with 16 issues
+  against the old codec; the draft tests reproduced the Off-size mismatch.
+- Corrected core: 108 tests passed. iOS units: 471 Swift Testing and 19 XCTest
+  tests passed. Strict formatting checks passed for the changed formatted files.
+- The focused grain effect/size UI save/reopen test passed, including the
+  canonical Off value's Small default after reopening. Independent review of
+  the mapping, preservation, rendering and draft changes found no actionable issues.
+- The complete iOS command ran all six UI suites: 65 cases, 61 passed, three
+  existing native-device gates skipped, one failure. The failing case was
+  `AppFlowTests.testPhoneEditorSavesNameAndFilmOfflineAndCancelDiscardsChanges`:
+  PROVIA was outside the native film menu's visible area while the keyboard
+  remained open. Temporary test-scrolling experiments did not resolve it and
+  were excluded from the change. No fully green UI suite is claimed.
+
+The three skipped gates are native Home/background delivery, native device
+rotation, and hardware Escape. This correction is in a new PR based on updated
+main; the earlier 32-test UI count in this document has also been scoped to
+AppFlow rather than incorrectly described as the complete UI target.
