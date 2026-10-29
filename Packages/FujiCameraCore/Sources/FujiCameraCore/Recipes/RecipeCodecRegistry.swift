@@ -73,12 +73,7 @@ public struct RecipeCodecRegistry: Sendable {
     ]
     let effects = EffectStrength.allCases.map(RecipeSettingValue.effect)
     let settings: [RecipeSettingID: SettingCapability] = [
-      .film: choice(
-        FilmSimulation.allCases.map(RecipeSettingValue.film),
-        rendering: [
-          .film(.provia), .film(.classicChrome), .film(.acros), .film(.acrosRed),
-          .film(.acrosGreen),
-        ]),
+      .film: choice(FilmSimulation.allCases.map(RecipeSettingValue.film)),
       .dynamicRange: choice(
         [0, 100, 200, 400].map(RecipeSettingValue.integer),
         rendering: [.integer(100), .integer(400)]),

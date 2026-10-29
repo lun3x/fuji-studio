@@ -99,10 +99,13 @@ struct PhoneRecipeEditor: View {
           get: { draft.grain?.strength },
           set: { if let effect = $0 { draft.setGrainEffect(effect) } })
       ) {
-        if draft.grain == nil {
+        if let effect = draft.grain?.strength, !draft.grainEffects.contains(effect) {
+          Text("\(effect.rawValue.capitalized) (unavailable for conversion)")
+            .tag(Optional(effect)).disabled(true)
+        } else if draft.grain == nil {
           Text("Keep current unsupported value").tag(Optional<GrainStrength>.none)
         }
-        ForEach(GrainStrength.allCases, id: \.self) {
+        ForEach(draft.grainEffects, id: \.self) {
           Text($0.rawValue.capitalized).tag(Optional($0))
         }
       }
@@ -118,8 +121,12 @@ struct PhoneRecipeEditor: View {
             get: { draft.grain?.size },
             set: { if let size = $0 { draft.setGrainSize(size) } })
         ) {
-          if draft.grain == nil { Text("Unavailable").tag(Optional<GrainSize>.none) }
-          ForEach(GrainSize.allCases, id: \.self) {
+          if let size = draft.grain?.size, !draft.grainSizes.contains(size) {
+            Text(size.rawValue.capitalized).tag(Optional(size)).disabled(true)
+          } else if draft.grain == nil {
+            Text("Unavailable").tag(Optional<GrainSize>.none)
+          }
+          ForEach(draft.grainSizes, id: \.self) {
             Text($0.rawValue.capitalized).tag(Optional($0))
           }
         }
@@ -138,8 +145,9 @@ struct PhoneRecipeEditor: View {
           get: { draft.value(for: field) },
           set: { if let value = $0 { draft.setValue(value, for: field) } })
       ) {
-        if let value = draft.value(for: field), !capability.accepts(value, rendering: false) {
-          Text("Keep current unsupported value").tag(Optional(value))
+        if let value = draft.value(for: field), !choices.contains(where: { $0.value == value }) {
+          Text("\(field.label(for: value)) (unavailable for conversion)")
+            .tag(Optional(value)).disabled(true)
         } else if draft.value(for: field) == nil {
           Text("Keep current unsupported value").tag(Optional<RecipeSettingValue>.none)
         }

@@ -124,6 +124,9 @@ final class WorkspaceFixture {
             for word in name.utf16 { nameData.append(contentsOf: [UInt8(truncatingIfNeeded: word), UInt8(truncatingIfNeeded: word >> 8)]) }
             nameData.append(contentsOf: [0, 0])
             var values = properties
+            if slot == 4, ProcessInfo.processInfo.arguments.contains("--fixture-astia-film") {
+                values[0xD192] = 3 // Regression for an existing phone recipe using ASTIA.
+            }
             if slot == 7 { values[0xD18E] = 65535 }
             return try XT5RecipeCodec.recipe(slot: slot, nameData: nameData,
                 properties: values.mapValues { Data([UInt8(truncatingIfNeeded: $0), UInt8(truncatingIfNeeded: $0 >> 8)]) }, context: context, importedAt: Date(timeIntervalSince1970: 0))

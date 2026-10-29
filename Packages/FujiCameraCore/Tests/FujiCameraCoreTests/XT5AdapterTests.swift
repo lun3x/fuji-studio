@@ -23,7 +23,7 @@ struct XT5AdapterTests {
         #expect(support.capabilityOrigin == .cameraReported)
         #expect(support.capability == "X-T5_0200")
         #expect(support.capabilities.bankSlots.map(\.id) == [1,2,3,4,5,6,7])
-        #expect(support.capabilities.settings[.film]?.accepts(.film(.velvia),rendering:true) == false)
+        #expect(support.capabilities.settings[.film]?.accepts(.film(.velvia),rendering:true) == true)
         await io.finish()
     }
 }

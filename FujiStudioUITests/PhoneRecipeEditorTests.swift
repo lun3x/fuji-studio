@@ -2,7 +2,28 @@ import XCTest
 
 @MainActor
 final class PhoneRecipeEditorTests: AppFlowTestCase {
-    func testPhoneEditorGrainEffectAndSizeSaveIndependently() {
+    func testExistingASTIAPhoneRecipeCanBeAppliedWithoutChangingItsFilm() {
+        let app = launch(["--fixture-astia-film"])
+        wait { app.buttons["app.status"].label.contains("Camera ready") }
+        app.cells["grid.source-0"].tap()
+        tap(app.buttons["recipe.control"], in: app); app.buttons["recipe.copy.4"].tap()
+        let phone = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.phone.")).firstMatch
+        XCTAssertTrue(phone.waitForExistence(timeout: 5)); XCTAssertTrue(phone.isEnabled)
+        let edit = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.edit.")).firstMatch
+        edit.tap()
+        let film = app.buttons["recipe.editor.setting.film"]
+        XCTAssertTrue(film.label.contains("ASTIA"))
+        XCTAssertFalse(film.label.contains("unavailable for conversion"))
+        shot(app, "Existing ASTIA recipe remains supported without editing its film")
+        app.buttons["recipe.editor.save"].tap()
+        XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(phone.isEnabled)
+        phone.tap()
+        wait { app.buttons["workspace.export"].isEnabled }
+        shot(app, "Existing ASTIA phone recipe is available for conversion")
+    }
+
+    func testPhoneEditorGrainChoicesStayConvertibleAcrossSaveAndReopen() {
         let app = launch(["--fixture-disconnected-camera"])
         tap(app.buttons["recipe.control"], in: app); app.buttons["recipe.copy.3"].tap()
         let edit = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.edit.")).firstMatch
@@ -10,27 +31,24 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
         let effect = app.buttons["recipe.editor.setting.grainEffect"]
         let size = app.buttons["recipe.editor.setting.grainSize"]
         XCTAssertTrue(effect.waitForExistence(timeout: 5))
-        reveal(effect, in: app); effect.tap(); app.buttons["Weak"].tap()
-        XCTAssertTrue(size.isEnabled)
-        size.tap(); app.buttons["Large"].tap()
-        effect.tap(); app.buttons["Off"].tap()
-        XCTAssertFalse(size.isEnabled); XCTAssertTrue(size.label.contains("Large"))
-        shot(app, "Grain Off disables size and retains Large")
+        effect.tap()
+        XCTAssertFalse(app.buttons["Weak"].exists)
+        app.buttons["Off"].tap()
+        XCTAssertFalse(size.isEnabled)
         effect.tap(); app.buttons["Strong"].tap()
-        XCTAssertTrue(size.isEnabled); XCTAssertTrue(size.label.contains("Large"))
+        XCTAssertTrue(size.isEnabled)
+        size.tap()
+        XCTAssertFalse(app.buttons["Large"].exists)
+        app.buttons["Small"].tap()
+        shot(app, "Convertible X-T5 grain choices")
         app.buttons["recipe.editor.save"].tap()
         XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitForNonExistence(timeout: 5))
-        edit.tap(); reveal(effect, in: app)
-        XCTAssertTrue(effect.label.contains("Strong")); XCTAssertTrue(size.label.contains("Large"))
+        edit.tap()
+        XCTAssertTrue(effect.label.contains("Strong")); XCTAssertTrue(size.label.contains("Small"))
         effect.tap(); app.buttons["Off"].tap(); app.buttons["recipe.editor.save"].tap()
         XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitForNonExistence(timeout: 5))
-        edit.tap(); reveal(effect, in: app)
+        edit.tap()
         XCTAssertTrue(effect.label.contains("Off")); XCTAssertFalse(size.isEnabled)
-        XCTAssertTrue(size.label.contains("Small"))
-        effect.tap(); app.buttons["Weak"].tap()
-        XCTAssertTrue(size.isEnabled); XCTAssertTrue(size.label.contains("Small"))
-        size.tap(); app.buttons["Small"].tap()
-        XCTAssertTrue(effect.label.contains("Weak")); XCTAssertTrue(size.label.contains("Small"))
         app.buttons["recipe.editor.cancel"].tap()
     }
 
@@ -128,33 +146,45 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
         app.buttons["recipe.editor.cancel"].tap()
     }
 
-    func testXT5EditorSavesMissingRecipeOptionsAndReopensThem() {
-        let app = launch(["--fixture-disconnected-camera"])
+    func testXT5EditorOffersOnlyConvertibleFilmRangeAndBalance() {
+        let app = launch()
+        wait { app.buttons["app.status"].label.contains("Camera ready") }
+        app.cells["grid.source-0"].tap()
         tap(app.buttons["recipe.control"], in: app); app.buttons["recipe.copy.1"].tap()
+        let phone = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.phone.")).firstMatch
         let edit = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.edit.")).firstMatch
         XCTAssertTrue(edit.waitForExistence(timeout: 5)); edit.tap()
         let film = app.buttons["recipe.editor.setting.film"]
-        film.tap(); app.buttons["REALA ACE"].tap()
+        film.tap()
+        let astia = app.buttons["ASTIA / Soft"]
+        let filmMenu = app.collectionViews.containing(.button, identifier: "Classic Chrome").firstMatch
+        for _ in 0..<3 {
+            if astia.isHittable { break }
+            filmMenu.swipeDown()
+        }
+        XCTAssertTrue(astia.isHittable)
+        astia.tap()
         let dynamicRange = app.buttons["recipe.editor.setting.dynamicRange"]
-        dynamicRange.tap(); app.buttons["200%"].tap()
+        dynamicRange.tap()
+        XCTAssertFalse(app.buttons["200%"].exists)
+        XCTAssertFalse(app.buttons["Auto"].exists)
+        app.buttons["100%"].tap()
         let balance = app.buttons["recipe.editor.setting.whiteBalance"]
-        reveal(balance, in: app); balance.tap(); app.buttons["Auto · White priority"].tap()
+        reveal(balance, in: app); balance.tap()
+        XCTAssertFalse(app.buttons["Daylight"].exists)
+        XCTAssertFalse(app.buttons["Custom 3"].exists)
+        app.buttons["Colour temperature"].tap()
         app.buttons["recipe.editor.save"].tap()
         XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitForNonExistence(timeout: 5))
+        XCTAssertTrue(phone.isEnabled)
         edit.tap()
-        XCTAssertTrue(film.label.contains("REALA ACE") || (film.value as? String ?? "").contains("REALA ACE"))
-        XCTAssertTrue(dynamicRange.label.contains("200%") || (dynamicRange.value as? String ?? "").contains("200%"))
+        XCTAssertTrue(film.label.contains("ASTIA"))
+        XCTAssertTrue(dynamicRange.label.contains("100%"))
         reveal(balance, in: app)
-        XCTAssertTrue(balance.label.contains("White priority") || (balance.value as? String ?? "").contains("White priority"))
-        balance.tap(); app.buttons["Custom 3"].tap()
-        reveal(dynamicRange, in: app); dynamicRange.tap(); app.buttons["Auto"].tap()
-        app.buttons["recipe.editor.save"].tap()
-        XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitForNonExistence(timeout: 5))
-        edit.tap()
-        XCTAssertTrue(dynamicRange.label.contains("Auto") || (dynamicRange.value as? String ?? "").contains("Auto"))
-        reveal(balance, in: app)
-        XCTAssertTrue(balance.label.contains("Custom 3") || (balance.value as? String ?? "").contains("Custom 3"))
-        shot(app, "Complete X-T5 recipe options saved and reopened")
+        XCTAssertTrue(balance.label.contains("Colour temperature"))
+        shot(app, "Convertible X-T5 recipe saved and reopened")
         app.buttons["recipe.editor.cancel"].tap()
+        phone.tap()
+        wait { app.buttons["workspace.export"].isEnabled }
     }
 }
