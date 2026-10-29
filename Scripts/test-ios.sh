@@ -14,6 +14,8 @@ Supply one or more test selectors to run focused unit or UI tests.
 --fast must be used alone. FUJI_STUDIO_DESTINATION selects the device.
 FUJI_STUDIO_TEST_WORKERS selects simulator UI test workers (default: 2).
 Set it to 1 for serial execution. Unit-only and physical-device runs are unchanged.
+FUJI_STUDIO_TEST_DIAGNOSTICS=on-failure enables verbose failure diagnostics.
+The default is never; normal test results and attachments are still collected.
 EOF
 }
 
@@ -40,6 +42,11 @@ if [[ ! "$workers" =~ ^[1-9][0-9]*$ ]]; then
   echo 'error: FUJI_STUDIO_TEST_WORKERS must be a positive integer.' >&2
   exit 2
 fi
+diagnostics="${FUJI_STUDIO_TEST_DIAGNOSTICS-never}"
+case "$diagnostics" in
+  never|on-failure) ;;
+  *) echo 'error: FUJI_STUDIO_TEST_DIAGNOSTICS must be never or on-failure.' >&2; exit 2 ;;
+esac
 includes_ui=false
 if [[ $# -eq 0 ]]; then includes_ui=true; fi
 for selector in "$@"; do
@@ -52,6 +59,7 @@ destination="${FUJI_STUDIO_DESTINATION:-platform=iOS Simulator,name=iPhone 15 Pr
 mkdir -p .build/TestResults
 result=".build/TestResults/$(date +%Y%m%d-%H%M%S)-$$.xcresult"
 args=(-project FujiStudio.xcodeproj -scheme FujiStudio -destination "$destination" -derivedDataPath .build/DerivedData -resultBundlePath "$result")
+args+=(-collect-test-diagnostics "$diagnostics")
 if [[ "$destination" == *"Simulator"* ]]; then
   args+=(CODE_SIGNING_ALLOWED=NO)
   if [[ "$includes_ui" == true ]]; then
