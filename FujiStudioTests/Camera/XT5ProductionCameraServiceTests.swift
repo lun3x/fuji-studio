@@ -58,6 +58,59 @@ struct XT5ProductionCameraServiceTests {
             await service.disconnect()
         }
     }
+    @Test func rejectedBaselineIsRetainedBeforeValidationAndSurvivesJournalReopen() async throws {
+        for count in [0, 3, 625] {
+            let f = try ProductionOperationFixture(); defer { f.remove() }
+            var rejected = count == 625 ? f.profile.baseline : Data(repeating: 0xff, count: count)
+            if count == 625 { rejected[533] ^= 1 }
+            let wire = ProductionSession(fixture: f, baseline: rejected)
+            let journal = try CameraOperationJournal(
+                directory: f.directory.appendingPathComponent("journal"), filePolicy: IOSCameraJournalFilePolicy())
+            let service = makeService(wire, journal); try await service.connect()
+            await #expect(throws: CameraServiceError.unsupportedProfile) {
+                try await service.render(raw: f.raw, recipe: f.profile.bank, policy: .fullSizeFineRecordedGeometry)
+            }
+            let reopened = try CameraOperationJournal(directory: journal.directory, filePolicy: IOSCameraJournalFilePolicy())
+            let folders = try FileManager.default.contentsOfDirectory(
+                at: reopened.directory, includingPropertiesForKeys: nil, options: .skipsHiddenFiles)
+            let folder = try #require(folders.first)
+            let record = try reopened.load(#require(UUID(uuidString: folder.lastPathComponent)))
+            #expect(try Data(contentsOf: folder.appendingPathComponent("baseline.bin")) == rejected)
+            #expect(record.baselineSHA256 == ResourceChecksum.sha256(rejected))
+            #expect(record.phase == .aborted && record.failure != nil)
+            #expect(record.recipeSnapshotID == f.profile.bank.id && record.sourceSHA256 == f.raw.sha256)
+            #expect(record.candidateSHA256 == nil && !record.triggerIntent && !record.deleteIntent)
+            #expect(await wire.commands.allSatisfy { $0.opcode != 0x1016 })
+            #expect(await wire.triggers == 0); #expect(await wire.deletes.isEmpty)
+            await service.disconnect()
+        }
+    }
+    @Test func mismatchedReadbackIsRetainedWithTheSentProfile() async throws {
+        let f = try ProductionOperationFixture(); defer { f.remove() }
+        let wire = ProductionSession(fixture: f, mode: .readbackMismatch)
+        let journal = try CameraOperationJournal(
+            directory: f.directory.appendingPathComponent("journal"), filePolicy: IOSCameraJournalFilePolicy())
+        let service = makeService(wire, journal); try await service.connect()
+        await #expect(throws: CameraServiceError.profileReadbackMismatch) {
+            try await service.render(raw: f.raw, recipe: f.profile.bank, policy: .fullSizeFineRecordedGeometry)
+        }
+        let sent = try #require(await wire.profile)
+        var returned = sent; returned[541] ^= 1
+        let reopened = try CameraOperationJournal(directory: journal.directory, filePolicy: IOSCameraJournalFilePolicy())
+        let folders = try FileManager.default.contentsOfDirectory(
+            at: reopened.directory, includingPropertiesForKeys: nil, options: .skipsHiddenFiles)
+        let folder = try #require(folders.first)
+        let record = try reopened.load(#require(UUID(uuidString: folder.lastPathComponent)))
+        #expect(try Data(contentsOf: folder.appendingPathComponent("baseline.bin")) == f.profile.baseline)
+        #expect(try Data(contentsOf: folder.appendingPathComponent("candidate.bin")) == sent)
+        #expect(try Data(contentsOf: folder.appendingPathComponent("readback.bin")) == returned)
+        #expect(record.baselineSHA256 == ResourceChecksum.sha256(f.profile.baseline))
+        #expect(record.candidateSHA256 == ResourceChecksum.sha256(sent))
+        #expect(record.phase == .aborted && record.failure != nil)
+        #expect(!record.triggerIntent && !record.deleteIntent)
+        #expect(await wire.triggers == 0); #expect(await wire.deletes.isEmpty)
+        await service.disconnect()
+    }
     @Test func profileRefusalNeverTriggersAndRetainsTheSessionForAttention() async throws {
         for mode in [ProductionSession.Mode.profileRejected,.readbackMismatch] {
             let f=try ProductionOperationFixture();defer { f.remove() }
@@ -403,6 +456,7 @@ struct XT5ProductionCameraServiceTests {
 actor ProductionSession: CameraSessionTransport {
     enum Mode { case normal,preexisting,profileRejected,readbackMismatch,wrongStorage,replacedHandle,payloadChanged,deleteRejected,nonemptyAfterDelete,staleAfterTrigger,triggerRejected,closeFails,wrongOutputFormat,malformedOutputInfo,oversizedOutputInfo,duplicateOutputHandles,zeroOutputHandle,outputAssociationSeven,unexpectedOutputAssociation }
     let fixture:ProductionOperationFixture,holdOpcode:UInt16?
+    let baseline: Data?
     let holdStates:Bool
     var mode:Mode
     var selected:UInt16=1,outputPresent=false
@@ -411,7 +465,7 @@ actor ProductionSession: CameraSessionTransport {
     var profile:Data?,deleted=false,downloadCount=0,views=0
     var held:CheckedContinuation<Void,Never>?,heldWaiters:[CheckedContinuation<Void,Never>]=[]
     var subscribers:[AsyncStream<CameraState>.Continuation]=[]
-    init(fixture:ProductionOperationFixture,mode:Mode = .normal,holdOpcode:UInt16?=nil,holdStates:Bool=false) { self.fixture=fixture;self.mode=mode;self.holdOpcode=holdOpcode;self.holdStates=holdStates }
+    init(fixture:ProductionOperationFixture,mode:Mode = .normal,holdOpcode:UInt16?=nil,holdStates:Bool=false,baseline:Data?=nil) { self.fixture=fixture;self.mode=mode;self.holdOpcode=holdOpcode;self.holdStates=holdStates;self.baseline=baseline }
     func states() async ->AsyncStream<CameraState> {
         if holdStates { await withCheckedContinuation { held=$0;heldWaiters.forEach { $0.resume() };heldWaiters=[] } }
         let pair=AsyncStream<CameraState>.makeStream();subscribers.append(pair.continuation);return pair.stream }
@@ -442,7 +496,7 @@ actor ProductionSession: CameraSessionTransport {
         case (0x900C,[0,0,0]): bytes=Data()
         case (0x900D,[]): uploadHashes.append(XT5WorkingProfile.hash(data!));profile=nil;downloadCount=0;bytes=Data()
         case (0x1015,[0xD185]):
-            var value=profile ?? fixture.profile.baseline
+            var value=profile ?? baseline ?? fixture.profile.baseline
             if mode == .readbackMismatch && profile != nil { value[541] ^= 1 };bytes=value
         case (0x1016,[0xD185]): if mode == .profileRejected { throw PTPError.responseCode(0x2002) };profile=data;bytes=Data()
         case (0x1016,[0xD183]):
