@@ -81,3 +81,20 @@ The single failed editor case passed in an isolated serial rerun with no source
 changes (32.722 seconds for the case, exit 0). The full-suite result above remains
 reported as failed. No recipe-editor changes were added to this performance task.
 The task simulator was shut down and deleted, and its absence was verified.
+
+## Physical iPhone installation
+
+On 2026-10-29, built source revision `f869e6b7` in Release for the connected
+physical iPhone 15 Pro, Louisphone (`00008130-001825E90204001C`), from the isolated
+workspace `/tmp/fuji-studio-filter-phone.HuYm5A`. Automatic signing used team
+`AZH3P824F3` and `Apple Development`. The build passed, and the exact resulting
+`.build/PhoneInstall/Build/Products/Release-iphoneos/FujiStudio.app` passed
+`codesign --verify --deep --strict`; its bundle ID and team matched expectations.
+
+`devicectl device install app` installed that bundle successfully. A normal launch
+of `com.lun3x.FujiStudio`, without fixture/test arguments, succeeded. A subsequent
+physical-device process query confirmed `FujiStudio` running as PID 4234 from the
+same installed bundle path. Device installation and launch JSON receipts are
+under `.build/phone-install.json` and `.build/phone-launch.json` in that workspace.
+No physical-camera filtering latency measurement was performed. The install
+task's unused isolated simulator was deleted and its absence verified.
