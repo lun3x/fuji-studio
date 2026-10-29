@@ -380,6 +380,7 @@ actor BatchCamera: CameraServing {
     func connect() {}
     func importRecipes() throws -> ImportedRecipeCollection { throw CameraServiceError.unsupportedContext }
     func disconnect() {}
+    func resetConnection() {}
     func render(raw: PreparedRAW, recipe: RecipeSnapshot, policy: OutputPolicy) async throws -> CameraJPEG {
         sources.append(raw.sourceID); recipes.append(recipe.id)
         if let latch { await latch.wait() }

@@ -92,12 +92,30 @@ struct AppWorkspaceView: View {
                         if model.state.libraryAccess == .limited { Button("Manage Photos", action: model.managePhotos).accessibilityIdentifier("app.managePhotos") }
                         if model.state.libraryAccess == .denied || model.state.libraryAccess == .restricted { Button("Open Settings", action: model.openSettings) }
                         Text(cameraMessage).accessibilityIdentifier("app.camera")
-                        if let reason = model.state.exportDisabledReason { Text(reason.message).accessibilityIdentifier("app.exportDisabledReason") }
+                        if let error = model.cameraError {
+                            Text(error).foregroundStyle(.red).accessibilityIdentifier("app.cameraError")
+                        }
+                        if let error = model.cameraResetError {
+                            Text(error).foregroundStyle(.red).accessibilityIdentifier("app.cameraResetError")
+                        }
+                        Button {
+                            Task { await model.resetCameraConnection() }
+                        } label: {
+                            HStack {
+                                if model.isResettingCamera { ProgressView() }
+                                Text(model.isResettingCamera ? "Resetting camera connection…" : "Reset camera connection")
+                            }
+                        }
+                        .disabled(!model.canResetCameraConnection)
+                        .accessibilityIdentifier("app.resetCamera")
+                        if let reason = model.state.exportDisabledReason {
+                            Text(reason.message).accessibilityIdentifier("app.exportDisabledReason")
+                        }
                         if case .authorizationDenied = model.state.cameraState { Button("Open Settings", action: model.openSettings) }
                         if let message = model.message { Text(message).accessibilityIdentifier("app.error") }
                         if let error = model.connectionError { Text(error).accessibilityIdentifier("app.connectionError") }
                         ForEach(model.progressEvents, id: \.jobID) { event in
-                            ExportProgressView(event: event, canResume: !model.isSuspended && !model.isSubmitting && model.state.currentCameraExecutionContext != nil,
+                            ExportProgressView(event: event, canResume: !model.isSuspended && !model.isSubmitting && !model.isResettingCamera && model.cameraError == nil && model.cameraResetError == nil && model.state.currentCameraExecutionContext != nil && model.state.isCameraReady,
                                 onCancel: { Task { await model.cancelExport(jobID: event.jobID) } }, onResume: { Task { await model.resumeExport(jobID: event.jobID) } },
                                 onRetry: { Task { await model.resumeExport(jobID: event.jobID, retry: true) } }, onReconcile: { Task { await model.reconcile() } })
                                 .accessibilityElement(children: .contain).accessibilityIdentifier("export.job.\(event.jobID.uuidString)")
@@ -113,9 +131,12 @@ struct AppWorkspaceView: View {
     }
     private var statusButton: some View {
         CameraStatusControl(state: CameraIndicatorState(camera: model.state.cameraState,
-            refreshingRecipes: model.isRefreshing), label: statusLabel) { statusPresented = true }
+            refreshingRecipes: model.isRefreshing || model.isResettingCamera,
+            hasError: model.cameraError != nil || model.cameraResetError != nil), label: statusLabel) { statusPresented = true }
     }
     private var statusLabel: String {
+        if model.isResettingCamera { return "Resetting camera connection…" }
+        if model.cameraError != nil || model.cameraResetError != nil { return "Camera error" }
         if model.isLoadingLibrary { return "Reading Photos…" }
         if let event = model.exportEvent { return "\(event.recipeLabel) · \(event.summary.completed) saved · \(ExportProgressView.status(event))" }
         if model.message != nil || model.connectionError != nil { return "Action needed" }
@@ -142,6 +163,7 @@ struct AppWorkspaceView: View {
         switch model.state.cameraState {
         case .ready: "\(model.state.currentCameraExecutionContext?.model ?? "Camera") ready for conversion."
         case .busy: "The camera is processing the current operation."
+        case .attentionRequired: "Camera connection needs attention. Reset the connection to try again."
         case .authorizationRequired: "Allow camera control to read recipes and convert RAWs over USB. This does not take new pictures."
         case .authorizationDenied: "Camera control is denied. Allow it in Settings, then return to Fuji Studio to connect automatically."
         case .wrongMode: "Set the camera USB connection mode to USB RAW CONV./BACKUP RESTORE. Use a USB data cable."

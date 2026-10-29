@@ -6,6 +6,12 @@ private let indicatorSession = CameraSession(generation: 1,
     connection: CameraConnection(name: "X-T5", usbVendorID: 0, usbProductID: 0))
 
 struct CameraIndicatorTests {
+    @Test(arguments: [false, true])
+    func cameraAttentionRemainsAnErrorDuringRecipeImport(_ refreshing: Bool) {
+        let state = CameraIndicatorState(camera: .attentionRequired(indicatorSession, message: "Unexpected photo dimensions"), refreshingRecipes: refreshing)
+        #expect(state.rawValue == "Camera error")
+    }
+
     @Test(arguments: [CameraState.ready(indicatorSession), .busy(indicatorSession)])
     func connectedSessionStaysPreparingUntilRecipeImportFinishes(_ camera: CameraState) {
         #expect(CameraIndicatorState(camera: camera, refreshingRecipes: true) == .preparing)

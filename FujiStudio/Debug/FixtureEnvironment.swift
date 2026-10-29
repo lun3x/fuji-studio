@@ -198,16 +198,22 @@ actor FixtureCamera: CameraServing {
     private var context: CameraExecutionContext
     private var state: CameraState = .disconnected
     private var observers: [AsyncStream<CameraState>.Continuation] = []
+    private var deferredNotifications: [CameraState]?
     private var shouldFailImport = false
+    private var importAttention: String?
     private var shouldFailRender = false
     private var shouldFailRenderWithoutDisconnect = false
+    private var renderAttention: String?
+    private var resetFailure: CameraServiceError?
+    private var reopenBeforeResetFailure = false
+    private var resetBarrier: FixtureBarrier?
     private var renderBarrier: FixtureBarrier?
     private var connectBarrier: FixtureBarrier?
     private var importBarrier: FixtureBarrier?
     private var connectionFailure: CameraServiceError?
     private var disconnectBarrier: FixtureBarrier?
     private(set) var cancelledRenders = 0
-    private(set) var subscriptions = 0, importCount = 0, connectCount = 0, disconnectCount = 0, renderCount = 0
+    private(set) var subscriptions = 0, importCount = 0, connectCount = 0, disconnectCount = 0, renderCount = 0, resetCount = 0
     var session: CameraSession { CameraSession(generation: context.generation, connection: CameraConnection(name: "Fixture \(context.model)", usbVendorID: 0, usbProductID: 0)) }
     init(recipes: [RecipeSnapshot], image: DisplayFileLease, root: URL,declaredSlots:[RecipeSlot]?=nil) {
         snapshots = recipes; self.image = image; self.root = root
@@ -216,10 +222,20 @@ actor FixtureCamera: CameraServing {
         context = CameraExecutionContext(model:first?.model ?? "X-T5",firmware:first?.firmware ?? "4.31",capability:first?.capability ?? "X-T5_0200",supportVersion:first?.model == "X-E3" ? XE3Support.identifier : XT5WorkingProfile.supportVersion,sessionIdentity:UUID(),generation:0)
     }
     func executionContext() throws -> CameraExecutionContext {
-        switch state { case .ready, .busy: return context; default: throw CameraServiceError.notReady }
+        switch state { case .ready, .busy, .attentionRequired: return context; default: throw CameraServiceError.notReady }
     }
     func states() -> AsyncStream<CameraState> { subscriptions += 1; return AsyncStream { observers.append($0); $0.yield(state) } }
-    private func emit(_ next: CameraState) { state = next; observers.forEach { $0.yield(next) } }
+    private func emit(_ next: CameraState) {
+        state = next
+        if deferredNotifications != nil { deferredNotifications?.append(next) }
+        else { observers.forEach { $0.yield(next) } }
+    }
+    func deferStateNotifications() { deferredNotifications = [] }
+    func resumeStateNotifications() {
+        let pending = deferredNotifications ?? []
+        deferredNotifications = nil
+        for event in pending { observers.forEach { $0.yield(event) } }
+    }
     func setConnectionFailure(_ failure: CameraServiceError?) { connectionFailure = failure }
     func holdConnect(_ barrier: FixtureBarrier) { connectBarrier = barrier }
     func connect() async throws {
@@ -232,11 +248,29 @@ actor FixtureCamera: CameraServing {
     }
     func holdDisconnect(_ barrier: FixtureBarrier) { disconnectBarrier = barrier }
     func disconnect() async { disconnectCount += 1; if let disconnectBarrier { await disconnectBarrier.wait() }; emit(.disconnected) }
+    func holdReset(_ barrier: FixtureBarrier) { resetBarrier = barrier }
+    func failReset(_ error: CameraServiceError?) { resetFailure = error }
+    func failResetAfterReopening(_ error: CameraServiceError) { resetFailure = error; reopenBeforeResetFailure = true }
+    func resetConnection() async throws {
+        resetCount += 1
+        emit(.opening)
+        if let resetBarrier { await resetBarrier.wait() }
+        if let resetFailure {
+            if reopenBeforeResetFailure {
+                context = CameraExecutionContext(model: context.model, firmware: context.firmware, capability: context.capability, supportVersion: context.supportVersion, sessionIdentity: UUID(), generation: context.generation + 1)
+            }
+            emit(.attentionRequired(session, message: "The camera could not clear its temporary converted photo."))
+            throw resetFailure
+        }
+        try await connect()
+    }
     func cycleBusyReady() { emit(.busy(session)); emit(.ready(session)) }
     func holdRender(_ barrier: FixtureBarrier) { renderBarrier = barrier }
     func failRender() { shouldFailRender = true }
     func failRenderWithoutDisconnect() { shouldFailRenderWithoutDisconnect = true }
+    func failRenderWithAttention(_ message: String) { renderAttention = message }
     func failImport() { shouldFailImport = true }
+    func failImportWithAttention(_ message: String) { importAttention = message }
     func holdImport(_ barrier: FixtureBarrier) { importBarrier = barrier }
     func cachedRecipeCollection() throws -> ImportedRecipeCollection {
         guard let first=snapshots.first?.cameraContext else { throw CatalogError.invalidRecipeCollection }
@@ -246,8 +280,14 @@ actor FixtureCamera: CameraServing {
         return .init(recipes:snapshots,declaredSlots:support.capabilities.bankSlots,context:cached,support:support)
     }
     func importRecipes() async throws -> ImportedRecipeCollection {
-        importCount += 1; emit(.busy(session)); await Task.yield(); defer { emit(.ready(session)) }
+        importCount += 1; emit(.busy(session)); await Task.yield()
+        defer { if case .busy = state { emit(.ready(session)) } }
         if let importBarrier { await importBarrier.wait() }
+        if let message = importAttention {
+            importAttention = nil
+            emit(.attentionRequired(session, message: message))
+            throw CameraServiceError.invalidOutput
+        }
         if shouldFailImport { throw CameraServiceError.recipeImportFailed(restorationConfirmed: true) }
         if context.model == "X-E3" {
             context = .init(model:context.model,firmware:context.firmware,capability:context.capability,supportVersion:context.supportVersion,sessionIdentity:UUID(),generation:context.generation+2)
@@ -259,11 +299,17 @@ actor FixtureCamera: CameraServing {
         return .init(recipes:recipes,declaredSlots:support.capabilities.bankSlots,context:context,support:support)
     }
     func render(raw: PreparedRAW, recipe: RecipeSnapshot, policy: OutputPolicy) async throws -> CameraJPEG {
-        _ = try executionContext(); renderCount += 1; emit(.busy(session)); await Task.yield()
+        guard case .ready = state else { throw CameraServiceError.notReady }
+        renderCount += 1; emit(.busy(session)); await Task.yield()
         if let renderBarrier { await renderBarrier.wait() }
         if Task.isCancelled { cancelledRenders += 1; throw CancellationError() }
         if shouldFailRender { shouldFailRender = false; emit(.disconnected); throw CameraServiceError.uncertainOperation(UUID()) }
         if shouldFailRenderWithoutDisconnect { shouldFailRenderWithoutDisconnect = false; emit(.ready(session)); throw CameraServiceError.storage }
+        if let message = renderAttention {
+            renderAttention = nil
+            emit(.attentionRequired(session, message: message))
+            throw CameraServiceError.invalidOutput
+        }
         defer { emit(.ready(session)) }
         let url = root.appendingPathComponent("render-\(UUID().uuidString).JPG")
         try FileManager.default.copyItem(at: image.fileURL, to: url)

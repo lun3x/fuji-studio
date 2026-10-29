@@ -9,11 +9,13 @@ public protocol CameraServing: Sendable {
   func render(raw: PreparedRAW, recipe: RecipeSnapshot, policy: OutputPolicy) async throws
     -> CameraJPEG
   func disconnect() async
+  func resetConnection() async throws
 }
 
 public enum CameraServiceError: Error, Sendable, Equatable {
   case unsupportedSource, unsupportedSettings, unsupportedProfile, unsupportedContext
   case sourceChanged, notReady, cancelled, storage, invalidOutput, profileReadbackMismatch
+  case invalidMetadata(String)
   case preexistingObjects, ownershipChanged, timeout
   case uncertainOperation(UUID)
   case closeUnconfirmed

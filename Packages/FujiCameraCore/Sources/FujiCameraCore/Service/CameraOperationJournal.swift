@@ -21,6 +21,7 @@ public struct CameraOperationRecord: Sendable, Codable {
   public var outputHandle: UInt32?
   public var outputSHA256: String?
   public var objectInfo: Data?, storageInfo: Data?
+  public var discardObjectInfo: Data?, discardStorageInfo: Data?, discardOutputSHA256: String?
   public var outputValidated = false
   public var deleteIntent = false
   public var deleteAcknowledged = false
@@ -182,13 +183,25 @@ public struct CameraOperationJournal: Sendable {
       record.outputSHA256 != nil, record.objectInfo != nil, record.storageInfo != nil,
       !record.deleteIntent
     else { throw CameraServiceError.uncertainOperation(record.id) }
+    try beginDeletionIntent(&record, intent: "one exact delete; never replay")
+  }
+  /// Explicit reset may discard this session's failed temporary conversion. It
+  /// does not claim that the image passed output validation.
+  public func beginDiscard(_ record: inout CameraOperationRecord) throws {
+    guard record.phase == .uncertain, record.initialViewEmpty, record.triggerIntent, record.triggerAcknowledged,
+      record.outputHandle != nil, record.discardObjectInfo != nil,
+      record.discardStorageInfo != nil, record.discardOutputSHA256 != nil, !record.deleteIntent
+    else { throw CameraServiceError.uncertainOperation(record.id) }
+    try beginDeletionIntent(&record, intent: "explicit reset discards one owned temporary output; never replay")
+  }
+  private func beginDeletionIntent(_ record: inout CameraOperationRecord, intent: String) throws {
     let marker = operationDirectory(record.id).appendingPathComponent("delete-intent.json")
     guard !FileManager.default.fileExists(atPath: marker.path) else {
       throw CameraServiceError.uncertainOperation(record.id)
     }
     do {
       let data = try JSONEncoder().encode([
-        "operation": record.id.uuidString, "intent": "one exact delete; never replay",
+        "operation": record.id.uuidString, "intent": intent,
       ])
       try durable(data, to: marker, exclusive: true)
     } catch { throw CameraServiceError.uncertainOperation(record.id) }

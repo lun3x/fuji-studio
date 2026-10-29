@@ -62,3 +62,100 @@ recorded before that stricter diagnostic stops after one trial.
   listing confirmed the installed bundle was running.
 
 No new physical-camera transaction is claimed by these checks.
+
+## Separate output-metadata failure and explicit reset
+
+A later report on 2026-10-29 involved a camera that continued flashing after
+unplugging and switching its power off. The phone's latest three operation
+records show two completed conversions followed by an acknowledged trigger and
+an output handle, then `invalidOutput` before ObjectInfo/storage metadata had
+been saved. This is a separate failure from the LMO mismatch above. The journal
+recorded confirmed native closure; that does not establish that camera firmware
+finished processing or recovered.
+
+While the camera was stuck, macOS USB enumeration showed no Fujifilm device.
+After the user removed/reinserted the battery, enumeration returned. One
+read-only Mac session successfully read DeviceInfo and USB mode 6, observed an
+empty object view, and confirmed native closure. No conversion or deletion was
+performed by that probe. The rejected metadata was lost across the reset, so
+the precise firmware-lockup cause remains unproven. Private phone records and
+probe evidence are retained outside the repository.
+
+At the user's request, metadata validation failures now retain a valid native
+session, publish a connected attention state, and block further conversions.
+The camera icon turns red; the existing status page shows the specific error
+and a **Reset camera connection** action. Rejected ObjectInfo and storage
+datasets are saved before decoding, bounded to 4 KiB each. Invalid handle
+datasets are treated as metadata errors rather than native transport failures.
+
+Reset is a single explicit lifecycle operation. It first reconciles missing
+output or discards a failed temporary conversion only with same-session
+ownership, an acknowledged trigger following an empty view, the exact handle,
+recognized temporary storage, stable metadata, and two matching payload reads.
+An exclusive deletion marker prevents replay. Discard evidence is separate
+from the original rejected metadata, and discarded output never becomes a
+successful render. If metadata or ownership cannot be trusted, reset still
+tries one native close/reopen without deleting that output. It returns ready
+only after a fresh empty view; otherwise the error remains visible. Real USB
+loss, native transaction failure, and unconfirmed closure retain their existing
+lifecycle handling.
+
+Camera-core regressions cover retained errors, explicit reset followed by a
+new render, persistent malformed metadata, unsafe/changed outputs, ambiguous
+deletion, cancellation, and settling a previously unconfirmed native close.
+These software checks do not prove recovery from firmware that no longer
+enumerates over USB.
+
+### Metadata captured on the updated iPhone build
+
+The user reproduced a red-icon error while the session remained open. Two
+rejected records report JPEG format `0x3801`, protection 0, roughly 25.2 MB,
+unknown ObjectInfo dimensions 0/0, and association `0x0007`. A completed record
+from the same camera/firmware reports association `0x0807`. The shipping X-T5
+dialect accepted only 0 and `0x0807`, explaining this reproducible rejection
+before storage or JPEG download. The original rejected bytes are now retained
+in the journal, with closure honestly recorded as `notRequested`.
+
+The X-T5 dialect now also accepts the observed `0x0007`. Storage identity,
+JPEG geometry/quality/recipe validation, source provenance, and cleanup checks
+remain mandatory; X-E3 is unchanged. The new shared-service regression failed
+with `uncertainOperation` before this correction and passes for both observed
+values afterwards. Unknown association 9 still stops before download/deletion
+and retains the connected error state. All 120 core tests pass.
+
+An initial parallel iOS validation exposed a test synchronization error in
+`explicitCameraResetIsSingleFlightAndDoesNotReplayFailedPreview`: the test
+asserted the camera call count after the UI progress flag was set, before the
+camera API had necessarily entered. The test now waits for its existing held
+reset barrier before checking the unchanged single-flight assertion. A focused
+AppModel run and the subsequent complete unit run pass. Earlier interrupted
+full runs are not counted as final full-suite validation.
+
+The corrected signed Release bundle passed strict codesign verification and was
+installed and launched normally on the physical iPhone. The user retried the
+same photo and recipe and confirmed that the photo now renders successfully.
+This verifies the reproduced metadata-admission case on the physical camera;
+recovery from a firmware state that no longer enumerates over USB remains
+unproven. Final complete iOS validation is recorded below.
+
+### Final validation and delivery
+
+- All 120 shared camera-core tests and 6 laptop-runner tests pass.
+- Complete `Scripts/test-ios.sh` validation on the task's isolated iPhone 15 Pro
+  simulator passed with the current two-worker runner: **604 logical tests,
+  601 passed, zero failed, three existing native-device gates skipped**. The
+  result tree contains 70 passing UI tests plus the three gates, including the
+  new error → status → reset → fresh render flow.
+- Result bundle: `.build/TestResults/20261029-150427-12167.xcresult`.
+- Independent core/UI reviews found no remaining actionable issues after the
+  lifecycle, selection-preservation, and synchronization corrections.
+- The signed physical-iPhone Release bundle passed
+  `codesign --verify --deep --strict`, was installed from
+  `.build/PhoneInstall/Build/Products/Release-iphoneos/FujiStudio.app`, and was
+  launched normally without fixture or test arguments. The user confirmed the
+  formerly failing photo/recipe now renders.
+- The task simulator and both native XCTest worker clones were shut down and
+  deleted. The UI implementer's separate simulator was also deleted. Unrelated
+  simulators were left untouched.
+
+Changes are published in [PR #34](https://github.com/lun3x/fuji-studio/pull/34).

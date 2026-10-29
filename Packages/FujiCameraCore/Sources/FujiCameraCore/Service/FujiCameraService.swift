@@ -15,6 +15,7 @@ public actor FujiCameraService: CameraServing {
   private var needsClose = false, stopRequested = false
   private var admissionEpoch: UInt64 = 0, transaction: UInt32 = 1
   private var state: CameraState = .disconnected
+  private var operationError: CameraServiceError?
   private var observers: [UUID: AsyncStream<CameraState>.Continuation] = [:]
   private var monitor: Task<Void, Never>?
   public init(
@@ -81,18 +82,23 @@ public actor FujiCameraService: CameraServing {
   }
   private func nativeEvent(_ event: CameraState) async {
     switch event {
-    case .busy, .sessionOpen, .ready: return  // Wire activity never changes whole-operation readiness.
+    case .busy, .sessionOpen, .ready, .attentionRequired: return  // Wire activity never changes whole-operation readiness.
     case .disconnected, .recoverableError, .authorizationDenied:
-      guard let expected = context else { return }  // Connection owner handles its own opening/close result.
+      // A metadata failure during verification can retain an open native session
+      // before a public execution context exists. Real removal must retire it too.
+      guard context != nil || operationError != nil, let expected = nativeSession else { return }
+      let identity = context?.sessionIdentity, epoch = admissionEpoch
       if let current = try? await session.currentSession(),
         current.generation == expected.generation
       {
         return
       }
-      guard context?.sessionIdentity == expected.sessionIdentity else { return }
+      guard admissionEpoch == epoch, nativeSession == expected,
+        context?.sessionIdentity == identity else { return }
       stopRequested = true
       context = nil
       nativeSession = nil
+      operationError = nil
       publish(event)
     case .authorizationRequired, .discovering, .opening, .wrongMode:
       if context == nil { publish(event) }
@@ -104,9 +110,10 @@ public actor FujiCameraService: CameraServing {
       throw Self.failure(error)
     }
   }
-  private func connectOwned(epoch: UInt64) async throws {
+  private func connectOwned(epoch: UInt64, requireEmptyOutput: Bool = false) async throws {
     guard epoch == admissionEpoch else { throw CameraServiceError.cancelled }
     try Task.checkCancellation()
+    if let operationError { throw operationError }
     if context != nil && !stopRequested {
       try await validateCurrent()
       return
@@ -121,9 +128,10 @@ public actor FujiCameraService: CameraServing {
     do {
       context = try await openVerified(epoch: epoch)
       let pending = try journal.unresolved()
-      if !pending.isEmpty {
+      if !pending.isEmpty || requireEmptyOutput {
         guard try await handles().isEmpty else {
-          throw CameraServiceError.uncertainOperation(pending[0].id)
+          if let first = pending.first { throw CameraServiceError.uncertainOperation(first.id) }
+          throw CameraServiceError.preexistingObjects
         }
         // Fresh empty view reconciles absence only. Old acknowledgements/files stay honest;
         // no trigger/delete is replayed and no old uncertain file becomes a success.
@@ -138,6 +146,10 @@ public actor FujiCameraService: CameraServing {
       try await finishReady()
     } catch {
       let failure = Self.failure(error)
+      if let retained = await sessionToRetain(after: failure) {
+        pause(failure, message: Self.validationMessage(failure), session: retained)
+        throw failure
+      }
       let closed = await closeUncancelled()
       if !closed { throw CameraServiceError.closeUnconfirmed }
       throw failure
@@ -287,6 +299,10 @@ public actor FujiCameraService: CameraServing {
         recipes: recipes, declaredSlots: result.declaredSlots, context: execution, support: support)
     } catch {
       let failure = Self.failure(error)
+      if let retained = await sessionToRetain(after: failure) {
+        pause(failure, message: Self.validationMessage(failure), session: retained)
+        throw failure
+      }
       if !(await closeUncancelled()) { throw CameraServiceError.closeUnconfirmed }
       throw failure
     }
@@ -376,20 +392,32 @@ public actor FujiCameraService: CameraServing {
       let handle = try await awaitOutput()
       record.outputHandle = handle
       let object = try await send(0x1008, [handle]).data
-      let info = try FujiConversionCodec.objectInfo(object)
-      guard info.format == 0x3801, info.protection == 0, info.byteCount > 0,
-        info.byteCount <= PTPCodec.maximumDataBytes,
-        dialect.outputAssociationTypes.contains(info.associationType),
-        info.width == 0 || info.width == raw.metadata.recordedGeometry.width,
-        info.height == 0 || info.height == raw.metadata.recordedGeometry.height
-      else { throw CameraServiceError.invalidOutput }
-      let storage = try await send(0x1005, [info.storageID]).data
-      let storageInfo = try FujiConversionCodec.storageInfo(storage)
-      guard storageInfo.storageType == 3, storageInfo.filesystemType == 2, storageInfo.access == 2
-      else { throw CameraServiceError.ownershipChanged }
-      record.objectInfo = object
-      record.storageInfo = storage
+      // Retain rejected metadata too; a failed conversion may leave the camera
+      // unavailable for later inspection. Dataset decoding is bounded to 4 KiB.
+      record.objectInfo = Data(object.prefix(4096))
       try journal.save(record)
+      let info: PTPObjectInfo
+      do { info = try FujiConversionCodec.objectInfo(object) } catch {
+        record.failure = "The camera returned unreadable information for the converted photo."
+        throw error
+      }
+      if let issue = Self.outputMetadataIssue(info, dialect: dialect, source: raw.metadata) {
+        record.failure = issue
+        throw CameraServiceError.invalidOutput
+      }
+      let storage = try await send(0x1005, [info.storageID]).data
+      record.storageInfo = Data(storage.prefix(4096))
+      try journal.save(record)
+      let storageInfo: PTPStorageInfo
+      do { storageInfo = try FujiConversionCodec.storageInfo(storage) } catch {
+        record.failure = "The camera returned unreadable storage information for the converted photo."
+        throw error
+      }
+      guard storageInfo.storageType == 3, storageInfo.filesystemType == 2, storageInfo.access == 2
+      else {
+        record.failure = "The camera reported an unexpected storage location for the converted photo."
+        throw CameraServiceError.ownershipChanged
+      }
       guard try await handles() == [handle] else { throw CameraServiceError.ownershipChanged }
       let assessment: CameraOutputAssessment
       let outputURL: URL
@@ -398,7 +426,10 @@ public actor FujiCameraService: CameraServing {
         guard payload.count == info.byteCount else { throw CameraServiceError.invalidOutput }
         try await revalidate(
           handle: handle, object: object, storage: storage, storageID: info.storageID)
-        assessment = try adapter.validateOutput(payload, conversion: patch)
+        do { assessment = try adapter.validateOutput(payload, conversion: patch) } catch {
+          record.failure = Self.jpegValidationMessage(error)
+          throw error
+        }
         record.outputSHA256 = ResourceChecksum.sha256(payload)
         outputURL = try journal.store(payload, name: "output.JPG", id: record.id)
       }
@@ -437,14 +468,18 @@ public actor FujiCameraService: CameraServing {
       return result
     } catch {
       let failure = Self.failure(error)
-      record.failure = record.failure ?? Self.safeFailure(failure)
-      let closed = await closeUncancelled()
-      record.closure = closed ? "confirmed" : "unconfirmed"
-      let uncertain = (record.triggerIntent && !record.emptyViewVerified) || !closed
+      record.failure = record.failure ?? Self.validationMessage(failure)
+      let retained = await sessionToRetain(after: failure)
+      let closed: Bool
+      if retained != nil { closed = false; record.closure = "notRequested" }
+      else { closed = await closeUncancelled(); record.closure = closed ? "confirmed" : "unconfirmed" }
+      let uncertain = (record.triggerIntent && !record.emptyViewVerified) || (retained == nil && !closed)
       record.phase = uncertain ? .uncertain : .aborted
       do { try journal.save(record) } catch {
+        if retained != nil { _ = await closeUncancelled() }
         throw CameraServiceError.uncertainOperation(record.id)
       }
+      if let retained { pause(failure, message: record.failure!, session: retained) }
       if uncertain { throw CameraServiceError.uncertainOperation(record.id) }
       throw failure
     }
@@ -495,9 +530,13 @@ public actor FujiCameraService: CameraServing {
     throw CameraServiceError.timeout
   }
   private func handles() async throws -> [UInt32] {
-    try FujiConversionCodec.objectHandles(await send(0x1007, [UInt32.max, 0, 0]).data)
+    let data = try await send(0x1007, [UInt32.max, 0, 0]).data
+    do { return try FujiConversionCodec.objectHandles(data) } catch {
+      throw CameraServiceError.invalidMetadata("The camera returned an invalid list of temporary conversion outputs.")
+    }
   }
   private func admit(epoch: UInt64) async throws -> CameraExecutionContext {
+    if let operationError { throw operationError }
     guard epoch == admissionEpoch, !stopRequested, let context, let nativeSession else {
       throw CameraServiceError.notReady
     }
@@ -542,6 +581,166 @@ public actor FujiCameraService: CameraServing {
     }
     _ = try? await owner.value
   }
+  public func resetConnection() async throws {
+    guard !Task.isCancelled else { throw CameraServiceError.cancelled }
+    admissionEpoch &+= 1
+    let epoch = admissionEpoch
+    stopRequested = true
+    // Once admitted, a lifecycle reset drains even if its UI task is cancelled.
+    let owner = Task.detached {
+      try await self.gate.withExclusiveAccess { try await self.resetOwned(epoch: epoch) }
+    }
+    do {
+      try await owner.value
+    } catch { throw Self.failure(error) }
+  }
+  private func resetOwned(epoch: UInt64) async throws {
+    guard epoch == admissionEpoch else { throw CameraServiceError.cancelled }
+    try Task.checkCancellation()
+    stopRequested = false
+    do {
+      if let expected = nativeSession,
+        let current = try? await session.currentSession(), current.generation == expected.generation {
+        do { try await reconcileForReset() } catch {
+          // An explicit reset still tries one native close/reopen when metadata
+          // cannot be trusted. No unknown object is deleted; only a fresh empty
+          // view can clear its unresolved journal after reopening.
+          guard await sessionToRetain(after: Self.failure(error)) != nil else { throw error }
+        }
+      }
+      // Retire the public affinity before our own native close event arrives.
+      context = nil
+      operationError = nil
+      guard await closeUncancelled(publishState: false) else { throw CameraServiceError.closeUnconfirmed }
+      try await connectOwned(epoch: epoch, requireEmptyOutput: true)
+    } catch {
+      let failure = Self.failure(error)
+      if epoch == admissionEpoch, let retained = await currentNativeSession() {
+        pause(failure, message: "Reset could not finish. " + Self.validationMessage(failure), session: retained)
+      }
+      throw failure
+    }
+  }
+  private func reconcileForReset() async throws {
+    let pending = try journal.unresolved()
+    let visible = try await handles()
+    if visible.isEmpty {
+      for var record in pending {
+        record.phase = .reconciledMissing
+        try journal.save(record)
+      }
+      return
+    }
+    guard pending.count == 1, var record = pending.first, record.context == context,
+      record.initialViewEmpty, record.triggerAcknowledged,
+      let handle = record.outputHandle, visible == [handle], !record.deleteIntent,
+      let dialect = activeAdapter?.conversionDialect
+    else { throw CameraServiceError.preexistingObjects }
+    // Only a stable JPEG in the camera's measured temporary conversion storage
+    // can be discarded. Unknown/card objects and an old session are never deleted.
+    let object = try await send(0x1008, [handle]).data
+    let info = try FujiConversionCodec.objectInfo(object)
+    guard info.format == 0x3801, info.protection == 0, info.byteCount > 0,
+      info.byteCount <= PTPCodec.maximumDataBytes,
+      dialect.outputAssociationTypes.contains(info.associationType)
+    else { throw CameraServiceError.invalidOutput }
+    let storage = try await send(0x1005, [info.storageID]).data
+    let storageInfo = try FujiConversionCodec.storageInfo(storage)
+    guard storageInfo.storageType == 3, storageInfo.filesystemType == 2, storageInfo.access == 2
+    else { throw CameraServiceError.ownershipChanged }
+    try await revalidate(handle: handle, object: object, storage: storage, storageID: info.storageID)
+    let hash: String
+    do {
+      let data = try await send(0x1009, [handle]).data
+      guard data.count == info.byteCount else { throw CameraServiceError.invalidOutput }
+      hash = ResourceChecksum.sha256(data)
+    }
+    if let originalHash = record.outputSHA256 ?? record.discardOutputSHA256, originalHash != hash {
+      throw CameraServiceError.ownershipChanged
+    }
+    record.discardObjectInfo = object
+    record.discardStorageInfo = storage
+    record.discardOutputSHA256 = hash
+    try journal.save(record)
+    try await revalidate(handle: handle, object: object, storage: storage, storageID: info.storageID)
+    do {
+      let data = try await send(0x1009, [handle]).data
+      guard data.count == info.byteCount, ResourceChecksum.sha256(data) == hash else {
+        throw CameraServiceError.ownershipChanged
+      }
+    }
+    try journal.beginDiscard(&record)
+    do {
+      try await revalidate(handle: handle, object: object, storage: storage, storageID: info.storageID)
+      _ = try await send(0x100B, [handle, 0])
+      record.deleteAcknowledged = true
+      record.phase = .deleteAcknowledged
+      try journal.save(record)
+      guard try await handles().isEmpty else { throw CameraServiceError.ownershipChanged }
+      record.emptyViewVerified = true
+      record.phase = .aborted
+      try journal.save(record)
+    } catch {
+      record.phase = .uncertain
+      try journal.save(record)
+      throw error
+    }
+  }
+  private func sessionToRetain(after failure: CameraServiceError) async -> CameraSession? {
+    switch failure {
+    case .invalidOutput, .invalidMetadata, .ownershipChanged, .profileReadbackMismatch, .unsupportedProfile,
+      .unsupportedContext, .preexistingObjects, .uncertainOperation, .recipeImportFailed,
+      .transport(.responseCode): break
+    default: return nil
+    }
+    return await currentNativeSession()
+  }
+  private func currentNativeSession() async -> CameraSession? {
+    guard !stopRequested, let expected = nativeSession,
+      let current = try? await session.currentSession(), current.generation == expected.generation,
+      !stopRequested, nativeSession == expected else { return nil }
+    return current
+  }
+  private func pause(_ failure: CameraServiceError, message: String, session: CameraSession) {
+    operationError = failure
+    publish(.attentionRequired(session, message: message))
+  }
+  private static func outputMetadataIssue(_ info: PTPObjectInfo, dialect: FujiRAWConversionDialect, source: RAWMetadata) -> String? {
+    if info.format != 0x3801 { return "The camera reported an unexpected image format for the converted photo (expected JPEG)." }
+    if info.protection != 0 { return "The camera reported the temporary converted photo as protected." }
+    if info.byteCount == 0 { return "The camera reported a converted photo with no image data (0 bytes)." }
+    if info.byteCount > PTPCodec.maximumDataBytes { return "The camera reported a converted photo larger than the supported transfer size." }
+    if !dialect.outputAssociationTypes.contains(info.associationType) { return "The camera reported an unexpected type of temporary conversion output." }
+    if (info.width != 0 && info.width != source.recordedGeometry.width) || (info.height != 0 && info.height != source.recordedGeometry.height) {
+      return "The camera reported unexpected photo dimensions: \(info.width) × \(info.height); expected \(source.recordedGeometry.width) × \(source.recordedGeometry.height)."
+    }
+    return nil
+  }
+  private static func jpegValidationMessage(_ error: any Error) -> String {
+    switch error {
+    case FujiJPEGValidationError.notFine, FujiJPEGValidationError.unsupportedQuality: "The camera returned a photo with unexpected JPEG quality (expected FINE)."
+    case FujiJPEGValidationError.cameraMismatch: "The converted photo reports a different camera model."
+    case FujiJPEGValidationError.geometryMismatch: "The converted photo has different dimensions from the original."
+    case FujiJPEGValidationError.orientationMismatch: "The converted photo has a different orientation from the original."
+    case FujiJPEGValidationError.missingMetadata: "The converted photo is missing required image metadata."
+    default: "The converted photo contains unreadable or unexpected image metadata."
+    }
+  }
+  private static func validationMessage(_ failure: CameraServiceError) -> String {
+    switch failure {
+    case .invalidOutput: "The camera returned unreadable or unexpected conversion output."
+    case .invalidMetadata(let message): message
+    case .ownershipChanged: "The camera's temporary conversion output changed unexpectedly."
+    case .profileReadbackMismatch: "The camera returned different processing settings than were sent."
+    case .unsupportedProfile: "The camera returned processing settings this app does not recognize."
+    case .unsupportedContext: "The camera returned an unsupported model, firmware, or conversion mode."
+    case .preexistingObjects, .uncertainOperation: "An unfinished conversion could not be safely cleared. Reset the camera connection to try again."
+    case .recipeImportFailed: "The camera returned an incomplete or unexpected recipe collection."
+    case .transport(.responseCode(let code)): "The camera declined the operation (error \(String(format: "0x%04X", code)))."
+    case .storage: "The app could not save the camera operation record."
+    default: safeFailure(failure)
+    }
+  }
   private func closeUncancelled(publishState: Bool = true) async -> Bool {
     let expected = nativeSession?.generation
     let task = Task.detached {
@@ -563,6 +762,7 @@ public actor FujiCameraService: CameraServing {
       context = nil
       activeAdapter = nil
       verifiedSupport = nil
+      operationError = nil
       if publishState { publish(.disconnected) }
       return true
     } catch {
