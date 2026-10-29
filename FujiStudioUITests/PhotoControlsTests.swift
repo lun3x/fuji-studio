@@ -2,6 +2,28 @@ import XCTest
 
 @MainActor
 final class PhotoControlsTests: AppFlowTestCase {
+    func testRepeatedPhotoSelectionKeepsLoadingOverlayUntilRecipeConversionFinishes() {
+        let app = launch(["--fixture-held-conversion"])
+        app.cells["grid.source-0"].tap()
+        let loading = app.descendants(matching: .any)["viewer.loading"]
+        wait { app.scrollViews["viewer.image"].exists && !loading.exists }
+        wait { app.buttons["app.status"].label.contains("Camera ready") }
+        recipe(1, in: app)
+        wait { app.buttons["fixture.finishPreview"].value as? String == "Loading preview" }
+
+        for sourceID in ["source-2", "source-1", "source-0", "source-2", "source-2"] {
+            app.cells["grid.\(sourceID)"].tap()
+            XCTAssertTrue(app.scrollViews["viewer.image"].exists)
+            XCTAssertTrue(loading.exists, "The selected recipe is still waiting for camera conversion")
+            XCTAssertFalse(app.buttons["workspace.export"].isEnabled)
+        }
+        shot(app, "Repeated photo selection stays under the loading overlay")
+        app.buttons["fixture.finishPreview"].tap()
+        wait { !loading.exists && app.buttons["workspace.export"].isEnabled }
+        XCTAssertTrue(app.scrollViews["viewer.image"].exists)
+        XCTAssertTrue(app.buttons["recipe.control"].label.contains("C1"))
+    }
+
     func testPhotoChangeKeepsPreviousImageAndZoomUnderLoadingOverlay() {
         let app = launch(["--fixture-held-photo"])
         app.cells["grid.source-0"].tap()

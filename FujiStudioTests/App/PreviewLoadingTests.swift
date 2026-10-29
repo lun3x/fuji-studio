@@ -3,6 +3,75 @@ import Testing
 @testable import FujiStudio
 
 @MainActor struct PreviewLoadingTests {
+    @Test(arguments: [false, true]) func switchingPhotosWhileCameraBusyKeepsSpinnerUntilPreviewFinishes(_ clearRecipe: Bool) async throws {
+        let fixture = try await FixtureEnvironment.make(), barrier = FixtureBarrier()
+        defer { Task { await barrier.release() } }
+        let model = AppModel(environment: fixture.environment)
+        await model.start(); await model.connect()
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
+        model.send(.sourceTapped("source-0"))
+        await eventually { model.displayFile != nil && model.imageLoading == nil }
+        await fixture.camera.holdRender(barrier)
+        model.send(.recipeSelected(slot: 1))
+        await barrier.entered()
+        await eventually { if case .busy = model.state.cameraState { return true }; return false }
+
+        // Let paired JPEGs finish while the earlier native conversion drains.
+        // RAW-only selections retain loading until that conversion releases the RAW pool.
+        for sourceID in ["source-2", "source-1", "source-0", "source-2", "source-2"] {
+            let previous = model.displayFile
+            model.send(.sourceTapped(sourceID))
+            #expect(model.imageLoading == .loading)
+            #expect(model.isLoadingPreview)
+            if sourceID != "source-1" {
+                await eventually { model.imageIdentity?.sourceID == sourceID && model.displayFile !== previous }
+            }
+            #expect(model.imageLoading == .loading)
+            #expect(model.isLoadingPreview)
+        }
+
+        if clearRecipe {
+            model.send(.recipeSelected(slot: nil))
+            await eventually { model.imageIdentity?.sourceID == "source-2" && model.imageLoading == nil }
+            #expect(!model.isLoadingPreview)
+        }
+        await barrier.release()
+        if clearRecipe {
+            await eventually { model.state.isCameraReady }
+            #expect(model.preview == nil)
+            #expect(model.imageLoading == nil)
+        } else {
+            await eventually { model.preview?.sourceID == "source-2" && model.imageLoading == nil }
+            #expect(!model.isLoadingPreview)
+            #expect(model.imageStatus == nil)
+        }
+        #expect(await fixture.writer.requests.isEmpty)
+    }
+
+    @Test(arguments: [false, true]) func interruptedConversionClearsSpinnerAfterSwitchingPhotos(_ attention: Bool) async throws {
+        let fixture = try await FixtureEnvironment.make(), barrier = FixtureBarrier()
+        defer { Task { await barrier.release() } }
+        let model = AppModel(environment: fixture.environment)
+        await model.start(); await model.connect()
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
+        model.send(.sourceTapped("source-0"))
+        await eventually { model.displayFile != nil && model.imageLoading == nil }
+        await fixture.camera.holdRender(barrier)
+        if attention { await fixture.camera.failRenderWithAttention("Camera conversion failed") }
+        else { await fixture.camera.failRender() }
+        model.send(.recipeSelected(slot: 1))
+        await barrier.entered()
+        await eventually { if case .busy = model.state.cameraState { return true }; return false }
+        model.send(.sourceTapped("source-2"))
+        await eventually { model.imageIdentity?.sourceID == "source-2" }
+        #expect(model.imageLoading == .loading)
+        await barrier.release()
+        await eventually { !model.isLoadingPreview }
+        await eventually { model.imageLoading == nil && model.imageStatus == nil }
+        #expect(model.imageIdentity?.sourceID == "source-2")
+        #expect(model.preview == nil)
+    }
+
     @Test(arguments: [false, true]) func completedDownloadShowsSpinnerUntilCameraFinishes(_ fails: Bool) async throws {
         let fixture = try await FixtureEnvironment.make(), barrier = FixtureBarrier()
         defer { Task { await barrier.release() } }
@@ -29,12 +98,12 @@ import Testing
         #expect(await fixture.writer.requests.isEmpty)
     }
 
-    private func eventually(_ condition: () async -> Bool) async {
+    private func eventually(sourceLocation: SourceLocation = #_sourceLocation, _ condition: () async -> Bool) async {
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))
         while ContinuousClock.now < deadline {
             if await condition() { return }
             try? await Task.sleep(for: .milliseconds(10))
         }
-        #expect(await condition())
+        #expect(await condition(), sourceLocation: sourceLocation)
     }
 }

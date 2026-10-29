@@ -10,7 +10,9 @@ import Observation
     private(set) var preview: CameraJPEG?
     private(set) var savedVersions: [SavedVersion] = []
     private(set) var imageStatus: String?
-    private(set) var imageLoading: ImageLoadingState?
+    private var displayLoading: ImageLoadingState?
+    /// Stored originals may finish while the selected recipe is still waiting for the camera.
+    var imageLoading: ImageLoadingState? { displayLoading ?? (isLoadingPreview ? .loading : nil) }
     private(set) var message: String?
     private(set) var connectionError: String?
     private(set) var cameraError: String?
@@ -23,7 +25,7 @@ import Observation
     private(set) var isRefreshing = false
     private(set) var isConnecting = false
     private(set) var isSubmitting = false
-    private(set) var isLoadingPreview = false
+    var isLoadingPreview: Bool { state.isAwaitingRecipePreview }
     private(set) var isSuspended = false
     let environment: AppEnvironment
     @ObservationIgnored private var started = false
@@ -216,7 +218,6 @@ import Observation
         displayIntent &+= 1
         let intent = displayIntent
         // Supersede intent in the coordinator; an already-active camera operation must drain.
-        isLoadingPreview = request != nil
         displayRequest = request; displayFailure = nil
         if let availableDisplay, let selected = state.viewedSourceID, state.displayedVersion != nil,
            sources.contains(where: { $0.id == availableDisplay.sourceID && $0.resourceRevision == availableDisplay.revision }),
@@ -227,10 +228,10 @@ import Observation
             displayFile = nil; availableDisplay = nil
         }
         imageStatus = "Loading image…"
-        imageLoading = .loading
+        displayLoading = .loading
         if preview?.sourceID != state.viewedSourceID || preview?.sourceRevision != state.viewedSourceRevision { preview = nil }
         guard let source = sources.first(where: { $0.id == state.viewedSourceID }), let version = state.displayedVersion else {
-            savedVersions = []; imageStatus = nil; imageLoading = nil
+            savedVersions = []; imageStatus = nil; displayLoading = nil
             let coordinator = environment.preview
             displayTask = Task { await coordinator.invalidate() }; return
         }
@@ -256,7 +257,7 @@ import Observation
         if let request = event.workspaceRequest {
             guard displayRequest == request, request.sourceRevision == state.viewedSourceRevision else { return }
             guard case .ready = event.state, let jpeg = event.jpeg, case .preview(let key) = event.version else {
-                imageLoading = ImageLoadingState(event.state)
+                displayLoading = ImageLoadingState(event.state)
                 if case .failed(let failure) = event.state, state.selectedRecipe == request.recipe {
                     if case .camera(.unsupportedSource) = failure,
                        request.cameraContext == state.currentCameraExecutionContext,
@@ -265,7 +266,6 @@ import Observation
                         state.reduce(.photoFilterAssessed(source, camera: camera, result: .incompatible))
                     }
                     displayFailure = previewMessage(failure); imageStatus = displayFailure
-                    isLoadingPreview = false
                     state.reduce(.previewInterrupted)
                     if !hasCurrentSourceDisplay { resolveFallbackOriginal() }
                 } else {
@@ -277,23 +277,22 @@ import Observation
             state.reduce(.previewCompleted(request: request, key: key))
             guard state.displayedVersion == .preview(key) else { return }
             preview = jpeg
-            isLoadingPreview = false
         } else {
             guard event.displayIntent == displayIntent else { return }
             if case .ready = event.state, event.version != state.displayedVersion { return }
         }
         switch event.state {
         case .ready:
-            imageLoading = nil
+            displayLoading = nil
             displayFile = event.displayFile; imageStatus = displayFailure
             if let file = event.displayFile, let version = event.version, let revision = state.viewedSourceRevision {
                 availableDisplay = AvailableDisplay(sourceID: event.sourceID, revision: revision, version: version, file: file)
             }
         case .loading, .progress:
-            imageLoading = ImageLoadingState(event.state)
+            displayLoading = ImageLoadingState(event.state)
             imageStatus = displayFailure ?? Self.loadingMessage(event.state)
         case .failed(let failure):
-            imageLoading = nil
+            displayLoading = nil
             if !hasCurrentSourceDisplay { displayFile = nil; availableDisplay = nil }
             displayFailure = previewMessage(failure); imageStatus = displayFailure
         }
@@ -304,7 +303,7 @@ import Observation
         guard let source = sources.first(where: { $0.id == state.viewedSourceID }) else { return }
         let version: VersionID = source.originalResources.jpeg == nil ? .raw : .cameraJPEG
         state.reduce(.previewFallback(version))
-        imageLoading = .loading
+        displayLoading = .loading
         let coordinator = environment.preview, intent = displayIntent
         displayTask = Task { await coordinator.selectStoredVersion(version, source: source, displayIntent: intent) }
     }
@@ -426,7 +425,6 @@ import Observation
         case .attentionRequired(let session, _):
             contextTask?.cancel()
             let context = state.currentCameraExecutionContext
-            isLoadingPreview = false
             if let context { reduce(.cameraChanged(event, context: context)) }
             if context?.generation == session.generation, state.cameraSupport != nil { return }
             let camera = environment.camera
@@ -475,7 +473,6 @@ import Observation
             contextTask?.cancel()
             if isLoadingPreview {
                 state.reduce(.previewInterrupted)
-                isLoadingPreview = false
             }
             reduce(.cameraChanged(event, context: nil))
         }
@@ -515,7 +512,6 @@ import Observation
         cameraResetAwaitingTerminal = true
         cameraResetError = nil
         reduce(.cameraResetChanged(true))
-        isLoadingPreview = false
         await environment.preview.invalidate()
         guard revision == cameraResetRevision, !isSuspended else { return }
         do {
@@ -695,8 +691,8 @@ import Observation
         // Revoke obsolete preparation before export reserves the shared scheduler/pool. An
         // already admitted native render remains independently owned by PreviewCoordinator.
         displayTask?.cancel(); displayIntent &+= 1; displayRequest = nil
-        imageLoading = nil
-        if isLoadingPreview { state.reduce(.previewInterrupted); isLoadingPreview = false }
+        displayLoading = nil
+        if isLoadingPreview { state.reduce(.previewInterrupted) }
         if !hasCurrentSourceDisplay { displayFile = nil; availableDisplay = nil }
         imageStatus = displayFile == nil ? "Image loading stopped. Select the recipe again to retry." : displayFailure
         await environment.preview.invalidate()
@@ -794,13 +790,13 @@ import Observation
             awaitingImportTerminal = false
             cameraError = nil; cameraResetError = nil
             reduce(.cameraResetChanged(false))
-            state.reduce(.previewInterrupted); isLoadingPreview = false
+            state.reduce(.previewInterrupted)
             foreground = false; isSuspended = true; restoreIdle()
             cancelPhotoFilterChecks()
             stopAutomaticConnection()
             displayIntent &+= 1
             displayTask?.cancel(); displayRequest = nil
-            imageLoading = !hasCurrentSourceDisplay && imageLoading != nil ? .loading : nil
+            displayLoading = !hasCurrentSourceDisplay && imageLoading != nil ? .loading : nil
         }
         let preceding = sceneTask
         let task = Task { [weak self] in
@@ -910,7 +906,7 @@ import Observation
                 displayIntent &+= 1
                 displayTask?.cancel(); displayRequest = nil; availableDisplay = nil
                 displayFile = nil
-                imageLoading = nil
+                displayLoading = nil
                 imageStatus = "This saved image is unavailable. Manage Photos access to include it."
                 await environment.preview.invalidate()
             }
