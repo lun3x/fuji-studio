@@ -68,17 +68,25 @@ actor RenderCamera: CameraServing {
 
     let fixture: RenderFixture
     let latch: RenderLatch?
+    let contextLatch: RenderLatch?
+    private var contextCalls = 0
     var calls = 0
     var resultKey: RenderKey?
     func overrideResult(_ key: RenderKey) { resultKey = key }
     var current: CameraExecutionContext
-    init(_ fixture: RenderFixture, latch: RenderLatch? = nil) { self.fixture = fixture; self.latch = latch; current = fixture.context }
+    init(_ fixture: RenderFixture, latch: RenderLatch? = nil, contextLatch: RenderLatch? = nil) {
+        self.fixture = fixture; self.latch = latch; self.contextLatch = contextLatch; current = fixture.context
+    }
     func states() -> AsyncStream<CameraState> { AsyncStream { $0.finish() } }
     func connect() {}
     func disconnect() {}
     func resetConnection() {}
     func importRecipes() throws -> ImportedRecipeCollection { let support=try support(for:fixture.context);return .init(recipes:[fixture.recipe],declaredSlots:support.capabilities.bankSlots,context:fixture.context,support:support) }
-    func executionContext() -> CameraExecutionContext { current }
+    func executionContext() async -> CameraExecutionContext {
+        contextCalls += 1
+        if contextCalls == 2, let contextLatch { await contextLatch.wait() }
+        return current
+    }
     func changeContext(_ value: CameraExecutionContext) { current = value }
     func render(raw: PreparedRAW, recipe: RecipeSnapshot, policy: OutputPolicy) async throws -> CameraJPEG {
         calls += 1
@@ -88,7 +96,7 @@ actor RenderCamera: CameraServing {
 }
 
 struct ImmediateCameraScheduler: CameraWorkScheduling {
-    func withPreview(_ operation: @Sendable () async throws -> CameraJPEG) async throws -> CameraJPEG { try await operation() }
+    func withPreview<T: Sendable>(_ operation: @Sendable () async throws -> T) async throws -> T { try await operation() }
     func withExportItem(jobID: UUID, operation: @Sendable () async throws -> CameraJPEG) async throws -> CameraJPEG { try await operation() }
     func beginExport(jobID: UUID) async throws {}
     func endExport(jobID: UUID) async {}
@@ -96,7 +104,7 @@ struct ImmediateCameraScheduler: CameraWorkScheduling {
 
 struct GatedCameraScheduler: CameraWorkScheduling {
     let gate: SerialCameraGate
-    func withPreview(_ operation: @Sendable () async throws -> CameraJPEG) async throws -> CameraJPEG { try await gate.withExclusiveAccess(operation) }
+    func withPreview<T: Sendable>(_ operation: @Sendable () async throws -> T) async throws -> T { try await gate.withExclusiveAccess(operation) }
     func withExportItem(jobID: UUID, operation: @Sendable () async throws -> CameraJPEG) async throws -> CameraJPEG { try await gate.withExclusiveAccess(operation) }
     func beginExport(jobID: UUID) async throws {}
     func endExport(jobID: UUID) async {}

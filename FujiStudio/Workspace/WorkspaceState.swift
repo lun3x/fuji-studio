@@ -461,8 +461,7 @@ struct WorkspaceState: Sendable {
     private mutating func requestUnsatisfiedPreview() -> [WorkspaceEffect] {
         guard isAwaitingRecipePreview, pendingPreview == nil,
               let id = viewedSourceID, let source = sources[id], let recipe = selectedRecipe,
-              case .ready(let session) = cameraState,
-              let context = currentCameraExecutionContext, context.generation == session.generation,
+              let context = currentCameraExecutionContext,
               matches(recipe: recipe, context: context) else { return [] }
         let request = WorkspacePreviewRequest(generation: displayGeneration, sourceID: id,
             sourceRevision: source.resourceRevision, recipe: recipe, cameraContext: context)

@@ -2,6 +2,39 @@ import XCTest
 
 @MainActor
 final class ExportFlowTests: AppFlowTestCase {
+    func testBatchProgressWhileBrowsingRecipePreviews() {
+        let app = launch(["--fixture-held-save", "--fixture-held-start", "--fixture-held-photo"])
+        wait { app.buttons["fixture.finishStart"].value as? String == "active" }
+        app.buttons["fixture.finishStart"].tap()
+        app.cells["grid.source-0"].tap()
+        wait { app.buttons["app.status"].label.contains("Camera ready") }
+        recipe(3, in: app)
+        wait { app.buttons["workspace.export"].isEnabled }
+        selectFirstRow(app)
+        wait { app.staticTexts["workspace.count"].label == "3 selected" && app.buttons["workspace.export"].isEnabled }
+        app.buttons["workspace.export"].tap()
+        let status = app.buttons["app.status"]
+        wait { status.label.contains("Saving to Photos") }
+        XCTAssertTrue((status.value as? String)?.contains("Exporting, 0 of 3 processed") == true)
+        shot(app, "Status button shows active batch progress")
+        app.buttons["workspace.select"].tap()
+        for source in ["source-1", "source-0"] {
+            app.cells["grid.\(source)"].tap()
+            wait { app.scrollViews["viewer.image"].exists && !app.descendants(matching: .any)["viewer.status"].exists }
+            XCTAssertTrue(status.label.contains("Saving to Photos"))
+            XCTAssertTrue(app.buttons["recipe.control"].label.contains("C3"))
+        }
+        shot(app, "New recipe preview ready while batch save is held")
+        app.buttons["fixture.finishSave"].tap()
+        wait { status.label.contains("2 saved") }
+        XCTAssertTrue((status.value as? String)?.contains("Exporting, 2 of 3 processed") == true)
+        shot(app, "Status progress advances as batch items finish")
+        app.buttons["fixture.finishPhoto"].tap()
+        wait { status.label.contains("3 saved") }
+        XCTAssertFalse((status.value as? String)?.contains("Exporting") == true)
+        shot(app, "Status progress hidden after export finishes")
+    }
+
     func testRecipeSelectionReplacesVersionsWithExport() {
         let app = launch()
         app.cells["grid.source-0"].tap()

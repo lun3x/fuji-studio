@@ -33,6 +33,7 @@ import Observation
         let camera: FixtureCamera
         let writer: FixtureWriter
         let platform: FixturePlatform
+        let scheduler: CameraWorkScheduler
     }
     static func make(access: LibraryAccess = .full, uncertain: Bool = false, cameraOverride: (any CameraServing)? = nil,cameraModel:String="X-T5",slotCount:Int=7,mixedModels:Bool=false,undecodableRAW:Bool=false,filterSources:Bool=false) async throws -> Bundle {
         let images = try WorkspaceFixture()
@@ -71,7 +72,7 @@ import Observation
         if mixedModels,let other=images.state.recipes.first { _ = try await storage.0.copyRecipeToPhone(other) }
         return Bundle(environment: AppEnvironment(reader: reader, camera: selectedCamera, catalog: storage.0, originals: pool, preview: preview,
             resolver: resolver, exports: exports, cache: storage.1, thumbnails: images.thumbnails, platform: platform),
-            reader: reader, camera: camera, writer: writer, platform: platform)
+            reader: reader, camera: camera, writer: writer, platform: platform, scheduler: scheduler)
     }
 }
 
@@ -213,6 +214,7 @@ actor FixtureCamera: CameraServing {
     private var connectionFailure: CameraServiceError?
     private var disconnectBarrier: FixtureBarrier?
     private(set) var cancelledRenders = 0
+    private(set) var renderRequests: [(sourceID: SourceID, recipeID: UUID)] = []
     private(set) var subscriptions = 0, importCount = 0, connectCount = 0, disconnectCount = 0, renderCount = 0, resetCount = 0
     var session: CameraSession { CameraSession(generation: context.generation, connection: CameraConnection(name: "Fixture \(context.model)", usbVendorID: 0, usbProductID: 0)) }
     init(recipes: [RecipeSnapshot], image: DisplayFileLease, root: URL,declaredSlots:[RecipeSlot]?=nil) {
@@ -300,6 +302,7 @@ actor FixtureCamera: CameraServing {
     }
     func render(raw: PreparedRAW, recipe: RecipeSnapshot, policy: OutputPolicy) async throws -> CameraJPEG {
         guard case .ready = state else { throw CameraServiceError.notReady }
+        renderRequests.append((raw.sourceID, recipe.id))
         renderCount += 1; emit(.busy(session)); await Task.yield()
         if let renderBarrier { await renderBarrier.wait() }
         if Task.isCancelled { cancelledRenders += 1; throw CancellationError() }

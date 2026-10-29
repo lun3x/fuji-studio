@@ -8,6 +8,7 @@ enum RenderCacheError: Error, Sendable, Equatable { case invalidEntry, missing, 
 /// durable pending-save pins live in separate roots. Callers must journal the URL returned by pin.
 actor FileRenderCache {
     typealias JPEGValidation = @Sendable (CameraJPEG) throws -> Void
+    typealias Display = (jpeg: CameraJPEG, file: DisplayFileLease)
     private let validateJPEG: JPEGValidation
     private struct Entry {
         let jpeg: CameraJPEG
@@ -59,7 +60,7 @@ actor FileRenderCache {
         }
     }
 
-    func lookup(_ key: RenderKey) async -> CameraJPEG? {
+    func lookup(_ key: RenderKey) -> CameraJPEG? {
         guard !Task.isCancelled, var entry = entries[key] else { return nil }
         guard (try? Self.validate(entry.jpeg, key: key, validateJPEG: validateJPEG)) != nil else {
             if Task.isCancelled { return nil }
@@ -82,7 +83,20 @@ actor FileRenderCache {
         return try DisplayFileLease.copy(from: entry.jpeg.fileURL, geometry: geometry)
     }
 
-    func store(_ jpeg: CameraJPEG, key: RenderKey) async throws {
+    /// Own the display pixels in the same actor turn as the cache hit. A finishing Photos
+    /// save can release its durable pin as soon as this method returns.
+    func lookupForDisplay(_ key: RenderKey) throws -> Display? {
+        guard let jpeg = lookup(key) else { return nil }
+        return (jpeg, try copyForDisplay(key))
+    }
+
+    func storeForDisplay(_ jpeg: CameraJPEG, key: RenderKey) throws -> Display {
+        try store(jpeg, key: key)
+        guard let display = try lookupForDisplay(key) else { throw RenderCacheError.missing }
+        return display
+    }
+
+    func store(_ jpeg: CameraJPEG, key: RenderKey) throws {
         let size = try Self.validate(jpeg, key: key, validateJPEG: validateJPEG)
         if hasPinReservation(try Self.identifier(key)) {
             let existing = try validatedPin(key)

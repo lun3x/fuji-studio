@@ -38,7 +38,7 @@ actor CameraWorkScheduler: CameraWorkScheduling {
         dispatch()
     }
 
-    func withPreview(_ operation: @Sendable () async throws -> CameraJPEG) async throws -> CameraJPEG {
+    func withPreview<T: Sendable>(_ operation: @Sendable () async throws -> T) async throws -> T {
         try Task.checkCancellation()
         if active { try await wait(kind: .preview) }
         else { active = true }

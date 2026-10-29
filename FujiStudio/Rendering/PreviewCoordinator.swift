@@ -82,10 +82,10 @@ actor PreviewCoordinator {
                       request.recipe == recipe else { throw ResourceError.resourceChanged }
             }
             if let recipe {
-                let jpeg = try await scheduler.withPreview {
+                let display = try await scheduler.withPreview {
                     try await self.requireCurrent(intent)
                     return try await self.pool.withPreparedRAW(source: source, beforeMaterialize: { try await self.requireCurrent(intent) },
-                        progress: { value in Task { await self.reportProgress(value, source: source, intent: intent, version: nil, request: workspaceRequest) } }) { raw in
+                        progress: { value in Task { await self.reportProgress(value, source: source, intent: intent, version: nil, request: workspaceRequest) } }) { raw -> FileRenderCache.Display in
                         try await self.requireCurrent(intent)
                         let context = try await self.camera.executionContext()
                         guard raw.metadata.cameraModel == context.model else { throw ResourceError.incompatibleCamera(raw.metadata.cameraModel) }
@@ -94,7 +94,7 @@ actor PreviewCoordinator {
                             settingsDigest: recipe.settingsDigest, cameraContext: context, width: raw.metadata.recordedGeometry.width,
                             height: raw.metadata.recordedGeometry.height, orientation: raw.metadata.orientation,
                             policy: .fullSizeFineRecordedGeometry, quality: .fullResolutionFine)
-                        let hit = await self.cache.lookup(key)
+                        let hit = try await self.cache.lookupForDisplay(key)
                         guard try await self.camera.executionContext() == context else { throw CameraServiceError.unsupportedContext }
                         try await self.requireCurrent(intent)
                         if let hit { return hit }
@@ -114,20 +114,18 @@ actor PreviewCoordinator {
                         }
                         // A completed camera operation's actual context is authoritative. Store only
                         // its own validated key, even if the user's display intent changed meanwhile.
-                        do { try await self.cache.store(result, key: result.key) }
+                        do { return try await self.cache.storeForDisplay(result, key: result.key) }
                         catch {
                             try? FileManager.default.removeItem(at: result.fileURL)
                             throw error
                         }
-                        guard let retained = await self.cache.lookup(result.key) else { throw RenderCacheError.missing }
-                        return retained
                     }
                 }
                 guard generation == intent else { return }
+                let jpeg = display.jpeg, file = display.file
                 let current = try await camera.executionContext()
                 guard generation == intent, current == jpeg.cameraContext,
                       workspaceRequest.map({ $0.cameraContext == current }) ?? true else { throw CameraServiceError.unsupportedContext }
-                let file = try await cache.copyForDisplay(jpeg.key)
                 guard generation == intent else { return }
                 currentDisplayFile = file
                 currentJPEG = jpeg

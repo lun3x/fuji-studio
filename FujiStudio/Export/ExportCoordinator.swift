@@ -9,6 +9,9 @@ enum ExportPauseReason: Sendable, Equatable {
 }
 struct ExportSummary: Sendable, Equatable {
     let completed: Int, failed: Int, skipped: Int, unprocessed: Int, unresolved: Int
+    var processed: Int { completed + failed + skipped }
+    var total: Int { processed + unprocessed + unresolved }
+    var fractionCompleted: Double { total > 0 ? Double(processed) / Double(total) : 0 }
 }
 struct ExportEvent: Sendable, Equatable {
     let jobID: UUID
@@ -22,6 +25,7 @@ struct ExportEvent: Sendable, Equatable {
     let terminal: Bool
     let stopRequested: Bool
     var sequence: UInt64 = 0
+    var activeProgress: ExportSummary? { !terminal && summary.total > 0 ? summary : nil }
 }
 
 /// Complete durable unfinished-job state at a coordinator sequence boundary. Transient events

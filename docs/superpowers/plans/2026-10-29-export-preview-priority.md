@@ -27,7 +27,7 @@
 
 ## Task 1: Prioritize previews
 
-Files: `FujiStudio/Rendering/CameraWorkScheduler.swift`, `FujiStudioTests/Rendering/CameraWorkSchedulerTests.swift`, `FujiStudioTests/App/PreviewLoadingTests.swift`.
+Files: `FujiStudio/Rendering/CameraWorkScheduler.swift`, `CameraWorkScheduling.swift`, `PreviewCoordinator.swift`, `FileRenderCache.swift`, `FujiStudio/Workspace/WorkspaceState.swift`, `FujiStudio/App/AppModel.swift`, and their unit tests.
 
 - [x] Add regression tests for newest-preview-before-export ordering, active-export admission, cancellation, and an AppModel preview during a held Photos save.
 - [x] Run focused tests and confirm the old scheduler blocks previews.
@@ -39,9 +39,9 @@ Files: `FujiStudio/Rendering/CameraWorkScheduler.swift`, `FujiStudioTests/Render
 
 Files: `FujiStudio/Export/ExportCoordinator.swift`, `FujiStudio/Workspace/CameraStatusControl.swift`, `FujiStudio/Workspace/ExportProgressView.swift`, `FujiStudioTests/Export/ExportProgressTests.swift`, `FujiStudioUITests/ExportFlowTests.swift`.
 
-- [ ] Add tests for progress across saved, failed, cancelled, pending, and terminal states; add UI coverage for preview navigation during a held batch and progress visibility.
-- [ ] Run tests and confirm missing progress fails.
-- [ ] Add a compact linear progress bar inside the existing status button, preserving its hit area and camera indicator. Include processed/total in its accessibility value.
+- [x] Add tests for progress across saved, failed, cancelled, pending, and terminal states; add UI coverage for preview navigation during a held batch and progress visibility.
+- [x] Run tests and confirm missing progress fails.
+- [x] Add a compact linear progress bar inside the existing status button, preserving its hit area and camera indicator. Include processed/total in its accessibility value.
 - [ ] Run affected UI suites and the complete `Scripts/test-ios.sh` suite.
 - [ ] Review the final diff, checkpoint and push, and shut down/delete the task simulator.
 
@@ -51,3 +51,6 @@ Files: `FujiStudio/Export/ExportCoordinator.swift`, `FujiStudio/Workspace/Camera
 - Root cause: `withPreview` waits whenever `exportJobID` is present, and dispatch withholds previews until `endExport`.
 - Pre-flight: the two tasks share existing `ExportEvent` only; no new scheduler protocol is needed.
 - Baseline: 517 unit tests passed. Regression run failed on the three expected preview-priority cases. After the scheduler fix, 520 unit tests passed (`20261029-165526-66985.xcresult`).
+- The affected export and camera UI suites passed (8 tests passed, 1 existing opt-in native lifecycle test skipped); screenshots verified progress at 0/3, 2/3, and after completion (`20261029-165833-68629.xcresult`).
+- Review identified two admission/handoff races. Regression tests reproduced both: busy photo/recipe changes had no queued preview, and export unpin could remove a cache hit before display ownership. Preview admission now returns an owned display copy, and the reducer queues against its verified busy session. A parallel paired-JPEG fallback preserves immediate original browsing.
+- Final unit iteration: 526 tests passed in 59 suites (`20261029-171037-73574.xcresult`). Independent review found no remaining concrete issues; complete unit/UI validation is running.

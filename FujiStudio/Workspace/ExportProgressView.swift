@@ -132,7 +132,8 @@ struct AppWorkspaceView: View {
     private var statusButton: some View {
         CameraStatusControl(state: CameraIndicatorState(camera: model.state.cameraState,
             refreshingRecipes: model.isRefreshing || model.isResettingCamera,
-            hasError: model.cameraError != nil || model.cameraResetError != nil), label: statusLabel) { statusPresented = true }
+            hasError: model.cameraError != nil || model.cameraResetError != nil), label: statusLabel,
+            exportProgress: model.exportEvent?.activeProgress) { statusPresented = true }
     }
     private var statusLabel: String {
         if model.isResettingCamera { return "Resetting camera connection…" }

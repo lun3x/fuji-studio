@@ -30,6 +30,7 @@ enum CameraIndicatorState: String {
 struct CameraStatusControl: View {
     let state: CameraIndicatorState
     let label: String
+    var exportProgress: ExportSummary? = nil
     var onTap: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
@@ -48,14 +49,27 @@ struct CameraStatusControl: View {
                 .symbolEffect(.rotate.wholeSymbol, options: .repeating,
                     isActive: state == .preparing && !reduceMotion)
                 .frame(minWidth: 44, minHeight: 44).contentShape(Capsule())
+                .overlay(alignment: .bottom) {
+                    if let exportProgress {
+                        ProgressView(value: exportProgress.fractionCompleted)
+                            .progressViewStyle(.linear).tint(.accentColor)
+                            .frame(width: 28).padding(.bottom, 6)
+                            .accessibilityHidden(true).allowsHitTesting(false)
+                    }
+                }
         }
         .buttonStyle(.glass).foregroundStyle(state == .error ? Color.red : Color.primary)
         .background {
             if reduceTransparency { Capsule().fill(Color(uiColor: .secondarySystemBackground)) }
         }
         .overlay { if contrast == .increased { Capsule().stroke(.primary, lineWidth: 1).allowsHitTesting(false) } }
-        .accessibilityLabel(label).accessibilityValue(state.rawValue)
+        .accessibilityLabel(label).accessibilityValue(accessibilityValue)
         .accessibilityHint("Show app details").accessibilityIdentifier("app.status")
+    }
+
+    private var accessibilityValue: String {
+        guard let exportProgress else { return state.rawValue }
+        return "\(state.rawValue), Exporting, \(exportProgress.processed) of \(exportProgress.total) processed"
     }
 }
 

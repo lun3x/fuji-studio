@@ -4,6 +4,28 @@ import Testing
 @testable import FujiStudio
 
 struct PreviewCoordinatorTests {
+    @Test func cachedPreviewOwnsPixelsBeforeExportReleasesItsPin() async throws {
+        let f = try RenderFixture(); defer { f.remove() }
+        let cache = try f.cache(), reader = RenderLibrary(f), context = RenderLatch()
+        let jpeg = try f.jpeg(); try await cache.store(jpeg, key: jpeg.key)
+        _ = try await cache.pin(jpeg.key)
+        let camera = RenderCamera(f, contextLatch: context)
+        let coordinator = PreviewCoordinator(pool: reader.pool(), camera: camera, scheduler: CameraWorkScheduler(), cache: cache,
+            rawRenderer: try RawDisplayRenderer(directory: f.root.appendingPathComponent("display")),
+            storedDisplay: { _,_,_ in throw RawDisplayError.unavailable })
+        var events = await coordinator.events().makeAsyncIterator()
+        let preview = Task { await coordinator.request(source: f.source, recipe: f.recipe) }
+        await context.entered()
+        await cache.unpin(jpeg.key)
+        await context.release(); await preview.value
+        _ = await events.next()
+        let ready = await events.next()
+        let file = try #require(ready?.displayFile)
+        #expect(ready?.state == .ready(file.fileURL))
+        #expect(try Data(contentsOf: file.fileURL) == Data(repeating: 45, count: 40))
+        #expect(await camera.calls == 0)
+    }
+
     @Test func modelSwitchCannotReusePreviewOrRunOtherModelConversion() async throws {
         let f=try RenderFixture();defer { f.remove() }
         let reader=RenderLibrary(f),camera=RenderCamera(f),cache=try f.cache()
