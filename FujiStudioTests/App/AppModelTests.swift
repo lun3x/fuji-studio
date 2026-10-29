@@ -4,6 +4,22 @@ import Testing
 @testable import FujiStudio
 
 @MainActor struct AppModelTests {
+    @Test func reenabledFilterRetriesUnavailablePhotosAndKeepsSuccessfulChecks() async throws {
+        let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment)
+        await model.start()
+        await eventually { model.state.photoFilterCamera != nil && !model.isRefreshing }
+        await f.reader.failMaterialize("source-0", error: .retrievalFailed("temporarily offline"))
+        model.send(.photoFilterSelected(.compatibleWithCamera))
+        await eventually { model.state.photoFilterPendingCount == 0 }
+        #expect(model.state.photoFilterUnavailableCount == 1)
+        #expect(await f.reader.rawReads == 2)
+        await f.reader.failMaterialize("source-0", error: nil)
+        model.send(.photoFilterSelected(.allPhotos)); model.send(.photoFilterSelected(.compatibleWithCamera))
+        await eventually { model.state.photoFilterPendingCount == 0 }
+        #expect(model.state.photoFilterUnavailableCount == 0)
+        #expect(await f.reader.rawReads == 3)
+    }
+
     @Test func cameraFilterChecksWithoutRenderingAndReusesAssessments() async throws {
         let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment)
         await model.start()

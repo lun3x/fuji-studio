@@ -25,6 +25,9 @@ struct PhotoTrayFilterIndex: Sendable {
     mutating func record(_ result: PhotoTrayAssessment, source: PhotoSource, camera: PhotoTrayFilterCamera) {
         results[camera, default: [:]][OriginalIdentity(source)] = result
     }
+    mutating func retryUnavailable(camera: PhotoTrayFilterCamera) {
+        results[camera] = results[camera]?.filter { $0.value != .unavailable }
+    }
     mutating func retain(_ sources: [PhotoSource]) {
         let identities = Set(sources.map(OriginalIdentity.init))
         for camera in results.keys { results[camera] = results[camera]?.filter { identities.contains($0.key) } }

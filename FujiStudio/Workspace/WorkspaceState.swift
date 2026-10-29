@@ -210,6 +210,9 @@ struct WorkspaceState: Sendable {
 
         case .photoFilterSelected(let filter):
             guard filter == .allPhotos || photoFilterCamera != nil else { return [] }
+            if filter == .compatibleWithCamera, let camera = photoFilterCamera {
+                photoFilterIndex.retryUnavailable(camera: camera)
+            }
             photoFilter = filter
 
         case .photoFilterAssessed(let source, let camera, let result):

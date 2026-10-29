@@ -33,6 +33,8 @@ struct WorkspaceView<StatusControl: View>: View {
 
     var body: some View {
         GeometryReader { proxy in
+            let visibleIDs = state.visibleSourceIDs
+            let traySources = sources.filter { visibleIDs.contains($0.id) }
             let orientation = self.orientation
             let windowSafe = proxy.safeAreaInsets
             let windowSize = CGSize(width: proxy.size.width + windowSafe.leading + windowSafe.trailing,
@@ -80,7 +82,7 @@ struct WorkspaceView<StatusControl: View>: View {
                                 scrollRequest = GridScrollRequest(sourceID: id, afterViewportHeight: detents.collapsedGridHeight)
                             }
                         }, grid: { onDrawerDrag in
-                            PhotoGrid(sources: sources, checkedSourceIDs: state.checkedSourceIDs, isSelecting: state.isSelecting,
+                            PhotoGrid(sources: traySources, checkedSourceIDs: state.checkedSourceIDs, isSelecting: state.isSelecting,
                                 viewedSourceID: state.viewedSourceID, thumbnails: thumbnails, scrollRequest: scrollRequest,
                                 gridMetrics: gridMetrics, bottomInset: safe.bottom,
                                 contentRotation: orientation.contentRotation, allowsDrawerCollapse: state.drawerDetent == .expanded,
@@ -88,6 +90,24 @@ struct WorkspaceView<StatusControl: View>: View {
                                 onCheckedChanged: { onAction(.checkedSourcesReplaced($0)) }, onViewportChanged: onViewportChanged,
                                 onDrawerDrag: onDrawerDrag)
                                 .anchorPreference(key: TrayBoundsKey.self, value: .bounds) { $0 }
+                                .overlay {
+                                    if state.photoFilter == .compatibleWithCamera, traySources.isEmpty {
+                                        VStack(spacing: 6) {
+                                            if state.photoFilterPendingCount > 0 || state.photoFilterCamera == nil {
+                                                ProgressView().accessibilityHidden(true)
+                                                Text("Checking photos…").accessibilityIdentifier("filter.checking")
+                                            } else {
+                                                Text("No compatible photos").fontWeight(.semibold)
+                                                    .accessibilityIdentifier("filter.empty")
+                                            }
+                                            filterStatusText
+                                        }
+                                        .font(.caption).foregroundStyle(.secondary)
+                                        .multilineTextAlignment(.center)
+                                        .rotationEffect(orientation.contentAngle)
+                                        .allowsHitTesting(false)
+                                    }
+                                }
                         })
                         .frame(width: contentWidth)
                 }.frame(width: contentWidth, height: size.height).offset(x: contentLeading)
@@ -105,6 +125,20 @@ struct WorkspaceView<StatusControl: View>: View {
                             .padding(.bottom, orientation == .portrait ? 0 : windowSafe.bottom)
                             .frame(width: frame.width, height: frame.height, alignment: orientation.trayControlAlignment)
                             .position(x: frame.midX, y: frame.midY)
+                        if state.photoFilter == .compatibleWithCamera,
+                           !visibleIDs.isEmpty,
+                           state.photoFilterPendingCount > 0 || state.photoFilterUnavailableCount > 0 {
+                            filterStatusText.font(.caption2)
+                                .multilineTextAlignment(.leading)
+                                .padding(.horizontal, 10).padding(.vertical, 6)
+                                .frame(maxWidth: min(220, max(1, frame.width - 96)))
+                                .fixedSize(horizontal: false, vertical: true)
+                                .glassEffect(.regular, in: .capsule)
+                                .padding(filterStatusInsets(windowSafe: windowSafe))
+                                .frame(width: frame.width, height: frame.height, alignment: filterStatusAlignment)
+                                .position(x: frame.midX, y: frame.midY)
+                                .allowsHitTesting(false)
+                        }
                     }
                 }
             }
@@ -170,8 +204,10 @@ struct WorkspaceView<StatusControl: View>: View {
     }
     private var selectionControls: some View {
         GlassEffectContainer(spacing: 12) {
-            DeviceAnchoredRow(orientation: orientation, spacing: 12, leadingItems: state.isSelecting ? 1 : 0,
+            DeviceAnchoredRow(orientation: orientation, spacing: 12, leadingItems: state.isSelecting ? 2 : 1,
                 reversesAxis: orientation == .landscapeLeft) {
+                PhotoFilterMenu(selected: state.photoFilter, cameraModel: state.photoFilterCamera?.model,
+                    onSelect: { onAction(.photoFilterSelected($0)) })
                 if state.isSelecting {
                     count.padding(.horizontal, 12).frame(minHeight: 44)
                         .glassEffect(.regular, in: .capsule)
@@ -179,6 +215,29 @@ struct WorkspaceView<StatusControl: View>: View {
                 }
                 selectionButton
             }
+        }
+    }
+    private var filterStatusAlignment: Alignment {
+        switch orientation {
+        case .portrait: .topLeading
+        case .landscapeLeft: .bottomTrailing
+        case .landscapeRight: .bottomLeading
+        }
+    }
+    private func filterStatusInsets(windowSafe: EdgeInsets) -> EdgeInsets {
+        switch orientation {
+        case .portrait: EdgeInsets(top: 64, leading: 12, bottom: 12, trailing: 12)
+        case .landscapeLeft: EdgeInsets(top: 12, leading: 12, bottom: windowSafe.bottom + 12, trailing: 72)
+        case .landscapeRight: EdgeInsets(top: 12, leading: 72, bottom: windowSafe.bottom + 12, trailing: 12)
+        }
+    }
+    @ViewBuilder private var filterStatusText: some View {
+        if state.photoFilterPendingCount > 0 {
+            Text("Checking photos · \(state.photoFilterPendingCount) remaining")
+                .accessibilityIdentifier("filter.progress")
+        } else if state.photoFilterUnavailableCount > 0 {
+            Text("\(state.photoFilterUnavailableCount) photos couldn’t be checked")
+                .accessibilityIdentifier("filter.unavailable")
         }
     }
     private var selectionButton: some View {
