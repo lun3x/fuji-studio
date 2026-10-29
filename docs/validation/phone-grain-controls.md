@@ -2,6 +2,13 @@
 
 Date: 2026-10-28. Implementation: `79fe1059`, following the phone editor in PR #16.
 
+Follow-up, 2026-10-29: the shared-adapter grain codec is corrected to write the
+published 1 Off, 2 Weak/Small, 3 Strong/Small, 4 Weak/Large, and 5 Strong/Large.
+Readbacks 6/7 remain preserved until grain is edited. Off stores no size: the
+draft remembers it while open, but a saved Off value reopens with Small.
+See [the correction record](recipe-option-values.md#grain-mapping-correction-2026-10-29).
+The original implementation and verification record below is historical.
+
 The Look section now has separate Grain effect (Off/Weak/Strong) and Grain size
 (Small/Large) native pickers. Off disables and greys out the size value. The
 last size survives effect changes and Save/reopen; changing size preserves

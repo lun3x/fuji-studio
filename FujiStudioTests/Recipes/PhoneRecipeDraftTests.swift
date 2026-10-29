@@ -5,7 +5,44 @@ import Testing
 @testable import FujiStudio
 
 struct PhoneRecipeDraftTests {
-  @Test(arguments: WhiteBalanceMode.allCases)
+  @Test func xt5EditorOffersAndReopensEveryDocumentedSelector() throws {
+    let phone = try ProductionProfileFixture().bank.copiedToPhone()
+    let original = PhoneRecipeDraft(recipe: phone)
+    #expect(original.choices(for: .film).count == 20)
+    #expect(original.choices(for: .whiteBalance).count == 14)
+    #expect(
+      original.choices(for: .dynamicRange).map(\.value)
+        == [400, 200, 100, 0].map(RecipeSettingValue.integer))
+    #expect(RecipeSettingID.dynamicRange.label(for: .integer(0)) == "Auto")
+    for id in [RecipeSettingID.film, .whiteBalance, .dynamicRange] {
+      for choice in original.choices(for: id) {
+        var draft = PhoneRecipeDraft(recipe: phone)
+        draft.setValue(choice.value, for: id)
+        let saved = PhoneRecipe(id: phone.id, snapshot: try draft.makeSnapshot())
+        let reopened = PhoneRecipeDraft(recipe: saved)
+        #expect(reopened.value(for: id) == choice.value)
+        #expect(!reopened.hasChanges)
+      }
+    }
+  }
+  @Test func xt5TemperatureUsesTenKelvinSteps() throws {
+    let phone = try ProductionProfileFixture().bank.copiedToPhone()
+    for kelvin in [2500, 5310, 10000] {
+      var draft = PhoneRecipeDraft(recipe: phone)
+      draft.temperature = String(kelvin)
+      let saved = try draft.makeSnapshot()
+      #expect(try RecipeCodecRegistry().editableValues(saved)[.kelvin] == .integer(kelvin))
+    }
+    for kelvin in [2490, 2501, 5301, 10001] {
+      var draft = PhoneRecipeDraft(recipe: phone)
+      draft.temperature = String(kelvin)
+      #expect(throws: PhoneRecipeEditingError.invalidTemperature) { try draft.makeSnapshot() }
+    }
+  }
+  @Test(arguments: [
+    WhiteBalanceMode.auto, .daylight, .shade, .fluorescent1, .fluorescent2, .fluorescent3,
+    .incandescent, .underwater, .temperature,
+  ])
   func calibratedXE3PresetsRemainRenderableAfterOfflineEdits(_ mode: WhiteBalanceMode) throws {
     let phone = try fixtureXE3Recipe().copiedToPhone()
     var draft = PhoneRecipeDraft(recipe: phone)
@@ -26,11 +63,11 @@ struct PhoneRecipeDraftTests {
     #expect(draft.grain?.size == nil)
     #expect(
       draft.choices(for: .kelvin).map(\.value)
-        == XE3NativeRecipeFields.kelvin.sorted().map(RecipeSettingValue.integer))
+        == XE3NativeRecipeFields.kelvin.sorted(by: >).map(RecipeSettingValue.integer))
     #expect(draft.choices(for: .colorChrome).isEmpty && draft.choices(for: .clarity).isEmpty)
     #expect(
       draft.choices(for: .highlight).map(\.value)
-        == [-20, -10, 0, 10, 20, 30, 40].map(RecipeSettingValue.integer))
+        == [40, 30, 20, 10, 0, -10, -20].map(RecipeSettingValue.integer))
     draft.setValue(.integer(2), for: .whiteBalanceRed)
     draft.setGrainEffect(.strong)
     let edited = try draft.makeSnapshot()
@@ -54,9 +91,14 @@ struct PhoneRecipeDraftTests {
     draft.setGrainEffect(.off)
     draft.setGrainSize(.small)
     #expect(draft.grain == .init(strength: .off, size: .large))
-    let saved = PhoneRecipe(id: original.id, snapshot: try draft.makeSnapshot())
+    let snapshot = try draft.makeSnapshot()
+    #expect(
+      snapshot.importedSettings.first { $0.code == 0xD195 }?.raw == ProtocolProbeFixtures.word(1))
+    draft.setGrainEffect(.strong)
+    #expect(draft.grain == .init(strength: .strong, size: .large))
+    let saved = PhoneRecipe(id: original.id, snapshot: snapshot)
     var reopened = PhoneRecipeDraft(recipe: saved)
-    #expect(reopened.grain == .init(strength: .off, size: .large))
+    #expect(reopened.grain == .init(strength: .off, size: .small))
     reopened.setGrainEffect(.strong)
     reopened.setGrainSize(.small)
     #expect(reopened.grain == .init(strength: .strong, size: .small))
@@ -75,7 +117,25 @@ struct PhoneRecipeDraftTests {
     #expect(draft.grain == .init(strength: .weak, size: .small))
     #expect(
       try draft.makeSnapshot().importedSettings.first { $0.code == 0xD195 }?.raw
-        == ProtocolProbeFixtures.word(1))
+        == ProtocolProbeFixtures.word(2))
+  }
+  @Test func grainControlEditsUsePublishedWireValues() throws {
+    let original = try ProductionProfileFixture().bank.copiedToPhone()
+    for (strength, size, wire): (GrainStrength, GrainSize, UInt16) in [
+      (.off, .large, 1), (.weak, .small, 2), (.strong, .small, 3),
+      (.weak, .large, 4), (.strong, .large, 5),
+    ] {
+      var draft = PhoneRecipeDraft(recipe: original)
+      draft.setGrainSize(size)
+      draft.setGrainEffect(strength)
+      let snapshot = try draft.makeSnapshot()
+      #expect(
+        snapshot.importedSettings.first { $0.code == 0xD195 }?.raw
+          == ProtocolProbeFixtures.word(wire))
+      #expect(
+        PhoneRecipeDraft(recipe: .init(id: original.id, snapshot: snapshot)).grain?.strength
+          == strength)
+    }
   }
   @Test func allSemanticGrainChoicesPreserveOtherBytes() throws {
     let original = try ProductionProfileFixture().bank.copiedToPhone()
@@ -140,7 +200,7 @@ struct PhoneRecipeDraftTests {
       #expect(throws: PhoneRecipeEditingError.invalidTemperature) { try draft.makeSnapshot() }
     }
     var invalid = PhoneRecipeDraft(recipe: original)
-    invalid.setValue(.integer(200), for: .dynamicRange)
+    invalid.setValue(.integer(300), for: .dynamicRange)
     #expect(throws: PhoneRecipeEditingError.self) { try invalid.makeSnapshot() }
     #expect(try original.snapshot.settings(using: RecipeCodecRegistry()).dynamicRange == 400)
   }

@@ -113,6 +113,35 @@ import XCTest
         }
     }
 
+    func testXT5EditorSavesMissingRecipeOptionsAndReopensThem() {
+        let app = launch(["--fixture-disconnected-camera"])
+        tap(app.buttons["recipe.control"], in: app); app.buttons["recipe.copy.1"].tap()
+        let edit = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.edit.")).firstMatch
+        XCTAssertTrue(edit.waitForExistence(timeout: 5)); edit.tap()
+        let film = app.buttons["recipe.editor.setting.film"]
+        film.tap(); app.buttons["REALA ACE"].tap()
+        let dynamicRange = app.buttons["recipe.editor.setting.dynamicRange"]
+        dynamicRange.tap(); app.buttons["200%"].tap()
+        let balance = app.buttons["recipe.editor.setting.whiteBalance"]
+        reveal(balance, in: app); balance.tap(); app.buttons["Auto · White priority"].tap()
+        app.buttons["recipe.editor.save"].tap()
+        XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitForNonExistence(timeout: 5))
+        edit.tap()
+        XCTAssertTrue(film.label.contains("REALA ACE") || (film.value as? String ?? "").contains("REALA ACE"))
+        XCTAssertTrue(dynamicRange.label.contains("200%") || (dynamicRange.value as? String ?? "").contains("200%"))
+        reveal(balance, in: app)
+        XCTAssertTrue(balance.label.contains("White priority") || (balance.value as? String ?? "").contains("White priority"))
+        balance.tap(); app.buttons["Custom 3"].tap()
+        reveal(dynamicRange, in: app); dynamicRange.tap(); app.buttons["Auto"].tap()
+        app.buttons["recipe.editor.save"].tap()
+        XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitForNonExistence(timeout: 5))
+        edit.tap()
+        XCTAssertTrue(dynamicRange.label.contains("Auto") || (dynamicRange.value as? String ?? "").contains("Auto"))
+        reveal(balance, in: app)
+        XCTAssertTrue(balance.label.contains("Custom 3") || (balance.value as? String ?? "").contains("Custom 3"))
+        shot(app, "Complete X-T5 recipe options saved and reopened")
+        app.buttons["recipe.editor.cancel"].tap()
+    }
     func testXE3RAWDisplayFailureKeepsPairedJPEGAndConversionAvailable() {
         let app=launch(["--fixture-xe3","--fixture-raw-unavailable"])
         wait { app.buttons["app.status"].label.contains("Camera ready") }
@@ -222,9 +251,9 @@ import XCTest
         XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitForNonExistence(timeout: 5))
         edit.tap(); reveal(effect, in: app)
         XCTAssertTrue(effect.label.contains("Off")); XCTAssertFalse(size.isEnabled)
-        XCTAssertTrue(size.label.contains("Large"))
+        XCTAssertTrue(size.label.contains("Small"))
         effect.tap(); app.buttons["Weak"].tap()
-        XCTAssertTrue(size.isEnabled); XCTAssertTrue(size.label.contains("Large"))
+        XCTAssertTrue(size.isEnabled); XCTAssertTrue(size.label.contains("Small"))
         size.tap(); app.buttons["Small"].tap()
         XCTAssertTrue(effect.label.contains("Weak")); XCTAssertTrue(size.label.contains("Small"))
         app.buttons["recipe.editor.cancel"].tap()
@@ -265,6 +294,27 @@ import XCTest
         app.buttons["recipe.editor.cancel"].tap()
         XCTAssertTrue(app.buttons[id].label.contains("My Provia"))
         XCTAssertEqual(phoneQuery.count, 1)
+    }
+
+    func testPhoneEditorNumericPickerDescendsThroughFractionalAndNegativeValues() {
+        let app = launch(["--fixture-disconnected-camera"])
+        tap(app.buttons["recipe.control"], in: app); app.buttons["recipe.copy.3"].tap()
+        let edit = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.edit.")).firstMatch
+        XCTAssertTrue(edit.waitForExistence(timeout: 5)); edit.tap()
+        let highlights = app.buttons["recipe.editor.setting.highlight"]
+        reveal(highlights, in: app); highlights.tap()
+        let labels = ["+4", "+3.5", "+3", "+2.5", "+2", "+1.5", "+1", "+0.5", "0", "-0.5", "-1", "-1.5", "-2"]
+        XCTAssertTrue(app.buttons[labels[0]].waitForExistence(timeout: 5))
+        for (upper, lower) in zip(labels, labels.dropFirst()) {
+            XCTAssertLessThan(app.buttons[upper].frame.minY, app.buttons[lower].frame.minY)
+        }
+        shot(app, "Highlights descend from positive through zero to negative")
+        app.buttons["+3.5"].tap()
+        app.buttons["recipe.editor.save"].tap()
+        XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitForNonExistence(timeout: 5))
+        edit.tap(); reveal(highlights, in: app)
+        XCTAssertTrue(highlights.label.contains("+3.5"))
+        app.buttons["recipe.editor.cancel"].tap()
     }
 
     func testPhoneEditorRejectsInvalidTemperatureAndKeepsDraft() {

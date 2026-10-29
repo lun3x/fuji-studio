@@ -64,8 +64,8 @@ public struct RecipeCodecRegistry: Sendable {
     func range(_ min: Int, _ max: Int, _ step: Int = 1) -> SettingCapability {
       .init(support: .supported, minimum: min, maximum: max, step: step)
     }
-    let grains = GrainStrength.allCases.flatMap { strength in
-      GrainSize.allCases.map { RecipeSettingValue.grain(.init(strength: strength, size: $0)) }
+    let grains = XT5GrainValues.writable.keys.sorted().compactMap {
+      XT5GrainValues.writable[$0].map(RecipeSettingValue.grain)
     }
     let renderGrains: [RecipeSettingValue] = [
       .grain(.init(strength: .off, size: .small)), .grain(.init(strength: .off, size: .large)),
@@ -73,13 +73,26 @@ public struct RecipeCodecRegistry: Sendable {
     ]
     let effects = EffectStrength.allCases.map(RecipeSettingValue.effect)
     let settings: [RecipeSettingID: SettingCapability] = [
-      .film: choice([
-        .film(.provia), .film(.classicChrome), .film(.acros), .film(.acrosRed), .film(.acrosGreen),
-      ]), .dynamicRange: choice([.integer(100), .integer(400)]),
+      .film: choice(
+        FilmSimulation.allCases.map(RecipeSettingValue.film),
+        rendering: [
+          .film(.provia), .film(.classicChrome), .film(.acros), .film(.acrosRed),
+          .film(.acrosGreen),
+        ]),
+      .dynamicRange: choice(
+        [0, 100, 200, 400].map(RecipeSettingValue.integer),
+        rendering: [.integer(100), .integer(400)]),
       .grain: choice(grains, rendering: renderGrains), .colorChrome: choice(effects),
       .colorChromeBlue: choice(effects),
-      .whiteBalance: choice([.whiteBalance(.auto), .whiteBalance(.temperature)]),
-      .whiteBalanceRed: range(-9, 9), .whiteBalanceBlue: range(-9, 9), .kelvin: range(2500, 10000),
+      .whiteBalance: choice(
+        [
+          .autoWhitePriority, .auto, .autoAmbiencePriority, .custom1, .custom2, .custom3,
+          .temperature, .daylight, .shade, .fluorescent1, .fluorescent2, .fluorescent3,
+          .incandescent, .underwater,
+        ].map(RecipeSettingValue.whiteBalance),
+        rendering: [.whiteBalance(.auto), .whiteBalance(.temperature)]),
+      .whiteBalanceRed: range(-9, 9), .whiteBalanceBlue: range(-9, 9),
+      .kelvin: range(2500, 10000, 10),
       .highlight: range(-20, 40, 5), .shadow: range(-20, 40, 5), .color: range(-40, 40, 10),
       .sharpness: range(-40, 40, 10), .noiseReduction: range(-4, 4), .clarity: range(-50, 50, 10),
     ]
@@ -137,6 +150,11 @@ extension FilmSimulation {
     case .acrosYellow: "ACROS + Y"
     case .acrosRed: "ACROS + R"
     case .acrosGreen: "ACROS + G"
+    case .eterna: "ETERNA / Cinema"
+    case .classicNeg: "Classic Neg."
+    case .eternaBleachBypass: "ETERNA Bleach Bypass"
+    case .nostalgicNeg: "Nostalgic Neg."
+    case .realaAce: "REALA ACE"
     }
   }
 }
@@ -152,6 +170,11 @@ extension WhiteBalanceMode {
     case .fluorescent3: "Fluorescent 3"
     case .incandescent: "Incandescent"
     case .underwater: "Underwater"
+    case .autoWhitePriority: "Auto · White priority"
+    case .autoAmbiencePriority: "Auto · Ambience priority"
+    case .custom1: "Custom 1"
+    case .custom2: "Custom 2"
+    case .custom3: "Custom 3"
     }
   }
 }

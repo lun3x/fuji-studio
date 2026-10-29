@@ -30,6 +30,7 @@ struct PhoneRecipeDraft: Sendable, Equatable {
   var name: String
   var temperature: String
   private var changedValues: [RecipeSettingID: RecipeSettingValue] = [:]
+  private var rememberedGrainSize: GrainSize?
   init(recipe: PhoneRecipe, codecs: RecipeCodecRegistry = RecipeCodecRegistry()) {
     original = recipe
     self.codecs = codecs
@@ -45,6 +46,7 @@ struct PhoneRecipeDraft: Sendable, Equatable {
   static func == (lhs: Self, rhs: Self) -> Bool {
     lhs.original == rhs.original && lhs.name == rhs.name && lhs.temperature == rhs.temperature
       && lhs.changedValues == rhs.changedValues
+      && lhs.rememberedGrainSize == rhs.rememberedGrainSize
   }
   var supportsSettingsEditing: Bool { capabilities != nil && !initialValues.isEmpty }
   var hasChanges: Bool {
@@ -59,14 +61,26 @@ struct PhoneRecipeDraft: Sendable, Equatable {
   }
   func choices(for setting: RecipeSettingID) -> [SettingChoice] {
     guard let c = capabilities?.settings[setting], c.support == .supported else { return [] }
-    if !c.editableChoices.isEmpty { return c.editableChoices }
+    if !c.editableChoices.isEmpty {
+      return c.editableChoices.sorted {
+        guard case .integer(let lhs) = $0.value, case .integer(let rhs) = $1.value else {
+          return false
+        }
+        return lhs > rhs
+      }
+    }
     guard let min = c.minimum, let max = c.maximum, let step = c.step, step > 0 else { return [] }
-    return stride(from: min, through: max, by: step).map {
+    return stride(from: min, through: max, by: step).reversed().map {
       .init(value: .integer($0), label: setting.label(for: .integer($0)))
     }
   }
   var grain: GrainSettings? {
-    if case .grain(let grain) = value(for: .grain) { return grain }
+    if case .grain(var grain) = value(for: .grain) {
+      if grain.strength == .off, grain.size != nil, let rememberedGrainSize {
+        grain.size = rememberedGrainSize
+      }
+      return grain
+    }
     return nil
   }
   mutating func setGrainEffect(_ effect: GrainStrength) {
@@ -76,6 +90,16 @@ struct PhoneRecipeDraft: Sendable, Equatable {
         if case .grain(let g) = $0.value { return g.size }
         return nil
       }.first
+    if effect == .off {
+      rememberedGrainSize = size
+      if let off = choices(for: .grain).first(where: {
+        if case .grain(let grain) = $0.value { return grain.strength == .off }
+        return false
+      }) {
+        setValue(off.value, for: .grain)
+        return
+      }
+    }
     setValue(.grain(.init(strength: effect, size: size)), for: .grain)
   }
   mutating func setGrainSize(_ size: GrainSize) {
