@@ -76,6 +76,7 @@ actor RenderCamera: CameraServing {
     func states() -> AsyncStream<CameraState> { AsyncStream { $0.finish() } }
     func connect() {}
     func disconnect() {}
+    func resetConnection() {}
     func importRecipes() throws -> ImportedRecipeCollection { let support=try support(for:fixture.context);return .init(recipes:[fixture.recipe],declaredSlots:support.capabilities.bankSlots,context:fixture.context,support:support) }
     func executionContext() -> CameraExecutionContext { current }
     func changeContext(_ value: CameraExecutionContext) { current = value }

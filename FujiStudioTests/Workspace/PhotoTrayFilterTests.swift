@@ -4,6 +4,24 @@ import Testing
 @testable import FujiStudio
 
 struct PhotoTrayFilterTests {
+    @Test(arguments: [false, true])
+    func replacingTheSameCameraSessionKeepsCompatibleCheckedPhotos(attention: Bool) throws {
+        let f = try FilterFixture(); var state = f.state()
+        for source in [f.one, f.two] {
+            state.reduce(.photoFilterAssessed(source, camera: f.camera, result: .compatible))
+        }
+        state.reduce(.photoFilterSelected(.compatibleWithCamera))
+        state.reduce(.select); state.reduce(.checkedSourcesReplaced(["one", "two"]))
+        let context = CameraExecutionContext(model: f.context.model, firmware: f.context.firmware,
+            capability: f.context.capability, supportVersion: f.context.supportVersion,
+            sessionIdentity: UUID(), generation: f.context.generation + 1)
+        let session = CameraSession(generation: context.generation, connection: f.session.connection)
+        state.reduce(.cameraChanged(attention ? .attentionRequired(session, message: "Unexpected output.") : .ready(session), context: context))
+        state.reduce(.cameraSupportVerified(context, f.support))
+        #expect(state.checkedSourceIDs == ["one", "two"])
+        #expect(state.visibleSourceIDs == ["one", "two"])
+    }
+
     @Test func filterIsOptionalAndUnknownPhotosStayHiddenUntilAssessed() throws {
         let f = try FilterFixture()
         var state = f.state()

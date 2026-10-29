@@ -176,7 +176,7 @@ struct WorkspaceView<StatusControl: View>: View {
     }
     private var recipeControl: some View {
         RecipeMenu(current: state.selectedRecipe, snapshots: state.recipes, phoneSnapshots: state.phoneRecipes,
-            slots:state.recipeSlots,canImport:state.isCameraConnected && state.cameraSupport?.capabilities.recipeImport == .supported,
+            slots:state.recipeSlots,canImport:state.canImportRecipes,
             executionReason:state.recipeExecutionReason,refreshState: state.recipeRefreshState,
             isCameraConnected: state.isCameraConnected,
             onSelect: { onAction(.recipeSelected(slot: $0)) }, onSelectPhone: { onAction(.phoneRecipeSelected($0)) },

@@ -118,6 +118,9 @@ private struct AppEntryView: View {
                         fixtureDisconnectedCamera = bundle.camera
                     }
                     if flags.contains("--fixture-preview-failure") { await bundle.camera.failRender() }
+                    if flags.contains("--fixture-camera-attention") {
+                        await bundle.camera.failRenderWithAttention("Unexpected photo dimensions: 640 × 480; expected 1800 × 1200.")
+                    }
                     if flags.contains("--fixture-held-start") {
                         let barrier = FixtureBarrier(); fixtureStartBarrier = barrier
                         await bundle.reader.holdDiscovery(barrier)

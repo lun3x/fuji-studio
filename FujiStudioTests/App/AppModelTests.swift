@@ -4,6 +4,233 @@ import Testing
 @testable import FujiStudio
 
 @MainActor struct AppModelTests {
+    @Test func resetDoesNotRevokeAnActivePreview() async throws {
+        let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment), barrier = FixtureBarrier()
+        defer { Task { await barrier.release() } }
+        await model.start(automaticallyConnect: false); await model.connect()
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
+        await f.camera.holdRender(barrier)
+        model.send(.sourceTapped("source-0")); model.send(.recipeSelected(slot: 1))
+        await barrier.entered()
+        await model.resetCameraConnection()
+        #expect(await f.camera.resetCount == 0)
+        #expect(!model.isResettingCamera)
+        await barrier.release()
+    }
+
+    @Test func backgroundSettlesResetProgressBeforeDelayedReadyDelivery() async throws {
+        let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment)
+        await model.start(automaticallyConnect: false); await model.connect()
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
+        await f.camera.deferStateNotifications()
+        await model.resetCameraConnection()
+        #expect(model.isResettingCamera)
+        await model.sceneChanged(.background)
+        #expect(!model.isResettingCamera)
+        #expect(!model.state.isCameraResetting)
+        await f.camera.resumeStateNotifications()
+        await model.sceneChanged(.active); await model.connect()
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
+        #expect(!model.isResettingCamera)
+    }
+
+    @Test func physicalDetachAfterResetFailureAllowsAReconnection() async throws {
+        let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment)
+        await model.start(automaticallyConnect: false); await model.connect()
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
+        await f.camera.failReset(.ownershipChanged)
+        await model.resetCameraConnection()
+        await eventually { model.cameraResetError != nil && model.cameraError != nil }
+        await f.camera.disconnect()
+        await eventually { !model.state.isCameraConnected }
+        #expect(model.cameraResetError == nil && model.cameraError == nil)
+        await model.connect()
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
+        #expect(await f.camera.connectCount == 2)
+    }
+
+    @Test func delayedImportAttentionNeverDisconnectsOrStartsAnotherConnection() async throws {
+        let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment)
+        await model.start(automaticallyConnect: false); await model.connect()
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
+        await f.camera.deferStateNotifications()
+        await f.camera.failImportWithAttention("Unexpected recipe profile length: 17 bytes.")
+        await model.refreshRecipes()
+        #expect(await f.camera.disconnectCount == 0)
+        await model.connect()
+        #expect(await f.camera.connectCount == 1)
+        await f.camera.resumeStateNotifications()
+        await eventually { model.cameraError != nil && model.state.currentCameraExecutionContext != nil }
+        #expect(model.cameraError?.contains("17 bytes") == true)
+        #expect(model.state.cameraSupport != nil)
+    }
+
+    @Test func resetFromReadyBlocksCameraWorkUntilTheReplacementSessionIsVerified() async throws {
+        let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment), barrier = FixtureBarrier()
+        defer { Task { await barrier.release() } }
+        await model.start(automaticallyConnect: false); await model.connect()
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
+        model.send(.sourceTapped("source-0")); model.send(.recipeSelected(slot: 1))
+        await eventually { model.preview != nil && !model.isLoadingPreview }
+        await f.camera.holdReset(barrier)
+        let reset = Task { await model.resetCameraConnection() }
+        await barrier.entered()
+        #expect(!model.state.canExport)
+        model.send(.sourceTapped("source-2")); model.send(.recipeSelected(slot: 2))
+        await model.export(); await model.refreshRecipes(); await model.resumeExport()
+        #expect(model.exportEvent == nil)
+        #expect(await f.writer.requests.isEmpty)
+        #expect(await f.camera.renderCount == 1)
+        #expect(await f.camera.importCount == 1)
+        await barrier.release(); await reset.value
+        await eventually { !model.isResettingCamera && !model.isRefreshing }
+        #expect(await f.camera.renderCount == 1)
+    }
+
+    @Test func resetAttentionAdoptsTheReplacementContextWithoutEmptyingTheCameraFilter() async throws {
+        let f = try await FixtureEnvironment.make(filterSources: true), model = AppModel(environment: f.environment)
+        await model.start(automaticallyConnect: false); await model.connect()
+        await eventually { model.state.photoFilterCamera != nil && !model.isRefreshing }
+        let originalContext = try #require(model.state.currentCameraExecutionContext)
+        model.send(.photoFilterSelected(.compatibleWithCamera))
+        await eventually { model.state.photoFilterPendingCount == 0 }
+        #expect(model.state.visibleSourceIDs == ["source-0"])
+        await f.camera.failResetAfterReopening(.ownershipChanged)
+        await model.resetCameraConnection()
+        await eventually { model.cameraResetError != nil && model.state.currentCameraExecutionContext != nil && model.state.currentCameraExecutionContext != originalContext }
+        #expect(model.state.photoFilter == .compatibleWithCamera)
+        #expect(model.state.visibleSourceIDs == ["source-0"])
+        #expect(model.state.photoFilterCamera != nil)
+    }
+
+    @Test func resetWaitsForDelayedReadyDeliveryWithoutClearingTheSelectedRecipe() async throws {
+        let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment)
+        await model.start(automaticallyConnect: false); await model.connect()
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
+        model.send(.sourceTapped("source-0")); await eventually { model.displayFile != nil }
+        await f.camera.failRenderWithAttention("Unexpected photo dimensions.")
+        model.send(.recipeSelected(slot: 1))
+        await eventually { model.cameraError != nil && model.imageStatusIsFailure }
+        await f.camera.deferStateNotifications()
+        await model.resetCameraConnection()
+        #expect(model.isResettingCamera)
+        await model.resetCameraConnection()
+        #expect(await f.camera.resetCount == 1)
+        await f.camera.resumeStateNotifications()
+        await eventually { !model.isResettingCamera && !model.isRefreshing && model.cameraError == nil }
+        #expect(model.state.selectedRecipe?.slot == 1)
+        #expect(await f.camera.renderCount == 1)
+    }
+
+    @Test func cameraAttentionWithoutVerifiedContextNeverAutoConnects() async throws {
+        let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment)
+        await model.start(automaticallyConnect: false)
+        let session = CameraSession(generation: 1, connection: .init(name: "Unknown Fujifilm", usbVendorID: 0x04cb, usbProductID: 0))
+        model.send(.cameraChanged(.attentionRequired(session, message: "The camera reported unsupported capability metadata."), context: nil))
+        await model.connect()
+        #expect(await f.camera.connectCount == 0)
+        #expect(model.state.currentCameraExecutionContext == nil)
+        #expect(model.state.isCameraConnected)
+    }
+
+    @Test func recipeImportAttentionRetainsTheCameraAndItsSpecificIssue() async throws {
+        let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment)
+        await model.start(automaticallyConnect: false); await model.connect()
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
+        let context = try #require(model.state.currentCameraExecutionContext)
+        await f.camera.failImportWithAttention("The camera reported an unexpected recipe profile length (17 bytes).")
+        await model.refreshRecipes()
+        await eventually { !model.isRefreshing && model.cameraError != nil }
+        #expect(model.state.currentCameraExecutionContext == context)
+        #expect(model.state.cameraSupport != nil)
+        #expect(model.cameraError?.contains("17 bytes") == true)
+        #expect(model.state.isCameraConnected)
+        #expect(await f.camera.disconnectCount == 0)
+        await model.connect()
+        #expect(await f.camera.connectCount == 1)
+    }
+
+    @Test func explicitCameraResetIsSingleFlightAndDoesNotReplayFailedPreview() async throws {
+        let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment), barrier = FixtureBarrier()
+        defer { Task { await barrier.release() } }
+        await model.start(automaticallyConnect: false); await model.connect()
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
+        let originalContext = try #require(model.state.currentCameraExecutionContext)
+        model.send(.sourceTapped("source-0")); await eventually { model.displayFile != nil }
+        await f.camera.failRenderWithAttention("Unexpected photo dimensions: 640 × 480; expected 1800 × 1200.")
+        model.send(.recipeSelected(slot: 1))
+        await eventually { model.cameraError != nil && model.imageStatusIsFailure }
+        await f.camera.holdReset(barrier)
+        let reset = Task { await model.resetCameraConnection() }
+        await eventually { model.isResettingCamera }
+        #expect(model.state.selectedRecipe?.slot == 1)
+        await model.resetCameraConnection()
+        #expect(await f.camera.resetCount == 1)
+        await barrier.release(); await reset.value
+        await eventually { !model.isResettingCamera && !model.isRefreshing && model.state.currentCameraExecutionContext != originalContext }
+        #expect(model.cameraError == nil)
+        #expect(model.cameraResetError == nil)
+        #expect(model.state.selectedRecipe?.slot == 1)
+        #expect(model.state.displayedVersion == .cameraJPEG)
+        #expect(await f.camera.renderCount == 1)
+        model.send(.recipeSelected(slot: 1))
+        await eventually { model.preview != nil && !model.isLoadingPreview }
+        #expect(await f.camera.renderCount == 2)
+    }
+
+    @Test func cameraResetFailureStaysVisibleUntilAnExplicitSuccessfulReset() async throws {
+        let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment)
+        await model.start(automaticallyConnect: false); await model.connect()
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
+        model.send(.sourceTapped("source-0")); await eventually { model.displayFile != nil }
+        await f.camera.failRenderWithAttention("The converted photo has unexpected dimensions.")
+        model.send(.recipeSelected(slot: 1))
+        await eventually { model.cameraError != nil && model.imageStatusIsFailure }
+        await f.camera.failReset(.ownershipChanged)
+        await model.resetCameraConnection()
+        #expect(!model.isResettingCamera)
+        #expect(model.cameraResetError?.contains("Reset failed") == true)
+        #expect(model.cameraError != nil)
+        #expect(model.state.selectedRecipe?.slot == 1)
+        #expect(model.displayFile != nil)
+        await model.connect()
+        #expect(await f.camera.connectCount == 1)
+        #expect(await f.camera.renderCount == 1)
+        await f.camera.failReset(nil)
+        await model.resetCameraConnection()
+        await eventually { model.cameraResetError == nil && model.cameraError == nil && !model.isRefreshing }
+        #expect(await f.camera.resetCount == 2)
+        #expect(await f.camera.renderCount == 1)
+    }
+
+    @Test func cameraAttentionPreservesBrowsingAndRecipeWithoutReconnectingOrReplaying() async throws {
+        let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment)
+        await model.start(automaticallyConnect: false); await model.connect()
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
+        let context = try #require(model.state.currentCameraExecutionContext)
+        let recipe = try #require(model.state.recipes.first)
+        model.send(.sourceTapped("source-0")); await eventually { model.displayFile != nil }
+        await f.camera.failRenderWithAttention("Unexpected photo dimensions: 640 × 480; expected 1800 × 1200.")
+        model.send(.recipeSelected(slot: recipe.slot))
+        await eventually { !model.isLoadingPreview && model.imageStatusIsFailure }
+        #expect(model.state.currentCameraExecutionContext == context)
+        #expect(model.state.selectedRecipe == recipe)
+        #expect(model.state.isCameraConnected)
+        #expect(!model.state.canExport)
+        #expect(model.state.exportDisabledReason?.message == "Resolve the camera error before exporting.")
+        #expect(model.imageStatus == "Unexpected photo dimensions: 640 × 480; expected 1800 × 1200.")
+        #expect(model.displayFile != nil)
+        await model.connect()
+        #expect(await f.camera.connectCount == 1)
+        #expect(await f.camera.disconnectCount == 0)
+        #expect(await f.camera.renderCount == 1)
+        // Photo browsing continues and does not retry a conversion while attention is required.
+        model.send(.sourceTapped("source-2"))
+        await eventually { model.imageIdentity?.sourceID == "source-2" }
+        #expect(await f.camera.renderCount == 1)
+        #expect(model.state.selectedRecipe == recipe)
+    }
+
     @Test func reenabledFilterRetriesUnavailablePhotosAndKeepsSuccessfulChecks() async throws {
         let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment)
         await model.start()

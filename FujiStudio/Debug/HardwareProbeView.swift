@@ -230,6 +230,7 @@ private final class CameraProbeModel {
                         status = "Session open; conversion mode unverified · generation \(session.generation) · USB \(session.connection.usbVendorID):\(session.connection.usbProductID)"
                     case .ready: status = "Higher service verified ready (not produced by this probe)"
                     case .busy: status = "PTP command in flight"
+                    case .attentionRequired(_, let message): status = message
                     case .wrongMode(let reason): status = reason
                     case .recoverableError(let error): status = "Session failed: \(error). Close/reconnect; if close is uncertain, unplug camera."
                     }
