@@ -40,7 +40,7 @@ actor ReceiptCamera: CameraServing {
     guard context == nil else { return }
     context = .init(
       model: "X-E3", firmware: "1.30", capability: XE3Support.identifier,
-      supportVersion: XE3Support.identifier, sessionIdentity: UUID(), generation: 1)
+      supportVersion: XE3Support.conversionVersion, sessionIdentity: UUID(), generation: 1)
     emit(.ready(session(1)))
   }
   func importRecipes() async throws -> ImportedRecipeCollection {

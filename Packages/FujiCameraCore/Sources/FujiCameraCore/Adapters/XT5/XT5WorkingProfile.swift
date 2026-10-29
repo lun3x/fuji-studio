@@ -3,7 +3,7 @@ import Foundation
 
 /// Measured frame structure with replaceable starting settings. Always patches fresh input.
 public struct XT5WorkingProfile: Sendable {
-  public static let supportVersion = "xt5-4.31-0200-structured-frame-v4"
+  public static let supportVersion = "xt5-4.31-0200-structured-frame-v5-source-dr"
   public static let writableOffsets = [
     533, 541, 545, 549, 553, 557, 561, 565, 569, 573, 577, 581, 585, 589, 593, 609, 617,
   ]
@@ -11,6 +11,7 @@ public struct XT5WorkingProfile: Sendable {
   public let recipeID: UUID
   public let settingsDigest: String
   public let settings: RecipeSettings
+  public let effectiveDynamicRange: Int
   public let baselineSHA256: String, candidateSHA256: String
 
   public static func validateSource(_ metadata: RAWMetadata) throws {
@@ -39,7 +40,7 @@ public struct XT5WorkingProfile: Sendable {
       0x5000: 4,
     ]
     guard tuple[0] == 7, [2, 4].contains(tuple[1]), tuple[2] == 1, tuple[3] == 1,
-      [100, 400].contains(v(0xD190)), v(0xD191) == 0,
+      [100, 200, 400].contains(v(0xD190)), v(0xD191) == 0,
       FujiRenderingValues.films[v(0xD192)] != nil,
       v(0xD193) == 0, v(0xD194) == 0, [1, 3, 6, 7].contains(v(0xD195)),
       (1...3).contains(v(0xD196)), (1...3).contains(v(0xD197)), v(0xD198) == 1,
@@ -75,7 +76,7 @@ public struct XT5WorkingProfile: Sendable {
     let p = try properties(recipe)
     var output = baseline
     let rules: [(Int, UInt16, Bool)] = [
-      (533, 0xD190, false), (541, 0xD192, false), (549, 0xD196, false), (557, 0xD199, false),
+      (541, 0xD192, false), (549, 0xD196, false), (557, 0xD199, false),
       (561, 0xD19A, true), (565, 0xD19B, true), (569, 0xD19C, false), (573, 0xD19D, true),
       (577, 0xD19E, true), (581, 0xD19F, true), (585, 0xD1A0, true), (589, 0xD1A1, false),
       (609, 0xD197, false), (617, 0xD1A2, true),
@@ -86,12 +87,15 @@ public struct XT5WorkingProfile: Sendable {
         offset..<offset + 4,
         with: word(signed ? UInt32(bitPattern: Int32(Int16(bitPattern: v))) : UInt32(v)))
     }
+    let effectiveDynamicRange = metadata.effectiveDynamicRange(for: settings.dynamicRange)
+    output.replaceSubrange(533..<537, with: word(UInt32(effectiveDynamicRange)))
     output.replaceSubrange(545..<549, with: word(settings.grain.strength == .strong ? 3 : 1))
     output.replaceSubrange(553..<557, with: word(2))
     // Explicit requested ON; effective value comes from returned JPEG.
     output.replaceSubrange(593..<597, with: word(1))
     return Self(
       bytes: output, recipeID: recipe.id, settingsDigest: recipe.settingsDigest, settings: settings,
+      effectiveDynamicRange: effectiveDynamicRange,
       baselineSHA256: hash(baseline), candidateSHA256: hash(output))
   }
   public func effective(lensOptimizer: Bool) -> EffectiveRecipeReport {
@@ -102,7 +106,8 @@ public struct XT5WorkingProfile: Sendable {
       lensOptimizerEffective: lensOptimizer,
       lensOptimizerAdjusted: !lensOptimizer,
       evidence:
-        "Exact profile readback; JPEG Fuji quality/context and LMO metadata. Opaque tuple accepted only within observed frame support."
+        "Exact profile readback; JPEG Fuji quality/context and LMO metadata. Opaque tuple accepted only within observed frame support.",
+      dynamicRangeEffective: effectiveDynamicRange
     )
   }
   public static func hash(_ data: Data) -> String {
@@ -131,12 +136,14 @@ public struct XT5WorkingProfile: Sendable {
   }
   public init(
     bytes: Data, recipeID: UUID, settingsDigest: String, settings: RecipeSettings,
+    effectiveDynamicRange: Int,
     baselineSHA256: String, candidateSHA256: String
   ) {
     self.bytes = bytes
     self.recipeID = recipeID
     self.settingsDigest = settingsDigest
     self.settings = settings
+    self.effectiveDynamicRange = effectiveDynamicRange
     self.baselineSHA256 = baselineSHA256
     self.candidateSHA256 = candidateSHA256
   }

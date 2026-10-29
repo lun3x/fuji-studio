@@ -95,18 +95,23 @@ DR400 recipe conversions. The original camera JPEG and matching-settings
 conversion look alike; C2 and C4 at DR400 have the obvious yellow/green cast.
 Private contact sheets retain that comparison and the DR-only isolation.
 
-## Status and remaining product decision
+## Conversion policy after the audit
 
-This audit identifies a missing source-specific DR limit. It does not change
-saved camera/phone recipes or install a new DR adjustment policy. The user
-was offered two possible behaviours: use the photo's maximum DR and report
-that adjustment, or block recipes that exceed its capture DR. The camera-menu
-check confirms C2's imported DR400 value; applying that recipe still needs a
-source-specific limit. No handling preference has been selected yet.
+The user selected `conversion DR = min(capture DR, recipe DR)` and explicitly
+required the recipe to remain applicable. The implementation reads capture DR
+from the RAF's embedded original JPEG and limits the X-E3 and X-T5 working
+profiles for each conversion. JPEG validation expects that effective DR while
+render provenance retains the original requested settings and records effective
+DR. Saved camera/phone recipes and their digests are unchanged.
+
+Missing, malformed or unrecognized capture DR falls back to DR100, which stays
+within every supported capture's limit without failing recipe application.
+Conversion support versions change so older cached renders cannot be reused;
+the X-E3 native recipe format identifier remains stable.
 
 The normal signed Release app was restored and launched after the temporary probe.
-The full simulator suite remains deferred at the user's request. No product
-mapping change or new full-suite pass is claimed by this audit. Private RAFs,
+The full simulator suite remains deferred at the user's request. No new
+full-suite pass is claimed by this audit. Private RAFs,
 JPEGs, full backups, source identifiers, journals and disposable instrumentation
 remain in ignored `.build`; only this sanitized report is committed.
 
@@ -129,3 +134,28 @@ checks and confirmed the DR-only causal isolation. Its evidence concern about
 the native code-3 interpretation was subsequently resolved by the user's C2
 camera-menu check above. No broad visual-fidelity claim is made for every WB
 mode merely from metadata matching.
+
+## Implementation verification, 2026-10-30
+
+- 78 focused core tests passed across nine suites, including all explicit
+  capture/recipe DR combinations, fallback handling, effective-DR JPEG validation,
+  requested/effective provenance and successful service completion/cleanup.
+- The exact original RAF from this audit was read by the production parser:
+  capture DR200 was recovered, requested DR400 stayed intact, and its working
+  profile carried effective DR200.
+- 105 focused iOS unit tests passed across nine suites. One affected editor UI
+  test passed, saving/reopening the now-convertible X-T5 DR200 choice.
+- Fresh review identified an old pinned-export path that bypassed render-version
+  invalidation. A regression first reproduced the stale save. The fix durably
+  requeues unsubmitted old-version exports and releases unreferenced old pins;
+  the regression and export suites pass. Already submitted/unknown Photos
+  transactions retain their reconciliation semantics.
+- A new live phone probe of unchanged C2/C5 stopped during connection with
+  `unsupportedContext`, before any conversion. It is not counted as physical
+  verification of the new automatic policy. The earlier physical DR-only and
+  source-safe recipe tests remain the colour-fidelity evidence.
+- Temporary probe source was restored. The signed Release app built, passed
+  strict/deep signature verification, and was installed/launched normally on the
+  phone. Full simulator/UI-suite validation remains deferred by the user.
+
+The implementation was rebased onto main `48301bd7` to include the newer RAW-metadata filter/cache work. Capture DR is available through both full preparation and metadata-only inspection. Metadata parser-cache version 2 discards records created before capture DR was recorded. Regression tests first reproduced legacy-cache reuse and invalid DR in decoded metadata, then passed after cache invalidation and safe DR validation at use. The combined core, iOS and affected UI checks above ran after this integration.

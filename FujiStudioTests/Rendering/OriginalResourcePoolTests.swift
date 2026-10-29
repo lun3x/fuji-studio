@@ -4,6 +4,24 @@ import Testing
 @testable import FujiStudio
 
 struct OriginalResourcePoolTests {
+    @Test func metadataCachePredatingCaptureDRIsRebuilt() async throws {
+        let f = try RenderFixture(); defer { f.remove() }
+        let directory = f.root.appendingPathComponent("metadata"), reader = RenderLibrary(f)
+        let cache = RAWMetadataCache(directory: directory)
+        cache.store(f.raw.metadata, for: f.token)
+        let file = try #require(FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil).first)
+        var legacy = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+        legacy["parserVersion"] = 1
+        var metadata = try #require(legacy["metadata"] as? [String: Any])
+        metadata.removeValue(forKey: "captureDynamicRange")
+        legacy["metadata"] = metadata
+        try JSONSerialization.data(withJSONObject: legacy).write(to: file)
+        let pool = OriginalResourcePool(reader: reader, metadataCacheDirectory: directory)
+        #expect(try await pool.assess(source: f.source, for: fixtureCameraSupport(f.context)) == .supported(model: "X-T5"))
+        #expect(await reader.metadataReads == 1)
+        #expect(cache.metadata(for: f.token)?.captureDynamicRange == 400)
+    }
+
     @Test func filterAssessmentUsesMetadataWithoutMaterializingOriginal() async throws {
         let f = try RenderFixture(); defer { f.remove() }
         let reader = RenderLibrary(f), pool = reader.pool(), support = try fixtureCameraSupport(f.context)

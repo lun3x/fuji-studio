@@ -5,12 +5,13 @@ import CoreGraphics
 import Testing
 @testable import FujiCameraCore
 
-func xe3RAFFixture(compression:UInt32=2,bits:Int=14,orientation:Int=8,duplicateGeometry:Bool=false) throws -> LocalResource {
+func xe3RAFFixture(compression:UInt32=2,bits:Int=14,orientation:Int=8,duplicateGeometry:Bool=false,embeddedJPEG:Data?=nil) throws -> LocalResource {
     let cg=try #require(CGContext(data:nil,width:4,height:6,bitsPerComponent:8,bytesPerRow:16,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.noneSkipLast.rawValue))
     let jpeg=NSMutableData()
     let actualDestination=try #require(CGImageDestinationCreateWithData(jpeg,UTType.jpeg.identifier as CFString,1,nil))
     CGImageDestinationAddImage(actualDestination,try #require(cg.makeImage()),[kCGImagePropertyOrientation:orientation,kCGImagePropertyTIFFDictionary:[kCGImagePropertyTIFFModel:"X-E3"]] as CFDictionary)
     #expect(CGImageDestinationFinalize(actualDestination))
+    let jpegData = embeddedJPEG ?? (jpeg as Data)
     func be16(_ n:Int)->Data { withUnsafeBytes(of:UInt16(n).bigEndian) { Data($0) } }
     func be32(_ n:Int)->Data { withUnsafeBytes(of:UInt32(n).bigEndian) { Data($0) } }
     func le16(_ n:Int)->Data { withUnsafeBytes(of:UInt16(n).littleEndian) { Data($0) } }
@@ -26,8 +27,8 @@ func xe3RAFFixture(compression:UInt32=2,bits:Int=14,orientation:Int=8,duplicateG
     sensor += le32(0)
     var bytes=Data(repeating:0,count:128)
     bytes.replaceSubrange(0..<16,with:Data("FUJIFILMCCD-RAW ".utf8));bytes.replaceSubrange(28..<32,with:Data("X-E3".utf8));bytes.replaceSubrange(60..<64,with:Data("0130".utf8))
-    for (offset,n) in [(84,128),(88,jpeg.length),(92,128+jpeg.length),(96,directory.count),(100,128+jpeg.length+directory.count),(104,sensor.count),(108,Int(compression))] { bytes.replaceSubrange(offset..<offset+4,with:be32(n)) }
-    bytes += jpeg as Data;bytes += directory;bytes += sensor
+    for (offset,n) in [(84,128),(88,jpegData.count),(92,128+jpegData.count),(96,directory.count),(100,128+jpegData.count+directory.count),(104,sensor.count),(108,Int(compression))] { bytes.replaceSubrange(offset..<offset+4,with:be32(n)) }
+    bytes += jpegData;bytes += directory;bytes += sensor
     let url=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString+".RAF");try bytes.write(to:url)
     let token=ResourceToken(assetID:"xe3-source",role:.primaryOriginal,contentTypeIdentifier:"com.fujifilm.raw-image",format:.raf,originalFilename:"synthetic.RAF",discriminator:"xe3",sourceRevision:"v1")
     return LocalResource(token:token,fileURL:url,checksum:try ResourceChecksum.sha256(url))

@@ -159,15 +159,23 @@ actor ExportCoordinator {
         do {
             try await reconcile(id)
             var job = try await catalog.job(id: id)
+            var released: [RenderKey] = []
             for index in job.items.indices {
                 switch job.items[index].state {
                 case .preparing, .converting, .unprocessed: job.items[index].state = .queued
                 case .failed, .cancelled:
                     if retryFailures { job.items[index].state = .queued }
+                case .pendingSave(let pending):
+                    if pending.submission == .notSubmitted,
+                       pending.jpeg.cameraContext.supportVersion != (try RecipeCodecRegistry().supportVersion(for: job.recipeSnapshot.cameraContext)) {
+                        job.items[index].state = .queued
+                        released.append(pending.jpeg.key)
+                    }
                 default: break
                 }
             }
             try await catalog.saveJob(job)
+            for key in released { try await releaseIfUnreferenced(key) }
             launch(job, epoch: epoch)
         } catch { occupied = false; throw error }
     }

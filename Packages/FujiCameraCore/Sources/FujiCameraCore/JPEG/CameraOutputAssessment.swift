@@ -43,7 +43,9 @@ extension CameraOutputAssessment {
     }
     var evidence: [RecipeSettingID: SettingEvidence] = [.lensOptimizer: .jpegObserved]
     for id in conversion.requested.values.keys.sorted(by: { $0.rawValue < $1.rawValue }) {
-      let requested = conversion.requested.values[id]!
+      let requested = id == .dynamicRange
+        ? RecipeSettingValue.integer(conversion.effectiveDynamicRange)
+        : conversion.requested.values[id]!
       if id == .kelvin && conversion.requested.whiteBalance != .temperature { continue }
       if metadata.unrecognized.contains(id) {
         return reject(id.rawValue, requested.label, "unrecognized camera value")
@@ -72,7 +74,7 @@ extension CameraOutputAssessment {
       lensOptimizerAdjusted: lmo != conversion.expectedLensOptimizer,
       evidence:
         "Exact profile readback and model-qualified JPEG identity/FINE/geometry; evidence source recorded per setting.",
-      evidenceBySetting: evidence)
+      evidenceBySetting: evidence, dynamicRangeEffective: conversion.effectiveDynamicRange)
     return .init(metadata: metadata, admission: .accepted(report))
   }
 }

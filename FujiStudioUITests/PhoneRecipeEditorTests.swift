@@ -166,9 +166,9 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
         astia.tap()
         let dynamicRange = app.buttons["recipe.editor.setting.dynamicRange"]
         dynamicRange.tap()
-        XCTAssertFalse(app.buttons["200%"].exists)
+        XCTAssertTrue(app.buttons["200%"].exists)
         XCTAssertFalse(app.buttons["Auto"].exists)
-        app.buttons["100%"].tap()
+        app.buttons["200%"].tap()
         let balance = app.buttons["recipe.editor.setting.whiteBalance"]
         reveal(balance, in: app); balance.tap()
         XCTAssertFalse(app.buttons["Daylight"].exists)
@@ -179,7 +179,7 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
         XCTAssertTrue(phone.isEnabled)
         edit.tap()
         XCTAssertTrue(film.label.contains("ASTIA"))
-        XCTAssertTrue(dynamicRange.label.contains("100%"))
+        XCTAssertTrue(dynamicRange.label.contains("200%"))
         reveal(balance, in: app)
         XCTAssertTrue(balance.label.contains("Colour temperature"))
         shot(app, "Convertible X-T5 recipe saved and reopened")
