@@ -244,6 +244,12 @@ import Observation
             guard case .ready = event.state, let jpeg = event.jpeg, case .preview(let key) = event.version else {
                 imageLoading = ImageLoadingState(event.state)
                 if case .failed(let failure) = event.state, state.selectedRecipe == request.recipe {
+                    if case .camera(.unsupportedSource) = failure,
+                       request.cameraContext == state.currentCameraExecutionContext,
+                       let camera = state.photoFilterCamera,
+                       let source = sources.first(where: { $0.id == request.sourceID }) {
+                        state.reduce(.photoFilterAssessed(source, camera: camera, result: .incompatible))
+                    }
                     displayFailure = Self.previewMessage(failure); imageStatus = displayFailure
                     isLoadingPreview = false
                     state.reduce(.previewInterrupted)
@@ -572,6 +578,18 @@ import Observation
     private func exportChanged(_ event: ExportEvent) async {
         guard event.sequence > recoverySequence else { return }
         applyProgress(event)
+        if event.failures.contains(.unsupportedSource), let camera = state.photoFilterCamera,
+           let job = try? await environment.catalog.job(id: event.jobID),
+           camera == state.photoFilterCamera {
+            let imported = job.recipeSnapshot.cameraContext
+            if camera.model == imported.model, camera.firmware == imported.firmware,
+               camera.capability == imported.capability,
+               camera.supportVersion == (try? RecipeCodecRegistry().supportVersion(for: imported)) {
+                for item in job.items where item.state == .failed(.unsupportedSource) {
+                    reduce(.photoFilterAssessed(item.source, camera: camera, result: .incompatible))
+                }
+            }
+        }
         if event.terminal { await refreshVersions(); await recoverWhenIdle() }
     }
     private func applyProgress(_ event: ExportEvent) {

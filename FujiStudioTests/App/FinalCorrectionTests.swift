@@ -4,6 +4,51 @@ import Testing
 @testable import FujiStudio
 
 @MainActor struct FinalCorrectionTests {
+    @Test func exportSourceRejectionDisablesRecipesForOffscreenSelectedPhoto() async throws {
+        let f = try await FixtureEnvironment.make(), reader = CorrectionLibrary(base: f.reader)
+        let camera = SourceRejectingCamera(base: f.camera, rejectedSourceID: "source-1")
+        let env = try correctionEnvironment(f, reader: reader, camera: camera)
+        let model = AppModel(environment: env)
+        await model.start(); await model.connect()
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
+        model.send(.sourceTapped("source-0")); model.send(.select)
+        model.send(.checkedSourcesReplaced(["source-0", "source-1"]))
+        let recipe = try #require(model.state.recipes.first { $0.slot == 3 })
+        _ = try await env.exports.start(sources: model.state.effectiveSources, recipe: recipe)
+        await eventually { model.exportEvent?.terminal == true }
+        #expect(model.state.viewedSourceID == "source-0")
+        #expect(model.exportEvent?.summary.failed == 1)
+        #expect(model.state.recipeExecutionReason(recipe) != nil)
+        model.send(.recipeSelected(slot: 3))
+        #expect(model.state.selectedRecipe == nil)
+        model.send(.checkedSourcesReplaced(["source-0"]))
+        #expect(model.state.recipeExecutionReason(recipe) == nil)
+    }
+
+    @Test func previewSourceRejectionDisablesAllRecipesWithoutUsingPhotoFilter() async throws {
+        let f = try await FixtureEnvironment.make(), reader = CorrectionLibrary(base: f.reader)
+        let camera = SourceRejectingCamera(base: f.camera)
+        let env = try correctionEnvironment(f, reader: reader, camera: camera)
+        let model = AppModel(environment: env)
+        await model.start(); await model.connect()
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
+        model.send(.sourceTapped("source-0"))
+        await eventually { model.displayFile != nil }
+        model.send(.recipeSelected(slot: 3))
+        await eventually { model.imageStatus?.contains("not supported") == true && !model.isLoadingPreview }
+        #expect(model.sources.first { $0.id == "source-0" }?.compatibility == .supported(model: "X-T5"))
+        for recipe in model.state.recipes {
+            #expect(model.state.recipeExecutionReason(recipe) != nil)
+            #expect(model.state.recipeExecutionReason(recipe.copiedToPhone().snapshot) != nil)
+        }
+        model.send(.recipeSelected(slot: 4))
+        #expect(model.state.selectedRecipe?.slot == 3)
+        await model.reloadLibrary()
+        #expect(model.state.recipeExecutionReason(try #require(model.state.selectedRecipe)) != nil)
+        model.send(.recipeSelected(slot: nil)); model.send(.sourceTapped("source-2"))
+        #expect(model.state.recipeExecutionReason(try #require(model.state.recipes.first)) == nil)
+    }
+
     // Catches terminal-only jobs falling out of the disk query used by a fresh model.
     @Test(arguments: [ExportItemState.failed(.insufficientStorage), .cancelled, .unprocessed])
     func reopenedTerminalJobRetainsFrozenSummaryAndRetriesOnlyRemaining(_ remainingState: ExportItemState) async throws {
@@ -156,7 +201,9 @@ import Testing
         model.send(.done); model.send(.sourceTapped("source-0")); model.send(.recipeSelected(slot: 1))
         await eventually { model.displayFile != nil }
         #expect(model.state.displayedVersion == .cameraJPEG)
-        #expect(model.state.exportDisabledReason == .incompatibleSource(sourceID: "source-0", model: "X-T4"))
+        #expect(model.state.selectedRecipe == nil)
+        #expect(model.state.recipeExecutionReason(recipe) != nil)
+        #expect(!model.state.canExport)
         await #expect(throws: ResourceError.incompatibleCamera("X-T4")) {
             _ = try await env.exports.start(sources: [frozen], recipe: recipe)
         }
@@ -273,15 +320,17 @@ import Testing
     }
 
     private func correctionEnvironment(_ f: FixtureEnvironment.Bundle, reader: CorrectionLibrary,
+        camera: (any CameraServing)? = nil,
         prepare: @escaping OriginalResourcePool.Prepare = Self.prepare) throws -> AppEnvironment {
+        let camera = camera ?? f.camera
         let pool = OriginalResourcePool(reader: reader, prepare: prepare), scheduler = CameraWorkScheduler()
         let renderer = try RawDisplayRenderer(directory: FileManager.default.temporaryDirectory.appendingPathComponent("correction-display-\(UUID())"))
         let resolver = VersionImageResolver(library: reader, catalog: f.environment.catalog, pool: pool, rawRenderer: renderer, cache: f.environment.cache)
-        let preview = PreviewCoordinator(pool: pool, camera: f.camera, scheduler: scheduler, cache: f.environment.cache, rawRenderer: renderer,
+        let preview = PreviewCoordinator(pool: pool, camera: camera, scheduler: scheduler, cache: f.environment.cache, rawRenderer: renderer,
             storedDisplay: { source, version, progress in try await resolver.resolve(source: source, version: version, progress: progress).lease })
-        let exports = ExportCoordinator(reader: reader, camera: f.camera, catalog: f.environment.catalog, writer: f.writer,
+        let exports = ExportCoordinator(reader: reader, camera: camera, catalog: f.environment.catalog, writer: f.writer,
             pool: pool, cache: f.environment.cache, scheduler: scheduler)
-        return AppEnvironment(reader: reader, camera: f.camera, catalog: f.environment.catalog, originals: pool, preview: preview, resolver: resolver,
+        return AppEnvironment(reader: reader, camera: camera, catalog: f.environment.catalog, originals: pool, preview: preview, resolver: resolver,
             exports: exports, cache: f.environment.cache, thumbnails: f.environment.thumbnails, platform: f.platform)
     }
 
@@ -296,5 +345,20 @@ import Testing
             try? await Task.sleep(for: .milliseconds(10))
         }
         #expect(await condition())
+    }
+}
+
+private struct SourceRejectingCamera: CameraServing {
+    let base: FixtureCamera
+    var rejectedSourceID: SourceID? = nil
+    func support(for context: CameraExecutionContext) async throws -> VerifiedCameraSupport { try await base.support(for: context) }
+    func executionContext() async throws -> CameraExecutionContext { try await base.executionContext() }
+    func states() async -> AsyncStream<CameraState> { await base.states() }
+    func connect() async throws { try await base.connect() }
+    func importRecipes() async throws -> ImportedRecipeCollection { try await base.importRecipes() }
+    func disconnect() async { await base.disconnect() }
+    func render(raw: PreparedRAW, recipe: RecipeSnapshot, policy: OutputPolicy) async throws -> CameraJPEG {
+        if rejectedSourceID == nil || raw.sourceID == rejectedSourceID { throw CameraServiceError.unsupportedSource }
+        return try await base.render(raw: raw, recipe: recipe, policy: policy)
     }
 }

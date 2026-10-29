@@ -4,6 +4,72 @@ import Testing
 @testable import FujiStudio
 
 struct WorkspaceStateTests {
+    @Test(arguments: [RAWCompatibility.incompatible(model: "X-T4"), .supported(model: "X-E3")])
+    func incompatibleSelectionDisablesCameraAndPhoneRecipes(compatibility: RAWCompatibility) throws {
+        let f = try WorkspaceFixture(), phone = f.recipes[2].copiedToPhone()
+        var state = f.state(sources: [f.source("viewed", compatibility: .supported(model: "X-T5")),
+            f.source("bad", compatibility: compatibility)])
+        state.reduce(.recipeSelected(slot: nil))
+        state.reduce(.phoneRecipesLoaded([phone]))
+        state.reduce(.sourceTapped("bad"))
+        for recipe in f.recipes + [phone.snapshot] {
+            #expect(state.recipeExecutionReason(recipe) != nil)
+        }
+        state.reduce(.select)
+        state.reduce(.sourceTapped("viewed"))
+        #expect(state.effectiveSourceIDs == ["bad", "viewed"])
+        #expect(state.viewedSourceID == "viewed")
+        for recipe in f.recipes {
+            #expect(state.recipeExecutionReason(recipe) != nil)
+            #expect(state.reduce(.recipeSelected(slot: recipe.slot)).isEmpty)
+            #expect(state.selectedRecipe == nil)
+        }
+        #expect(state.recipeExecutionReason(phone.snapshot) != nil)
+        #expect(state.reduce(.phoneRecipeSelected(phone.id)).isEmpty)
+        #expect(state.selectedRecipe == nil)
+
+        // Unchecking the incompatible photo restores recipes even while viewing it.
+        state.reduce(.sourceTapped("bad"))
+        #expect(state.effectiveSourceIDs == ["viewed"])
+        for recipe in f.recipes + [phone.snapshot] {
+            #expect(state.recipeExecutionReason(recipe) == nil)
+        }
+        state.reduce(.phoneRecipeSelected(phone.id))
+        #expect(state.selectedRecipe == phone.snapshot)
+    }
+
+    @Test func lateCompatibilityUpdateDisablesRecipesAndStillAllowsClearingSelection() throws {
+        let f = try WorkspaceFixture()
+        var state = f.state()
+        state.reduce(.sourceTapped("viewed")); state.reduce(.select)
+        state.reduce(.checkedSourcesReplaced(["viewed", "next"]))
+        #expect(state.recipeExecutionReason(f.recipes[2]) == nil)
+        state.reduce(.libraryUpdated(sources: [f.source("viewed"),
+            f.source("next", compatibility: .supported(model: "X-E3"))], access: .full))
+        #expect(state.recipeExecutionReason(f.recipes[2]) != nil)
+        #expect(state.reduce(.recipeSelected(slot: 4)).isEmpty)
+        #expect(state.selectedRecipe == f.recipes[2])
+        state.reduce(.recipeSelected(slot: nil))
+        #expect(state.selectedRecipe == nil)
+        state.reduce(.checkedSourcesReplaced(["viewed"]))
+        #expect(state.recipeExecutionReason(f.recipes[2]) == nil)
+        #expect(preview(in: state.reduce(.recipeSelected(slot: 4))) != nil)
+    }
+
+    @Test func cameraSpecificSourceRejectionDisablesRecipesEvenForMatchingModel() throws {
+        let f = try WorkspaceFixture(), source = f.source("viewed", compatibility: .supported(model: "X-T5"))
+        var state = f.state(sources: [source])
+        state.reduce(.sourceTapped(source.id))
+        let support = try fixtureCameraSupport(f.context)
+        state.reduce(.cameraSupportVerified(f.context, support))
+        #expect(state.recipeExecutionReason(f.recipes[2]) == nil)
+        state.reduce(.photoFilterAssessed(source, camera: PhotoTrayFilterCamera(support), result: .incompatible))
+        #expect(state.recipeExecutionReason(f.recipes[2]) != nil)
+        #expect(!state.canExport)
+        #expect(state.reduce(.recipeSelected(slot: 4)).isEmpty)
+        #expect(state.selectedRecipe == f.recipes[2])
+    }
+
     @Test func editingSelectedPresetSupersedesPreviewWhileKeepingStablePresetIdentity() throws {
         let f = try WorkspaceFixture(), phone = f.recipes[2].copiedToPhone()
         var state = f.state(); state.reduce(.sourceTapped("viewed")); state.reduce(.phoneRecipesLoaded([phone]))

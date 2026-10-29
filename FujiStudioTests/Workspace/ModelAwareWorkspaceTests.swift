@@ -55,6 +55,17 @@ struct ModelAwareWorkspaceTests {
     state.reduce(.sourceTapped(source.id))
     let effects = state.reduce(.recipeSelected(slot: 1))
     #expect(effects.isEmpty)
-    #expect(state.exportDisabledReason == .incompatibleSource(sourceID: source.id, model: "X-E3"))
+    #expect(state.selectedRecipe == nil)
+    #expect(state.recipeExecutionReason(recipes[0]) != nil)
+    #expect(!state.canExport)
+
+    let xe3 = try fixtureXE3Recipe()
+    let xe3Receipt = fixtureCollection([xe3], slots: [.init(id: xe3.slot, label: "C\(xe3.slot)")])
+    state.reduce(.recipesImported(xe3Receipt))
+    state.reduce(.cameraChanged(.ready(session), context: xe3Receipt.context))
+    #expect(state.recipeExecutionReason(xe3) == nil)
+    #expect(!state.reduce(.recipeSelected(slot: xe3.slot)).isEmpty)
+    #expect(state.selectedRecipe == xe3)
+    #expect(state.canExport)
   }
 }
