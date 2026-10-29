@@ -302,6 +302,19 @@ pending. Previews do not invoke Photos saving. Export creates separate JPEG
 assets with the original effective Photos capture date and available location;
 Photos controls equal-time tie order.
 
+## Camera failure journals
+
+Each admitted conversion keeps an operation directory under
+`Library/Application Support/FujiStudio/camera-journal/<operation UUID>` in the
+app's data container. `journal.json` records the failure, source and recipe
+identities, camera context, and processing-profile checksums. `baseline.bin`
+retains the exact starting profile even if its shape or settings are rejected;
+`candidate.bin` retains the settings prepared for the camera; `readback.bin`
+retains the camera's actual reply even when it differs from the candidate.
+Files are present only for stages reached by the operation. Rejected profiles
+do not trigger conversion. Keep these private diagnostic artifacts outside
+version control when copying them from a device.
+
 ## Hardware probe
 
 Normal launch opens the live workspace. DEBUG-only fixture/probe routes are

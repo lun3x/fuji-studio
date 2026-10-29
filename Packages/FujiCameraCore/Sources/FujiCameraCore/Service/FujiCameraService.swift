@@ -365,20 +365,22 @@ public actor FujiCameraService: CameraServing {
         _ = try await send(dialect.uploadOpcode, [], payload)
       }
       let baseline = try await send(0x1015, [dialect.profileProperty]).data
+      // Retain the exact response even when the adapter rejects its shape or settings.
+      try journal.store(baseline, name: "baseline.bin", id: record.id)
+      record.baselineSHA256 = ResourceChecksum.sha256(baseline)
+      record.phase = .baselineReceived
+      try journal.save(record)
       let patch = try adapter.prepareConversion(
         baseline: baseline, source: raw.metadata, recipe: recipe, support: support, policy: policy)
-      record.baselineSHA256 = patch.baselineSHA256
       record.candidateSHA256 = patch.candidateSHA256
-      record.phase = .baselineReceived
-      try journal.store(baseline, name: "baseline.bin", id: record.id)
       try journal.store(patch.bytes, name: "candidate.bin", id: record.id)
       try journal.save(record)
       record.phase = .profileIntent
       try journal.save(record)
       _ = try await send(0x1016, [dialect.profileProperty], patch.bytes)
       let readback = try await send(0x1015, [dialect.profileProperty]).data
-      guard readback == patch.bytes else { throw CameraServiceError.profileReadbackMismatch }
       try journal.store(readback, name: "readback.bin", id: record.id)
+      guard readback == patch.bytes else { throw CameraServiceError.profileReadbackMismatch }
       record.phase = .profileAccepted
       try journal.save(record)
       guard try await handles().isEmpty else { throw CameraServiceError.preexistingObjects }
