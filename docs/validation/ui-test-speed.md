@@ -22,7 +22,7 @@ No production app code, test methods, assertions, native animations, or existing
 
 - Mac: 10 logical CPUs, 16 GiB RAM. Xcode 27.1 (27A9275), iPhone 15 Pro / iOS 27.0 (24A434).
 - Isolated task-owned simulators; Xcode creates and removes its native worker clones. Unrelated simulators were left untouched.
-- Baseline includes a cold build. Later runs use warmed build products; some experiments use `test-without-building`. Simulator/test-runner startup is included. Therefore these are operational measurements, not a controlled estimate of parallelism alone.
+- Baseline includes a cold build. Later runs use warmed build products; some experiments use `test-without-building`. Xcode worker/test-runner startup is included; task-base creation/erase/preboot is outside wrapper timings. The manual probe includes its own preparation and cleanup. Therefore these are operational measurements, not a controlled estimate of parallelism alone.
 - No retries or test exclusions. Full runs have 551 logical cases: 487 unit and 64 UI. Three existing opt-in native-device gates skip. Parameterized execution counts differ from logical summary counts.
 - XcodeGen 2.46.0 installed as required by README; Python probes use the workspace's `.venv`. No thermal/performance warnings were reported during the worker sweep.
 
@@ -42,7 +42,9 @@ Rows through direct sharding used the subsequently rejected existence/predicate 
 | Default repeat, before cleanup fix | 651.37 s | 548 / 3 / 0 | Passed; two 60-second native rotation waits inflated tail |
 | Build once, preboot 4 simulators, balanced direct shards | 782.94 s | 548 / 3 / 0 | Slower; no custom coordinator retained |
 | Cleanup fix, still using shortcuts | 611.43 s | 546 / 3 / 2 | Numeric geometry and AX5 hit-testing failures; shortcuts removed |
-| Original waits plus cleanup, erased simulator | 768.17 s | 546 / 3 / 2 | Two editor menus obstructed by keyboard; diagnosed and fixed in helper |
+| Original waits plus cleanup, erased simulator | 768.17 s | 546 / 3 / 2 | Two editor menus obstructed by keyboard |
+| Keyboard/form helper and explicit numeric keyboard setup, 4 workers, erased simulator | 794.86 s | 545 / 3 / 3 | Grain, camera-status timeout, temperature keyboard race |
+| Explicit keyboard setup for numeric and temperature cases, 3 workers, erased simulator | 740.38 s | 547 / 3 / 1 | All editor cases passed; original immediate AX5 Select hit-testing assertion failed |
 
 Six-worker interruption failures are not product regressions or completed timing data. Higher counts were not attempted after the host exceeded useful capacity. The direct-shard probe's preparation/unit readiness took 270.68 seconds, and UI execution alone took 498.45 seconds; it was slower even before setup. Its four extra simulators were removed, and no Python runtime dependency was added.
 
@@ -52,13 +54,13 @@ The original grain-editor test is intermittent. Its baseline failure was an imme
 
 Fresh parallel runs exposed numeric-menu geometry and accessibility hit-testing failures with the fast-wait candidate. Every shortcut was removed. Seven focused cases then passed with original native waits in 258.11 seconds. The next erased-simulator full run still showed keyboard-clipped editor menus, motivating the explicit keyboard regression and form-scrolling correction.
 
-The keyboard-focused five-case editor run is recorded separately from final validation. It preserves the grain failure rather than treating a passing regression case as a passing suite.
+The keyboard-focused five-case editor run took 220.98 seconds: four passed and the grain case failed. This is not a passing suite. A later four-worker erased-simulator run took 794.86 seconds (545 passed, 3 skipped, 3 failed). It reproduced grain selection, a camera-status predicate timeout with a nine-second AX lookup, and a keyboard appearing after the temperature helper's initial check. The temperature case now also explicitly focuses Name and waits for the keyboard before revealing the white-balance control; the independent reviewer confirmed that this deterministic precondition preserves its validation and persistence coverage. Lower-worker comparisons use that strengthened setup. Return is not a general solution for keyboards appearing after a presence check.
 
 The remaining foreground rotation waits occur inside XCTest, not explicit test sleeps. One trace contained a 61.64-second Landscape Left idle wait. Preserving native foreground rotation coverage means that long tail can still recur.
 
 One early diagnostic was mistakenly started while its preceding failed Xcode process was collecting diagnostics. That overlapping experiment is invalid and excluded. Subsequent measurements wait for actual process exit.
 
-Four workers are the measured local stopping point: three were slower, six stalled, alternate scheme/capture settings did not improve results, and prepared manual sharding was slower. This is not proof of a universal minimum. Hardware, runtime, and native worker startup affect the result; a 5% material-improvement threshold was used when considering extra settings.
+Four workers were the fastest early experiment, but the later cold runs exposed startup saturation and failures. The final worker count must account for those results rather than select only the best time. Six stalled, alternate scheme/capture settings did not improve the early result, and prepared manual sharding was slower. This is not proof of a universal minimum. Hardware, runtime, and native worker startup affect the result; a 5% material-improvement threshold was used when considering extra settings.
 
 ## Reproduce and inspect
 

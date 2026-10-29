@@ -90,6 +90,8 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
         tap(app.buttons["recipe.control"], in: app); app.buttons["recipe.copy.3"].tap()
         let edit = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.edit.")).firstMatch
         XCTAssertTrue(edit.waitForExistence(timeout: 5)); edit.tap()
+        app.textFields["recipe.editor.name"].tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
         let balance = app.buttons["recipe.editor.setting.whiteBalance"]
         reveal(balance, in: app); balance.tap(); app.buttons["Colour temperature"].tap()
         let temperature = app.textFields["recipe.editor.temperature"]
