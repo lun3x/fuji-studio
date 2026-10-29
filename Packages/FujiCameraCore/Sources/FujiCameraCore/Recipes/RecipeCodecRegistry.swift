@@ -64,8 +64,8 @@ public struct RecipeCodecRegistry: Sendable {
     func range(_ min: Int, _ max: Int, _ step: Int = 1) -> SettingCapability {
       .init(support: .supported, minimum: min, maximum: max, step: step)
     }
-    let grains = GrainStrength.allCases.flatMap { strength in
-      GrainSize.allCases.map { RecipeSettingValue.grain(.init(strength: strength, size: $0)) }
+    let grains = XT5GrainValues.writable.keys.sorted().compactMap {
+      XT5GrainValues.writable[$0].map(RecipeSettingValue.grain)
     }
     let renderGrains: [RecipeSettingValue] = [
       .grain(.init(strength: .off, size: .small)), .grain(.init(strength: .off, size: .large)),

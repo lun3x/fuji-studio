@@ -20,7 +20,9 @@ extension RecipeCodecRegistry {
     var raw = try nativeFields(snapshot)
     let fields = SemanticNativeField.fields(model: snapshot.cameraContext.model)
     guard !changes.isEmpty else { return snapshot }
-    for (id, value) in changes {
+    for (id, requested) in changes {
+      let value =
+        snapshot.cameraContext.model == "X-T5" ? XT5GrainValues.canonical(requested) : requested
       guard capabilities.settings[id]?.accepts(value, rendering: false) == true,
         let field = fields[id], let encoded = field.encode(value)
       else { throw CameraServiceError.unsupportedSettings }
@@ -61,6 +63,7 @@ private struct SemanticNativeField {
   enum Encoding {
     case choices([UInt16: RecipeSettingValue])
     case integer(scale: Int, offset: Int, signed: Bool)
+    case xt5Grain
   }
   let code: UInt16, width: Int, encoding: Encoding
   func decode(_ data: Data) -> RecipeSettingValue? {
@@ -68,6 +71,7 @@ private struct SemanticNativeField {
     let raw = UInt16(data[0]) | (width == 2 ? UInt16(data[1]) << 8 : 0)
     switch encoding {
     case .choices(let values): return values[raw]
+    case .xt5Grain: return XT5GrainValues.readable[raw].map(RecipeSettingValue.grain)
     case .integer(let scale, let offset, let signed):
       return .integer((signed ? Int(Int16(bitPattern: raw)) : Int(raw)) * scale + offset)
     }
@@ -75,6 +79,11 @@ private struct SemanticNativeField {
   func encode(_ value: RecipeSettingValue) -> Data? {
     let raw: UInt16
     switch encoding {
+    case .xt5Grain:
+      guard case .grain(let grain) = value, let encoded = XT5GrainValues.encode(grain) else {
+        return nil
+      }
+      raw = encoded
     case .choices(let values):
       guard let key = values.first(where: { $0.value == value })?.key else { return nil }
       raw = key
@@ -140,16 +149,7 @@ private struct SemanticNativeField {
       choices(
         .whiteBalance, 0xD199,
         FujiRenderingValues.whiteBalances.mapValues(RecipeSettingValue.whiteBalance))
-      choices(
-        .grain, 0xD195,
-        [
-          1: .grain(.init(strength: .weak, size: .small)),
-          2: .grain(.init(strength: .weak, size: .large)),
-          3: .grain(.init(strength: .strong, size: .small)),
-          4: .grain(.init(strength: .strong, size: .large)),
-          6: .grain(.init(strength: .off, size: .small)),
-          7: .grain(.init(strength: .off, size: .large)),
-        ])
+      result[.grain] = Self(code: 0xD195, width: width, encoding: .xt5Grain)
       choices(
         .colorChrome, 0xD196, FujiRenderingValues.effects.mapValues(RecipeSettingValue.effect))
       choices(

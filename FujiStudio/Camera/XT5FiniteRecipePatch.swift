@@ -43,7 +43,7 @@ struct XT5FiniteRecipePatch: Sendable {
             func v(_ code: UInt16) -> UInt16 { values[code]! }
             func s(_ code: UInt16) -> Int { Int(Int16(bitPattern:v(code))) }
             guard [100,400].contains(v(0xD190)), v(0xD191) == 0, [1,11,12,14,15].contains(v(0xD192)),
-                  v(0xD193) == 0, v(0xD194) == 0, [3,6,7].contains(v(0xD195)),
+                  v(0xD193) == 0, v(0xD194) == 0, [1,3,6,7].contains(v(0xD195)),
                   (1...3).contains(v(0xD196)), (1...3).contains(v(0xD197)), v(0xD198) == 1,
                   [2,32775].contains(v(0xD199)), (-9...9).contains(s(0xD19A)), (-9...9).contains(s(0xD19B)),
                   (2500...10000).contains(v(0xD19C)), [0x8000,0x7000,0x4000,0x3000,0x2000,0x1000,0,0x6000,0x5000].contains(v(0xD1A1)),

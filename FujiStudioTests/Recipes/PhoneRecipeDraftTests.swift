@@ -91,9 +91,14 @@ struct PhoneRecipeDraftTests {
     draft.setGrainEffect(.off)
     draft.setGrainSize(.small)
     #expect(draft.grain == .init(strength: .off, size: .large))
-    let saved = PhoneRecipe(id: original.id, snapshot: try draft.makeSnapshot())
+    let snapshot = try draft.makeSnapshot()
+    #expect(
+      snapshot.importedSettings.first { $0.code == 0xD195 }?.raw == ProtocolProbeFixtures.word(1))
+    draft.setGrainEffect(.strong)
+    #expect(draft.grain == .init(strength: .strong, size: .large))
+    let saved = PhoneRecipe(id: original.id, snapshot: snapshot)
     var reopened = PhoneRecipeDraft(recipe: saved)
-    #expect(reopened.grain == .init(strength: .off, size: .large))
+    #expect(reopened.grain == .init(strength: .off, size: .small))
     reopened.setGrainEffect(.strong)
     reopened.setGrainSize(.small)
     #expect(reopened.grain == .init(strength: .strong, size: .small))
@@ -112,7 +117,25 @@ struct PhoneRecipeDraftTests {
     #expect(draft.grain == .init(strength: .weak, size: .small))
     #expect(
       try draft.makeSnapshot().importedSettings.first { $0.code == 0xD195 }?.raw
-        == ProtocolProbeFixtures.word(1))
+        == ProtocolProbeFixtures.word(2))
+  }
+  @Test func grainControlEditsUsePublishedWireValues() throws {
+    let original = try ProductionProfileFixture().bank.copiedToPhone()
+    for (strength, size, wire): (GrainStrength, GrainSize, UInt16) in [
+      (.off, .large, 1), (.weak, .small, 2), (.strong, .small, 3),
+      (.weak, .large, 4), (.strong, .large, 5),
+    ] {
+      var draft = PhoneRecipeDraft(recipe: original)
+      draft.setGrainSize(size)
+      draft.setGrainEffect(strength)
+      let snapshot = try draft.makeSnapshot()
+      #expect(
+        snapshot.importedSettings.first { $0.code == 0xD195 }?.raw
+          == ProtocolProbeFixtures.word(wire))
+      #expect(
+        PhoneRecipeDraft(recipe: .init(id: original.id, snapshot: snapshot)).grain?.strength
+          == strength)
+    }
   }
   @Test func allSemanticGrainChoicesPreserveOtherBytes() throws {
     let original = try ProductionProfileFixture().bank.copiedToPhone()
