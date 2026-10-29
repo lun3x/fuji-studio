@@ -20,7 +20,7 @@ actor CameraWorkScheduler: CameraWorkScheduling {
     func beginExport(jobID: UUID) async throws {
         try Task.checkCancellation()
         guard exportJobID == nil else { throw CameraSchedulingError.exportAlreadyActive }
-        exportJobID = jobID // Reserve before draining the current preview.
+        exportJobID = jobID // Reserve the job; individual items yield to previews.
         do {
             if active { try await wait(kind: .begin) }
             try Task.checkCancellation()
@@ -40,7 +40,7 @@ actor CameraWorkScheduler: CameraWorkScheduling {
 
     func withPreview(_ operation: @Sendable () async throws -> CameraJPEG) async throws -> CameraJPEG {
         try Task.checkCancellation()
-        if active || exportJobID != nil { try await wait(kind: .preview) }
+        if active { try await wait(kind: .preview) }
         else { active = true }
         defer { active = false; dispatch() }
         try Task.checkCancellation()
@@ -85,11 +85,11 @@ actor CameraWorkScheduler: CameraWorkScheduling {
 
     private func dispatch() {
         guard !active else { return }
-        if let waiter = beginning { beginning = nil; waiter.continuation.resume(); return }
-        if exportJobID != nil {
-            if !exports.isEmpty { active = true; exports.removeFirst().continuation.resume() }
-        } else if let waiter = preview {
+        if let waiter = beginning { beginning = nil; waiter.continuation.resume() }
+        if let waiter = preview {
             preview = nil; active = true; waiter.continuation.resume()
+        } else if exportJobID != nil {
+            if !exports.isEmpty { active = true; exports.removeFirst().continuation.resume() }
         }
     }
 }

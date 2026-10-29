@@ -3,6 +3,31 @@ import Testing
 @testable import FujiStudio
 
 @MainActor struct PreviewLoadingTests {
+    @Test func newRecipePreviewFinishesWhileBatchSaveIsStillPending() async throws {
+        let fixture = try await FixtureEnvironment.make(), save = FixtureBarrier()
+        defer { Task { await save.release() } }
+        let model = AppModel(environment: fixture.environment)
+        await model.start(); await model.connect()
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
+        model.send(.sourceTapped("source-0")); model.send(.recipeSelected(slot: 3))
+        await eventually { model.preview != nil && model.state.canExport }
+        model.send(.select)
+        model.send(.checkedSourcesReplaced(["source-0", "source-1", "source-2"]))
+        await fixture.writer.holdSave(save)
+        await model.export(); await save.entered()
+        model.send(.done)
+        model.send(.sourceTapped("source-2"))
+        await eventually { model.preview?.sourceID == "source-2" && model.imageLoading == nil }
+        #expect(model.state.selectedRecipe?.slot == 3)
+        #expect(model.exportEvent?.terminal == false)
+        #expect(model.exportEvent?.summary.completed == 0)
+        #expect(await fixture.writer.requests.count == 1)
+        await save.release()
+        await eventually { model.exportEvent?.terminal == true }
+        #expect(model.exportEvent?.summary.completed == 3)
+        #expect(await fixture.writer.requests.count == 3)
+    }
+
     @Test(arguments: [false, true]) func switchingPhotosWhileCameraBusyKeepsSpinnerUntilPreviewFinishes(_ clearRecipe: Bool) async throws {
         let fixture = try await FixtureEnvironment.make(), barrier = FixtureBarrier()
         defer { Task { await barrier.release() } }
