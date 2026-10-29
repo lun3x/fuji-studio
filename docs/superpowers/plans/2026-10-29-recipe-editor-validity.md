@@ -28,6 +28,13 @@ Editor files: `FujiStudio/Recipes/PhoneRecipeDraft.swift`, `FujiStudio/Recipes/P
 
 ## Task 2: Verify and deliver
 
-- [ ] Run complete `Scripts/test-ios.sh` with the isolated simulator.
-- [ ] Request an independent read-only review of the complete change, address substantive issues and verify any fixes.
-- [ ] Record results, commit and push the final checkpoint; shut down and delete the simulator. Deliver the cause, repair steps for Bright Summer and the reviewable change.
+- [x] Start complete `Scripts/test-ios.sh`; stop at the user’s explicit request and defer completion. Run only focused film/workflow checks afterwards.
+- [x] Request an independent read-only review of the complete change, address substantive issues and verify any fixes.
+- [x] Record results, commit and push the final checkpoint; shut down and delete the simulator. Deliver the cause, repair steps for Bright Summer and the reviewable change.
+
+## Added verification requested by the user
+
+- [x] Run a controlled physical X-T5 conversion for each of the 20 film simulations.
+- [x] Independently inspect every exact profile readback and returned JPEG film/filter metadata.
+- [x] Confirm full-resolution FINE output, cleanup, preserved camera banks and native closure.
+- [x] Restore the normal Release app, record focused workflow results, push the evidence checkpoint and clean up task resources.

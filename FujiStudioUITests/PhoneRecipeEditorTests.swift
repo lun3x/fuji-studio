@@ -5,6 +5,7 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
     func testExistingASTIAPhoneRecipeCanBeAppliedWithoutChangingItsFilm() {
         let app = launch(["--fixture-astia-film"])
         wait { app.buttons["app.status"].label.contains("Camera ready") }
+        app.cells["grid.source-0"].tap()
         tap(app.buttons["recipe.control"], in: app); app.buttons["recipe.copy.4"].tap()
         let phone = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.phone.")).firstMatch
         XCTAssertTrue(phone.waitForExistence(timeout: 5)); XCTAssertTrue(phone.isEnabled)
@@ -148,14 +149,21 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
     func testXT5EditorOffersOnlyConvertibleFilmRangeAndBalance() {
         let app = launch()
         wait { app.buttons["app.status"].label.contains("Camera ready") }
+        app.cells["grid.source-0"].tap()
         tap(app.buttons["recipe.control"], in: app); app.buttons["recipe.copy.1"].tap()
         let phone = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.phone.")).firstMatch
         let edit = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.edit.")).firstMatch
         XCTAssertTrue(edit.waitForExistence(timeout: 5)); edit.tap()
         let film = app.buttons["recipe.editor.setting.film"]
         film.tap()
-        XCTAssertTrue(app.buttons["ASTIA / Soft"].exists)
-        app.buttons["ASTIA / Soft"].tap()
+        let astia = app.buttons["ASTIA / Soft"]
+        let filmMenu = app.collectionViews.containing(.button, identifier: "Classic Chrome").firstMatch
+        for _ in 0..<3 {
+            if astia.isHittable { break }
+            filmMenu.swipeDown()
+        }
+        XCTAssertTrue(astia.isHittable)
+        astia.tap()
         let dynamicRange = app.buttons["recipe.editor.setting.dynamicRange"]
         dynamicRange.tap()
         XCTAssertFalse(app.buttons["200%"].exists)

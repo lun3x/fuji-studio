@@ -61,9 +61,9 @@ Output cleanup and native closure were confirmed; before/after imported
 camera banks matched. The existing requested LMO ON → effective OFF lens
 adjustment was reported by all three outputs and accepted by the service.
 
-This is direct ASTIA hardware evidence, not a claim that all 20 film choices
-were individually exercised on the physical camera. All 20 have literal
-conversion-word and JPEG metadata tests, including monochrome/sepia filters.
+This initial ASTIA run was followed by the all-film physical sweep below.
+All 20 also have literal conversion-word and JPEG metadata tests, including
+monochrome/sepia filters.
 Private photos, profiles, identifiers, source bindings, and journals remain
 in ignored `.build/RecipeEvidence`.
 
@@ -77,9 +77,65 @@ probe arguments. The saved recipe's ASTIA setting was retained.
   invalid full-snapshot saves, and unsafe grain combinations.
 - Film tests separately reproduced the old allowlist and missing JPEG modes.
 - Core package: 126 tests passed.
-- iOS unit iteration: 532 Swift Testing tests passed; native XCTest results
-  and complete UI validation are recorded in the final checkpoint below.
+- iOS unit iteration: 532 Swift Testing tests and 19 native XCTest tests passed.
 - Independent read-only review: no actionable correctness findings. Its
   monochrome coverage limitation was addressed with explicit tests for all
   nine monochrome/sepia variants; the core suite passed again afterwards.
-- Complete iOS suite: running at this checkpoint.
+- The complete iOS suite was interrupted at the user's explicit request to
+  focus on film verification. It is not claimed as a passing full run.
+  `testExistingASTIAPhoneRecipeCanBeAppliedWithoutChangingItsFilm` exposed a
+  test setup error: no photo had been selected before waiting for Export.
+  The corrected test passed in isolation. A focused menu test then exposed
+  its offscreen ASTIA option; it now scrolls the native menu explicitly.
+  `testPhoneEditorRejectsInvalidTemperatureAndKeepsDraft` and
+  `testZoomPersistsAcrossMatchingVersionsAndResetsForNewSource` were canceled
+  by that interruption, rather than completed failures.
+
+## Complete physical film audit
+
+At the user's request, the full simulator suite was stopped and every film
+simulation was exercised on the connected X-T5, firmware 4.31. Twenty separate
+production conversions used the same original RAW and frozen base recipe,
+changing only the film selector. All twenty returned the requested film,
+7728×5152 FINE quality, exact profile readbacks, and confirmed output cleanup.
+The before/after camera banks matched and native closure was confirmed.
+
+An independent audit read the downloaded profile words at offset 541 and used
+ExifTool to read the actual JPEG MakerNote tags, with these results:
+
+| Film | D185 film word | JPEG tag | JPEG value (hex) | Result |
+| --- | ---: | --- | --- | --- |
+| provia | 1 | FilmMode | `0000` | Pass |
+| velvia | 2 | FilmMode | `0200` | Pass |
+| astia | 3 | FilmMode | `0120` | Pass |
+| proNegHi | 4 | FilmMode | `0501` | Pass |
+| proNegStd | 5 | FilmMode | `0500` | Pass |
+| monochrome | 6 | Saturation | `0300` | Pass |
+| monochromeYellow | 7 | Saturation | `0302` | Pass |
+| monochromeRed | 8 | Saturation | `0301` | Pass |
+| monochromeGreen | 9 | Saturation | `0303` | Pass |
+| sepia | 10 | Saturation | `0310` | Pass |
+| classicChrome | 11 | FilmMode | `0600` | Pass |
+| acros | 12 | Saturation | `0500` | Pass |
+| acrosYellow | 13 | Saturation | `0502` | Pass |
+| acrosRed | 14 | Saturation | `0501` | Pass |
+| acrosGreen | 15 | Saturation | `0503` | Pass |
+| eterna | 16 | FilmMode | `0700` | Pass |
+| classicNeg | 17 | FilmMode | `0800` | Pass |
+| eternaBleachBypass | 18 | FilmMode | `0900` | Pass |
+| nostalgicNeg | 19 | FilmMode | `0A00` | Pass |
+| realaAce | 20 | FilmMode | `0B00` | Pass |
+
+This directly verifies the conversion encodings for all 20 X-T5 films,
+including the newer 18–20 values previously marked as guesses in libfuji.
+No further film-mapping changes were needed after the ASTIA fix. The sweep
+created temporary conversion snapshots and left the saved phone recipe intact.
+Private originals, JPEGs and journals remain ignored; the independent report
+and verifier are in `.build/RecipeEvidence/film-sweep-*`. Disposable probe
+instrumentation is excluded from the shipping code.
+
+Focused workflow reruns passed after the test setup corrections:
+`testExistingASTIAPhoneRecipeCanBeAppliedWithoutChangingItsFilm` and
+`testXT5EditorOffersOnlyConvertibleFilmRangeAndBalance`. The final normal
+Release app was restored and launched after the hardware sweep. The full
+suite remains deferred at the user's request.
