@@ -9,6 +9,7 @@ public protocol CameraServing: Sendable {
   func render(raw: PreparedRAW, recipe: RecipeSnapshot, policy: OutputPolicy) async throws
     -> CameraJPEG
   func disconnect() async
+  func resetConnection() async throws
 }
 
 public enum CameraServiceError: Error, Sendable, Equatable {

@@ -36,6 +36,8 @@ public enum CameraState: Sendable, Equatable {
   /// Reserved for the higher camera service after it verifies conversion capability.
   case ready(CameraSession)
   case busy(CameraSession)
+  /// The USB session is retained, but further work needs an explicit reset.
+  case attentionRequired(CameraSession, message: String)
   case wrongMode(String)
   case recoverableError(PTPError)
 }
