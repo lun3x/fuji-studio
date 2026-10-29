@@ -77,7 +77,9 @@ public struct XT5Adapter: FujiCameraAdapter {
     -> CameraOutputAssessment
   {
     let metadata = try validateJPEG(jpeg, conversion.source)
+    // Measured X-T5 output can disable requested LMO for the source/lens.
+    // Preserve that observed adjustment in the report without rejecting the recipe.
     return try CameraOutputAssessment.assess(
-      metadata: metadata, conversion: conversion, required: [])
+      metadata: metadata, conversion: conversion, required: [], allowLensOptimizerAdjustment: true)
   }
 }
