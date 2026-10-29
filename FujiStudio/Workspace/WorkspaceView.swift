@@ -204,31 +204,31 @@ struct WorkspaceView<StatusControl: View>: View {
     }
     private var selectionControls: some View {
         GlassEffectContainer(spacing: 12) {
-            DeviceAnchoredRow(orientation: orientation, spacing: 12, leadingItems: state.isSelecting ? 2 : 1,
+            DeviceAnchoredRow(orientation: orientation, spacing: 12, leadingItems: state.isSelecting ? 1 : 0,
                 reversesAxis: orientation == .landscapeLeft) {
-                PhotoFilterMenu(selected: state.photoFilter, cameraModel: state.photoFilterCamera?.model,
-                    onSelect: { onAction(.photoFilterSelected($0)) })
                 if state.isSelecting {
                     count.padding(.horizontal, 12).frame(minHeight: 44)
                         .glassEffect(.regular, in: .capsule)
                         .allowsHitTesting(false)
                 }
+                PhotoFilterMenu(selected: state.photoFilter, cameraModel: state.photoFilterCamera?.model,
+                    onSelect: { onAction(.photoFilterSelected($0)) })
                 selectionButton
             }
         }
     }
     private var filterStatusAlignment: Alignment {
         switch orientation {
-        case .portrait: .topLeading
-        case .landscapeLeft: .bottomTrailing
-        case .landscapeRight: .bottomLeading
+        case .portrait: .topTrailing
+        case .landscapeLeft: .topTrailing
+        case .landscapeRight: .topLeading
         }
     }
     private func filterStatusInsets(windowSafe: EdgeInsets) -> EdgeInsets {
         switch orientation {
         case .portrait: EdgeInsets(top: 64, leading: 12, bottom: 12, trailing: 12)
-        case .landscapeLeft: EdgeInsets(top: 12, leading: 12, bottom: windowSafe.bottom + 12, trailing: 72)
-        case .landscapeRight: EdgeInsets(top: 12, leading: 72, bottom: windowSafe.bottom + 12, trailing: 12)
+        case .landscapeLeft: EdgeInsets(top: windowSafe.top + 68, leading: 12, bottom: windowSafe.bottom + 12, trailing: 72)
+        case .landscapeRight: EdgeInsets(top: windowSafe.top + 68, leading: 72, bottom: windowSafe.bottom + 12, trailing: 12)
         }
     }
     @ViewBuilder private var filterStatusText: some View {

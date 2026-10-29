@@ -74,9 +74,17 @@ import XCTest
         XCTAssertTrue(app.cells["grid.source-0"].waitForExistence(timeout: 5))
     }
 
-    func testCameraFilterStaysAtTrayLeadingEdgeInLandscape() {
+    func testCameraFilterSitsBesideSelectAndBelowItInLandscape() {
         let app = XCUIApplication(); app.launchArguments = ["--workspace-fixture", "--fixture-filter-sources"]; app.launch()
         XCTAssertTrue(app.buttons["workspace.filter"].waitForExistence(timeout: 10))
+        let filter = app.buttons["workspace.filter"], select = app.buttons["workspace.select"]
+        XCTAssertEqual(select.frame.minX - filter.frame.maxX, 12, accuracy: 1)
+        XCTAssertEqual(filter.frame.midY, select.frame.midY, accuracy: 1)
+        select.tap()
+        let counter = app.staticTexts["workspace.count"]
+        XCTAssertTrue(counter.waitForExistence(timeout: 5))
+        XCTAssertEqual(counter.frame.minX, 12, accuracy: 1)
+        XCTAssertEqual(select.frame.minX - filter.frame.maxX, 12, accuracy: 1)
         app.buttons["drawer.toggle"].tap()
         wait {
             app.buttons["workspace.filter"].frame.maxY < app.cells["grid.source-0"].frame.maxY &&
@@ -86,17 +94,23 @@ import XCTest
         XCTAssertTrue(app.buttons["filter.compatible"].waitForExistence(timeout: 5))
         app.buttons["filter.compatible"].tap()
         wait { !app.cells["grid.source-1"].exists }
-        XCUIDevice.shared.orientation = .landscapeLeft
         defer { XCUIDevice.shared.orientation = .portrait }
-        wait { app.windows.firstMatch.frame.width > app.windows.firstMatch.frame.height }
-        XCTAssertTrue(app.buttons["workspace.filter"].isHittable)
-        XCTAssertTrue(app.buttons["workspace.select"].isHittable)
-        tap(app.buttons["workspace.filter"], in: app)
-        XCTAssertTrue(app.buttons["filter.all"].waitForExistence(timeout: 5))
-        shot(app, "Camera filter landscape expanded")
-        let screen = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
-        screen.name = "Camera filter expanded full screen"; screen.lifetime = .keepAlways; add(screen)
-        app.buttons["filter.all"].tap()
+        for orientation: UIDeviceOrientation in [.landscapeLeft, .landscapeRight] {
+            XCUIDevice.shared.orientation = orientation
+            wait {
+                let window = app.windows.firstMatch.frame, tray = app.collectionViews["photoGrid"].frame
+                return window.width > window.height && abs(tray.height - window.height) < 1 &&
+                    (orientation == .landscapeLeft ? abs(tray.maxX - window.maxX) < 1 : abs(tray.minX - window.minX) < 1)
+            }
+            XCTAssertEqual(filter.frame.minY - select.frame.maxY, 12, accuracy: 1)
+            XCTAssertGreaterThan(counter.frame.minY, app.windows.firstMatch.frame.midY)
+            XCTAssertTrue(filter.isHittable); XCTAssertTrue(select.isHittable)
+            let screen = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            screen.name = "Filter below Select with counter preserved \(orientation.rawValue)"; screen.lifetime = .keepAlways; add(screen)
+            tap(filter, in: app)
+            XCTAssertTrue(app.buttons["filter.all"].waitForExistence(timeout: 5))
+            app.buttons["filter.compatible"].tap()
+        }
     }
 
     func testXE3RAWDisplayFailureKeepsPairedJPEGAndConversionAvailable() {

@@ -23,8 +23,11 @@ metadata assessment against the connected camera's existing source rules.
 
 ## Proposed interaction
 
-- Float a circular glass button with the system filter symbol at the tray's
-  leading edge, opposite Select. Keep it available in browse and selection mode,
+- Float a circular glass button with the system filter symbol immediately left
+  of Select in portrait and below Select in either landscape orientation.
+  The user requested this placement refinement after the first phone install.
+  Keep the selection count in its original leading corner, independently of the
+  filter/Select group. Keep the filter available in browse and selection mode,
   collapsed and expanded, with upright controls in either landscape orientation.
 - Its native menu contains **All Photos** and **Compatible with X-E3** or
   **Compatible with X-T5**, following the verified connected model. Show the current choice with a checkmark and

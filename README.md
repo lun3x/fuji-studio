@@ -71,7 +71,8 @@ selected and becomes an Export icon when a recipe is selected. Export no longer
 appears in the top status row. Clear the recipe to browse the original RAW,
 camera JPEG and saved exports; temporary previews are not version-menu entries.
 
-The photo tray includes a floating glass filter menu opposite Select. Choose
+The photo tray includes a floating glass filter menu beside Select (below it in
+either landscape orientation). The selection counter keeps its original corner. Choose
 **Compatible with X-E3** or **Compatible with X-T5**, depending on the verified
 connected camera, to show only RAWs admitted by that camera's existing source
 rules. Filtering is optional; **All Photos** restores the complete tray, and
