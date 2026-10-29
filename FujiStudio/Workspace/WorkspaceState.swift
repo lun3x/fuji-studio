@@ -37,6 +37,7 @@ enum WorkspaceAction: Sendable {
     case recipesLoaded([RecipeSnapshot],slots:[RecipeSlot])
     case recipesImported(ImportedRecipeCollection)
     case recipeImportStarted
+    case cameraResetChanged(Bool)
     case cameraSupportVerified(CameraExecutionContext,VerifiedCameraSupport)
     case recipeRefreshFailed(String)
     /// Complete accessible metadata index after removals or an authorization change.
@@ -51,7 +52,7 @@ enum WorkspaceAction: Sendable {
 }
 
 enum WorkspaceExportDisabledReason: Sendable, Equatable {
-    case noSources, noRecipe, activeJob, cameraNotReady, cameraContextUnavailable, recipeCameraMismatch
+    case noSources, noRecipe, activeJob, cameraNotReady, cameraAttention, cameraResetting, cameraContextUnavailable, recipeCameraMismatch
     case incompatibleSource(sourceID: SourceID, model: String)
     case unsupportedRecipe([RecipeRenderingIssue])
 
@@ -61,6 +62,8 @@ enum WorkspaceExportDisabledReason: Sendable, Equatable {
         case .noRecipe: "Choose a recipe to export."
         case .activeJob: "Wait for the current export to finish."
         case .cameraNotReady: "Connect a supported Fujifilm camera and wait for it to be ready."
+        case .cameraAttention: "Resolve the camera error before exporting."
+        case .cameraResetting: "Wait for the camera connection reset to finish."
         case .cameraContextUnavailable: "Verify the connected camera before exporting."
         case .recipeCameraMismatch: "Refresh recipes from the connected camera."
         case .incompatibleSource(_, let model): "This RAW was captured by \(model) and cannot be converted by the connected camera."
@@ -85,6 +88,7 @@ struct WorkspaceState: Sendable {
     private(set) var recipeRefreshState: RecipeRefreshState = .fresh
     private(set) var currentCameraExecutionContext: CameraExecutionContext?
     private(set) var cameraState: CameraState = .disconnected
+    private(set) var isCameraResetting = false
     private(set) var activeJobID: UUID?
     private(set) var libraryAccess: LibraryAccess
     private var sources: [SourceID: PhotoSource]
@@ -130,7 +134,7 @@ struct WorkspaceState: Sendable {
 
     var isCameraConnected: Bool {
         switch cameraState {
-        case .sessionOpen, .ready, .busy: true
+        case .sessionOpen, .ready, .busy, .attentionRequired: true
         default: false
         }
     }
@@ -167,12 +171,14 @@ struct WorkspaceState: Sendable {
     }
 
     var exportDisabledReason: WorkspaceExportDisabledReason? {
+        if isCameraResetting { return .cameraResetting }
         let effective = effectiveSources
         guard !effective.isEmpty else { return .noSources }
         guard let recipe = selectedRecipe else { return .noRecipe }
         if let reason = incompatibleSelectionReason { return reason }
         if case .unsupported(let issues) = recipe.renderingSupport(using: RecipeCodecRegistry()) { return .unsupportedRecipe(issues) }
         guard activeJobID == nil else { return .activeJob }
+        if case .attentionRequired = cameraState { return .cameraAttention }
         guard case .ready(let session) = cameraState else { return .cameraNotReady }
         guard let context = currentCameraExecutionContext, context.generation == session.generation else {
             return .cameraContextUnavailable
@@ -181,6 +187,11 @@ struct WorkspaceState: Sendable {
         return nil
     }
     var canExport: Bool { exportDisabledReason == nil }
+    var isCameraReady: Bool {
+        guard !isCameraResetting, case .ready = cameraState else { return false }
+        return true
+    }
+    var canImportRecipes: Bool { isCameraReady && cameraSupport?.capabilities.recipeImport == .supported }
 
     @discardableResult
     mutating func reduce(_ action: WorkspaceAction) -> [WorkspaceEffect] {
@@ -190,6 +201,9 @@ struct WorkspaceState: Sendable {
             }
         }
         switch action {
+        case .cameraResetChanged(let resetting):
+            isCameraResetting = resetting
+            return reduce(.previewInterrupted)
         case .sourceTapped(let id):
             guard sourceIsVisible(id) else { return [] }
             if isSelecting {
@@ -359,6 +373,12 @@ struct WorkspaceState: Sendable {
             }
             if currentCameraExecutionContext != context { cameraSupport=nil }
             currentCameraExecutionContext = context
+            if case .attentionRequired = state {
+                if context == nil { photoFilter = .allPhotos }
+                // Keep browsing and the recipe selection, but require an explicit
+                // request after recovery rather than replaying the failed preview.
+                return reduce(.previewInterrupted)
+            }
             if !isCameraConnected, selectedRecipe != nil {
                 return reduce(.recipeSelected(slot: nil))
             }
@@ -419,7 +439,7 @@ struct WorkspaceState: Sendable {
     }
 
     private mutating func requestUnsatisfiedPreview() -> [WorkspaceEffect] {
-        guard !previewSatisfied, pendingPreview == nil,
+        guard !isCameraResetting, !previewSatisfied, pendingPreview == nil,
               wantsRecipePreview, let id = viewedSourceID, let source = sources[id],
               eligibleSourceIDs.contains(id), let recipe = selectedRecipe,
               case .supported = recipe.renderingSupport(using: RecipeCodecRegistry()),
@@ -447,6 +467,8 @@ struct WorkspaceState: Sendable {
         }
     }
     func recipeExecutionReason(_ recipe:RecipeSnapshot) -> String? {
+        if isCameraResetting { return "Wait for the camera connection reset to finish." }
+        if case .attentionRequired = cameraState { return "Resolve the camera error before converting photos." }
         if let reason = incompatibleSelectionReason { return reason.message }
         if let context=currentCameraExecutionContext,!matches(recipe:recipe,context:context) { return "Requires a compatible \(recipe.cameraContext.model) camera." }
         if case .unsupported = recipe.renderingSupport(using:RecipeCodecRegistry()) { return "Conversion is unavailable for these settings." }

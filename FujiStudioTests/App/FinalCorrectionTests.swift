@@ -357,6 +357,7 @@ private struct SourceRejectingCamera: CameraServing {
     func connect() async throws { try await base.connect() }
     func importRecipes() async throws -> ImportedRecipeCollection { try await base.importRecipes() }
     func disconnect() async { await base.disconnect() }
+    func resetConnection() async throws { try await base.resetConnection() }
     func render(raw: PreparedRAW, recipe: RecipeSnapshot, policy: OutputPolicy) async throws -> CameraJPEG {
         if rejectedSourceID == nil || raw.sourceID == rejectedSourceID { throw CameraServiceError.unsupportedSource }
         return try await base.render(raw: raw, recipe: recipe, policy: policy)

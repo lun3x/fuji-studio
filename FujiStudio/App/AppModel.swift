@@ -13,6 +13,9 @@ import Observation
     private(set) var imageLoading: ImageLoadingState?
     private(set) var message: String?
     private(set) var connectionError: String?
+    private(set) var cameraError: String?
+    private(set) var cameraResetError: String?
+    private(set) var isResettingCamera = false
     private(set) var exportEvent: ExportEvent?
     private var unfinishedEvents: [UUID: ExportEvent] = [:]
     private var jobOrder: [UUID] = []
@@ -37,6 +40,9 @@ import Observation
     @ObservationIgnored private var recipeLifecycleRevision:UInt64 = 0
     @ObservationIgnored private var pendingImportReady:CameraSession?
     @ObservationIgnored private var pendingImportTerminal:CameraState?
+    @ObservationIgnored private var awaitingImportTerminal = false
+    @ObservationIgnored private var cameraResetCallActive = false
+    @ObservationIgnored private var cameraResetReadyAdopted = false
     @ObservationIgnored private var contextTask: Task<Void, Never>?
     @ObservationIgnored private var versionRefreshTask: Task<Void, Never>?
     @ObservationIgnored private var versionRefreshSource: SourceID?
@@ -250,7 +256,7 @@ import Observation
                        let source = sources.first(where: { $0.id == request.sourceID }) {
                         state.reduce(.photoFilterAssessed(source, camera: camera, result: .incompatible))
                     }
-                    displayFailure = Self.previewMessage(failure); imageStatus = displayFailure
+                    displayFailure = previewMessage(failure); imageStatus = displayFailure
                     isLoadingPreview = false
                     state.reduce(.previewInterrupted)
                     if !hasCurrentSourceDisplay { resolveFallbackOriginal() }
@@ -281,7 +287,7 @@ import Observation
         case .failed(let failure):
             imageLoading = nil
             if !hasCurrentSourceDisplay { displayFile = nil; availableDisplay = nil }
-            displayFailure = Self.previewMessage(failure); imageStatus = displayFailure
+            displayFailure = previewMessage(failure); imageStatus = displayFailure
         }
     }
 
@@ -368,8 +374,25 @@ import Observation
         // Session cleanup may deliver DISCONNECTED after connect() reports denial.
         // Keep the Settings action until the next foreground authorization attempt.
         if cameraAuthorizationDenied, event == .disconnected { return }
+        if case .attentionRequired(_, let message) = event {
+            cameraError = message
+            if displayFailure != nil { displayFailure = message; imageStatus = message }
+        }
+        // Keep the verified context and selection while an explicit reset closes
+        // and reopens the native session. READY adopts the replacement context.
+        if isResettingCamera || cameraResetError != nil {
+            switch event {
+            case .opening, .discovering, .sessionOpen, .disconnected: return
+            default: break
+            }
+        }
         cameraEventGeneration &+= 1
         let token = cameraEventGeneration
+        switch event {
+        case .ready, .attentionRequired, .disconnected, .authorizationDenied, .wrongMode, .recoverableError:
+            awaitingImportTerminal = false
+        default: break
+        }
         if isRefreshing {
             switch event {
             case .ready(let session):pendingImportReady=session;return
@@ -378,8 +401,32 @@ import Observation
             }
         }
         switch event {
+        case .attentionRequired(let session, _):
+            contextTask?.cancel()
+            let context = state.currentCameraExecutionContext
+            isLoadingPreview = false
+            if let context { reduce(.cameraChanged(event, context: context)) }
+            if context?.generation == session.generation, state.cameraSupport != nil { return }
+            let camera = environment.camera
+            contextTask = Task { [weak self] in
+                do {
+                    let context = try await camera.executionContext()
+                    let support = try await camera.support(for: context)
+                    guard !Task.isCancelled, let self, self.cameraEventGeneration == token,
+                          !self.isSuspended, context.generation == session.generation else { return }
+                    self.reduce(.cameraChanged(event, context: context))
+                    self.reduce(.cameraSupportVerified(context, support))
+                } catch {
+                    guard !Task.isCancelled, let self, self.cameraEventGeneration == token, !self.isSuspended else { return }
+                    self.reduce(.cameraChanged(event, context: nil))
+                }
+            }
         case .ready(let session), .busy(let session):
             if let context = state.currentCameraExecutionContext, context.generation == session.generation {
+                if case .ready = event {
+                    cameraError = nil; cameraResetError = nil; connectionError = nil
+                    cameraResetReadyAdopted = true; finishCameraResetIfReady()
+                }
                 reduce(.cameraChanged(event, context: context))
                 return
             }
@@ -394,9 +441,11 @@ import Observation
                     let support = try await camera.support(for:context)
                     guard !Task.isCancelled, let self, self.cameraEventGeneration == token, !self.isSuspended,
                           context.generation == session.generation else { return }
+                    self.cameraError = nil; self.cameraResetError = nil; self.connectionError = nil
                     self.reduce(.cameraChanged(event, context: context))
                     self.reduce(.cameraSupportVerified(context,support))
-                    if support.capabilities.recipeImport == .supported,
+                    self.cameraResetReadyAdopted = true; self.finishCameraResetIfReady()
+                    if !self.isResettingCamera, support.capabilities.recipeImport == .supported,
                         self.importedSessions.insert(context.sessionIdentity).inserted { await self.refreshRecipes() }
                 } catch { }
             }
@@ -412,9 +461,11 @@ import Observation
 
     func connect() async {
         guard !Task.isCancelled, !isConnecting, foreground, !isSuspended,
-              !cameraAuthorizationDenied, !isRefreshing, state.currentCameraExecutionContext == nil else { return }
+              !cameraAuthorizationDenied, !isRefreshing, !isResettingCamera,
+              !awaitingImportTerminal,
+              cameraError == nil, cameraResetError == nil, state.currentCameraExecutionContext == nil else { return }
         // READY may precede the asynchronous execution-context lookup.
-        switch state.cameraState { case .ready, .busy: return; default: break }
+        switch state.cameraState { case .ready, .busy, .attentionRequired: return; default: break }
         isConnecting = true
         defer { isConnecting = false }
         do { try await environment.camera.connect(); connectionError = nil }
@@ -431,6 +482,36 @@ import Observation
             default: connectionError = Self.explain(error)
             }
         }
+    }
+
+    func resetCameraConnection() async {
+        guard !isResettingCamera, !isConnecting, !isRefreshing, !isSubmitting,
+              state.activeJobID == nil, foreground, !isSuspended else { return }
+        isResettingCamera = true
+        cameraResetCallActive = true; cameraResetReadyAdopted = false
+        cameraResetError = nil
+        reduce(.cameraResetChanged(true))
+        isLoadingPreview = false
+        await environment.preview.invalidate()
+        do {
+            try await environment.camera.resetConnection()
+            cameraResetCallActive = false
+            finishCameraResetIfReady()
+            if !isResettingCamera, let context = state.currentCameraExecutionContext,
+               state.cameraSupport?.capabilities.recipeImport == .supported,
+               importedSessions.insert(context.sessionIdentity).inserted { await refreshRecipes() }
+        }
+        catch {
+            cameraResetCallActive = false; isResettingCamera = false
+            reduce(.cameraResetChanged(false))
+            cameraResetError = "Reset failed: \(Self.explain(error))"
+        }
+    }
+
+    private func finishCameraResetIfReady() {
+        guard isResettingCamera, cameraResetReadyAdopted, !cameraResetCallActive else { return }
+        isResettingCamera = false
+        reduce(.cameraResetChanged(false))
     }
 
     private func startAutomaticConnection() {
@@ -453,7 +534,7 @@ import Observation
     }
 
     func refreshRecipes() async {
-        guard !isSuspended, state.activeJobID == nil, !isSubmitting else { return }
+        guard !isSuspended, !isResettingCamera, state.activeJobID == nil, !isSubmitting, cameraError == nil, cameraResetError == nil else { return }
         let operation:Task<ImportedRecipeCollection,Error>
         if let active=recipeImportTask { operation=active }
         else {
@@ -478,8 +559,10 @@ import Observation
                 isRefreshing=false;recipeImportTask=nil;recipeRequestToken=nil;pendingImportReady=nil;pendingImportTerminal=nil
             }
         }
+        var cameraImportFinished = false
         do {
             let collection=try await operation.value
+            cameraImportFinished = true
             guard recipeRequestIsCurrent(request,lifecycle:lifecycle) else { return }
             guard try await environment.camera.executionContext() == collection.context else { throw CameraServiceError.unsupportedContext }
             guard recipeRequestIsCurrent(request,lifecycle:lifecycle) else { return }
@@ -496,6 +579,31 @@ import Observation
             }
         } catch {
             if recipeRequestIsCurrent(request,lifecycle:lifecycle) {
+                let attentionPending: Bool
+                if case .attentionRequired? = pendingImportTerminal { attentionPending = true }
+                else { attentionPending = false }
+                if !cameraImportFinished || attentionPending {
+                    let context = try? await environment.camera.executionContext()
+                    let support: VerifiedCameraSupport?
+                    if let context { support = try? await environment.camera.support(for: context) }
+                    else { support = nil }
+                    guard recipeRequestIsCurrent(request,lifecycle:lifecycle) else { return }
+                    if let terminal = pendingImportTerminal ?? pendingImportReady.map(CameraState.ready) {
+                        awaitingImportTerminal = false
+                        switch terminal {
+                        case .ready, .busy, .attentionRequired:
+                            reduce(.cameraChanged(terminal,context:context))
+                            if let context, let support { reduce(.cameraSupportVerified(context,support)) }
+                        default: reduce(.cameraChanged(terminal, context: nil))
+                        }
+                    } else {
+                        // The service owns connection recovery. Its stream can deliver
+                        // the terminal state after the import's thrown error resumes us.
+                        awaitingImportTerminal = true
+                    }
+                    reduce(.recipeRefreshFailed(Self.explain(error)))
+                    return
+                }
                 // A failed receipt commit must not leave a live service context behind
                 // the app's retired context. Close it so Connect can start a fresh
                 // attempt; never publish the collection whose persistence failed.
@@ -553,7 +661,8 @@ import Observation
     }
 
     func export() async {
-        guard state.canExport, !isSubmitting, !recovering, !isSuspended, let recipe = state.selectedRecipe else { return }
+        guard state.canExport, !isResettingCamera, cameraError == nil, cameraResetError == nil,
+              !isSubmitting, !recovering, !isSuspended, let recipe = state.selectedRecipe else { return }
         isSubmitting = true
         let sources = state.effectiveSources, engine = environment.exports
         // Revoke obsolete preparation before export reserves the shared scheduler/pool. An
@@ -611,7 +720,7 @@ import Observation
     }
     func resumeExport(jobID: UUID? = nil, retry: Bool = false) async {
         let target = jobID.flatMap { unfinishedEvents[$0] } ?? exportEvent
-        guard !isSuspended, !isSubmitting, !recovering, state.activeJobID == nil,
+        guard !isSuspended, !isResettingCamera, cameraError == nil, cameraResetError == nil, !isSubmitting, !recovering, state.activeJobID == nil,
               case .ready = state.cameraState, let event = target, event.terminal, event.summary.unresolved == 0 else { return }
         isSubmitting = true
         defer { isSubmitting = false }
@@ -791,11 +900,12 @@ import Observation
         default: "The operation could not finish. Your existing versions are retained. Try again when the source and camera are available."
         }
     }
-    private static func previewMessage(_ failure: PreviewFailure) -> String {
-        switch failure {
+    private func previewMessage(_ failure: PreviewFailure) -> String {
+        if case .camera = failure, let cameraError { return cameraError }
+        return switch failure {
         case .rawDisplayUnavailable: "RAW display is unavailable. Camera conversion is still available."
-        case .source(let error): explain(error)
-        case .camera(let error): explain(error)
+        case .source(let error): Self.explain(error)
+        case .camera(let error): Self.explain(error)
         case .cache: "The temporary image is unavailable. Select the recipe to regenerate it."
         case .cancelled: "Image loading stopped. Select a version to retry."
         case .unavailable: "This image is unavailable. Manage Photos access or select another version."

@@ -5,8 +5,11 @@ enum CameraIndicatorState: String {
     case disconnected = "Camera disconnected"
     case preparing = "Preparing camera"
     case ready = "Camera ready"
+    case error = "Camera error"
 
-    init(camera: CameraState, refreshingRecipes: Bool) {
+    init(camera: CameraState, refreshingRecipes: Bool, hasError: Bool = false) {
+        if hasError { self = .error; return }
+        if case .attentionRequired = camera { self = .error; return }
         if refreshingRecipes {
             switch camera {
             case .opening,.discovering,.sessionOpen,.ready,.busy:self = .preparing;return
@@ -46,7 +49,7 @@ struct CameraStatusControl: View {
                     isActive: state == .preparing && !reduceMotion)
                 .frame(minWidth: 44, minHeight: 44).contentShape(Capsule())
         }
-        .buttonStyle(.glass).foregroundStyle(.primary)
+        .buttonStyle(.glass).foregroundStyle(state == .error ? Color.red : Color.primary)
         .background {
             if reduceTransparency { Capsule().fill(Color(uiColor: .secondarySystemBackground)) }
         }
