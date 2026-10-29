@@ -74,3 +74,33 @@ performance are not established by these checks. Existing camera compatibility
 rules are unchanged. No physical camera conversion or Photos export was run for
 this feature. The task simulator was shut down and deleted after final validation;
 its absence was verified with `simctl list devices`.
+
+## Placement follow-up
+
+The user requested the filter immediately left of Select in portrait and below
+Select in either landscape direction, with the selection count back in its
+original leading corner. Revision `26cbb71d` groups filter/Select at the trailing
+edge and reserves the original leading slot for the count. Checking/failure
+status follows the relocated filter group.
+
+Work took place in `/tmp/fuji-studio-filter-placement-20261029`, based on the
+previously installed filter branch. The existing native placement case was
+extended to check the 12-point control gap, the count's original 12-point
+portrait inset, both landscape directions and menu access. It failed against
+the old layout, then passed with the correction. The other affected camera
+filter/status and dark selection cases passed. Full-screen landscape captures
+were inspected, and a fresh read-only code review found no material issues.
+
+The complete unfiltered project scheme passed with Xcode's parallel testing
+override and three isolated workers on a task-specific iPhone 15 Pro / iOS 27.0
+simulator: **564 passed, 3 established native opt-in skips, 0 failures**, exit 0.
+The result has no runtime warnings. Result bundle:
+`.build/TestResults/filter-placement-full.xcresult`.
+
+The signed Release build of `26cbb71d` passed with the existing team and identity,
+and the exact app passed `codesign --verify --deep --strict`. It was installed
+on the physical iPhone 15 Pro and launched normally after the user unlocked the
+phone; a process query confirmed it was running. Follow-up logs and screenshots
+are under `.build/filter-placement` in the new workspace.
+The task simulator was deleted after validation; no matching devices remain in
+either the normal CoreSimulator device set or Xcode's XCTestDevices worker set.
