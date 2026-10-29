@@ -12,7 +12,7 @@ Usage: Scripts/test-ios.sh [--fast | Target[/Suite[/Test]] ...]
 
 Supply one or more test selectors to run focused unit or UI tests.
 --fast must be used alone. FUJI_STUDIO_DESTINATION selects the device.
-FUJI_STUDIO_TEST_WORKERS selects simulator UI test workers (default: 2).
+FUJI_STUDIO_TEST_WORKERS selects simulator UI test workers (default: 4).
 Set it to 1 for serial execution. Unit-only and physical-device runs are unchanged.
 FUJI_STUDIO_TEST_DIAGNOSTICS=on-failure enables verbose failure diagnostics.
 The default is never; normal test results and attachments are still collected.
@@ -37,7 +37,7 @@ for selector in "$@"; do
   fi
 done
 
-workers="${FUJI_STUDIO_TEST_WORKERS-2}"
+workers="${FUJI_STUDIO_TEST_WORKERS-4}"
 diagnostics="${FUJI_STUDIO_TEST_DIAGNOSTICS-never}"
 case "$diagnostics" in
   never|on-failure) ;;

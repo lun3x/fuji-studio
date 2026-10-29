@@ -208,6 +208,7 @@ Scripts/test-ios.sh --fast # All unit tests; use during implementation.
 Scripts/test-ios.sh FujiStudioTests/RawResourceSelectorTests
 Scripts/test-ios.sh FujiStudioTests/WorkspaceStateTests FujiStudioTests/AppModelTests
 Scripts/test-ios.sh FujiStudioUITests/LaunchTests
+Scripts/test-ios.sh FujiStudioUITests/PhoneRecipeEditorTests
 Scripts/test-ios.sh # Complete unit and UI suite; use for final validation.
 ```
 
@@ -225,6 +226,23 @@ The script generates the ignored `FujiStudio.xcodeproj` and shared `FujiStudio` 
 ```sh
 FUJI_STUDIO_DESTINATION='platform=iOS Simulator,id=YOUR_SIMULATOR_UUID' Scripts/test-ios.sh
 ```
+
+Simulator UI tests use four isolated Xcode worker clones. Override the worker
+count for your machine with `FUJI_STUDIO_TEST_WORKERS`; set it to `1` for serial
+execution. Unit-only and physical-device runs ignore this setting. The UI suites
+are divided by feature so that a large test class cannot hold up all workers.
+
+```sh
+FUJI_STUDIO_TEST_WORKERS=4 Scripts/test-ios.sh
+FUJI_STUDIO_TEST_WORKERS=1 Scripts/test-ios.sh FujiStudioUITests/WorkspaceOrientationTests
+```
+
+The runner retains `.xcresult` results and test attachments but skips verbose
+failure diagnostics by default. Xcode's simulator diagnostic collection can take
+minutes after a failed test has already finished. Enable it when investigating a
+failure with `FUJI_STUDIO_TEST_DIAGNOSTICS=on-failure`. Performance measurements
+and the existing grain-editor flake are recorded in
+[`docs/validation/ui-test-speed.md`](docs/validation/ui-test-speed.md).
 
 The simulator needs an iOS 27+ runtime that supports iPhone 15 Pro. iOS 27.0
 is verified to work. The iOS 27.1 runtime installed during setup supports only
