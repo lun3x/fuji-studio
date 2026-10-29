@@ -36,3 +36,10 @@ Worker experiments and final validation are appended as they complete. Raw logs,
 | Original six UI classes, 2 workers | 674.25 s | 547 / 3 / 1 | Same grain flake; all 551 cases executed; verbose diagnostics off |
 
 The two-worker result confirms substantial improvement but remains bounded by the large AppFlowTests class. Its single failure is retained in the comparison, not retried or excluded.
+| Split fourteen UI classes, 4 workers | 475.71 s | 548 / 3 / 0 | Full suite passed |
+| Split classes, 6 workers | Cancelled at 507.69 s | Not a complete run | Only 31 UI cases completed; startup stalls and an unresponsive host made this configuration unsuitable |
+| Separate automation scheme, UI-only parallelism, debugger off, 4 workers | 592.21 s | 546 / 3 / 2 | Slower, with numeric-picker and phone-deletion failures; configuration discarded |
+
+Six workers were cancelled deliberately; cancellation failures are not reported as product regressions. Xcode removed those worker clones, and the host recovered. Larger worker counts were not attempted on this machine.
+
+The separate automation scheme and per-target parallelization experiment were reverted. The normal scheme/debugger behavior remains. The final comparisons use the original scheme with explicit bounded workers.

@@ -13,9 +13,9 @@
 - Stop after repeat measurements show no meaningful gain from additional workers or identified safe optimizations. This establishes a measured local plateau, not a universal minimum.
 
 ## Tasks
-- [ ] Record full baseline and per-test timings, including orientation/animation waits.
-- [ ] Reproduce the slowest behavior in focused tests. Apply only evidence-backed fixes and remeasure.
-- [ ] Balance suites while preserving test method names and assertions, if class scheduling limits throughput.
+- [x] Record full baseline and per-test timings, including orientation/animation waits.
+- [x] Reproduce the slowest behavior in focused tests. Apply only evidence-backed fixes and remeasure.
+- [x] Balance suites while preserving test method names and assertions, if class scheduling limits throughput.
 - [ ] Benchmark bounded worker counts, select the fastest reliable setting, and expose a configurable script override with argument validation.
 - [ ] Validate script behavior, run unit tests and affected UI tests during implementation, then the full wrapper suite.
 - [ ] Review the complete diff, document measurements and limitations, push final checkpoint, and remove task simulators.
@@ -36,3 +36,7 @@
 - Two-worker original-class run complete: 674.25 seconds, 551 tests (547 passed, 3 skipped, same single original grain failure). No other failures. Proceeding with smaller suites and worker sweep; preserve this failure in reports.
 - Independent review confirmed all 64 method bodies unchanged after existence-helper normalization, no duplicate inheritance tests, per-launch UUID fixture isolation, and no Critical/Important findings. Addressed its minor worker-validation concern with a failing command-stub check, then scoped worker validation to simulator UI runs; checks now pass for invalid-but-irrelevant settings on unit-only/phone runs.
 - Split implementation compiled and unit validation passed: 487 unit tests, 0 failures. Four-worker full wrapper now executes the 14-class candidate. All 64 original UI methods remain exactly once; independent review verified normalized bodies. No production app changes.
+- Four-worker split-suite calibration passed all 551 cases: 548 passed, 3 skipped, 0 failures, 475.71 seconds. Six-worker global-override benchmark running.
+- Additional hypothesis: the global parallel override also starts hosted unit-test workers, increasing simulator/test-runner startup. Candidate scheme enables only the UI bundle; script respects per-target settings. Command-stub check first rejected the global override, then passed after removing it. Compare warmed global-4 and UI-only-parallel-4 before deciding whether to retain.
+- Six-worker run rejected for local capacity: UI runner startup stalled and the host became unresponsive. Cancelled at 507.69 seconds with only 31 UI cases completed. Cancellation failures are not application regressions or valid full-suite timing data. Xcode removed all six worker clones; only task/base and unrelated original simulator remain.
+- Automation-scheme candidate (no debugger, UI-only target parallelism) showed no clear startup gain and introduced a numeric-picker UI failure absent from the serial/two/four controls. Candidate script/project changes discarded; normal FujiStudio scheme and global worker override restored. The original three-worker control will run after this experiment exits.
