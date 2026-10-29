@@ -1,60 +1,64 @@
 # UI test performance investigation
 
-Date: 2026-10-29. Baseline: `34649780`.
+Date: 2026-10-29. Baseline: `34649780`. Development bookmark: `codex/ui-test-speed`.
 
 ## Result
 
-The runner now defaults to **four simulator workers**. The best completed passing full-suite run took **475.71 seconds (7m 56s)** versus **1334.88 seconds (22m 15s)** for the original serial baseline. All **64 original UI test methods** remain, distributed over **14 feature suites**. No production app code, assertions, native animations, or existing device gates were removed.
+The runner defaults to **four native simulator workers**, with all **64 original UI methods** distributed over **14 feature classes** instead of six. The original serial full-suite baseline took **1334.88 seconds (22m 15s)**, including a cold build and one existing grain-editor failure. Final accepted-source validation is recorded below when complete.
 
-A pre-cleanup-fix default-command repeat also passed all 551 tests in **651.37 seconds (10m 51s)**. Native-worker timings vary with simulator startup and occasional XCTest rotation idle waits; the best and repeat correspond to approximately **64% and 51% less wall time** than the cold serial baseline. The table preserves all outcomes rather than selecting only favorable results.
-
-## Measurement conditions
-
-- Mac with 10 logical CPUs and 16 GiB RAM; Xcode 27.1 (27A9275); iPhone 15 Pro / iOS 27.0 (24A434).
-- Initial task-owned simulator: `5E1942C5-ACE1-4824-B263-F2F411298291`. A fresh task-owned iPhone 15 Pro was created after the initial cleanup to validate the rotation-cleanup follow-up. Xcode created and removed its worker clones for each run. Unrelated simulators were left untouched.
-- The serial baseline included a fresh build. Later comparisons used warmed build products; some invoked the full wrapper and others `test-without-building`. Simulator/test-runner startup remains included.
-- No retries or test exclusions. Counts are Xcode's logical test summary, including parameterized tests. All full runs include 487 unit and 64 UI tests; three existing opt-in native-device gates skip.
-- XcodeGen 2.46.0 was installed as required by the README; Python tooling used the workspace's `.venv`. `pmset -g therm` reported no thermal or performance warnings during the worker sweep.
-
-## Full-suite measurements
-
-| Configuration | Wall time | Passed / skipped / failed | Outcome |
-| --- | ---: | --- | --- |
-| Original serial wrapper, cold build | 1334.88 s | 547 / 3 / 1 | Baseline grain-editor flake |
-| Original six UI classes, 2 workers | 674.25 s | 547 / 3 / 1 | Same grain flake; no other failures |
-| Fourteen UI classes, 4 workers | 475.71 s | 548 / 3 / 0 | Fastest completed passing configuration |
-| Fourteen classes, 6 workers | Cancelled at 507.69 s | Incomplete | Only 31 UI cases completed; startup stalls and an unresponsive host |
-| Debugger off, only UI target parallel, 4 workers | 592.21 s | 546 / 3 / 2 | Slower, with numeric-picker and phone-deletion failures; discarded |
-| Original scheme, 3 workers | 595.03 s | 548 / 3 / 0 | Slower than four workers |
-| Screenshot capture instead of recording, 4 workers | 565.64 s | 548 / 3 / 0 | No improvement; discarded |
-| Default wrapper before rotation-cleanup fix, normal recording, 4 workers | 651.37 s | 548 / 3 / 0 | Passed; two 60-second rotation idle waits inflated the tail |
-| Build once, preboot 4 simulators, direct balanced shards | 782.94 s | 548 / 3 / 0 | Includes setup, merged results and cleanup; slower, discarded |
-
-The six-worker cancellation generated interruption failures; those are not product regressions or a completed suite timing. Xcode removed all six worker clones, and the host recovered. Larger worker counts were not attempted on this machine.
+The fastest experimental passing run was **475.71 seconds (7m 56s)**. That configuration included immediate existence/predicate shortcuts which were subsequently rejected for reliability. **That timing is not a claim about the final source.**
 
 ## Retained changes
 
-`AppFlowTests` originally took **687.3 seconds** and `WorkspaceLayoutTests` **295.3 seconds**. XCTest's whole-class scheduling made AppFlowTests alone an approximately 11.5-minute floor regardless of worker count. Their tests are now grouped into smaller feature classes with fixture operations in shared base classes. The base classes contain no test methods.
+- `FUJI_STUDIO_TEST_WORKERS` defaults to four; use one for serial execution. Worker options apply only to simulator runs containing UI tests. Unit-only selectors, `--fast`, and physical-device signing retain their behavior.
+- Smaller feature classes remove the whole-class scheduling bottleneck. Originally, AppFlowTests alone took 687.3 seconds and WorkspaceLayoutTests 295.3 seconds. Shared base classes contain no test methods. [Apple describes class-based parallel distribution](https://developer.apple.com/videos/play/wwdc2020/10221/).
+- Verbose simulator diagnostics are opt-in with `FUJI_STUDIO_TEST_DIAGNOSTICS=on-failure`. Normal `.xcresult` results and attachments remain. A sampled failed run spent over seven minutes in `collectSimulatorDiagnostics`, waiting for `simctl diagnose --timeout=600`. With the new default `never`, a temporary deliberate failure returned the expected exit 65 in 12.21 seconds and recorded exactly one failure. The probe was removed.
+- Three completed-app rotation cleanups terminate the app before resetting portrait. The measured post-assertion reset dropped from a 60.52-second AUT idle wait to a 0.026-second SpringBoard wait. All live foreground rotations, screenshots, and assertions remain, including explicit portrait-return selection checks. Five affected cases passed.
+- Editor control revelation scrolls `recipe.editor.form` rather than the entire app. When the alphabetic keyboard exposes Return, it dismisses it through that public UI action and waits for disappearance. A regression setup explicitly opens the name keyboard before checking the complete numeric menu. The old helper failed; the new helper passed. Number-pad dismissal is not added.
 
-Logs also showed approximately one second before XCTest's initial existence poll. `waitUntilExists` checks the actual current existence first and falls back to the original XCTest wait and timeout when needed. Central fixture/finite-metrics predicates likewise check their existing success condition before polling. Property and disappearance waits remain unchanged. An independent review verified every original method body after existence-helper-name normalization, no duplicates, and per-launch UUID fixture isolation. A subsequent focused review confirmed that three added deferred app terminations preserve all foreground rotation/assertion sequences. Runtime runs verified actual discovery and all 551 tests.
+No production app code, test methods, assertions, native animations, or existing device gates were removed. All immediate existence/predicate shortcuts were reverted, including ElementWaits.swift. The original scheme, debugger, and recording format remain.
 
-A second bottleneck affected failed runs. After a focused suite finished at 09:11:21, Xcode remained alive for over seven more minutes. Its process sample showed `XCTHRunDestinationAllocator.collectSimulatorDiagnostics` blocked in `XCTHProcessInvocation.simCtlDiagnose`; the child command was `simctl diagnose --timeout=600`.
+## Measurement conditions
 
-The runner now defaults to `-collect-test-diagnostics never`, while retaining normal `.xcresult` results and attachments. Set `FUJI_STUDIO_TEST_DIAGNOSTICS=on-failure` to restore verbose simulator diagnostics. A temporary deliberate `XCTFail` returned the expected exit 65 in **12.21 seconds**, and its result summary recorded exactly that one failure. The probe was removed before subsequent full runs.
+- Mac: 10 logical CPUs, 16 GiB RAM. Xcode 27.1 (27A9275), iPhone 15 Pro / iOS 27.0 (24A434).
+- Isolated task-owned simulators; Xcode creates and removes its native worker clones. Unrelated simulators were left untouched.
+- Baseline includes a cold build. Later runs use warmed build products; some experiments use `test-without-building`. Simulator/test-runner startup is included. Therefore these are operational measurements, not a controlled estimate of parallelism alone.
+- No retries or test exclusions. Full runs have 551 logical cases: 487 unit and 64 UI. Three existing opt-in native-device gates skip. Parameterized execution counts differ from logical summary counts.
+- XcodeGen 2.46.0 installed as required by README; Python probes use the workspace's `.venv`. No thermal/performance warnings were reported during the worker sweep.
 
-## Rejected changes and evidence limits
+## Experiment ledger
 
-The unchanged baseline grain-editor test failed at an immediate disabled-size assertion, followed by a missed Strong selection. Three original isolated repeats passed at about **44.4 seconds** each, confirming intermittency. State waits alone still failed once; the failure hierarchy showed Strong open with Off still selected after XCTest reported tapping it. Coordinate/transition-wait experiments passed five repeats but took **57.6–58.3 seconds**. Aggressive property/disappearance fast paths later failed one of three repeats. All picker modifications and those fast paths were discarded. The original grain test is preserved, and this investigation does not claim to fix its flake.
+Rows through direct sharding used the subsequently rejected existence/predicate shortcuts, except the original baseline. They support the bounded worker choice but do not establish final-source speed or reliability.
 
-One subsequent diagnostic was mistakenly started while the preceding failed Xcode process was still collecting diagnostics. That overlapping experiment is invalid and excluded from comparisons. Subsequent benchmarks waited for process exit.
+| Configuration | Wall time | Passed / skipped / failed | Decision |
+| --- | ---: | --- | --- |
+| Original serial, cold build | 1334.88 s | 547 / 3 / 1 | Baseline grain-editor flake |
+| Original six classes, 2 workers | 674.25 s | 547 / 3 / 1 | Same grain flake |
+| Fourteen classes, 4 workers | 475.71 s | 548 / 3 / 0 | Fastest experiment; shortcuts later rejected |
+| Fourteen classes, 6 workers | Cancelled at 507.69 s | Incomplete | Only 31 UI cases completed; runner startup stalled and host became unresponsive |
+| Debugger off, UI-only target parallel, 4 workers | 592.21 s | 546 / 3 / 2 | Slower; discarded |
+| Original scheme, 3 workers | 595.03 s | 548 / 3 / 0 | Slower than four |
+| Screenshot capture instead of recording, 4 workers | 565.64 s | 548 / 3 / 0 | No improvement; discarded |
+| Default repeat, before cleanup fix | 651.37 s | 548 / 3 / 0 | Passed; two 60-second native rotation waits inflated tail |
+| Build once, preboot 4 simulators, balanced direct shards | 782.94 s | 548 / 3 / 0 | Slower; no custom coordinator retained |
+| Cleanup fix, still using shortcuts | 611.43 s | 546 / 3 / 2 | Numeric geometry and AX5 hit-testing failures; shortcuts removed |
+| Original waits plus cleanup, erased simulator | 768.17 s | 546 / 3 / 2 | Two editor menus obstructed by keyboard; diagnosed and fixed in helper |
 
-All four orientation tests passed in the baseline. The complete historical 1,222-second stall did not reproduce, but the final repeat exposed its mechanism: `testTrayAndControlsStayAtPhysicalDeviceEdgesInBothLandscapeDirections` took **142.684 seconds**, including **61.64 seconds** waiting for app idleness after Landscape Left and **60.52 seconds** after Portrait. These waits are inside XCTest, not explicit test sleeps. The fixture has no loading animation. The Portrait wait was post-assertion cleanup, so it can safely run after terminating the completed app. The three active-app rotation cleanup blocks now terminate first, then reset portrait. All live foreground rotations and assertions remain, including the explicit portrait-return selection checks. Five affected rotation cases passed; the cleanup activity now targets SpringBoard and took **0.026 seconds**, and the dark geometry case took **11.725 seconds**. Foreground XCTest idle waits remain a runtime limitation; only unnecessary cleanup waiting is removed.
+Six-worker interruption failures are not product regressions or completed timing data. Higher counts were not attempted after the host exceeded useful capacity. The direct-shard probe's preparation/unit readiness took 270.68 seconds, and UI execution alone took 498.45 seconds; it was slower even before setup. Its four extra simulators were removed, and no Python runtime dependency was added.
 
-A direct-sharding probe built test products once, cloned/prebooted four isolated simulators, balanced all fourteen UI classes by measured durations, and merged unit plus four UI result bundles. All 551 tests passed. Preparation/unit readiness took **270.68 seconds**, the UI phase **498.45 seconds**, and total time including cleanup was **782.94 seconds**. The UI phase alone exceeded the best entire native-worker run, so the extra runner was not retained. No Python driver or additional runtime dependency was added to the project.
+## Reliability and evidence limits
 
-The debugger/per-target parallelization experiment and screenshot-format change were also reverted; the normal scheme, debugger, and recording behavior remain.
+The original grain-editor test is intermittent. Its baseline failure was an immediate disabled-size assertion followed by a missed Strong choice. Three original isolated repeats passed at about 44.4 seconds each. State-wait and coordinate experiments did not provide a reliable speed improvement and were discarded. The subsequent keyboard-focused editor group reproduced this baseline flake at a Save transition. This investigation does not claim to fix grain selection.
 
-The practical stopping point is four native workers: three were slower, six exceeded useful local capacity, the alternate scheme/capture settings did not improve the result, and manual prepared-simulator sharding was slower even before accounting for setup. A repeat of the final defaults passed. A 5% material-improvement threshold was used for retaining extra settings. This is a measured local choice, not a universal optimum for other hardware or Xcode versions.
+Fresh parallel runs exposed numeric-menu geometry and accessibility hit-testing failures with the fast-wait candidate. Every shortcut was removed. Seven focused cases then passed with original native waits in 258.11 seconds. The next erased-simulator full run still showed keyboard-clipped editor menus, motivating the explicit keyboard regression and form-scrolling correction.
+
+The keyboard-focused five-case editor run is recorded separately from final validation. It preserves the grain failure rather than treating a passing regression case as a passing suite.
+
+The remaining foreground rotation waits occur inside XCTest, not explicit test sleeps. One trace contained a 61.64-second Landscape Left idle wait. Preserving native foreground rotation coverage means that long tail can still recur.
+
+One early diagnostic was mistakenly started while its preceding failed Xcode process was collecting diagnostics. That overlapping experiment is invalid and excluded. Subsequent measurements wait for actual process exit.
+
+Four workers are the measured local stopping point: three were slower, six stalled, alternate scheme/capture settings did not improve results, and prepared manual sharding was slower. This is not proof of a universal minimum. Hardware, runtime, and native worker startup affect the result; a 5% material-improvement threshold was used when considering extra settings.
 
 ## Reproduce and inspect
 
@@ -65,6 +69,8 @@ FUJI_STUDIO_TEST_WORKERS=3 Scripts/test-ios.sh
 FUJI_STUDIO_TEST_DIAGNOSTICS=on-failure Scripts/test-ios.sh FujiStudioUITests/PhoneRecipeEditorTests
 ```
 
-`--fast` and focused selectors retain their existing usage. Worker settings apply only to simulator runs that include the UI target; unit-only and physical-device runs ignore them. The final runner validation exercised defaults, overrides, serial execution, focused selectors, invalid values, phone signing preservation, and diagnostic modes with command stubs. A separate `--fast` validation passed all **487 unit tests**. Independent review found no substantive issues; its minor worker-validation concern was fixed and verified before the final full run.
+Runner command-stub checks cover defaults, overrides, serial execution, focused selectors, invalid values, ignored worker settings for unit-only/phone runs, signing preservation, and diagnostic modes. `bash -n` passes. A separate `--fast` run passed all 487 unit cases.
 
-Raw logs, result bundles, source-conservation checks, the process sample, and command-stub checks remain under `/tmp/fuji-ui-test-speed/.build/`. The reviewable workspace is `/tmp/fuji-ui-test-speed`; checkpoints are pushed to `codex/ui-test-speed`.
+Independent review verified all 64 original method bodies after normalizing the then-proposed wait names, and subsequently reviewed rotation cleanup and the keyboard/form correction. No substantive issues were found. One minor worker-validation concern was fixed and verified. Source conservation after restoring native waits permits only the three cleanup additions and the explicit keyboard regression setup.
+
+Raw logs, result bundles, process samples, command-stub checks, and discarded probes remain under `/tmp/fuji-ui-test-speed/.build/`. The reviewable Jujutsu workspace is `/tmp/fuji-ui-test-speed`; checkpoints are pushed to `codex/ui-test-speed`.

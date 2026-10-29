@@ -67,6 +67,8 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
         tap(app.buttons["recipe.control"], in: app); app.buttons["recipe.copy.3"].tap()
         let edit = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.edit.")).firstMatch
         XCTAssertTrue(edit.waitForExistence(timeout: 5)); edit.tap()
+        app.textFields["recipe.editor.name"].tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
         let highlights = app.buttons["recipe.editor.setting.highlight"]
         reveal(highlights, in: app); highlights.tap()
         let labels = ["+4", "+3.5", "+3", "+2.5", "+2", "+1.5", "+1", "+0.5", "0", "-0.5", "-1", "-1.5", "-2"]

@@ -18,7 +18,7 @@
 - [x] Balance suites while preserving test method names and assertions, if class scheduling limits throughput.
 - [x] Benchmark bounded worker counts, select the fastest reliable setting, and expose a configurable script override with argument validation.
 - [x] Validate script behavior, run unit tests and affected UI tests during implementation, then the full wrapper suite.
-- [x] Review the complete diff, document measurements and limitations, push final checkpoint, and remove task simulators.
+- [ ] Review the complete diff, document measurements and limitations, push final checkpoint, and remove task simulators (reopened for follow-up validation).
 
 ## Experiment ledger
 - Baseline: original main@origin 34649780, default scheme and runner, iPhone 15 Pro / iOS 27.0. Logs under ignored `.build/Benchmarks/`.
@@ -55,3 +55,11 @@
 - [ ] Run the full default suite with the cleanup fix, record result, remove the new simulator, and publish final evidence.
 - Fresh-simulator parallel run with the broad existence shortcuts failed numeric-picker geometry and initial AX5 Select hit-testing, before affected rotation cleanup ran. Reverted every existence/predicate shortcut, removed ElementWaits.swift, and restored the original XCTest polling throughout. Original seven affected cases then all passed (258.11 seconds). Conservation check now verifies all 64 bodies against baseline after only normalizing the three safe deferred cleanup additions.
 - Final validation will erase/reboot the task simulator before running the default full suite, so success cannot depend on warmed UI state. The accepted performance changes are bounded parallelism, feature-class scheduling, verbose-diagnostic opt-in, and the measured rotation-cleanup fix.
+
+## Follow-up: editor keyboard obstruction
+- Full erased-simulator run with original native waits and rotation cleanup completed in 768.17 seconds: 546 passed, 3 skipped, 2 editor failures. Failure snapshots show alphabetic keyboard clipping numeric/temperature menu options. No timing shortcut remained.
+- Made keyboard visibility explicit before the numeric-menu test. With original whole-window reveal helper, the focused regression failed in 102.53 seconds. Replaced whole-window scrolling with recipe.editor.form scrolling and used the native Return button to dismiss the alphabetic keyboard when present.
+- Independent review found no assertion/coverage regression, confirmed all reveal callers belong to this editor and Return does not Save. Number-pad dismissal is outside this helper's current requirements.
+- Five-case editor group: four passed, including the explicit numeric regression and invalid-temperature case; the original grain-picker case failed at a Save transition. Total 220.98 seconds. Do not describe this as a passing suite or a grain-flake fix.
+- Command-stub runner checks and Bash syntax passed again. Mechanical source comparison confirms all 64 original UI methods, normalizing only the three rotation cleanup additions and the explicit keyboard setup. No original assertion removed.
+- Full default validation started after the focused Xcode process exited, with the task simulator erased and rebooted. Final report now clearly distinguishes the rejected fast-wait timings from accepted-source results.
