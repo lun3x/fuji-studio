@@ -28,7 +28,8 @@ extension RecipeSettingID {
       return n % 10 == 0 ? signed(n / 10) : String(format: "%+.1f", Double(n) / 10)
     }
     if [.whiteBalanceRed, .whiteBalanceBlue, .noiseReduction].contains(self) { return signed(n) }
-    return self == .dynamicRange ? "\(n)%" : value.label
+    if self == .dynamicRange { return n == 0 ? "Auto" : "\(n)%" }
+    return value.label
   }
   private func signed(_ n: Int) -> String { n > 0 ? "+\(n)" : "\(n)" }
 }

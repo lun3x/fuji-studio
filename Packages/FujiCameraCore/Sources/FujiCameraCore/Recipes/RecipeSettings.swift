@@ -2,11 +2,12 @@ import Foundation
 
 public enum FilmSimulation: String, CaseIterable, Codable, Sendable, Hashable {
   case provia, velvia, astia, proNegHi, proNegStd, monochrome, monochromeYellow, monochromeRed,
-    monochromeGreen, sepia, classicChrome, acros, acrosYellow, acrosRed, acrosGreen
+    monochromeGreen, sepia, classicChrome, acros, acrosYellow, acrosRed, acrosGreen,
+    eterna, classicNeg, eternaBleachBypass, nostalgicNeg, realaAce
 }
 public enum WhiteBalanceMode: String, CaseIterable, Codable, Sendable, Hashable {
   case auto, daylight, shade, fluorescent1, fluorescent2, fluorescent3, incandescent, underwater,
-    temperature
+    temperature, autoWhitePriority, autoAmbiencePriority, custom1, custom2, custom3
 }
 public enum GrainStrength: String, CaseIterable, Codable, Sendable, Hashable {
   case off, weak, strong

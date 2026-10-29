@@ -2,14 +2,19 @@ import Foundation
 
 // Native encodings belong to the Fuji adapter family, never editor identities.
 enum FujiRenderingValues {
+  // Selector provenance and the separate measured conversion domain are recorded
+  // in docs/validation/recipe-option-values.md. These are not EXIF tag values.
   static let films: [UInt16: FilmSimulation] = [
     1: .provia, 2: .velvia, 3: .astia, 4: .proNegHi, 5: .proNegStd, 6: .monochrome,
     7: .monochromeYellow, 8: .monochromeRed, 9: .monochromeGreen, 10: .sepia, 11: .classicChrome,
     12: .acros, 13: .acrosYellow, 14: .acrosRed, 15: .acrosGreen,
+    16: .eterna, 17: .classicNeg, 18: .eternaBleachBypass, 19: .nostalgicNeg, 20: .realaAce,
   ]
   static let whiteBalances: [UInt16: WhiteBalanceMode] = [
     2: .auto, 4: .daylight, 0x8006: .shade, 0x8001: .fluorescent1, 0x8002: .fluorescent2,
     0x8003: .fluorescent3, 6: .incandescent, 8: .underwater, 0x8007: .temperature,
+    0x8020: .autoWhitePriority, 0x8021: .autoAmbiencePriority,
+    0x8008: .custom1, 0x8009: .custom2, 0x800a: .custom3,
   ]
   static let effects: [UInt16: EffectStrength] = [1: .off, 2: .weak, 3: .strong]
   static let noise: [UInt16: Int] = [
