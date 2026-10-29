@@ -95,3 +95,20 @@ are recorded below.
 An older invalid-value test used DR200; it now uses invalid DR300. No physical
 camera test or newly validated conversion support is claimed. The isolated
 task simulator was shut down and deleted after validation.
+
+## Physical iPhone installation, 2026-10-29
+
+At the user's request, the option changes were combined with latest main
+`34649780` (descending numeric pickers) in `60f638df`. The option availability
+test now expects the existing main-branch descending DR order. After integration,
+all 470 Swift Testing tests, 19 XCTest unit tests, and both focused UI tests
+(descending fractional/negative choices and new X-T5 save/reopen) passed on a
+new isolated iPhone 15 Pro simulator; that simulator was deleted afterwards.
+
+The Release build for the paired physical iPhone 15 Pro succeeded using automatic
+Apple Development signing and team `AZH3P824F3`. The exact
+`.build/PhoneInstall/Build/Products/Release-iphoneos/FujiStudio.app` bundle passed
+`codesign --verify --deep --strict`, was installed successfully with `devicectl`,
+and launched normally as `com.lun3x.FujiStudio` without fixture/test arguments.
+A subsequent process listing confirmed that installed bundle was running.
+No new physical-camera conversion validation is inferred from installation.
