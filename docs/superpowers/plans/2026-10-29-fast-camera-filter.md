@@ -31,11 +31,11 @@
 
 **Interfaces:** Produce `RAFMetadataReader.metadata(in:fileByteCount:) throws -> RAWMetadata?` and `PhotoLibraryReading.rawMetadata(_:) async throws -> RAWMetadata`.
 
-- [ ] Write failing parser and transfer tests: large undelivered sensor payload, chunking, matching metadata, malformed bounds, cancellation and unknown-size EOF.
-- [ ] Run focused tests; expect missing API failures before implementation.
-- [ ] Extract shared structural parsing, implement bounded stream with early cancellation, and wire native/fixture readers.
-- [ ] Run package and affected unit tests; expect all passing and full-preparation mutation checks preserved.
-- [ ] Commit and push checkpoint with Jujutsu.
+- [x] Write failing parser and transfer tests: large undelivered sensor payload, chunking, matching metadata, malformed bounds, cancellation and unknown-size EOF.
+- [x] Run focused tests; expect missing API failures before implementation.
+- [x] Extract shared structural parsing, implement bounded stream with early cancellation, and wire native/fixture readers.
+- [x] Run package and affected unit tests; expect all passing and full-preparation mutation checks preserved.
+- [x] Commit and push checkpoint with Jujutsu.
 
 ### Task 2: Persistent metadata cache and pool integration
 
@@ -43,14 +43,14 @@
 
 **Interfaces:** Consume `rawMetadata(_:)`; produce optional persistent metadata caching in OriginalResourcePool, wired for the live app.
 
-- [ ] Write failing integration tests for cache reuse in a recreated pool, token/revision invalidation, different camera rules, corrupt/missing/unwritable cache, and retry after retrieval failure.
-- [ ] Run focused tests; expect missing persistence/lightweight-path assertions to fail.
-- [ ] Make RAWMetadata value types Codable, implement atomic versioned per-source records and use the lightweight reader in assess. Full preparation also seeds the cache.
-- [ ] Update fixture expectations to distinguish metadata reads from full materializations; run all unit tests.
-- [ ] Commit and push checkpoint with Jujutsu.
+- [x] Write failing integration tests for cache reuse in a recreated pool, token/revision invalidation, different camera rules, corrupt/missing/unwritable cache, and retry after retrieval failure.
+- [x] Run focused tests; expect missing persistence/lightweight-path assertions to fail.
+- [x] Make RAWMetadata value types Codable, implement atomic versioned per-source records and use the lightweight reader in assess. Full preparation also seeds the cache.
+- [x] Update fixture expectations to distinguish metadata reads from full materializations; run all unit tests.
+- [x] Commit and push checkpoint with Jujutsu.
 
 ### Task 3: Final validation and review
 
-- [ ] Run package tests, affected camera-filter UI suites and the full Scripts/test-ios.sh suite; expect no new failures.
-- [ ] Obtain independent whole-change review; address material findings with failing regression tests.
-- [ ] Record validation evidence, commit/push final checkpoint and delete task simulator.
+- [x] Run package tests, affected camera-filter UI suites and the full Scripts/test-ios.sh suite; expect no new failures.
+- [x] Obtain independent whole-change review; address material findings with failing regression tests.
+- [x] Record validation evidence, commit/push final checkpoint and delete task simulator.
