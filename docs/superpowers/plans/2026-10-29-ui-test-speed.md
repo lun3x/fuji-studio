@@ -16,9 +16,9 @@
 - [x] Record full baseline and per-test timings, including orientation/animation waits.
 - [x] Reproduce the slowest behavior in focused tests. Apply only evidence-backed fixes and remeasure.
 - [x] Balance suites while preserving test method names and assertions, if class scheduling limits throughput.
-- [ ] Benchmark bounded worker counts, select the fastest reliable setting, and expose a configurable script override with argument validation.
-- [ ] Validate script behavior, run unit tests and affected UI tests during implementation, then the full wrapper suite.
-- [ ] Review the complete diff, document measurements and limitations, push final checkpoint, and remove task simulators.
+- [x] Benchmark bounded worker counts, select the fastest reliable setting, and expose a configurable script override with argument validation.
+- [x] Validate script behavior, run unit tests and affected UI tests during implementation, then the full wrapper suite.
+- [x] Review the complete diff, document measurements and limitations, push final checkpoint, and remove task simulators.
 
 ## Experiment ledger
 - Baseline: original main@origin 34649780, default scheme and runner, iPhone 15 Pro / iOS 27.0. Logs under ignored `.build/Benchmarks/`.
@@ -42,3 +42,8 @@
 - Automation-scheme candidate (no debugger, UI-only target parallelism) showed no clear startup gain and introduced a numeric-picker UI failure absent from the serial/two/four controls. Candidate script/project changes discarded; normal FujiStudio scheme and global worker override restored. The original three-worker control will run after this experiment exits.
 - Three-worker original-scheme control passed all 551 tests (548 passed, 3 skipped) in 595.03 seconds. Four workers remain the fastest completed passing configuration at 475.71 seconds. No thermal/performance warning reported by `pmset -g therm`.
 - Set default worker count to four, preserving overrides and unit/phone exclusions. Command-stub test rejected the old default and passed after the change. Screenshot capture is the last candidate experiment; retain only if it materially improves the full result. Then run the default wrapper again as final validation and a repeatability check.
+- Screenshot-format candidate passed all 551 tests in 565.64 seconds, slower than the existing format. Reverted project.yml; final source has no scheme/debugger/capture-format changes. Default wrapper repeat now runs with four workers and original recording behavior, with no worker override in the environment.
+
+- Final default wrapper passed: 551 total, 548 passed, 3 existing skips, 0 failures, 651.37 seconds. Its 142.684-second orientation case contains 61.64- and 60.52-second XCTest idle waits. Preserved native rotation coverage; documented the remaining runtime limitation.
+- Prepared-simulator direct-shard probe also passed all 551 tests, but took 782.94 seconds including setup and cleanup. UI execution alone took 498.45 seconds, longer than the best complete native run. Rejected; no production coordinator/dependency added.
+- Final cleanup verified: task base and all four manual-pool simulators absent, no native worker clones remain, original unrelated iPhone 18 Pro still booted. All project changes remain on the requested development bookmark; workspace/artifacts retained for review.
