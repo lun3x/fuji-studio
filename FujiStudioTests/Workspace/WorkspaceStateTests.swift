@@ -537,15 +537,15 @@ struct WorkspaceStateTests {
         }
     }
 
-    @Test func sourceIntentChangedWhileBusySupersedesOldPreviewAndRequestsLatestOnceReady() throws {
+    @Test func sourceIntentChangedWhileBusyQueuesLatestPreviewImmediately() throws {
         let f = try WorkspaceFixture()
         var state = f.state()
         let old = try #require(preview(in: state.reduce(.sourceTapped("viewed"))))
         state.reduce(.cameraChanged(.busy(f.session), context: f.context))
-        #expect(state.reduce(.sourceTapped("next")).isEmpty)
+        let latest = try #require(preview(in: state.reduce(.sourceTapped("next"))))
         state.reduce(.previewCompleted(request: old, key: f.key(old)))
         #expect(state.displayedVersion == .raw)
-        let latest = try #require(preview(in: state.reduce(.cameraChanged(.ready(f.session), context: f.context))))
+        #expect(state.reduce(.cameraChanged(.ready(f.session), context: f.context)).isEmpty)
         #expect(latest.sourceID == "next")
         #expect(latest.generation > old.generation)
         state.reduce(.cameraChanged(.busy(f.session), context: f.context))
@@ -554,15 +554,15 @@ struct WorkspaceStateTests {
         #expect(state.displayedVersion == .preview(f.key(latest)))
     }
 
-    @Test func recipeIntentChangedWhileBusySupersedesOldPreviewAndRequestsLatestOnceReady() throws {
+    @Test func recipeIntentChangedWhileBusyQueuesLatestPreviewImmediately() throws {
         let f = try WorkspaceFixture()
         var state = f.state()
         let old = try #require(preview(in: state.reduce(.sourceTapped("viewed"))))
         state.reduce(.cameraChanged(.busy(f.session), context: f.context))
-        #expect(state.reduce(.recipeSelected(slot: 4)).isEmpty)
+        let latest = try #require(preview(in: state.reduce(.recipeSelected(slot: 4))))
         state.reduce(.previewCompleted(request: old, key: f.key(old)))
         #expect(state.displayedVersion == .cameraJPEG)
-        let latest = try #require(preview(in: state.reduce(.cameraChanged(.ready(f.session), context: f.context))))
+        #expect(state.reduce(.cameraChanged(.ready(f.session), context: f.context)).isEmpty)
         #expect(latest.recipe.id == f.recipes[3].id)
         state.reduce(.cameraChanged(.busy(f.session), context: f.context))
         #expect(state.reduce(.cameraChanged(.ready(f.session), context: f.context)).isEmpty)

@@ -114,6 +114,7 @@ class AppFlowTestCase: XCTestCase {
         XCTAssertTrue(app.buttons["fixture.finishSave"].waitForExistence(timeout: 5))
         app.buttons["fixture.finishSave"].tap()
         wait { app.buttons["app.status"].label.contains("Export paused") }
+        XCTAssertFalse((app.buttons["app.status"].value as? String)?.contains("Exporting") == true)
         app.buttons["app.status"].tap()
         XCTAssertTrue(app.staticTexts["export.counts"].label.contains("1 saved"))
         XCTAssertTrue(app.staticTexts["export.counts"].label.contains("2 remaining"))

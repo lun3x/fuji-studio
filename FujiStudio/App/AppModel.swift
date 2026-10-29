@@ -235,7 +235,10 @@ import Observation
             let coordinator = environment.preview
             displayTask = Task { await coordinator.invalidate() }; return
         }
-        let coordinator = environment.preview
+        let coordinator = environment.preview, resolver = environment.resolver
+        let showQueuedOriginal: Bool
+        if case .busy = state.cameraState { showQueuedOriginal = source.originalResources.jpeg != nil }
+        else { showQueuedOriginal = false }
         // Foreground recovery reloads Photos before reopening work. A selected image is
         // still pending during that interval; an empty viewer must keep its loading state.
         guard !isSuspended else {
@@ -247,9 +250,32 @@ import Observation
             guard let self else { return }
             await self.refreshVersions()
             guard !Task.isCancelled, self.displayIntent == intent else { return }
-            if let request { await coordinator.request(source: source, recipe: request.recipe, workspaceRequest: request) }
+            if let request {
+                await withTaskGroup(of: Void.self) { group in
+                    // Stored JPEGs can appear while the prioritized preview waits for the
+                    // camera. Intent checks keep this fallback from replacing a ready preview.
+                    if showQueuedOriginal {
+                        group.addTask { [weak self] in
+                            guard let file = try? await resolver.resolve(source: source, version: .cameraJPEG).lease else { return }
+                            await self?.showQueuedPreviewOriginal(file, source: source, request: request, intent: intent)
+                        }
+                    }
+                    await coordinator.request(source: source, recipe: request.recipe, workspaceRequest: request)
+                    group.cancelAll()
+                }
+            }
             else { await coordinator.selectStoredVersion(version, source: source, displayIntent: intent) }
         }
+    }
+
+    private func showQueuedPreviewOriginal(_ file: DisplayFileLease, source: PhotoSource, request: WorkspacePreviewRequest, intent: UInt64) {
+        guard !Task.isCancelled, !isSuspended, displayIntent == intent, displayRequest == request,
+              state.acceptsPreview(request), state.viewedSourceID == source.id,
+              state.viewedSourceRevision == source.resourceRevision else { return }
+        state.reduce(.previewFallback(.cameraJPEG))
+        displayFile = file
+        availableDisplay = AvailableDisplay(sourceID: source.id, revision: source.resourceRevision, version: .cameraJPEG, file: file)
+        displayLoading = nil; imageStatus = nil
     }
 
     private func previewChanged(_ event: PreviewEvent) {
@@ -259,6 +285,14 @@ import Observation
             guard case .ready = event.state, let jpeg = event.jpeg, case .preview(let key) = event.version else {
                 displayLoading = ImageLoadingState(event.state)
                 if case .failed(let failure) = event.state, state.selectedRecipe == request.recipe {
+                    // A previous native operation can require attention before a queued
+                    // preview is admitted. Keep browsing without reporting a second error.
+                    if case .camera(.notReady) = failure, case .attentionRequired = state.cameraState,
+                       !state.acceptsPreview(request) {
+                        displayLoading = nil; imageStatus = displayFailure
+                        if !hasCurrentSourceDisplay { resolveFallbackOriginal() }
+                        return
+                    }
                     if case .camera(.unsupportedSource) = failure,
                        request.cameraContext == state.currentCameraExecutionContext,
                        let camera = state.photoFilterCamera,
