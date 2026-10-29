@@ -201,17 +201,8 @@ struct PhotoViewer: View {
     private var loadingOverlay: some View {
         ZStack {
             Color(uiColor: .systemBackground).opacity(0.35)
-            VStack(spacing: 8) {
-                ProgressView().controlSize(.large).tint(.primary)
-                    .accessibilityLabel("Loading preview")
-                if case .downloading(let progress) = loading {
-                    Text(progress, format: .percent.precision(.fractionLength(0)))
-                        .font(.caption.monospacedDigit())
-                        .accessibilityLabel("Downloading original")
-                        .accessibilityValue(Text(progress, format: .percent.precision(.fractionLength(0))))
-                        .accessibilityIdentifier("viewer.loading.progress")
-                }
-            }.accessibilityElement(children: .contain).accessibilityIdentifier("viewer.loading")
+            PhotoLoadingRing(loading: loading ?? .loading)
+                .accessibilityIdentifier("viewer.loading")
         }.allowsHitTesting(false)
     }
 
