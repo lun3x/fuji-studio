@@ -33,7 +33,10 @@ final class ModelRecipeTests: AppFlowTestCase {
         XCTAssertTrue(app.buttons["recipe.editor.save"].waitUntilExists(timeout:5))
         shot(app,"X-E3 editor largest text portrait")
         XCUIDevice.shared.orientation = .landscapeLeft
-        defer { XCUIDevice.shared.orientation = .portrait }
+        defer {
+            app.terminate()
+            XCUIDevice.shared.orientation = .portrait
+        }
         wait {
             let window=app.windows.firstMatch.frame,save=app.buttons["recipe.editor.save"].frame
             return window.width > window.height && save.maxX > window.width/2 && save.maxX <= window.maxX

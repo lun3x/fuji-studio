@@ -47,3 +47,9 @@
 - Final default wrapper passed: 551 total, 548 passed, 3 existing skips, 0 failures, 651.37 seconds. Its 142.684-second orientation case contains 61.64- and 60.52-second XCTest idle waits. Preserved native rotation coverage; documented the remaining runtime limitation.
 - Prepared-simulator direct-shard probe also passed all 551 tests, but took 782.94 seconds including setup and cleanup. UI execution alone took 498.45 seconds, longer than the best complete native run. Rejected; no production coordinator/dependency added.
 - Final cleanup verified: task base and all four manual-pool simulators absent, no native worker clones remain, original unrelated iPhone 18 Pro still booted. All project changes remain on the requested development bookmark; workspace/artifacts retained for review.
+- Follow-up root fix from final activity trace: the 60.52-second Portrait wait occurs solely in post-assertion cleanup. Terminate the completed app before restoring device orientation in the three active-app rotation cleanups. Live foreground rotations and all post-rotation assertions stay intact, including the explicit portrait/selection check in the landscape-selection test. New task-owned iPhone 15 Pro simulator created for focused and full validation after the original pool cleanup.
+
+## Follow-up: rotation cleanup
+- [x] Verify trace root cause and review the three deferred cleanup changes.
+- [x] Run the five affected rotation cases: all passed. The prior 60.52-second cleanup idle wait now targets SpringBoard and took 0.026 seconds; full dark geometry test took 11.725 seconds.
+- [ ] Run the full default suite with the cleanup fix, record result, remove the new simulator, and publish final evidence.

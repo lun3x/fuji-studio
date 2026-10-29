@@ -52,7 +52,10 @@ final class WorkspaceOrientationTests: XCTestCase {
 
     func testTrayAndControlsStayAtPhysicalDeviceEdgesInBothLandscapeDirections() {
         let app = launch(["--fixture-dark"])
-        defer { XCUIDevice.shared.orientation = .portrait }
+        defer {
+            app.terminate()
+            XCUIDevice.shared.orientation = .portrait
+        }
 
         for (orientation, trayOnLeft) in [(UIDeviceOrientation.landscapeRight, true), (.landscapeLeft, false)] {
             XCUIDevice.shared.orientation = orientation
@@ -97,7 +100,10 @@ final class WorkspaceOrientationTests: XCTestCase {
 
     func testLandscapeTrayOpensSidewaysAndPreservesSelectionThroughRotation() {
         let app = launch()
-        defer { XCUIDevice.shared.orientation = .portrait }
+        defer {
+            app.terminate()
+            XCUIDevice.shared.orientation = .portrait
+        }
         app.buttons["workspace.select"].tap()
         app.cells["grid.source-1"].tap()
         let viewed = app.staticTexts["fixture.viewed"].label
