@@ -44,6 +44,9 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
         XCTAssertTrue(edit.isEnabled); XCTAssertFalse(phoneQuery.firstMatch.isEnabled)
         edit.tap()
         XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitForExistence(timeout: 5))
+        app.textFields["recipe.editor.name"].tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        reveal(app.buttons["recipe.editor.setting.film"], in: app)
         app.buttons["recipe.editor.setting.film"].tap()
         app.buttons["PROVIA / Standard"].tap()
         replaceText(app.textFields["recipe.editor.name"], with: "My Provia")
@@ -122,6 +125,36 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
         shot(app, "Phone editor at largest text")
         XCTAssertTrue(app.buttons["recipe.editor.save"].isHittable)
         XCTAssertTrue(app.buttons["recipe.editor.cancel"].isHittable)
+        app.buttons["recipe.editor.cancel"].tap()
+    }
+
+    func testXT5EditorSavesMissingRecipeOptionsAndReopensThem() {
+        let app = launch(["--fixture-disconnected-camera"])
+        tap(app.buttons["recipe.control"], in: app); app.buttons["recipe.copy.1"].tap()
+        let edit = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.edit.")).firstMatch
+        XCTAssertTrue(edit.waitForExistence(timeout: 5)); edit.tap()
+        let film = app.buttons["recipe.editor.setting.film"]
+        film.tap(); app.buttons["REALA ACE"].tap()
+        let dynamicRange = app.buttons["recipe.editor.setting.dynamicRange"]
+        dynamicRange.tap(); app.buttons["200%"].tap()
+        let balance = app.buttons["recipe.editor.setting.whiteBalance"]
+        reveal(balance, in: app); balance.tap(); app.buttons["Auto · White priority"].tap()
+        app.buttons["recipe.editor.save"].tap()
+        XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitForNonExistence(timeout: 5))
+        edit.tap()
+        XCTAssertTrue(film.label.contains("REALA ACE") || (film.value as? String ?? "").contains("REALA ACE"))
+        XCTAssertTrue(dynamicRange.label.contains("200%") || (dynamicRange.value as? String ?? "").contains("200%"))
+        reveal(balance, in: app)
+        XCTAssertTrue(balance.label.contains("White priority") || (balance.value as? String ?? "").contains("White priority"))
+        balance.tap(); app.buttons["Custom 3"].tap()
+        reveal(dynamicRange, in: app); dynamicRange.tap(); app.buttons["Auto"].tap()
+        app.buttons["recipe.editor.save"].tap()
+        XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitForNonExistence(timeout: 5))
+        edit.tap()
+        XCTAssertTrue(dynamicRange.label.contains("Auto") || (dynamicRange.value as? String ?? "").contains("Auto"))
+        reveal(balance, in: app)
+        XCTAssertTrue(balance.label.contains("Custom 3") || (balance.value as? String ?? "").contains("Custom 3"))
+        shot(app, "Complete X-T5 recipe options saved and reopened")
         app.buttons["recipe.editor.cancel"].tap()
     }
 }

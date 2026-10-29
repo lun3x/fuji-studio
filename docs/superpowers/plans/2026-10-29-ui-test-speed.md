@@ -83,3 +83,12 @@
 - Reverted the entire AX5 readiness/diagnostic block. Selected the clean two-worker full control:843.80seconds,548passed/3existing-skips/0failed. This is~37% less measured wall time than original1334.88seconds, subject to cold-build and simulator-startup differences. Three/four cold workers had failures; six stalled. Do not claim the rejected475.71second fast-wait result for final source.
 - Runner default-two command-stub check first failed against default-four, then passed after changing the default and README/help. Bash syntax passed. Final UI test source is identical to passing control8b3d4016, and production app/project.yml remain identical to baseline.
 - Final task base and all task-owned native worker clones removed after actual Xcode exit. Unrelated iPhone18Pro remains booted. Evidence in `.build/Benchmarks/final-cleanup-verified.json`; workspace and raw artifacts retained for review. Final checkpoints publish on `codex/ui-test-speed`.
+
+## PR publication and merge
+- User explicitly authorized creating and merging the PR. Fetched latest main3083d717; rebased the checkpoint stack and resolved conflicts at their first occurrence using Jujutsu.
+- Preserved all72latest-main UI tests, including8new cases and2editor-body corrections. Grouped new cases into2feature classes plusPhoneRecipeEditorTests (16concreteclasses total). Sharedreveal chooses the editor form when present and retains app scrolling for new recipe-menu callers.
+- Mechanical test-body comparison, independent review, Bashsyntax and runnerargument checks passed. Production app/unit/package/project diff againstlatestmain is empty. Newtask simulatorFuji-UI-Speed-PR created for complete rebased validation.
+- [ ] Finish full rebased validation, update evidence, clean up newtask simulator, publish PR, verifychecks, and merge.
+
+- First rebased run interrupted after2real editor failures: baseline missedStrong grain transition and a keyboard-clippedFilm menu(PROVIAabsent). Added the same explicit keyboard precondition plusreveal(Film) to the film/name test, preservingmain's film-before-name-replacement sequence and all assertions. Independentreview accepted scope. Focused2cases passed(128.07seconds,0failures); no claim thattheoriginalfullrunpassed or grainflakewasfixed.
+- Mainstill3083d717afterfreshfetch. Completefinal default-two run restarted with finaltestsource; no timingcomparisonagainst64-testbaseline willbeclaimedfor72-testintegration.

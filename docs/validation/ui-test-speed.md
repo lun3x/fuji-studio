@@ -4,7 +4,7 @@ Date: 2026-10-29. Baseline: `34649780`. Development bookmark: `codex/ui-test-spe
 
 ## Result
 
-The runner now defaults to **two native simulator workers**, with all **64 original UI methods** distributed over **14 feature classes** instead of six. The clean full-suite run took **843.80 seconds (14m 04s)**: **548 passed, three existing skips, zero failures**. The original serial baseline took **1334.88 seconds (22m 15s)**, including a cold build and one existing grain-editor failure. This is approximately **37% less measured wall time**; measurement conditions and limitations are below.
+The runner now defaults to **two native simulator workers**, with the latest main branch's **72 UI methods** distributed over **16 feature classes**. The performance calibration below was completed earlier with 64 UI methods in 14 classes, before main added eight tests. The historical clean 64-UI-test full-suite run took **843.80 seconds (14m 04s)**: **548 passed, three existing skips, zero failures**. The original serial baseline took **1334.88 seconds (22m 15s)**, including a cold build and one existing grain-editor failure. This is approximately **37% less measured wall time**; measurement conditions and limitations are below.
 
 Two is the selected default because the final cold three-worker controls failed original UI checks, four had multiple failures and heavy startup load, and six stalled. This is the best clean validated configuration from this investigation, not a guarantee of the fastest or flake-free setting on every host.
 
@@ -16,7 +16,7 @@ The fastest experimental passing run was **475.71 seconds (7m 56s)**. That confi
 - Smaller feature classes remove the whole-class scheduling bottleneck. Originally, AppFlowTests alone took 687.3 seconds and WorkspaceLayoutTests 295.3 seconds. Shared base classes contain no test methods. [Apple describes class-based parallel distribution](https://developer.apple.com/videos/play/wwdc2020/10221/).
 - Verbose simulator diagnostics are opt-in with `FUJI_STUDIO_TEST_DIAGNOSTICS=on-failure`. Normal `.xcresult` results and attachments remain. A sampled failed run spent over seven minutes in `collectSimulatorDiagnostics`, waiting for `simctl diagnose --timeout=600`. With the new default `never`, a temporary deliberate failure returned the expected exit 65 in 12.21 seconds and recorded exactly one failure. The probe was removed.
 - Three completed-app rotation cleanups terminate the app before resetting portrait. The measured post-assertion reset dropped from a 60.52-second AUT idle wait to a 0.026-second SpringBoard wait. All live foreground rotations, screenshots, and assertions remain, including explicit portrait-return selection checks. Five affected cases passed.
-- Editor control revelation scrolls `recipe.editor.form` rather than the entire app. When the alphabetic keyboard exposes Return, it dismisses it through that public UI action and waits for disappearance. Regression setups explicitly open the name keyboard before the numeric menu and temperature-validation flow. The old helper failed; the new helper passed. Number-pad dismissal is not added.
+- Editor control revelation scrolls `recipe.editor.form` rather than the entire app. When the alphabetic keyboard exposes Return, it dismisses it through that public UI action and waits for disappearance. Regression setups explicitly open the name keyboard before the numeric menu, temperature-validation flow, and film-selection flow. The old helper failed; the new helper passed. Number-pad dismissal is not added.
 
 No production app code, test methods, assertions, native animations, or existing device gates were removed. All immediate existence/predicate shortcuts were reverted, including ElementWaits.swift. The original scheme, debugger, and recording format remain.
 
@@ -68,7 +68,7 @@ The final bounded experiment added a five-second native Select.isHittable readin
 
 The final decision uses the clean two-worker control, rather than the fastest favorable experimental time. Three workers were faster but failed in two cold attempts; four cold workers also failed, and six stalled. During startup the host showed roughly 7 GB used swap, 15 GB physical memory used, and substantial compression and simulator background activity. Those observations support resource saturation as a concern, but do not establish the cause of every individual UI failure. Alternative scheme/capture settings did not improve the early control, and prepared manual sharding was slower than the strongest native control. No further verified safe material gain was found. A 5% improvement threshold was used when considering extra settings; this is a measured local stopping point, not proof of a universal minimum.
 
-The selected passing run used exactly the final UI test source and explicit worker count two. The final runner default emits the same Xcode flags; command-stub checks first rejected the prior default four and then passed with two. One clean full run does not prove the existing grain flake is solved, and XCTest startup/foreground-rotation variation remains.
+The selected historical passing run used the UI test source at checkpoint `8b3d4016` and explicit worker count two. The later PR rebase preserves eight additional main-branch UI tests and its two editor-test corrections; its validation is recorded separately below. The final runner default emits the same Xcode flags; command-stub checks first rejected the prior default four and then passed with two. One clean full run does not prove the existing grain flake is solved, and XCTest startup/foreground-rotation variation remains.
 
 ## Reproduce and inspect
 
@@ -81,7 +81,7 @@ FUJI_STUDIO_TEST_DIAGNOSTICS=on-failure Scripts/test-ios.sh FujiStudioUITests/Ph
 
 Runner command-stub checks cover defaults, overrides, serial execution, focused selectors, invalid values, ignored worker settings for unit-only/phone runs, signing preservation, and diagnostic modes. `bash -n` passes. A separate `--fast` run passed all 487 unit cases.
 
-Independent review verified all 64 original method bodies after normalizing the then-proposed wait names, and subsequently reviewed rotation cleanup and the keyboard/form correction. No substantive issues were found. One minor worker-validation concern was fixed and verified. Comparison of all 64 test-method bodies after restoring native waits permits only the three cleanup additions and the two explicit keyboard regression setups. The rejected AX5 readiness block is absent.
+Independent review verified all 64 original method bodies after normalizing the then-proposed wait names, and subsequently reviewed rotation cleanup and the keyboard/form correction. No substantive issues were found. One minor worker-validation concern was fixed and verified. Comparison of all 64 test-method bodies after restoring native waits permits only the three cleanup additions and the three explicit keyboard regression setups (including film-menu revelation before film selection). The rejected AX5 readiness block is absent.
 
 Raw logs, result bundles, process samples, command-stub checks, and discarded probes remain under `/tmp/fuji-ui-test-speed/.build/`. The reviewable Jujutsu workspace is `/tmp/fuji-ui-test-speed`; checkpoints are pushed to `codex/ui-test-speed`.
 
@@ -90,3 +90,11 @@ Raw logs, result bundles, process samples, command-stub checks, and discarded pr
 The initial task base and manual pool were removed, and the follow-up base `58ACFD93-AFC0-4BF0-A8DC-4B92280E90C1` was deleted after the final experiment exited. No task-owned native worker clones remain. The unrelated iPhone 18 Pro remains booted. Final cleanup evidence is `.build/Benchmarks/final-cleanup-verified.json`.
 
 The passing result is `.build/TestResults/20261029-123700-34645.xcresult`; the exact bundle path is recorded in `.build/Benchmarks/native-2-cold.log`, and its parsed summary is `.build/Benchmarks/native-2-cold.summary.json`.
+
+## PR integration with latest main
+
+Rebased onto `3083d717` (PR #32). Preserved all 72 latest-main UI methods, including eight new tests and the updated persisted-Small expectations and film-before-name editor sequence. Added CameraFilterTests and RecipePhotoCompatibilityTests, and placed the new X-T5 editor case in PhoneRecipeEditorTests. Shared reveal retains application scrolling for the new recipe-menu caller outside the editor; it uses the form when an editor exists.
+
+A mechanical comparison and independent review confirm every latest-main test body is retained, normalizing only three cleanup additions, three keyboard preconditions, and the film-menu reveal call. No production app, unit-test, package, or project changes relative to latest main. Full rebased validation is in progress; the historical 843.80-second timing is not a measurement of the expanded suite.
+
+The first rebased run was interrupted after the known missed-Strong grain interaction and a film-menu failure: a visible keyboard clipped PROVIA out of the menu before name editing had begun. The film test now explicitly focuses Name, waits for the keyboard, and reveals Film through the existing Return-dismissal helper before selecting the film. This preserves main's film-selection-before-name-replacement sequence and every assertion. Both affected editor cases then passed in a focused run (2 tests, 0 failures, 128.07 seconds including build/startup). The original parallel failures remain recorded; this focused pass is not reported as a passing full run. A complete final rerun is in progress.

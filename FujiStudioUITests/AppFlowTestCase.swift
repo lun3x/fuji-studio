@@ -16,7 +16,8 @@ class AppFlowTestCase: XCTestCase {
             XCTAssertTrue(keyboard.waitForNonExistence(timeout: 5))
         }
         let form = app.descendants(matching: .any)["recipe.editor.form"].firstMatch
-        for _ in 0..<8 { if element.isHittable { return }; form.swipeUp() }
+        let container = form.exists ? form : app
+        for _ in 0..<8 { if element.isHittable { return }; container.swipeUp() }
         XCTAssertTrue(element.isHittable)
     }
 
