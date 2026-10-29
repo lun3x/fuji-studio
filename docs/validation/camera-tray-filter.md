@@ -104,3 +104,24 @@ phone; a process query confirmed it was running. Follow-up logs and screenshots
 are under `.build/filter-placement` in the new workspace.
 The task simulator was deleted after validation; no matching devices remain in
 either the normal CoreSimulator device set or Xcode's XCTestDevices worker set.
+
+## PR integration
+
+PR #30 integrates the filter with `main` at `448c114c`. The sole merge conflict
+was adjacent UI-test additions; both the five filter tests and main's recipe
+option test were retained. An independent read-only review confirmed that all
+methods from both parents were preserved and found no material integration issue.
+
+The complete combined scheme ran on three isolated iPhone 15 Pro / iOS 27.0
+workers. It reported 568 passed, 3 established native opt-in skips and one UI
+automation failure: the longer film menu left PROVIA outside the visible menu
+while the name keyboard was open. The existing save/reopen/cancel test now
+chooses the film before typing the name, preserving all assertions. Its focused
+rerun passed; the final production code is identical to the complete-run code.
+Thus all 569 non-skipped integration cases have passing evidence across the
+complete run and this focused rerun. The signed generic iOS Release build and
+strict code-signature verification also passed.
+
+Evidence is under `.build/filter-merge`; the complete result bundle is
+`.build/TestResults/filter-merge-full.xcresult`, and the corrected UI case is in
+`.build/TestResults/20261029-120015-32791.xcresult`.
