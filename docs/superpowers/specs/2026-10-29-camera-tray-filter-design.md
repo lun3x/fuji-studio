@@ -1,6 +1,6 @@
 # Connected-camera photo tray filter
 
-Status: proposed. The user chose an optional filter, enabled only from its menu.
+Status: approved by the user on 2026-10-29. The filter is enabled only from its menu.
 
 ## Intent
 
@@ -26,8 +26,8 @@ metadata assessment against the connected camera's existing source rules.
 - Float a circular glass button with the system filter symbol at the tray's
   leading edge, opposite Select. Keep it available in browse and selection mode,
   collapsed and expanded, with upright controls in either landscape orientation.
-- Its native menu contains **All Photos** and **Compatible with X-E3** (using
-  the verified connected model). Show the current choice with a checkmark and
+- Its native menu contains **All Photos** and **Compatible with X-E3** or
+  **Compatible with X-T5**, following the verified connected model. Show the current choice with a checkmark and
   tint the button blue while filtering.
 - Start with All Photos. Connecting a camera does not enable the filter.
   Disable the camera option until a supported connection is verified.
