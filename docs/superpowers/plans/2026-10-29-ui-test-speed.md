@@ -70,3 +70,10 @@
 
 - Three-worker cold run complete: 740.38 seconds, 547 passed, 3 skipped, 1 failure. All five editor cases passed; unchanged AX5 Select.isHittable assertion failed just after launch. Review recommends an asserted native property readiness wait only in this specific case if transience is demonstrated; keep original assertions. No synchronization change made yet.
 - Two-worker cold run started with unchanged source after three-worker Xcode process exit. Its result will inform the final reliable worker default.
+
+## Final candidate decision rule
+- Preserve the unchanged two-worker cold control as the fallback if it completes cleanly. All editor and AX5 layout cases have passed in that run so far; no synchronization change is in its source.
+- If two is materially slower than three (>5%), one bounded experiment remains: an asserted native Select.isHittable readiness wait in the specific AX5 layout test, before geometry measurements, retaining all existing assertions. Record whether the initial false state becomes true without interaction. This is an experiment, not a claimed root-cause fix. Reject it if the gate remains false or the full three-worker result is not clean/faster. Do not add retries, interactions, or extend existing timeouts to conceal failure.
+
+- Two-worker cold control PASSED: 843.80 seconds, 548 passed, 3 existing skips, 0 failed. Source8b3d4016, all original immediate assertions unchanged. This is the clean fallback, approximately37% less wall time than the original cold serial baseline.
+- Since three was >5% faster, the single bounded AX5 readiness candidate is now running in an erased-simulator full3test. It records initial and post-wait readiness and retains every original assertion. A full clean faster result is required to retain it; false→true evidence is required before claiming the prior failure was transient.

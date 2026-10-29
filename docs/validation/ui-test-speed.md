@@ -4,7 +4,7 @@ Date: 2026-10-29. Baseline: `34649780`. Development bookmark: `codex/ui-test-spe
 
 ## Result
 
-The runner defaults to **four native simulator workers**, with all **64 original UI methods** distributed over **14 feature classes** instead of six. The original serial full-suite baseline took **1334.88 seconds (22m 15s)**, including a cold build and one existing grain-editor failure. Final accepted-source validation is recorded below when complete.
+The runner supports bounded native simulator workers (initial default four, final choice under investigation), with all **64 original UI methods** distributed over **14 feature classes** instead of six. The original serial full-suite baseline took **1334.88 seconds (22m 15s)**, including a cold build and one existing grain-editor failure. A clean cold control with two workers completed in **843.80 seconds (14m 04s)**: **548 passed, three existing skips, zero failures**, about **37% less wall time** than baseline. The bounded three-worker readiness candidate is still being evaluated.
 
 The fastest experimental passing run was **475.71 seconds (7m 56s)**. That configuration included immediate existence/predicate shortcuts which were subsequently rejected for reliability. **That timing is not a claim about the final source.**
 
@@ -21,7 +21,7 @@ No production app code, test methods, assertions, native animations, or existing
 ## Measurement conditions
 
 - Mac: 10 logical CPUs, 16 GiB RAM. Xcode 27.1 (27A9275), iPhone 15 Pro / iOS 27.0 (24A434).
-- Isolated task-owned simulators; Xcode creates and removes its native worker clones. Unrelated simulators were left untouched.
+- Isolated task-owned simulators; Xcode creates and removes its native worker clones. One unrelated iPhone 18 Pro simulator remained booted throughout and was left untouched.
 - Baseline includes a cold build. Later runs use warmed build products; some experiments use `test-without-building`. Xcode worker/test-runner startup is included; task-base creation/erase/preboot is outside wrapper timings. The manual probe includes its own preparation and cleanup. Therefore these are operational measurements, not a controlled estimate of parallelism alone.
 - No retries or test exclusions. Full runs have 551 logical cases: 487 unit and 64 UI. Three existing opt-in native-device gates skip. Parameterized execution counts differ from logical summary counts.
 - XcodeGen 2.46.0 installed as required by README; Python probes use the workspace's `.venv`. No thermal/performance warnings were reported during the worker sweep.
@@ -45,6 +45,7 @@ Rows through direct sharding used the subsequently rejected existence/predicate 
 | Original waits plus cleanup, erased simulator | 768.17 s | 546 / 3 / 2 | Two editor menus obstructed by keyboard |
 | Keyboard/form helper and explicit numeric keyboard setup, 4 workers, erased simulator | 794.86 s | 545 / 3 / 3 | Grain, camera-status timeout, temperature keyboard race |
 | Explicit keyboard setup for numeric and temperature cases, 3 workers, erased simulator | 740.38 s | 547 / 3 / 1 | All editor cases passed; original immediate AX5 Select hit-testing assertion failed |
+| Same source, 2 workers, erased simulator | 843.80 s | 548 / 3 / 0 | Clean fallback; all original assertions unchanged |
 
 Six-worker interruption failures are not product regressions or completed timing data. Higher counts were not attempted after the host exceeded useful capacity. The direct-shard probe's preparation/unit readiness took 270.68 seconds, and UI execution alone took 498.45 seconds; it was slower even before setup. Its four extra simulators were removed, and no Python runtime dependency was added.
 
