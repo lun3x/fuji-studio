@@ -1,3 +1,4 @@
+@testable import FujiCameraCore
 import Foundation
 @testable import FujiStudio
 

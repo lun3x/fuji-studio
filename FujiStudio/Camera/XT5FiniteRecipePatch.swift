@@ -1,3 +1,4 @@
+import FujiCameraCore
 import Foundation
 
 /// Finite engineering experiment only. Never clears RecipeSnapshot.renderingIssues.

@@ -1,3 +1,4 @@
+import FujiCameraCore
 import Foundation
 import CryptoKit
 
@@ -194,7 +195,7 @@ actor FileRenderCache {
         let geometry = PixelSize(width: jpeg.width, height: jpeg.height)
         let metadata = RAWMetadata(cameraModel: jpeg.cameraContext.model, containerGeometry: geometry, recordedGeometry: geometry,
             recordedAspect: geometry, cropTop: 0, cropLeft: 0, orientation: jpeg.orientation)
-        _ = try XT5ConversionCodec.validateFullSizeFineJPEG(Data(contentsOf: jpeg.fileURL, options: .mappedIfSafe), expected: metadata)
+        _ = try FujiConversionCodec.validateFullSizeFineJPEG(Data(contentsOf: jpeg.fileURL, options: .mappedIfSafe), expected: metadata)
     }
 
     private static func identifier(_ key: RenderKey) throws -> String {

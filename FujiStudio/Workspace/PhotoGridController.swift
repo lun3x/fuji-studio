@@ -1,3 +1,4 @@
+import FujiCameraCore
 import UIKit
 
 @MainActor
@@ -362,7 +363,7 @@ private final class PhotoGridCell: UICollectionViewCell {
         image.tintColor = .tertiaryLabel
         accessibilityHint = "Thumbnail unavailable. Activate to view this source."
         var label = source.originalResources.jpeg == nil ? "RAF" : "RAW + JPEG"
-        if case .incompatible(let model) = source.compatibility { label += " · \(model): X-T5 conversion unavailable" }
+        if case .incompatible(let model) = source.compatibility { label += " · \(model): camera conversion unavailable" }
         type.text = label; accessibilityLabel = "Photo, \(source.originalResources.raf.originalFilename), \(label)"
         accessibilityIdentifier = "grid.\(source.id)"
         membership(selecting: selecting, checked: checked, viewed: viewed)

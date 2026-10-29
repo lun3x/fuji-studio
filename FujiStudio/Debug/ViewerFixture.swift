@@ -1,3 +1,4 @@
+import FujiCameraCore
 #if DEBUG
 import SwiftUI
 import UIKit
@@ -85,18 +86,18 @@ private struct ViewerFixture {
         let recipes = try (1...7).map { try XT5RecipeCodec.recipe(slot: $0, nameData: nameData,
             properties: properties.mapValues { Data([UInt8(truncatingIfNeeded: $0), UInt8(truncatingIfNeeded: $0 >> 8)]) },
             context: context, importedAt: Date(timeIntervalSince1970: 0)) }
-        let recipe = recipes[2], normalized = try recipe.normalizedSettings
+        let recipe = recipes[2], normalized = try recipe.settings(using: RecipeCodecRegistry())
         let key = RenderKey(sourceID: self.source.id, sourceRevision: "fixture", sourceSHA256: "generated", settingsDigest: recipe.settingsDigest,
             cameraContext: camera, width: 6000, height: 4000, orientation: 1, policy: .fullSizeFineRecordedGeometry, quality: .fullResolutionFine)
         preview = CameraJPEG(fileURL: savedFile.fileURL, sourceID: self.source.id, sourceRevision: "fixture", sourceSHA256: "generated", recipeSnapshotID: recipe.id,
             settingsDigest: recipe.settingsDigest, cameraContext: camera, operationID: UUID(), width: 6000, height: 4000, orientation: 1, quality: .fullResolutionFine,
-            effectiveRecipe: .init(supportVersion: normalized.supportVersion, requested: normalized, dormantGrainSizeNotSerialized: false, inactiveKelvinPreserved: false,
+            effectiveRecipe: .init(supportVersion: XT5WorkingProfile.supportVersion, requested: normalized, dormantGrainSizeNotSerialized: false, inactiveKelvinPreserved: false,
                 lensOptimizerRequested: false, lensOptimizerEffective: false, lensOptimizerAdjusted: false, evidence: "Generated viewer fixture; not a camera conversion"),
             baselineSHA256: "generated", candidateSHA256: "generated", outputSHA256: try ResourceChecksum.sha256(savedFile.fileURL), key: key)
         saved = SavedVersion(id: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!, sourceID: self.source.id, outputAssetID: "generated-output",
             recipeSnapshot: recipe, operationID: UUID(), exportedAt: Date(timeIntervalSince1970: 1_700_000_000), jpeg: preview, availability: .available)
         var state = WorkspaceState(sources: [self.source, otherSource], access: .full)
-        state.reduce(.recipesRefreshed(recipes))
+        state.reduce(.recipesLoaded(recipes,slots:RecipeCodecRegistry.xt5Capabilities.bankSlots))
         state.reduce(.cameraChanged(.ready(CameraSession(generation: 1, connection: .init(name: "Generated fixture", usbVendorID: 0, usbProductID: 0))), context: camera))
         state.reduce(.recipeSelected(slot: 3))
         let effects = state.reduce(.sourceTapped(self.source.id))

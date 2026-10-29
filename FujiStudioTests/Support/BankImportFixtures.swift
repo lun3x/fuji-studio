@@ -1,3 +1,4 @@
+@testable import FujiCameraCore
 import Foundation
 
 /// Synthetic slot data exercising the documented wire shapes. Not an observed seven-bank capture.

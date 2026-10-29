@@ -1,3 +1,4 @@
+@testable import FujiCameraCore
 import Foundation
 
 /// Advances the actual AppModel retry loop without waiting on wall-clock time.

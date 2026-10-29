@@ -1,10 +1,11 @@
+@testable import FujiCameraCore
 import Foundation
 import Testing
 @testable import FujiStudio
 
-struct XT5ConversionCodecTests {
+struct FujiConversionCodecTests {
     @Test func uploadInfoUsesPinnedVendorRAFFormatAndFixedTransferName() throws {
-        let data = try XT5ConversionCodec.uploadInfo(byteCount: 0x123456)
+        let data = try FujiConversionCodec.uploadInfo(byteCount: 0x123456)
         #expect(data.count == 82)
         #expect(Data(data.prefix(12)) == Data([0,0,0,0,2,248,0,0,86,52,18,0]))
         #expect(Data(data[12..<52]) == Data(repeating: 0, count: 40))
@@ -12,18 +13,18 @@ struct XT5ConversionCodecTests {
     }
     @Test func refusesZeroAndOversizedUploadLengths() {
         for count in [0, -1, 128 * 1024 * 1024 + 1] {
-            #expect(throws: (any Error).self) { try XT5ConversionCodec.uploadInfo(byteCount: count) }
+            #expect(throws: (any Error).self) { try FujiConversionCodec.uploadInfo(byteCount: count) }
         }
     }
     @Test func distinguishesTrulyEmptyHandlesFromMalformedOrOversizedEnumeration() throws {
-        #expect(try XT5ConversionCodec.objectHandles(Data([0,0,0,0])) == [])
+        #expect(try FujiConversionCodec.objectHandles(Data([0,0,0,0])) == [])
         let valid = Data([2,0,0,0,7,0,0,0,9,0,0,0])
-        #expect(try XT5ConversionCodec.objectHandles(valid) == [7,9])
+        #expect(try FujiConversionCodec.objectHandles(valid) == [7,9])
         for count in 0..<valid.count {
-            #expect(throws: (any Error).self) { try XT5ConversionCodec.objectHandles(Data(valid.prefix(count))) }
+            #expect(throws: (any Error).self) { try FujiConversionCodec.objectHandles(Data(valid.prefix(count))) }
         }
         for invalid in [valid + Data([0]), Data([255,255,255,255]), Data([1,0,0,0,0,0,0,0]), Data([2,0,0,0,7,0,0,0,7,0,0,0])] {
-            #expect(throws: (any Error).self) { try XT5ConversionCodec.objectHandles(invalid) }
+            #expect(throws: (any Error).self) { try FujiConversionCodec.objectHandles(invalid) }
         }
     }
 }
@@ -470,7 +471,7 @@ struct XT5PairedBaselinePreparationTests {
             let library=PairedBaselineLibrary(ids:["standalone","old","square","reference"], reversed:reversed)
             let selected=try await RAWBaselineSourcePreparer(reader:library,prepare:Self.parse).preparePaired(in:fixture.directory)
             #expect(selected.source.id == "square")
-            #expect(selected.source.compatibility == .xt5)
+            #expect(selected.source.compatibility == .supported(model: "X-T5"))
             #expect(selected.raw.metadata.recordedGeometry == PixelSize(width:5000,height:5000))
             #expect(selected.raw.metadata.orientation == 6)
             #expect(await library.materialized == ["old","square"])

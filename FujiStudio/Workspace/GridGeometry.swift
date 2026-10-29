@@ -1,3 +1,4 @@
+import FujiCameraCore
 import UIKit
 
 struct GridMetrics: Equatable {

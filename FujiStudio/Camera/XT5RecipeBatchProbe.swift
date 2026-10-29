@@ -1,3 +1,4 @@
+import FujiCameraCore
 import Foundation
 
 struct XT5RecipeBatchEvidence: Sendable, Encodable {
@@ -71,19 +72,19 @@ actor XT5RecipeBatchProbe {
             // snapshots after equality checks, never from this preflight's generated candidates.
             for bank in referenceBanks { _ = try XT5FiniteRecipePatch.make(bank:bank,referenceBanks:referenceBanks,reference:reference) }
             guard referenceBanks.count == 7 else { throw XT5RecipeBatchIssue.invalidReference }
-            let info=try XT5RecipeCodec.deviceInfo(await send(0x1001,[],nil).data)
+            let info=try PTPDatasets.deviceInfo(await send(0x1001,[],nil).data)
             guard info.manufacturer == "FUJIFILM",info.model == "X-T5",info.firmware == "4.31" else { throw XT5RawBaselineIssue.unsupportedContext }
             guard [UInt16(0x1005),0x1007,0x1008,0x1009,0x100B,0x1015,0x1016,0x900C,0x900D].allSatisfy(info.operations.contains),
                   ([UInt16(0xD16E),0xD183,0xD185,0xD186,0xD187,0xD18C,0xD18D] + Array(0xD18E...0xD1A4)).allSatisfy(info.properties.contains) else { throw XT5RawBaselineIssue.missingCapability }
             guard try await send(0x1015,[0xD16E],nil).data == Data([6,0]) else { throw XT5RawBaselineIssue.unsupportedContext }
             for property:UInt32 in [0xD186,0xD187] {
-                guard try XT5RecipeCodec.value(await send(0x1015,[property],nil).data,type:0xffff).string == "X-T5_0200" else { throw XT5RawBaselineIssue.unsupportedContext }
+                guard try PTPDatasets.value(await send(0x1015,[property],nil).data,type:0xffff).string == "X-T5_0200" else { throw XT5RawBaselineIssue.unsupportedContext }
             }
             evidence.freshContextValidated=true
             await onUpdate(evidence)
             // Controlled ordering experiment: only known-J maintenance may precede bank equality.
             // This does not infer that deleting the visible output releases the opaque RAW buffer.
-            let handles=try XT5ConversionCodec.objectHandles(await send(0x1007,[UInt32.max,0,0],nil).data)
+            let handles=try FujiConversionCodec.objectHandles(await send(0x1007,[UInt32.max,0,0],nil).data)
             if handles.isEmpty { evidence.initialOutputAbsent=true }
             else {
                 let prior=evidence
@@ -211,7 +212,7 @@ enum XT5CreatedOutputProof {
         _ = try target.validateLocal(raw:raw)
         do {
             let jpeg=try bounded("quarantined-candidate.bin",directory:directory,maximum:PTPCodec.maximumDataBytes)
-            let observed=try XT5ConversionCodec.jpegObservation(jpeg,expected:raw.metadata)
+            let observed=try FujiConversionCodec.jpegObservation(jpeg,expected:raw.metadata)
             guard observed.modelMatches,observed.recordedGeometryMatches,observed.orientationMatches else { throw XT5ExactCleanupIssue.invalidPreservedProof }
         }
         return target

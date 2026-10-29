@@ -1,9 +1,31 @@
+@testable import FujiCameraCore
 import Foundation
 import ImageCaptureCore
 import Testing
 @testable import FujiStudio
 
 @MainActor struct ImageCaptureSessionDriverTests {
+    @Test func attachmentContinuitySurvivesCloseButNotRemovalWhileClosed() throws {
+        let browser=SessionTestBrowser(),callbacks=DriverCallbackQueue(),camera=SessionTestCamera()
+        browser.cachedDevices=[camera]
+        let driver=ImageCaptureSessionDriver(makeBrowser:{ browser },deliverCompletion:{ callbacks.enqueue($0) })
+        var connections:[CameraConnection]=[]
+        driver.start { if case .opened(let c)=$0 { connections.append(c) } }
+        camera.completeOpen(error:nil);callbacks.drain()
+        let first=try #require(connections.first?.attachmentIdentity)
+        driver.close {};callbacks.drain()
+        driver.start { if case .opened(let c)=$0 { connections.append(c) } }
+        camera.completeOpen(error:nil);callbacks.drain()
+        #expect(connections.last?.attachmentIdentity == first)
+        driver.close {};callbacks.drain()
+        browser.cachedDevices=[];driver.deviceBrowser(browser,didRemove:camera,moreGoing:false)
+        browser.cachedDevices=[camera];driver.deviceBrowser(browser,didAdd:camera,moreComing:false)
+        driver.start { if case .opened(let c)=$0 { connections.append(c) } }
+        camera.completeOpen(error:nil);callbacks.drain()
+        #expect(connections.count == 3)
+        #expect(connections.last?.attachmentIdentity != nil && connections.last?.attachmentIdentity != first)
+        driver.close {};callbacks.drain()
+    }
     @Test func ptpEventFromNativeOperationQueueIsIgnoredAcrossSessions() async throws {
         let browser = SessionTestBrowser(); let callbacks = DriverCallbackQueue(); let camera = SessionTestCamera()
         browser.cachedDevices = [camera]

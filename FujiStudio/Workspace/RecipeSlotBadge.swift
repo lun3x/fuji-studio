@@ -1,3 +1,4 @@
+import FujiCameraCore
 import SwiftUI
 
 /// The containing row supplies the slot in its accessibility label.

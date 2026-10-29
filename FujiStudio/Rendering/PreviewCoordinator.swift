@@ -1,3 +1,4 @@
+import FujiCameraCore
 import Foundation
 
 enum PreviewState: Sendable, Equatable {
@@ -87,6 +88,7 @@ actor PreviewCoordinator {
                         progress: { value in Task { await self.reportProgress(value, source: source, intent: intent, version: nil, request: workspaceRequest) } }) { raw in
                         try await self.requireCurrent(intent)
                         let context = try await self.camera.executionContext()
+                        guard raw.metadata.cameraModel == context.model else { throw ResourceError.incompatibleCamera(raw.metadata.cameraModel) }
                         if let request = workspaceRequest, request.cameraContext != context { throw CameraServiceError.unsupportedContext }
                         let key = RenderKey(sourceID: raw.sourceID, sourceRevision: raw.sourceRevision, sourceSHA256: raw.sha256,
                             settingsDigest: recipe.settingsDigest, cameraContext: context, width: raw.metadata.recordedGeometry.width,

@@ -1,3 +1,4 @@
+import FujiCameraCore
 import SwiftUI
 
 /// One persistent grid. Header drags and pulls past the grid's top share the same drawer motion.

@@ -1,3 +1,4 @@
+import FujiCameraCore
 import Foundation
 
 /// The caller owns and pins jpeg.fileURL until the actual Photos transaction completes.

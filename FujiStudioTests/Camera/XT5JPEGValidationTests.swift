@@ -1,3 +1,4 @@
+@testable import FujiCameraCore
 import Foundation
 import Testing
 
@@ -9,7 +10,7 @@ struct XT5JPEGValidationTests {
     for value:UInt32 in [0,1] {
       let f=JPEGQualityFixture(lensOptimizer:value)
       #expect(try FujiJPEGMetadataReader.read(f.jpeg).lensOptimizer == (value == 1))
-      let observed=try XT5ConversionCodec.validateFullSizeFineJPEG(f.inject(into:ObjectObservationFixture.jpeg()),expected:ObjectObservationFixture.metadata)
+      let observed=try FujiConversionCodec.validateFullSizeFineJPEG(f.inject(into:ObjectObservationFixture.jpeg()),expected:ObjectObservationFixture.metadata)
       #expect(observed.lensOptimizer == (value == 1))
     }
     let f=JPEGQualityFixture(lensOptimizer:1)
@@ -102,25 +103,25 @@ struct XT5JPEGValidationTests {
     let image = try ObjectObservationFixture.jpeg()
     let data = JPEGQualityFixture().inject(into: image)
     let before = data
-    let metadata = try XT5ConversionCodec.validateFullSizeFineJPEG(
+    let metadata = try FujiConversionCodec.validateFullSizeFineJPEG(
       data, expected: ObjectObservationFixture.metadata)
     #expect(metadata.width == 4 && metadata.height == 6 && metadata.orientation == 8)
     #expect(metadata.quality == .fine && metadata.make == "FUJIFILM" && metadata.model == "X-T5")
     #expect(data == before)
     #expect(
-      try XT5ConversionCodec.jpegObservation(data, expected: ObjectObservationFixture.metadata)
+      try FujiConversionCodec.jpegObservation(data, expected: ObjectObservationFixture.metadata)
         .fineQualityValidated == false)
     for f in [
       JPEGQualityFixture(quality: "NORMAL "), JPEGQualityFixture(make: "OTHER"),
       JPEGQualityFixture(model: "X-T4"), JPEGQualityFixture(orientation: 1),
     ] {
       #expect(throws: FujiJPEGValidationError.self) {
-        try XT5ConversionCodec.validateFullSizeFineJPEG(
+        try FujiConversionCodec.validateFullSizeFineJPEG(
           f.inject(into: image), expected: ObjectObservationFixture.metadata)
       }
     }
     #expect(throws: FujiJPEGValidationError.notFine) {
-      try XT5ConversionCodec.validateFullSizeFineJPEG(
+      try FujiConversionCodec.validateFullSizeFineJPEG(
         JPEGQualityFixture(quality: "NORMAL ").inject(into: image),
         expected: ObjectObservationFixture.metadata)
     }
@@ -129,7 +130,7 @@ struct XT5JPEGValidationTests {
       recordedGeometry: .init(width: 5, height: 6), recordedAspect: .init(width: 5, height: 6),
       cropTop: 0, cropLeft: 0, orientation: 8)
     #expect(throws: FujiJPEGValidationError.self) {
-      try XT5ConversionCodec.validateFullSizeFineJPEG(data, expected: wrong)
+      try FujiConversionCodec.validateFullSizeFineJPEG(data, expected: wrong)
     }
   }
 }

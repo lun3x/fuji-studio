@@ -1,3 +1,4 @@
+import FujiCameraCore
 import Foundation
 import CryptoKit
 
@@ -63,9 +64,9 @@ actor XT5ProtocolProbe {
         try await gate.withExclusiveAccess { try await self.readExclusively(onUpdate: onUpdate) }
     }
     private func deviceEvidence(requiring operations: [UInt16]) async throws -> XT5ProtocolEvidence {
-        let info = try XT5RecipeCodec.deviceInfo(await read(0x1001))
-        guard info.manufacturer == "FUJIFILM", info.model == "X-T5" else { throw XT5ProtocolError.unsupportedCamera }
-        guard operations.allSatisfy(info.operations.contains) else { throw XT5ProtocolError.missingReadOperations }
+        let info = try PTPDatasets.deviceInfo(await read(0x1001))
+        guard info.manufacturer == "FUJIFILM", info.model == "X-T5" else { throw PTPDatasetError.unsupportedCamera }
+        guard operations.allSatisfy(info.operations.contains) else { throw PTPDatasetError.missingReadOperations }
         let firmware = info.firmware.range(of: "^[0-9]{1,4}(\\.[0-9]{1,4}){1,3}$", options: .regularExpression) != nil ? info.firmware : "unrecognized (redacted)"
         return XT5ProtocolEvidence(observedAt: Date(), model: "X-T5", firmware: firmware,
                                          standardVersion: info.standardVersion, vendorExtensionID: info.vendorExtensionID,
@@ -84,7 +85,7 @@ actor XT5ProtocolProbe {
             do {
                 let bytes = try await read(0x1014, property: code)
                 observation.descriptorBytes = bytes.count
-                let descriptor = try XT5RecipeCodec.propertyDescriptor(bytes, expectedCode: code)
+                let descriptor = try PTPDatasets.propertyDescriptor(bytes, expectedCode: code)
                 observation.dataType = Self.hex(descriptor.dataType)
                 observation.writable = descriptor.writable
                 // Opaque D185 and all string/name values are omitted, even if malformed camera
@@ -101,7 +102,7 @@ actor XT5ProtocolProbe {
                     if numeric { observation.allowedValues = values.map { Self.hexBytes($0.raw) } }
                 }
                 if code == 0xD16E || code == 0xD186 || code == 0xD187 {
-                    let value = try XT5RecipeCodec.value(await read(0x1015, property: code), type: descriptor.dataType)
+                    let value = try PTPDatasets.value(await read(0x1015, property: code), type: descriptor.dataType)
                     if code == 0xD16E, [2,4,6,8].contains(descriptor.dataType) {
                         report.usbMode = value.unsignedInteger
                         observation.value = Self.hexBytes(value.raw)
@@ -110,7 +111,7 @@ actor XT5ProtocolProbe {
                         observation.value = text
                     } else { observation.value = "unsupported representation (redacted)" }
                 }
-            } catch let error as XT5ProtocolError {
+            } catch let error as PTPDatasetError {
                 observation.outcome = Self.safeError(error)
             } catch PTPError.responseCode(let response) {
                 observation.outcome = "PTP response \(Self.hex(response))"
@@ -143,14 +144,14 @@ actor XT5ProtocolProbe {
             do {
                 let bytes = try await read(0x1015, property: code)
                 observation.valueBytes = bytes.count
-                guard bytes.count <= 512 else { throw XT5ProtocolError.oversized }
+                guard bytes.count <= 512 else { throw PTPDatasetError.oversized }
                 try Self.observeDirectValue(bytes, code: code, observation: &observation)
                 if code == 0xD16E { report.candidateUSBMode = observation.candidateUnsigned }
                 if code == 0xD18C, let selector = observation.candidateUnsigned, (1...7).contains(selector) {
                     if selectorReads == 1 { report.selectorBefore = selector }
                     else { report.selectorAfter = selector }
                 }
-            } catch let error as XT5ProtocolError {
+            } catch let error as PTPDatasetError {
                 observation.outcome = Self.safeError(error)
             } catch PTPError.responseCode(let response) {
                 observation.outcome = "PTP response \(Self.hex(response))"
@@ -167,7 +168,7 @@ actor XT5ProtocolProbe {
     private static func observeDirectValue(_ bytes: Data, code: UInt16, observation: inout XT5ProtocolEvidence.Property) throws {
         if [0xD186, 0xD187, 0xD18D].contains(code) {
             observation.documentedEncoding = "PTP UTF16LE string (candidate; pinned protocol references)"
-            let text = try XT5RecipeCodec.value(bytes, type: 0xffff).string!
+            let text = try PTPDatasets.value(bytes, type: 0xffff).string!
             observation.stringUTF16Units = text.utf16.count
             // Never serialize a bank name or arbitrary capability string, including malformed bytes.
             if code != 0xD18D, text.range(of: "^X-T5_[0-9]{4}$", options: .regularExpression) != nil {
@@ -182,7 +183,7 @@ actor XT5ProtocolProbe {
                 return
             }
             observation.rawValueHex = hexBytes(bytes)
-            observation.candidateUnsigned = XT5PropertyValue(raw: bytes, string: nil).unsignedInteger
+            observation.candidateUnsigned = PTPPropertyValue(raw: bytes, string: nil).unsignedInteger
             return
         }
         let signed: Set<UInt16> = [0xD193,0xD194,0xD19A,0xD19B,0xD19D,0xD19E,0xD19F,0xD1A0,0xD1A2]
@@ -210,7 +211,7 @@ actor XT5ProtocolProbe {
     private static func hex(_ value: UInt16) -> String { String(format: "0x%04X", value) }
     private static func hexBytes(_ data: Data) -> String { data.map { String(format: "%02X", $0) }.joined() }
     static func safeError(_ error: any Error) -> String {
-        if let error = error as? XT5ProtocolError { return String(describing: error) }
+        if let error = error as? PTPDatasetError { return String(describing: error) }
         if let error = error as? PTPError {
             switch error {
             case .responseCode(let code): return "PTP response \(hex(code))"
@@ -227,237 +228,6 @@ actor XT5ProtocolProbe {
 }
 
 // MARK: - Controlled seven-bank import; conversion remains unsupported
-
-enum XT5BankImportIssue: Error, Sendable, Equatable {
-    case sessionChanged, unsupportedContext, missingProperties, invalidSelector
-    case selectorMismatch, bankChanged(Int), originalBankChanged, restorationTimeout
-}
-
-enum XT5SelectorRestoration: String, Sendable, Codable { case notNeeded, pending, verified, unconfirmed }
-
-struct XT5BankImportEvidence: Sendable, Encodable {
-    struct CommandFailure: Sendable, Encodable {
-        let stage: String
-        let opcode: String
-        let property: String?
-        let responseCode: String?
-    }
-    struct Comparison: Sendable, Encodable {
-        let slot: Int
-        let namesMatch: Bool
-        let settingsMatch: Bool
-    }
-    let schemaVersion = 1
-    let observedAt = Date()
-    var model: String?
-    var firmware: String?
-    var capability: String?
-    var originalSelector: Int?
-    var restoredSelector: Int?
-    var beforeSlots: [Int] = []
-    var afterSlots: [Int] = []
-    var comparisons: [Comparison] = []
-    var restoration: XT5SelectorRestoration = .notNeeded
-    var failure: String?
-    var restorationFailure: String?
-    var firstFailedCommand: CommandFailure?
-    var complete = false
-    let conversionValidated = false
-    let settingsPerBank = 23
-    // No names, identifiers, hashes, or raw property values in public evidence.
-}
-
-struct XT5BankImportUpdate: Sendable {
-    let evidence: XT5BankImportEvidence
-    let snapshots: [RecipeSnapshot]
-    let verificationSnapshots: [RecipeSnapshot]
-}
-
-struct XT5BankImportResult: Sendable {
-    let evidence: XT5BankImportEvidence
-    let recipes: [RecipeSnapshot]
-}
-
-struct XT5BankImportFailure: Error, Sendable {
-    let evidence: XT5BankImportEvidence
-}
-
-/// Restricted to the actually observed X-T5 4.31 / _0200 protocol context. This importer owns no
-/// connection/retry policy. The required validator binds every command to the original live session.
-actor XT5BankImporter {
-    private let transport: any PTPTransport
-    private let sessionGeneration: UInt64
-    private let sessionIdentity = UUID()
-    private let validateSession: @Sendable () async throws -> Void
-    private let settle: @Sendable (Duration) async throws -> Void
-    private let cleanupTimeout: Duration
-    private let gate: SerialCameraGate
-    private var transaction: UInt32 = 1
-    private var commandStage = "preflight"
-    private var firstFailedCommand: XT5BankImportEvidence.CommandFailure?
-
-    init(transport: any PTPTransport, sessionGeneration: UInt64,
-         validateSession: @escaping @Sendable () async throws -> Void,
-         settle: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
-         cleanupTimeout: Duration = .seconds(10),
-         gate: SerialCameraGate = SerialCameraGate()) {
-        self.transport = transport; self.sessionGeneration = sessionGeneration
-        self.validateSession = validateSession; self.settle = settle; self.gate = gate
-        self.cleanupTimeout = cleanupTimeout
-    }
-
-    func importRecipesVerified(onUpdate: @escaping @Sendable (XT5BankImportUpdate) async -> Void = { _ in }) async throws -> XT5BankImportResult {
-        try await gate.withExclusiveAccess { try await self.importExclusively(onUpdate: onUpdate) }
-    }
-
-    private func importExclusively(onUpdate: @Sendable (XT5BankImportUpdate) async -> Void) async throws -> XT5BankImportResult {
-        commandStage = "preflight"; firstFailedCommand = nil
-        var evidence = XT5BankImportEvidence()
-        var snapshots: [RecipeSnapshot] = []
-        var verificationSnapshots: [RecipeSnapshot] = []
-        var initial: RecipeSnapshot?
-        var context: RecipeCameraContext?
-        var selectorAttempted = false
-        await onUpdate(XT5BankImportUpdate(evidence: evidence, snapshots: snapshots, verificationSnapshots: verificationSnapshots))
-        do {
-            let info = try XT5RecipeCodec.deviceInfo(await send(0x1001))
-            guard info.manufacturer == "FUJIFILM", info.model == "X-T5", info.firmware == "4.31" else { throw XT5BankImportIssue.unsupportedContext }
-            let properties: [UInt16] = [0xD16E,0xD186,0xD187,0xD18C,0xD18D] + Array(0xD18E...0xD1A4)
-            guard [UInt16(0x1015),0x1016].allSatisfy(info.operations.contains), properties.allSatisfy(info.properties.contains) else { throw XT5BankImportIssue.missingProperties }
-            guard try await send(0x1015, property: 0xD16E) == Data([6,0]) else { throw XT5BankImportIssue.unsupportedContext }
-            for code: UInt16 in [0xD186,0xD187] {
-                let key = try XT5RecipeCodec.value(await send(0x1015, property: code), type: 0xffff).string
-                guard key == "X-T5_0200" else { throw XT5BankImportIssue.unsupportedContext }
-            }
-            commandStage = "initial selector"
-            let current = try await selectedSlot()
-            let camera = RecipeCameraContext(model: "X-T5", firmware: "4.31", capability: "X-T5_0200", sessionIdentity: sessionIdentity, sessionGeneration: sessionGeneration)
-            context = camera
-            evidence.model = camera.model; evidence.firmware = camera.firmware; evidence.capability = camera.capability
-            evidence.originalSelector = current
-            commandStage = "initial bank"
-            initial = try await readBank(current, context: camera)
-            for pass in 1...2 {
-                for slot in 1...7 {
-                    try Task.checkCancellation()
-                    selectorAttempted = true // A failed reply cannot prove that a write had no effect.
-                    evidence.restoration = .pending
-                    commandStage = "scan \(pass) C\(slot)"
-                    try await select(slot)
-                    let bank = try await readBank(slot, context: camera)
-                    if pass == 1 {
-                        snapshots.append(bank); evidence.beforeSlots.append(slot)
-                        if slot == current, let initial, !sameContents(initial, bank) { throw XT5BankImportIssue.bankChanged(slot) }
-                    } else {
-                        verificationSnapshots.append(bank)
-                        let before = snapshots[slot - 1]
-                        let comparison = XT5BankImportEvidence.Comparison(slot: slot, namesMatch: before.importedName == bank.importedName,
-                                                                          settingsMatch: before.importedSettings == bank.importedSettings)
-                        evidence.afterSlots.append(slot); evidence.comparisons.append(comparison)
-                        guard comparison.namesMatch && comparison.settingsMatch else { throw XT5BankImportIssue.bankChanged(slot) }
-                    }
-                    await onUpdate(XT5BankImportUpdate(evidence: evidence, snapshots: snapshots, verificationSnapshots: verificationSnapshots))
-                }
-            }
-            try Task.checkCancellation()
-        } catch { evidence.failure = Self.safeFailure(error) }
-
-        if selectorAttempted, let initial, let context {
-            // A cancelled parent cannot cancel this one bounded cleanup attempt. The operation gate
-            // is held until cleanup returns. No reconnect; validator rejects a different/closed run.
-            let cleanup = Task.detached { try await self.restoreBounded(initial, context: context) }
-            do {
-                try await cleanup.value
-                evidence.restoration = .verified; evidence.restoredSelector = initial.slot
-            } catch {
-                evidence.restoration = .unconfirmed; evidence.restorationFailure = Self.safeFailure(error)
-            }
-        }
-        if evidence.failure == nil && Task.isCancelled { evidence.failure = "cancelled" }
-        evidence.firstFailedCommand = firstFailedCommand
-        evidence.complete = evidence.failure == nil && evidence.restoration == .verified && evidence.comparisons.count == 7
-        await onUpdate(XT5BankImportUpdate(evidence: evidence, snapshots: snapshots, verificationSnapshots: verificationSnapshots))
-        guard evidence.complete else { throw XT5BankImportFailure(evidence: evidence) }
-        return XT5BankImportResult(evidence: evidence, recipes: snapshots)
-    }
-
-    private func restoreBounded(_ initial: RecipeSnapshot, context: RecipeCameraContext) async throws {
-        commandStage = "restoration"
-        try await withThrowingTaskGroup(of: Void.self) { group in
-            group.addTask {
-                try await self.select(initial.slot)
-                let restored = try await self.readBank(initial.slot, context: context)
-                guard self.sameContents(initial, restored) else { throw XT5BankImportIssue.originalBankChanged }
-            }
-            group.addTask {
-                try await Task.sleep(for: self.cleanupTimeout)
-                throw XT5BankImportIssue.restorationTimeout
-            }
-            defer { group.cancelAll() }
-            try await group.next()
-        }
-    }
-    private func select(_ slot: Int) async throws {
-        guard (1...7).contains(slot) else { throw XT5BankImportIssue.invalidSelector }
-        _ = try await send(0x1016, property: 0xD18C, data: Data([UInt8(slot),0]), stage: "\(commandStage) selector write")
-        try await settle(.milliseconds(100))
-        guard try await selectedSlot(stage: "\(commandStage) selector readback") == slot else { throw XT5BankImportIssue.selectorMismatch }
-    }
-    private func selectedSlot(stage: String? = nil) async throws -> Int {
-        let bytes = try await send(0x1015, property: 0xD18C, stage: stage)
-        guard bytes.count == 2, bytes[bytes.startIndex + 1] == 0, (1...7).contains(bytes[bytes.startIndex]) else { throw XT5BankImportIssue.invalidSelector }
-        return Int(bytes[bytes.startIndex])
-    }
-    private func readBank(_ slot: Int, context: RecipeCameraContext) async throws -> RecipeSnapshot {
-        let name = try await send(0x1015, property: 0xD18D)
-        guard name.count <= 511 else { throw XT5ProtocolError.oversized }
-        var properties: [UInt16:Data] = [:]
-        for code in UInt16(0xD18E)...0xD1A4 {
-            let bytes = try await send(0x1015, property: code)
-            guard bytes.count == 2 else { throw RecipeImportError.malformedProperty(code) }
-            properties[code] = bytes
-        }
-        guard try await selectedSlot(stage: "\(commandStage) bank selector guard") == slot else { throw XT5BankImportIssue.selectorMismatch }
-        return try XT5RecipeCodec.recipe(slot: slot, nameData: name, properties: properties, context: context, importedAt: Date())
-    }
-    private nonisolated func sameContents(_ a: RecipeSnapshot, _ b: RecipeSnapshot) -> Bool {
-        a.importedName == b.importedName && a.importedSettings == b.importedSettings
-    }
-    private func send(_ opcode: UInt16, property: UInt16? = nil, data: Data? = nil, stage: String? = nil) async throws -> Data {
-        try Task.checkCancellation(); try await validateSession(); try Task.checkCancellation()
-        guard transaction < UInt32.max else { throw PTPError.invalidParameters }
-        let id = transaction; transaction += 1
-        let reply: PTPReply
-        do {
-            reply = try await transport.execute(PTPCommand(opcode: opcode, parameters: property.map { [UInt32($0)] } ?? [], transactionID: id), data: data)
-        } catch {
-            // Capture once: restoration may fail differently but must not overwrite the command
-            // that first failed. No payload, bank name, object handle or private value is retained.
-            if firstFailedCommand == nil {
-                var responseCode: String?
-                if let ptp = error as? PTPError, case .responseCode(let code) = ptp { responseCode = String(format: "0x%04X", code) }
-                firstFailedCommand = .init(stage: stage ?? commandStage, opcode: String(format: "0x%04X", opcode),
-                    property: property.map { String(format: "0x%04X", $0) }, responseCode: responseCode)
-            }
-            throw error
-        }
-
-        try await validateSession()
-        return reply.data
-    }
-    static func safeFailure(_ error: any Error) -> String {
-        if let issue = error as? XT5BankImportIssue { return String(describing: issue) }
-        if let issue = error as? RecipeImportError {
-            switch issue {
-            case .invalidSlot: return "invalid slot"
-            case .incompletePropertyBlock: return "incomplete property block"
-            case .malformedProperty(let code): return String(format: "malformed property 0x%04X", code)
-            case .unsupportedRendering: return "unsupported rendering"
-            }
-        }
-        return XT5ProtocolProbe.safeError(error)
-    }
-}
 
 // MARK: - Authorized transient RAW upload / opaque baseline observation only
 
@@ -564,13 +334,13 @@ actor XT5RawBaselineProbe {
         do {
             _ = try target.validateLocal(raw: raw)
             guard raw.metadata.cameraModel == "X-T5" else { throw XT5RawBaselineIssue.unsupportedContext }
-            let info = try XT5RecipeCodec.deviceInfo(await send(0x1001).data)
+            let info = try PTPDatasets.deviceInfo(await send(0x1001).data)
             guard info.manufacturer == "FUJIFILM", info.model == "X-T5", info.firmware == "4.31" else { throw XT5RawBaselineIssue.unsupportedContext }
             guard [UInt16(0x1005),0x1007,0x1008,0x1009,0x100B,0x1015,0x1016,0x900C,0x900D].allSatisfy(info.operations.contains),
                   [UInt16(0xD16E),0xD183,0xD185,0xD186,0xD187].allSatisfy(info.properties.contains) else { throw XT5RawBaselineIssue.missingCapability }
             guard try await send(0x1015, parameters: [0xD16E]).data == Data([6,0]) else { throw XT5RawBaselineIssue.unsupportedContext }
             for code: UInt32 in [0xD186,0xD187] {
-                guard try XT5RecipeCodec.value(await send(0x1015, parameters: [code]).data, type: 0xffff).string == "X-T5_0200" else { throw XT5RawBaselineIssue.unsupportedContext }
+                guard try PTPDatasets.value(await send(0x1015, parameters: [code]).data, type: 0xffff).string == "X-T5_0200" else { throw XT5RawBaselineIssue.unsupportedContext }
             }
             evidence.model = "X-T5"; evidence.firmware = "4.31"; evidence.capability = "X-T5_0200"
             let beforeCleanup = evidence
@@ -607,13 +377,13 @@ actor XT5RawBaselineProbe {
         do {
             guard raw.metadata.cameraModel == "X-T5" else { throw XT5RawBaselineIssue.unsupportedContext }
             guard try ResourceChecksum.sha256(raw.fileURL) == raw.sha256 else { throw ResourceError.checksumMismatch }
-            let info = try XT5RecipeCodec.deviceInfo(await send(0x1001).data)
+            let info = try PTPDatasets.deviceInfo(await send(0x1001).data)
             guard info.manufacturer == "FUJIFILM", info.model == "X-T5", info.firmware == "4.31" else { throw XT5RawBaselineIssue.unsupportedContext }
             guard [UInt16(0x1007),0x1008,0x1009,0x1015].allSatisfy(info.operations.contains),
                   [UInt16(0xD16E),0xD186,0xD187].allSatisfy(info.properties.contains) else { throw XT5RawBaselineIssue.missingCapability }
             guard try await send(0x1015, parameters: [0xD16E]).data == Data([6,0]) else { throw XT5RawBaselineIssue.unsupportedContext }
             for code: UInt32 in [0xD186,0xD187] {
-                guard try XT5RecipeCodec.value(await send(0x1015, parameters: [code]).data, type: 0xffff).string == "X-T5_0200" else { throw XT5RawBaselineIssue.unsupportedContext }
+                guard try PTPDatasets.value(await send(0x1015, parameters: [code]).data, type: 0xffff).string == "X-T5_0200" else { throw XT5RawBaselineIssue.unsupportedContext }
             }
             evidence.model = "X-T5"; evidence.firmware = "4.31"; evidence.capability = "X-T5_0200"
             evidence.width = raw.metadata.recordedGeometry.width; evidence.height = raw.metadata.recordedGeometry.height; evidence.orientation = raw.metadata.orientation
@@ -653,7 +423,7 @@ actor XT5RawBaselineProbe {
             try filmReference?.validate(raw: raw)
             if let batchPatch, batchPatch.sourceSHA256 != raw.sha256 { throw XT5RecipeBatchIssue.invalidReference }
             guard raw.metadata.cameraModel == "X-T5" else { throw XT5RawBaselineIssue.unsupportedContext }
-            let info = try XT5RecipeCodec.deviceInfo(await send(0x1001).data)
+            let info = try PTPDatasets.deviceInfo(await send(0x1001).data)
             guard info.manufacturer == "FUJIFILM", info.model == "X-T5", info.firmware == "4.31" else { throw XT5RawBaselineIssue.unsupportedContext }
             guard [UInt16(0x1015),0x1007,0x900C,0x900D].allSatisfy(info.operations.contains),
                   [UInt16(0xD16E),0xD185,0xD186,0xD187].allSatisfy(info.properties.contains) else { throw XT5RawBaselineIssue.missingCapability }
@@ -663,7 +433,7 @@ actor XT5RawBaselineProbe {
             }
             guard try await send(0x1015, parameters: [0xD16E]).data == Data([6,0]) else { throw XT5RawBaselineIssue.unsupportedContext }
             for code: UInt32 in [0xD186,0xD187] {
-                guard try XT5RecipeCodec.value(await send(0x1015, parameters: [code]).data, type: 0xffff).string == "X-T5_0200" else { throw XT5RawBaselineIssue.unsupportedContext }
+                guard try PTPDatasets.value(await send(0x1015, parameters: [code]).data, type: 0xffff).string == "X-T5_0200" else { throw XT5RawBaselineIssue.unsupportedContext }
             }
             evidence.model = "X-T5"; evidence.firmware = "4.31"; evidence.capability = "X-T5_0200"
             evidence.width = raw.metadata.recordedGeometry.width; evidence.height = raw.metadata.recordedGeometry.height; evidence.orientation = raw.metadata.orientation
@@ -679,13 +449,13 @@ actor XT5RawBaselineProbe {
             // download and no second upload payload can coexist with this data phase.
             do {
                 let size = try raw.fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-                _ = try XT5ConversionCodec.uploadInfo(byteCount: size)
+                _ = try FujiConversionCodec.uploadInfo(byteCount: size)
                 let payload = try Data(contentsOf: raw.fileURL, options: .mappedIfSafe)
                 guard payload.count == size else { throw ResourceError.checksumMismatch }
                 let hash = SHA256.hash(data: payload).map { String(format: "%02x", $0) }.joined()
                 guard hash == raw.sha256 else { throw ResourceError.checksumMismatch }
                 evidence.rawBytes = payload.count
-                let objectInfo = try XT5ConversionCodec.uploadInfo(byteCount: payload.count)
+                let objectInfo = try FujiConversionCodec.uploadInfo(byteCount: payload.count)
                 uploadAttempted = true
                 let infoReply = try await send(0x900C, parameters: [0,0,0], data: objectInfo)
                 manifest.uploadInfoResponseParameters = infoReply.parameters; evidence.uploadInfoSucceeded = true
@@ -707,7 +477,7 @@ actor XT5RawBaselineProbe {
                 _ = try await send(0x1016, parameters: [0xD185], data: batchPatch.bytes)
                 evidence.batchProfileWriteAccepted = true; await onUpdate(evidence)
                 let readback = try await send(0x1015, parameters: [0xD185]).data
-                guard readback.count <= 65_536 else { throw XT5ProtocolError.oversized }
+                guard readback.count <= 65_536 else { throw PTPDatasetError.oversized }
                 try privateWrite(readback, to: directory.appendingPathComponent("recipe-readback.bin"))
                 guard readback == batchPatch.bytes else { throw XT5RecipeBatchIssue.readbackMismatch }
                 evidence.batchProfileReadbackMatches = true; await onUpdate(evidence)
@@ -785,7 +555,7 @@ actor XT5RawBaselineProbe {
     private func enumerate(directory: URL, phase: String) async throws -> [UInt32] {
         let bytes = try await send(0x1007, parameters: [UInt32.max,0,0]).data
         if bytes.count <= 65_536 { try privateWrite(bytes, to: directory.appendingPathComponent("handles-\(phase).bin")) }
-        return try XT5ConversionCodec.objectHandles(bytes)
+        return try FujiConversionCodec.objectHandles(bytes)
     }
     private func observeObjects(_ handles: [UInt32], phase: String, allowed: Bool, directory: URL,
                                 manifest: inout Manifest, evidence: inout XT5RawBaselineEvidence) async throws {
@@ -793,7 +563,7 @@ actor XT5RawBaselineProbe {
         for (index, handle) in handles.prefix(8).enumerated() {
             do {
                 let bytes = try await send(0x1008, parameters: [handle]).data
-                guard bytes.count <= 4096 else { throw XT5ProtocolError.oversized }
+                guard bytes.count <= 4096 else { throw PTPDatasetError.oversized }
                 let file = "object-\(phase)-\(index).bin"
                 try privateWrite(bytes, to: directory.appendingPathComponent(file))
                 manifest.objects.append(.init(handle: handle, phase: phase, byteCount: bytes.count, file: file, failure: nil))
@@ -853,7 +623,7 @@ struct XT5UnchangedConversionObservation: Sendable, Encodable {
     var downloadedBytes: Int?
     var storageType: UInt16?
     var storageObservation = "not attempted"
-    var jpeg: XT5JPEGObservation?
+    var jpeg: JPEGObservation?
     var jpegRetained = false
     var quarantineRequested = false
     var quarantineCaptured = false
@@ -879,8 +649,8 @@ private actor XT5UnchangedConversionProbe {
         var privateQuarantine = false
         var handleViews: [[UInt32]] = []
         var candidateHandle: UInt32?
-        var object: XT5ObjectInfo?
-        var storage: XT5StorageInfo?
+        var object: PTPObjectInfo?
+        var storage: PTPStorageInfo?
         var outputSHA256: String?
     }
     init(send: @escaping Send, pollWait: @escaping @Sendable () async throws -> Void) { self.send = send; self.pollWait = pollWait }
@@ -945,7 +715,7 @@ private actor XT5UnchangedConversionProbe {
         manifest.candidateHandle = selected
         let bytes = try await send(0x1008, [selected], nil).data
         try write(bytes, name: "output-object-info.bin", directory: directory, maximum: 4096)
-        let info = try XT5ConversionCodec.objectInfo(bytes)
+        let info = try FujiConversionCodec.objectInfo(bytes)
         manifest.object = info
         observation.objectBytes = info.byteCount; observation.objectWidth = info.width; observation.objectHeight = info.height
         observation.objectAssociationType = info.associationType
@@ -954,7 +724,7 @@ private actor XT5UnchangedConversionProbe {
             do {
                 let storage = try await send(0x1005, [info.storageID], nil).data
                 try write(storage, name: "output-storage-info.bin", directory: directory, maximum: 4096)
-                let decoded = try XT5ConversionCodec.storageInfo(storage)
+                let decoded = try FujiConversionCodec.storageInfo(storage)
                 manifest.storage = decoded; observation.storageType = decoded.storageType; observation.storageObservation = "decoded; ownership unconfirmed"
             } catch PTPError.responseCode(let code) { observation.storageObservation = String(format: "PTP response 0x%04X; ownership unconfirmed", code) }
         } else { observation.storageObservation = "not advertised; ownership unconfirmed" }
@@ -986,7 +756,7 @@ private actor XT5UnchangedConversionProbe {
             observation.quarantineCaptured = true; observation.captureOutcome = "privateQuarantine"
             await onUpdate(observation)
         }
-        let decoded = try XT5ConversionCodec.jpegObservation(jpeg, expected: raw.metadata)
+        let decoded = try FujiConversionCodec.jpegObservation(jpeg, expected: raw.metadata)
         observation.jpeg = decoded
         guard decoded.modelMatches, decoded.recordedGeometryMatches, decoded.orientationMatches else { throw XT5ConversionProbeIssue.unexpectedJPEGContext }
         try Task.checkCancellation()
@@ -995,13 +765,13 @@ private actor XT5UnchangedConversionProbe {
         observation.jpegRetained = true
         observation.captureOutcome = "validatedDiagnosticCandidate"
     }
-    private func handles() async throws -> [UInt32] { try XT5ConversionCodec.objectHandles(await send(0x1007, [UInt32.max,0,0], nil).data) }
+    private func handles() async throws -> [UInt32] { try FujiConversionCodec.objectHandles(await send(0x1007, [UInt32.max,0,0], nil).data) }
     private func persist(_ manifest: Manifest, directory: URL) throws {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted,.sortedKeys]
         try write(encoder.encode(manifest), name: "conversion-manifest.json", directory: directory, maximum: 1_048_576)
     }
     private func write(_ data: Data, name: String, directory: URL, maximum: Int) throws {
-        guard data.count <= maximum else { throw XT5ProtocolError.oversized }
+        guard data.count <= maximum else { throw PTPDatasetError.oversized }
         do { try data.write(to: directory.appendingPathComponent(name), options: [.atomic,.completeFileProtection]) }
         catch { throw XT5RawBaselineIssue.artifactWriteFailed }
     }

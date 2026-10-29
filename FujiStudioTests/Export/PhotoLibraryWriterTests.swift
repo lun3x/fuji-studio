@@ -1,3 +1,4 @@
+@testable import FujiCameraCore
 import CryptoKit
 import Foundation
 import Photos
@@ -307,7 +308,7 @@ private struct WriterFixture: Sendable {
         let camera = CameraExecutionContext(model: "X-T5", firmware: "synthetic", capability: "synthetic", supportVersion: "synthetic", sessionIdentity: UUID(), generation: 1)
         let key = RenderKey(sourceID: "synthetic-source", sourceRevision: "revision", sourceSHA256: "synthetic-raw", settingsDigest: "synthetic-settings", cameraContext: camera, width: 7728, height: 5152, orientation: 8, policy: .fullSizeFineRecordedGeometry, quality: .fullResolutionFine)
         jpeg = CameraJPEG(fileURL: url, sourceID: key.sourceID, sourceRevision: key.sourceRevision, sourceSHA256: key.sourceSHA256, recipeSnapshotID: profile.bank.id, settingsDigest: key.settingsDigest, cameraContext: camera, operationID: UUID(), width: key.width, height: key.height, orientation: key.orientation, quality: key.quality,
-            effectiveRecipe: .init(supportVersion: "synthetic", requested: try profile.bank.normalizedSettings, dormantGrainSizeNotSerialized: false, inactiveKelvinPreserved: false, lensOptimizerRequested: true, lensOptimizerEffective: false, lensOptimizerAdjusted: true, evidence: "synthetic"), baselineSHA256: "synthetic-baseline", candidateSHA256: "synthetic-candidate", outputSHA256: "synthetic-output", key: key)
+            effectiveRecipe: .init(supportVersion: "synthetic", requested: try profile.bank.settings(using: RecipeCodecRegistry()), dormantGrainSizeNotSerialized: false, inactiveKelvinPreserved: false, lensOptimizerRequested: true, lensOptimizerEffective: false, lensOptimizerAdjusted: true, evidence: "synthetic"), baselineSHA256: "synthetic-baseline", candidateSHA256: "synthetic-candidate", outputSHA256: "synthetic-output", key: key)
     }
     func request(metadata: Bool = true) -> PhotoSaveRequest {
         .init(jpeg: jpeg, operationID: operationID, captureDate: metadata ? date : nil, location: metadata ? location : nil)

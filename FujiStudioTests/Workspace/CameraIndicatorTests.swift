@@ -1,3 +1,4 @@
+@testable import FujiCameraCore
 import Testing
 @testable import FujiStudio
 
@@ -11,10 +12,15 @@ struct CameraIndicatorTests {
         #expect(CameraIndicatorState(camera: camera, refreshingRecipes: false) == .ready)
     }
 
-    @Test(arguments: [CameraState.disconnected, .discovering, .opening, .sessionOpen(indicatorSession),
+    @Test(arguments: [CameraState.disconnected,
         .authorizationRequired, .authorizationDenied, .wrongMode("USB mode"), .recoverableError(.notConnected)])
     func unavailableCameraOverridesAnUnfinishedRecipeImport(_ camera: CameraState) {
         #expect(CameraIndicatorState(camera: camera, refreshingRecipes: true) == .disconnected)
         #expect(CameraIndicatorState(camera: camera, refreshingRecipes: false) == .disconnected)
+    }
+    @Test(arguments:[CameraState.opening,.discovering,.sessionOpen(indicatorSession)])
+    func ownedReopenStaysPreparingWhileImportOwnsSession(_ camera:CameraState) {
+        #expect(CameraIndicatorState(camera:camera,refreshingRecipes:true) == .preparing)
+        #expect(CameraIndicatorState(camera:camera,refreshingRecipes:false) == .disconnected)
     }
 }

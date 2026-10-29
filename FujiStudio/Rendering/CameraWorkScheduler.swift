@@ -1,3 +1,4 @@
+import FujiCameraCore
 import Foundation
 
 enum CameraSchedulingError: Error, Sendable, Equatable { case exportAlreadyActive, wrongJob }

@@ -1,0 +1,64 @@
+{
+  "kind": "User-confirmed physical iPhone C4 preview, backed by actual completed camera journal, exact candidate/readback binaries and consistent catalog/WAL snapshots.",
+  "implementationRevision": "3ea81052d5a3",
+  "phone": "iPhone 15 Pro / iOS 27.0.1",
+  "source": {
+    "model": "X-E3",
+    "userSelectedDifferentPhoto": true,
+    "pairedCameraJPEG": true,
+    "compressionClass": "not independently captured; original transfer cache was empty when inspected",
+    "originalRAWDisplay": "not yet verified"
+  },
+  "camera": {
+    "model": "X-E3",
+    "firmware": "1.30",
+    "nativeGeneration": 23,
+    "recipeSlot": 4,
+    "supportVersion": "xe3-1.30-FF129505-v1"
+  },
+  "output": {
+    "width": 6000,
+    "height": 4000,
+    "orientation": 8,
+    "quality": "fullResolutionFine"
+  },
+  "requested": {
+    "colorTenths": -20,
+    "dynamicRange": 400,
+    "film": "classicChrome",
+    "grain": {
+      "strength": "weak"
+    },
+    "highlightTenths": -10,
+    "kelvin": 6300,
+    "noiseReduction": -4,
+    "shadowTenths": 20,
+    "sharpnessTenths": 0,
+    "whiteBalance": "temperature",
+    "whiteBalanceBlue": -2,
+    "whiteBalanceRed": -4
+  },
+  "operation": {
+    "phase": "completed",
+    "triggerIntent": true,
+    "triggerAcknowledged": true,
+    "outputValidated": true,
+    "deleteIntent": true,
+    "deleteAcknowledged": true,
+    "emptyViewVerified": true,
+    "closure": "notRequested"
+  },
+  "profile": {
+    "bytes": 601,
+    "processor": "FF129505",
+    "readbackMatches": true,
+    "candidateChecksumMatchesJournal": true
+  },
+  "deleteIntentMarkerPresent": true,
+  "resultProvenanceMatchesJournal": true,
+  "newExportJobs": 0,
+  "newSavedVersions": 0,
+  "nativeCommandCounts": "not captured on physical iPhone",
+  "independentJPEGFileInspection": "pending; file protected while phone locked",
+  "sessionClosure": "normal successful preview retains the phone camera session; not requested"
+}

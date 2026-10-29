@@ -1,3 +1,4 @@
+@testable import FujiCameraCore
 import Foundation
 import Testing
 @testable import FujiStudio
@@ -5,8 +6,8 @@ import Testing
 struct CameraExecutionContextTests {
     @Test func getterRequiresVerifiedCurrentSessionAndInvalidatesOnDisconnect() async throws {
         let f = try ProductionOperationFixture(); defer { f.remove() }
-        let wire = ProductionSession(fixture: f), journal = try CameraOperationJournal(directory: f.directory.appendingPathComponent("journal"))
-        let service = XT5CameraService(session: wire, journal: journal)
+        let wire = ProductionSession(fixture: f), journal = try CameraOperationJournal(directory: f.directory.appendingPathComponent("journal"), filePolicy: IOSCameraJournalFilePolicy())
+        let service = FujiCameraService(session: wire, journal: journal)
         await #expect(throws: CameraServiceError.notReady) { try await service.executionContext() }
         try await service.connect()
         let context = try await service.executionContext()
@@ -25,8 +26,8 @@ struct CameraExecutionContextTests {
     }
     @Test func queuedGetterCancellationDoesNotCloseOrDisturbOwner() async throws {
         let f = try ProductionOperationFixture(); defer { f.remove() }
-        let wire = ProductionSession(fixture: f), journal = try CameraOperationJournal(directory: f.directory.appendingPathComponent("journal")), gate = SerialCameraGate()
-        let service = XT5CameraService(session: wire, journal: journal, gate: gate)
+        let wire = ProductionSession(fixture: f), journal = try CameraOperationJournal(directory: f.directory.appendingPathComponent("journal"), filePolicy: IOSCameraJournalFilePolicy()), gate = SerialCameraGate()
+        let service = FujiCameraService(session: wire, journal: journal, gate: gate)
         try await service.connect()
         let latch = RenderLatch()
         let holder = Task { try await gate.withExclusiveAccess { await latch.wait() } }
@@ -46,7 +47,7 @@ extension CameraExecutionContextTests {
     @Test func disconnectDuringNativeReadRevokesCapturedExecutionContext() async throws {
         let f = try ProductionOperationFixture(); defer { f.remove() }
         let wire = SuspendedContextSession(ProductionSession(fixture: f)), gate = SerialCameraGate()
-        let service = XT5CameraService(session: wire, journal: try CameraOperationJournal(directory: f.directory.appendingPathComponent("journal")), gate: gate)
+        let service = FujiCameraService(session: wire, journal: try CameraOperationJournal(directory: f.directory.appendingPathComponent("journal"), filePolicy: IOSCameraJournalFilePolicy()), gate: gate)
         try await service.connect()
         let latch = RenderLatch(); await wire.hold(latch)
         let getter = Task { try await service.executionContext() }

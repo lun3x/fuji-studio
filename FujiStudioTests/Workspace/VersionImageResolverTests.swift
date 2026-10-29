@@ -1,3 +1,4 @@
+@testable import FujiCameraCore
 import Foundation
 import UIKit
 import Testing
@@ -136,7 +137,8 @@ private actor ViewerCatalog: CatalogStoring {
     init(_ saved: [SavedVersion]) { self.saved = saved }
     func versions(sourceID: SourceID) -> [SavedVersion] { sourceIDs.append(sourceID); return saved }
     func upsertSources(_ sources: [PhotoSource]) throws { throw ViewerError.invalidVersion }
-    func replaceRecipes(_ snapshots: [RecipeSnapshot]) throws { throw ViewerError.invalidVersion }
+    func replaceRecipes(_ snapshots: ImportedRecipeCollection) throws { throw ViewerError.invalidVersion }
+    func latestRecipeSlots() throws -> [RecipeSlot] { [] }
     func recipes(camera: CameraExecutionContext) -> [RecipeSnapshot] { [] }
     func latestRecipes() -> [RecipeSnapshot] { [] }
     func updatePhoneRecipe(_ draft: PhoneRecipeDraft) throws -> PhoneRecipe { throw ViewerError.invalidVersion }

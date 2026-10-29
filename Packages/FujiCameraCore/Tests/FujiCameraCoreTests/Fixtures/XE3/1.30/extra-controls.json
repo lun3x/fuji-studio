@@ -1,0 +1,163 @@
+[
+  {
+    "trial": "nr-minus3",
+    "patches": [
+      [
+        589,
+        28672
+      ]
+    ],
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "failure": null,
+    "seconds": 1.747,
+    "metadata": {
+      "NoiseReduction": "-3 (very weak)",
+      "WhiteBalance": "Auto"
+    }
+  },
+  {
+    "trial": "nr-minus2",
+    "patches": [
+      [
+        589,
+        16384
+      ]
+    ],
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "failure": null,
+    "seconds": 10.801,
+    "metadata": {
+      "NoiseReduction": "-2 (weak)",
+      "WhiteBalance": "Auto"
+    }
+  },
+  {
+    "trial": "nr-minus1",
+    "patches": [
+      [
+        589,
+        12288
+      ]
+    ],
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "failure": null,
+    "seconds": 10.743,
+    "metadata": {
+      "NoiseReduction": "-1 (medium weak)",
+      "WhiteBalance": "Auto"
+    }
+  },
+  {
+    "trial": "nr-zero",
+    "patches": [
+      [
+        589,
+        8192
+      ]
+    ],
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "failure": null,
+    "seconds": 10.758,
+    "metadata": {
+      "NoiseReduction": "0 (normal)",
+      "WhiteBalance": "Auto"
+    }
+  },
+  {
+    "trial": "nr-plus1",
+    "patches": [
+      [
+        589,
+        4096
+      ]
+    ],
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "failure": null,
+    "seconds": 10.738,
+    "metadata": {
+      "NoiseReduction": "+1 (medium strong)",
+      "WhiteBalance": "Auto"
+    }
+  },
+  {
+    "trial": "nr-plus2",
+    "patches": [
+      [
+        589,
+        0
+      ]
+    ],
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "failure": null,
+    "seconds": 10.745,
+    "metadata": {
+      "NoiseReduction": "+2 (strong)",
+      "WhiteBalance": "Auto"
+    }
+  },
+  {
+    "trial": "nr-plus3",
+    "patches": [
+      [
+        589,
+        24576
+      ]
+    ],
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "failure": null,
+    "seconds": 10.726,
+    "metadata": {
+      "NoiseReduction": "+3 (very strong)",
+      "WhiteBalance": "Auto"
+    }
+  },
+  {
+    "trial": "wb-5310k",
+    "patches": [
+      [
+        553,
+        2
+      ],
+      [
+        557,
+        32775
+      ],
+      [
+        569,
+        5310
+      ]
+    ],
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "failure": null,
+    "seconds": 10.778,
+    "metadata": {
+      "NoiseReduction": "-4 (weakest)",
+      "WhiteBalance": "Kelvin",
+      "ColorTemperature": 2500
+    }
+  }
+]

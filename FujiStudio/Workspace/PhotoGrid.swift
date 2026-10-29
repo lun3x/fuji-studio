@@ -1,3 +1,4 @@
+import FujiCameraCore
 import SwiftUI
 
 struct GridScrollRequest: Equatable {

@@ -1,3 +1,4 @@
+@testable import FujiCameraCore
 import Foundation
 import Testing
 import ImageIO
@@ -7,7 +8,7 @@ import CoreGraphics
 
 struct XT5ObjectObservationTests {
     @Test func readsObjectMetadataWithoutPublishingNamesOrClaimingOwnership() throws {
-        let info = try XT5ConversionCodec.objectInfo(ObjectObservationFixture.info())
+        let info = try FujiConversionCodec.objectInfo(ObjectObservationFixture.info())
         #expect(info.storageID == 0x10001)
         #expect(info.format == 0x3801)
         #expect(info.byteCount == 1234)
@@ -18,25 +19,25 @@ struct XT5ObjectObservationTests {
     @Test func objectMetadataRejectsEveryTruncationAndTrailingData() throws {
         let valid = ObjectObservationFixture.info()
         for end in 0..<valid.count {
-            #expect(throws: (any Error).self) { try XT5ConversionCodec.objectInfo(Data(valid.prefix(end))) }
+            #expect(throws: (any Error).self) { try FujiConversionCodec.objectInfo(Data(valid.prefix(end))) }
         }
-        #expect(throws: (any Error).self) { try XT5ConversionCodec.objectInfo(valid + Data([0])) }
+        #expect(throws: (any Error).self) { try FujiConversionCodec.objectInfo(valid + Data([0])) }
         var malformed = valid; malformed[52] = 255
-        #expect(throws: (any Error).self) { try XT5ConversionCodec.objectInfo(malformed) }
+        #expect(throws: (any Error).self) { try FujiConversionCodec.objectInfo(malformed) }
     }
     @Test func storageMetadataPreservesTypeAndAccessWithoutInferringTemporaryOwnership() throws {
-        let value = try XT5ConversionCodec.storageInfo(ObjectObservationFixture.storage())
+        let value = try FujiConversionCodec.storageInfo(ObjectObservationFixture.storage())
         #expect(value.storageType == 4)
         #expect(value.filesystemType == 2)
         #expect(value.access == 0)
         #expect(value.capacity == 8_000_000)
         let bytes = ObjectObservationFixture.storage()
-        for end in 0..<bytes.count { #expect(throws: (any Error).self) { try XT5ConversionCodec.storageInfo(Data(bytes.prefix(end))) } }
-        #expect(throws: (any Error).self) { try XT5ConversionCodec.storageInfo(bytes + Data([0])) }
+        for end in 0..<bytes.count { #expect(throws: (any Error).self) { try FujiConversionCodec.storageInfo(Data(bytes.prefix(end))) } }
+        #expect(throws: (any Error).self) { try FujiConversionCodec.storageInfo(bytes + Data([0])) }
     }
     @Test func JPEGObservationReportsPixelsOrientationAndContextWithoutQualityInference() throws {
         let jpeg = try ObjectObservationFixture.jpeg()
-        let observation = try XT5ConversionCodec.jpegObservation(jpeg, expected: ObjectObservationFixture.metadata)
+        let observation = try FujiConversionCodec.jpegObservation(jpeg, expected: ObjectObservationFixture.metadata)
         #expect(observation.width == 4 && observation.height == 6)
         #expect(observation.orientation == 8)
         #expect(observation.modelMatches)
@@ -44,10 +45,10 @@ struct XT5ObjectObservationTests {
         #expect(observation.orientationMatches)
         #expect(!observation.fineQualityValidated)
         let wrong = RAWMetadata(cameraModel: "X-T5", containerGeometry: PixelSize(width: 7728,height: 5152), recordedGeometry: PixelSize(width: 7728,height: 5152), recordedAspect: PixelSize(width: 3,height: 2), cropTop: 0,cropLeft: 0,orientation: 1)
-        let different = try XT5ConversionCodec.jpegObservation(jpeg, expected: wrong)
+        let different = try FujiConversionCodec.jpegObservation(jpeg, expected: wrong)
         #expect(!different.recordedGeometryMatches && !different.orientationMatches)
-        #expect(throws: (any Error).self) { try XT5ConversionCodec.jpegObservation(Data(jpeg.dropLast(2)), expected: wrong) }
-        #expect(throws: (any Error).self) { try XT5ConversionCodec.jpegObservation(Data([1,2,3]), expected: wrong) }
+        #expect(throws: (any Error).self) { try FujiConversionCodec.jpegObservation(Data(jpeg.dropLast(2)), expected: wrong) }
+        #expect(throws: (any Error).self) { try FujiConversionCodec.jpegObservation(Data([1,2,3]), expected: wrong) }
     }
 }
 

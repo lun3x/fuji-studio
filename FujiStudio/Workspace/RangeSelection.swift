@@ -1,3 +1,4 @@
+import FujiCameraCore
 import Foundation
 
 /// A sweep always derives membership from the immutable starting snapshot.

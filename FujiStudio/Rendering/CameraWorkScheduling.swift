@@ -1,3 +1,4 @@
+import FujiCameraCore
 import Foundation
 
 /// Admission must enclose RAW preparation and camera use, never an already materialized RAF.

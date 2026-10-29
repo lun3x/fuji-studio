@@ -1,12 +1,5 @@
 import Foundation
-
-/// Value-only session boundary, injectable without exposing framework objects to the service actor.
-protocol CameraSessionTransport: PTPTransport {
-    func states() async -> AsyncStream<CameraState>
-    func connect() async throws
-    func currentSession() async throws -> CameraSession
-    func close() async throws
-}
+import FujiCameraCore
 
 @MainActor final class ImageCaptureSessionTransport: CameraSessionTransport {
     let native: ImageCaptureTransport

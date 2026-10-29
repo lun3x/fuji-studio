@@ -1,3 +1,4 @@
+import FujiCameraCore
 #if DEBUG
 import Foundation
 import Observation
@@ -26,7 +27,7 @@ enum RetainedProductionAcceptanceInputs {
             let decoder=JSONDecoder();decoder.dateDecodingStrategy = .iso8601
             let capture=try decoder.decode(BankCapture.self,from:bytes)
             guard capture.complete,XT5FiniteRecipePatch.sameBanks(capture.snapshots,capture.verificationSnapshots) else { throw CameraServiceError.unsupportedSettings }
-            for recipe in capture.snapshots { _ = try recipe.normalizedSettings }
+            for recipe in capture.snapshots { _ = try recipe.settings(using: RecipeCodecRegistry()) }
             try Task.checkCancellation()
             try bytes.write(to:destination.appendingPathComponent("frozen-banks.json"),options:[.atomic,.completeFileProtection])
             let binding=["sourceA":a.fileURL.path,"sourceASHA256":a.sha256,"sourceAID":a.sourceID,"sourceARevision":a.sourceRevision,
@@ -93,7 +94,7 @@ struct XT5ProductionAcceptanceEvidence: Encodable {
     init(transport:ImageCaptureTransport=ImageCaptureTransport(),directory:URL?=nil,
          prepare:@escaping Prepare = { try await RetainedProductionAcceptanceInputs.prepare(documents:$0,destination:$1) },makeService:ServiceFactory?=nil) {
         native=transport;requestedDirectory=directory;self.prepare=prepare
-        self.makeService=makeService ?? { root in XT5CameraService(session:ImageCaptureSessionTransport(native:transport),journal:try CameraOperationJournal(directory:root)) }
+        self.makeService=makeService ?? { root in FujiCameraService(session:ImageCaptureSessionTransport(native:transport),journal:try CameraOperationJournal(directory:root, filePolicy: IOSCameraJournalFilePolicy())) }
     }
     func runIfRequested(arguments:[String]) async {
         let others=["--xt5-read-only-probe","--xt5-direct-values-probe","--camera-reconnect-probe","--xt5-bank-import-probe","--xt5-raw-baseline-probe","--xt5-paired-baseline-probe","--xt5-unchanged-baseline-probe","--xt5-output-recovery-probe","--xt5-output-quarantine-probe","--xt5-trigger-one-probe","--xt5-film-only-probe","--xt5-recipe-batch-probe"]
@@ -110,7 +111,7 @@ struct XT5ProductionAcceptanceEvidence: Encodable {
             let inputs=try await prepare(documents,run)
             guard inputs.a.sha256 != inputs.b.sha256,let frozen=inputs.banks.first(where:{ $0.slot == 7 }),
                   XT5FiniteRecipePatch.sameBanks(inputs.banks,inputs.banks) else { throw CameraServiceError.sourceChanged }
-            _ = try frozen.normalizedSettings
+            _ = try frozen.settings(using: RecipeCodecRegistry())
             let camera=try makeService(root.appendingPathComponent("operations"));service=camera
             evidence.stage="connecting verified production service";try save(evidence,to:documents)
             try await camera.connect()
@@ -128,14 +129,14 @@ struct XT5ProductionAcceptanceEvidence: Encodable {
                     lensOptimizerAdjusted:result.effectiveRecipe.lensOptimizerAdjusted,outputCleanupConfirmed:true))
                 evidence.trialCount=results.count;try save(evidence,to:documents)
                 guard result.recipeSnapshotID == frozen.id,result.sourceSHA256 == raw.sha256,
-                      result.effectiveRecipe.lensOptimizerRequested,!result.effectiveRecipe.lensOptimizerEffective else { throw CameraServiceError.invalidOutput }
+                      result.effectiveRecipe.lensOptimizerRequested,result.effectiveRecipe.lensOptimizerEffective else { throw CameraServiceError.invalidOutput }
                 if index == 0 {
                     // M uploaded a RAW without producing an output. First A cleanup precedes selectors.
-                    before=try await camera.importRecipes()
+                    before=try await camera.importRecipes().recipes
                     try encoder.encode(before).write(to:run.appendingPathComponent("banks-before.json"),options:[.atomic,.completeFileProtection])
                 }
             }
-            let after=try await camera.importRecipes()
+            let after=try await camera.importRecipes().recipes
             let encoder=JSONEncoder();encoder.dateEncodingStrategy = .iso8601
             try encoder.encode(after).write(to:run.appendingPathComponent("banks-after.json"),options:[.atomic,.completeFileProtection])
             evidence.banksPreserved=XT5FiniteRecipePatch.sameBanks(before,after)
@@ -145,7 +146,7 @@ struct XT5ProductionAcceptanceEvidence: Encodable {
             guard evidence.banksPreserved,evidence.sameFrozenSnapshot,evidence.sameAKey,evidence.differentBKey,
                   Set(results.map(\.operationID)).count == 3,Set(results.map(\.fileURL)).count == 3 else { throw CameraServiceError.ownershipChanged }
             evidence.stage="awaiting native close";try save(evidence,to:documents)
-        } catch { evidence.failure=XT5CameraService.safeFailure(XT5CameraService.failure(error)) }
+        } catch { evidence.failure=FujiCameraService.safeFailure(FujiCameraService.failure(error)) }
         if let service {
             await service.disconnect()
             var stream=await service.states().makeAsyncIterator()

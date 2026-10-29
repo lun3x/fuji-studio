@@ -1,3 +1,4 @@
+@testable import FujiCameraCore
 import Foundation
 @testable import FujiStudio
 
@@ -17,8 +18,8 @@ struct RenderFixture: Sendable {
     func jpeg(key: RenderKey? = nil, count: Int = 40) throws -> CameraJPEG {
         let key = key ?? self.key(), url = root.appendingPathComponent(UUID().uuidString + ".JPG")
         try Data(repeating: 45, count: count).write(to: url)
-        let normalized = try recipe.normalizedSettings
-        return CameraJPEG(fileURL: url, sourceID: key.sourceID, sourceRevision: key.sourceRevision, sourceSHA256: key.sourceSHA256, recipeSnapshotID: recipe.id, settingsDigest: key.settingsDigest, cameraContext: key.cameraContext, operationID: UUID(), width: key.width, height: key.height, orientation: key.orientation, quality: .fullResolutionFine, effectiveRecipe: .init(supportVersion: normalized.supportVersion, requested: normalized, dormantGrainSizeNotSerialized: false, inactiveKelvinPreserved: false, lensOptimizerRequested: true, lensOptimizerEffective: false, lensOptimizerAdjusted: true, evidence: "synthetic"), baselineSHA256: "baseline", candidateSHA256: "candidate", outputSHA256: try ResourceChecksum.sha256(url), key: key)
+        let normalized = try recipe.settings(using: RecipeCodecRegistry())
+        return CameraJPEG(fileURL: url, sourceID: key.sourceID, sourceRevision: key.sourceRevision, sourceSHA256: key.sourceSHA256, recipeSnapshotID: recipe.id, settingsDigest: key.settingsDigest, cameraContext: key.cameraContext, operationID: UUID(), width: key.width, height: key.height, orientation: key.orientation, quality: .fullResolutionFine, effectiveRecipe: .init(supportVersion: XT5WorkingProfile.supportVersion, requested: normalized, dormantGrainSizeNotSerialized: false, inactiveKelvinPreserved: false, lensOptimizerRequested: true, lensOptimizerEffective: false, lensOptimizerAdjusted: true, evidence: "synthetic"), baselineSHA256: "baseline", candidateSHA256: "candidate", outputSHA256: try ResourceChecksum.sha256(url), key: key)
     }
     func cache(budget: Int = 100) throws -> FileRenderCache { try FileRenderCache(directory: root.appendingPathComponent("cache"), pinnedDirectory: root.appendingPathComponent("support"), unpinnedBudget: budget, validateJPEG: { _ in }) }
     func remove() { try? FileManager.default.removeItem(at: root) }
@@ -59,6 +60,12 @@ actor RenderLibrary: PhotoLibraryReading {
 }
 
 actor RenderCamera: CameraServing {
+    func support(for expected: CameraExecutionContext) throws -> VerifiedCameraSupport {
+        let current = fixture.context
+        guard current == expected else { throw CameraServiceError.unsupportedContext }
+        return try fixtureCameraSupport(current)
+    }
+
     let fixture: RenderFixture
     let latch: RenderLatch?
     var calls = 0
@@ -69,7 +76,7 @@ actor RenderCamera: CameraServing {
     func states() -> AsyncStream<CameraState> { AsyncStream { $0.finish() } }
     func connect() {}
     func disconnect() {}
-    func importRecipes() -> [RecipeSnapshot] { [fixture.recipe] }
+    func importRecipes() throws -> ImportedRecipeCollection { let support=try support(for:fixture.context);return .init(recipes:[fixture.recipe],declaredSlots:support.capabilities.bankSlots,context:fixture.context,support:support) }
     func executionContext() -> CameraExecutionContext { current }
     func changeContext(_ value: CameraExecutionContext) { current = value }
     func render(raw: PreparedRAW, recipe: RecipeSnapshot, policy: OutputPolicy) async throws -> CameraJPEG {

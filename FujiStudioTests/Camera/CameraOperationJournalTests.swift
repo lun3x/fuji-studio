@@ -1,3 +1,4 @@
+@testable import FujiCameraCore
 import Foundation
 import Testing
 @testable import FujiStudio
@@ -5,13 +6,13 @@ import Testing
 struct CameraOperationJournalTests {
     @Test func fileBackedReopenPreservesOperationAndOneShotIntentCannotReplay() throws {
         let f=try ProductionOperationFixture();defer { f.remove() }
-        let journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"))
+        let journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"), filePolicy: IOSCameraJournalFilePolicy())
         var record=try journal.create(raw:f.raw,recipe:f.profile.bank,context:f.context)
         record.phase = .captured;record.triggerIntent = true;record.outputValidated = true
         record.outputHandle=31;record.outputSHA256="synthetic";record.objectInfo=Data([1]);record.storageInfo=Data([2])
         try journal.save(record)
         try journal.beginDelete(&record)
-        let reopened=try CameraOperationJournal(directory:journal.directory)
+        let reopened=try CameraOperationJournal(directory:journal.directory, filePolicy: IOSCameraJournalFilePolicy())
         let loaded=try reopened.load(record.id)
         #expect(loaded.phase == .deleteIntent && loaded.deleteIntent)
         #expect(try reopened.unresolved().map(\.id) == [record.id])
@@ -21,7 +22,7 @@ struct CameraOperationJournalTests {
     }
     @Test func partialMarkerBlocksEvenIfJournalWriteNeverRecordedIntent() throws {
         let f=try ProductionOperationFixture();defer { f.remove() }
-        let journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"))
+        let journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"), filePolicy: IOSCameraJournalFilePolicy())
         var record=try journal.create(raw:f.raw,recipe:f.profile.bank,context:f.context)
         record.phase = .captured;record.outputValidated=true;record.outputHandle=31;record.outputSHA256="synthetic";record.objectInfo=Data([1]);record.storageInfo=Data([2])
         try journal.save(record)
@@ -31,11 +32,11 @@ struct CameraOperationJournalTests {
     }
     @Test func completionDoesNotRequireRetainingDuplicateAdoptedImageAndMalformedRecordBlocks() throws {
         let f=try ProductionOperationFixture();defer { f.remove() }
-        let journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"))
+        let journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"), filePolicy: IOSCameraJournalFilePolicy())
         var record=try journal.create(raw:f.raw,recipe:f.profile.bank,context:f.context)
         record.phase = .completed;record.deleteAcknowledged=true;record.emptyViewVerified=true
         try journal.save(record)
-        #expect(try CameraOperationJournal(directory:journal.directory).unresolved().isEmpty)
+        #expect(try CameraOperationJournal(directory:journal.directory, filePolicy: IOSCameraJournalFilePolicy()).unresolved().isEmpty)
         try Data([0]).write(to:journal.operationDirectory(record.id).appendingPathComponent("journal.json"))
         #expect(throws: CameraServiceError.storage) { try journal.unresolved() }
     }

@@ -1,0 +1,271 @@
+{
+  "kind": "diagnostic-only native Kelvin evidence; shared core separately exercises 2500/6300/10000 K",
+  "previouslyVerified": [
+    5000,
+    6300,
+    7100
+  ],
+  "runs": [
+    {
+      "requested": 10000,
+      "observed": 10000,
+      "whiteBalance": 4080,
+      "exitCode": 0,
+      "readbackMatches": true,
+      "cleanupVerified": true,
+      "closeConfirmed": true
+    },
+    {
+      "requested": 9100,
+      "observed": 9100,
+      "whiteBalance": 4080,
+      "exitCode": 0,
+      "readbackMatches": true,
+      "cleanupVerified": true,
+      "closeConfirmed": true
+    },
+    {
+      "requested": 8300,
+      "observed": 8300,
+      "whiteBalance": 4080,
+      "exitCode": 0,
+      "readbackMatches": true,
+      "cleanupVerified": true,
+      "closeConfirmed": true
+    },
+    {
+      "requested": 7700,
+      "observed": 7700,
+      "whiteBalance": 4080,
+      "exitCode": 0,
+      "readbackMatches": true,
+      "cleanupVerified": true,
+      "closeConfirmed": true
+    },
+    {
+      "requested": 6700,
+      "observed": 6700,
+      "whiteBalance": 4080,
+      "exitCode": 0,
+      "readbackMatches": true,
+      "cleanupVerified": true,
+      "closeConfirmed": true
+    },
+    {
+      "requested": 5900,
+      "observed": 5900,
+      "whiteBalance": 4080,
+      "exitCode": 0,
+      "readbackMatches": true,
+      "cleanupVerified": true,
+      "closeConfirmed": true
+    },
+    {
+      "requested": 5600,
+      "observed": 5600,
+      "whiteBalance": 4080,
+      "exitCode": 0,
+      "readbackMatches": true,
+      "cleanupVerified": true,
+      "closeConfirmed": true
+    },
+    {
+      "requested": 5300,
+      "observed": 5300,
+      "whiteBalance": 4080,
+      "exitCode": 0,
+      "readbackMatches": true,
+      "cleanupVerified": true,
+      "closeConfirmed": true
+    },
+    {
+      "requested": 4800,
+      "observed": 4800,
+      "whiteBalance": 4080,
+      "exitCode": 0,
+      "readbackMatches": true,
+      "cleanupVerified": true,
+      "closeConfirmed": true
+    },
+    {
+      "requested": 4500,
+      "observed": 4500,
+      "whiteBalance": 4080,
+      "exitCode": 0,
+      "readbackMatches": true,
+      "cleanupVerified": true,
+      "closeConfirmed": true
+    },
+    {
+      "requested": 4300,
+      "observed": 4300,
+      "whiteBalance": 4080,
+      "exitCode": 0,
+      "readbackMatches": true,
+      "cleanupVerified": true,
+      "closeConfirmed": true
+    },
+    {
+      "requested": 4200,
+      "observed": 4200,
+      "whiteBalance": 4080,
+      "exitCode": 0,
+      "readbackMatches": true,
+      "cleanupVerified": true,
+      "closeConfirmed": true
+    },
+    {
+      "requested": 4000,
+      "observed": 4000,
+      "whiteBalance": 4080,
+      "exitCode": 0,
+      "readbackMatches": true,
+      "cleanupVerified": true,
+      "closeConfirmed": true
+    },
+    {
+      "requested": 3800,
+      "observed": 3800,
+      "whiteBalance": 4080,
+      "exitCode": 0,
+      "readbackMatches": true,
+      "cleanupVerified": true,
+      "closeConfirmed": true
+    },
+    {
+      "requested": 3700,
+      "observed": 3700,
+      "whiteBalance": 4080,
+      "exitCode": 0,
+      "readbackMatches": true,
+      "cleanupVerified": true,
+      "closeConfirmed": true
+    },
+    {
+      "requested": 3600,
+      "observed": 3600,
+      "whiteBalance": 4080,
+      "exitCode": 0,
+      "readbackMatches": true,
+      "cleanupVerified": true,
+      "closeConfirmed": true
+    },
+    {
+      "requested": 3400,
+      "observed": 3400,
+      "whiteBalance": 4080,
+      "exitCode": 0,
+      "readbackMatches": true,
+      "cleanupVerified": true,
+      "closeConfirmed": true
+    },
+    {
+      "requested": 3300,
+      "observed": 3300,
+      "whiteBalance": 4080,
+      "exitCode": 0,
+      "readbackMatches": true,
+      "cleanupVerified": true,
+      "closeConfirmed": true
+    },
+    {
+      "requested": 3200,
+      "observed": 3200,
+      "whiteBalance": 4080,
+      "exitCode": 0,
+      "readbackMatches": true,
+      "cleanupVerified": true,
+      "closeConfirmed": true
+    },
+    {
+      "requested": 3100,
+      "observed": 3100,
+      "whiteBalance": 4080,
+      "exitCode": 0,
+      "readbackMatches": true,
+      "cleanupVerified": true,
+      "closeConfirmed": true
+    },
+    {
+      "requested": 3000,
+      "observed": 3000,
+      "whiteBalance": 4080,
+      "exitCode": 0,
+      "readbackMatches": true,
+      "cleanupVerified": true,
+      "closeConfirmed": true
+    },
+    {
+      "requested": 2950,
+      "observed": 2950,
+      "whiteBalance": 4080,
+      "exitCode": 0,
+      "readbackMatches": true,
+      "cleanupVerified": true,
+      "closeConfirmed": true
+    },
+    {
+      "requested": 2850,
+      "observed": 2850,
+      "whiteBalance": 4080,
+      "exitCode": 0,
+      "readbackMatches": true,
+      "cleanupVerified": true,
+      "closeConfirmed": true
+    },
+    {
+      "requested": 2800,
+      "observed": 2800,
+      "whiteBalance": 4080,
+      "exitCode": 0,
+      "readbackMatches": true,
+      "cleanupVerified": true,
+      "closeConfirmed": true
+    },
+    {
+      "requested": 2700,
+      "observed": 2700,
+      "whiteBalance": 4080,
+      "exitCode": 0,
+      "readbackMatches": true,
+      "cleanupVerified": true,
+      "closeConfirmed": true
+    },
+    {
+      "requested": 2650,
+      "observed": 2650,
+      "whiteBalance": 4080,
+      "exitCode": 0,
+      "readbackMatches": true,
+      "cleanupVerified": true,
+      "closeConfirmed": true
+    },
+    {
+      "requested": 2550,
+      "observed": 2550,
+      "whiteBalance": 4080,
+      "exitCode": 0,
+      "readbackMatches": true,
+      "cleanupVerified": true,
+      "closeConfirmed": true
+    },
+    {
+      "requested": 2500,
+      "observed": 2500,
+      "whiteBalance": 4080,
+      "exitCode": 0,
+      "readbackMatches": true,
+      "cleanupVerified": true,
+      "closeConfirmed": true
+    },
+    {
+      "requested": 5310,
+      "observed": 2500,
+      "whiteBalance": 4080,
+      "exitCode": 0,
+      "readbackMatches": true,
+      "cleanupVerified": true,
+      "closeConfirmed": true
+    }
+  ]
+}

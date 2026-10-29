@@ -1,0 +1,1305 @@
+[
+  {
+    "trial": "film-provia",
+    "patches": [
+      [
+        541,
+        1
+      ]
+    ],
+    "seconds": 1.774,
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "width": 6000,
+    "height": 4000,
+    "failure": null,
+    "metadata": {
+      "FilmMode": "F0/Standard (Provia)",
+      "Saturation": "+4 (highest)",
+      "WhiteBalance": "Auto",
+      "WhiteBalanceFineTune": "Red +60, Blue -80",
+      "HighlightTone": "-1 (medium soft)",
+      "ShadowTone": "-1 (medium soft)",
+      "Sharpness": "0 (normal)",
+      "NoiseReduction": "-4 (weakest)",
+      "GrainEffectRoughness": "Off",
+      "DevelopmentDynamicRange": 200,
+      "LensModulationOptimizer": "On",
+      "Quality": "FINE   "
+    }
+  },
+  {
+    "trial": "film-velvia",
+    "patches": [
+      [
+        541,
+        2
+      ]
+    ],
+    "seconds": 10.838,
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "width": 6000,
+    "height": 4000,
+    "failure": null,
+    "metadata": {
+      "FilmMode": "F2/Fujichrome (Velvia)",
+      "Saturation": "+4 (highest)",
+      "WhiteBalance": "Auto",
+      "WhiteBalanceFineTune": "Red +60, Blue -80",
+      "HighlightTone": "-1 (medium soft)",
+      "ShadowTone": "-1 (medium soft)",
+      "Sharpness": "0 (normal)",
+      "NoiseReduction": "-4 (weakest)",
+      "GrainEffectRoughness": "Off",
+      "DevelopmentDynamicRange": 200,
+      "LensModulationOptimizer": "On",
+      "Quality": "FINE   "
+    }
+  },
+  {
+    "trial": "film-astia",
+    "patches": [
+      [
+        541,
+        3
+      ]
+    ],
+    "seconds": 10.818,
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "width": 6000,
+    "height": 4000,
+    "failure": null,
+    "metadata": {
+      "FilmMode": "F1b/Studio Portrait Smooth Skin Tone (Astia)",
+      "Saturation": "+4 (highest)",
+      "WhiteBalance": "Auto",
+      "WhiteBalanceFineTune": "Red +60, Blue -80",
+      "HighlightTone": "-1 (medium soft)",
+      "ShadowTone": "-1 (medium soft)",
+      "Sharpness": "0 (normal)",
+      "NoiseReduction": "-4 (weakest)",
+      "GrainEffectRoughness": "Off",
+      "DevelopmentDynamicRange": 200,
+      "LensModulationOptimizer": "On",
+      "Quality": "FINE   "
+    }
+  },
+  {
+    "trial": "film-pro-neg-hi",
+    "patches": [
+      [
+        541,
+        4
+      ]
+    ],
+    "seconds": 10.79,
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "width": 6000,
+    "height": 4000,
+    "failure": null,
+    "metadata": {
+      "FilmMode": "Pro Neg. Hi",
+      "Saturation": "+4 (highest)",
+      "WhiteBalance": "Auto",
+      "WhiteBalanceFineTune": "Red +60, Blue -80",
+      "HighlightTone": "-1 (medium soft)",
+      "ShadowTone": "-1 (medium soft)",
+      "Sharpness": "0 (normal)",
+      "NoiseReduction": "-4 (weakest)",
+      "GrainEffectRoughness": "Off",
+      "DevelopmentDynamicRange": 200,
+      "LensModulationOptimizer": "On",
+      "Quality": "FINE   "
+    }
+  },
+  {
+    "trial": "film-pro-neg-std",
+    "patches": [
+      [
+        541,
+        5
+      ]
+    ],
+    "seconds": 10.81,
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "width": 6000,
+    "height": 4000,
+    "failure": null,
+    "metadata": {
+      "FilmMode": "Pro Neg. Std",
+      "Saturation": "+4 (highest)",
+      "WhiteBalance": "Auto",
+      "WhiteBalanceFineTune": "Red +60, Blue -80",
+      "HighlightTone": "-1 (medium soft)",
+      "ShadowTone": "-1 (medium soft)",
+      "Sharpness": "0 (normal)",
+      "NoiseReduction": "-4 (weakest)",
+      "GrainEffectRoughness": "Off",
+      "DevelopmentDynamicRange": 200,
+      "LensModulationOptimizer": "On",
+      "Quality": "FINE   "
+    }
+  },
+  {
+    "trial": "film-mono",
+    "patches": [
+      [
+        541,
+        6
+      ]
+    ],
+    "seconds": 10.713,
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "width": 6000,
+    "height": 4000,
+    "failure": null,
+    "metadata": {
+      "Saturation": "None (B&W)",
+      "WhiteBalance": "Auto",
+      "WhiteBalanceFineTune": "Red +60, Blue -80",
+      "HighlightTone": "-1 (medium soft)",
+      "ShadowTone": "-1 (medium soft)",
+      "Sharpness": "0 (normal)",
+      "NoiseReduction": "-4 (weakest)",
+      "GrainEffectRoughness": "Off",
+      "DevelopmentDynamicRange": 200,
+      "LensModulationOptimizer": "On",
+      "Quality": "FINE   "
+    }
+  },
+  {
+    "trial": "film-mono-yellow",
+    "patches": [
+      [
+        541,
+        7
+      ]
+    ],
+    "seconds": 10.696,
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "width": 6000,
+    "height": 4000,
+    "failure": null,
+    "metadata": {
+      "Saturation": "B&W Yellow Filter",
+      "WhiteBalance": "Auto",
+      "WhiteBalanceFineTune": "Red +60, Blue -80",
+      "HighlightTone": "-1 (medium soft)",
+      "ShadowTone": "-1 (medium soft)",
+      "Sharpness": "0 (normal)",
+      "NoiseReduction": "-4 (weakest)",
+      "GrainEffectRoughness": "Off",
+      "DevelopmentDynamicRange": 200,
+      "LensModulationOptimizer": "On",
+      "Quality": "FINE   "
+    }
+  },
+  {
+    "trial": "film-mono-red",
+    "patches": [
+      [
+        541,
+        8
+      ]
+    ],
+    "seconds": 10.733,
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "width": 6000,
+    "height": 4000,
+    "failure": null,
+    "metadata": {
+      "Saturation": "B&W Red Filter",
+      "WhiteBalance": "Auto",
+      "WhiteBalanceFineTune": "Red +60, Blue -80",
+      "HighlightTone": "-1 (medium soft)",
+      "ShadowTone": "-1 (medium soft)",
+      "Sharpness": "0 (normal)",
+      "NoiseReduction": "-4 (weakest)",
+      "GrainEffectRoughness": "Off",
+      "DevelopmentDynamicRange": 200,
+      "LensModulationOptimizer": "On",
+      "Quality": "FINE   "
+    }
+  },
+  {
+    "trial": "film-mono-green",
+    "patches": [
+      [
+        541,
+        9
+      ]
+    ],
+    "seconds": 10.702,
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "width": 6000,
+    "height": 4000,
+    "failure": null,
+    "metadata": {
+      "Saturation": "B&W Green Filter",
+      "WhiteBalance": "Auto",
+      "WhiteBalanceFineTune": "Red +60, Blue -80",
+      "HighlightTone": "-1 (medium soft)",
+      "ShadowTone": "-1 (medium soft)",
+      "Sharpness": "0 (normal)",
+      "NoiseReduction": "-4 (weakest)",
+      "GrainEffectRoughness": "Off",
+      "DevelopmentDynamicRange": 200,
+      "LensModulationOptimizer": "On",
+      "Quality": "FINE   "
+    }
+  },
+  {
+    "trial": "film-sepia",
+    "patches": [
+      [
+        541,
+        10
+      ]
+    ],
+    "seconds": 10.729,
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "width": 6000,
+    "height": 4000,
+    "failure": null,
+    "metadata": {
+      "Saturation": "B&W Sepia",
+      "WhiteBalance": "Auto",
+      "WhiteBalanceFineTune": "Red +60, Blue -80",
+      "HighlightTone": "-1 (medium soft)",
+      "ShadowTone": "-1 (medium soft)",
+      "Sharpness": "0 (normal)",
+      "NoiseReduction": "-4 (weakest)",
+      "GrainEffectRoughness": "Off",
+      "DevelopmentDynamicRange": 200,
+      "LensModulationOptimizer": "On",
+      "Quality": "FINE   "
+    }
+  },
+  {
+    "trial": "film-classic-chrome",
+    "patches": [
+      [
+        541,
+        11
+      ]
+    ],
+    "seconds": 10.855,
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "width": 6000,
+    "height": 4000,
+    "failure": null,
+    "metadata": {
+      "FilmMode": "Classic Chrome",
+      "Saturation": "+4 (highest)",
+      "WhiteBalance": "Auto",
+      "WhiteBalanceFineTune": "Red +60, Blue -80",
+      "HighlightTone": "-1 (medium soft)",
+      "ShadowTone": "-1 (medium soft)",
+      "Sharpness": "0 (normal)",
+      "NoiseReduction": "-4 (weakest)",
+      "GrainEffectRoughness": "Off",
+      "DevelopmentDynamicRange": 200,
+      "LensModulationOptimizer": "On",
+      "Quality": "FINE   "
+    }
+  },
+  {
+    "trial": "film-acros",
+    "patches": [
+      [
+        541,
+        12
+      ]
+    ],
+    "seconds": 11.015,
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "width": 6000,
+    "height": 4000,
+    "failure": null,
+    "metadata": {
+      "Saturation": "Acros",
+      "WhiteBalance": "Auto",
+      "WhiteBalanceFineTune": "Red +60, Blue -80",
+      "HighlightTone": "-1 (medium soft)",
+      "ShadowTone": "-1 (medium soft)",
+      "Sharpness": "0 (normal)",
+      "NoiseReduction": "-4 (weakest)",
+      "GrainEffectRoughness": "Off",
+      "DevelopmentDynamicRange": 200,
+      "LensModulationOptimizer": "On",
+      "Quality": "FINE   "
+    }
+  },
+  {
+    "trial": "film-acros-yellow",
+    "patches": [
+      [
+        541,
+        13
+      ]
+    ],
+    "seconds": 10.06,
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "width": 6000,
+    "height": 4000,
+    "failure": null,
+    "metadata": {
+      "Saturation": "Acros Yellow Filter",
+      "WhiteBalance": "Auto",
+      "WhiteBalanceFineTune": "Red +60, Blue -80",
+      "HighlightTone": "-1 (medium soft)",
+      "ShadowTone": "-1 (medium soft)",
+      "Sharpness": "0 (normal)",
+      "NoiseReduction": "-4 (weakest)",
+      "GrainEffectRoughness": "Off",
+      "DevelopmentDynamicRange": 200,
+      "LensModulationOptimizer": "On",
+      "Quality": "FINE   "
+    }
+  },
+  {
+    "trial": "film-acros-red",
+    "patches": [
+      [
+        541,
+        14
+      ]
+    ],
+    "seconds": 10.063,
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "width": 6000,
+    "height": 4000,
+    "failure": null,
+    "metadata": {
+      "Saturation": "Acros Red Filter",
+      "WhiteBalance": "Auto",
+      "WhiteBalanceFineTune": "Red +60, Blue -80",
+      "HighlightTone": "-1 (medium soft)",
+      "ShadowTone": "-1 (medium soft)",
+      "Sharpness": "0 (normal)",
+      "NoiseReduction": "-4 (weakest)",
+      "GrainEffectRoughness": "Off",
+      "DevelopmentDynamicRange": 200,
+      "LensModulationOptimizer": "On",
+      "Quality": "FINE   "
+    }
+  },
+  {
+    "trial": "film-acros-green",
+    "patches": [
+      [
+        541,
+        15
+      ]
+    ],
+    "seconds": 10.022,
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "width": 6000,
+    "height": 4000,
+    "failure": null,
+    "metadata": {
+      "Saturation": "Acros Green Filter",
+      "WhiteBalance": "Auto",
+      "WhiteBalanceFineTune": "Red +60, Blue -80",
+      "HighlightTone": "-1 (medium soft)",
+      "ShadowTone": "-1 (medium soft)",
+      "Sharpness": "0 (normal)",
+      "NoiseReduction": "-4 (weakest)",
+      "GrainEffectRoughness": "Off",
+      "DevelopmentDynamicRange": 200,
+      "LensModulationOptimizer": "On",
+      "Quality": "FINE   "
+    }
+  },
+  {
+    "trial": "grain-weak",
+    "patches": [
+      [
+        545,
+        2
+      ]
+    ],
+    "seconds": 10.089,
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "width": 6000,
+    "height": 4000,
+    "failure": null,
+    "metadata": {
+      "FilmMode": "Classic Chrome",
+      "Saturation": "+4 (highest)",
+      "WhiteBalance": "Auto",
+      "WhiteBalanceFineTune": "Red +60, Blue -80",
+      "HighlightTone": "-1 (medium soft)",
+      "ShadowTone": "-1 (medium soft)",
+      "Sharpness": "0 (normal)",
+      "NoiseReduction": "-4 (weakest)",
+      "GrainEffectRoughness": "Weak",
+      "DevelopmentDynamicRange": 200,
+      "LensModulationOptimizer": "On",
+      "Quality": "FINE   "
+    }
+  },
+  {
+    "trial": "grain-strong",
+    "patches": [
+      [
+        545,
+        3
+      ]
+    ],
+    "seconds": 10.104,
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "width": 6000,
+    "height": 4000,
+    "failure": null,
+    "metadata": {
+      "FilmMode": "Classic Chrome",
+      "Saturation": "+4 (highest)",
+      "WhiteBalance": "Auto",
+      "WhiteBalanceFineTune": "Red +60, Blue -80",
+      "HighlightTone": "-1 (medium soft)",
+      "ShadowTone": "-1 (medium soft)",
+      "Sharpness": "0 (normal)",
+      "NoiseReduction": "-4 (weakest)",
+      "GrainEffectRoughness": "Strong",
+      "DevelopmentDynamicRange": 200,
+      "LensModulationOptimizer": "On",
+      "Quality": "FINE   "
+    }
+  },
+  {
+    "trial": "dr100",
+    "patches": [
+      [
+        533,
+        100
+      ]
+    ],
+    "seconds": 9.825,
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "width": 6000,
+    "height": 4000,
+    "failure": null,
+    "metadata": {
+      "FilmMode": "Classic Chrome",
+      "Saturation": "+4 (highest)",
+      "WhiteBalance": "Auto",
+      "WhiteBalanceFineTune": "Red +60, Blue -80",
+      "HighlightTone": "-1 (medium soft)",
+      "ShadowTone": "-1 (medium soft)",
+      "Sharpness": "0 (normal)",
+      "NoiseReduction": "-4 (weakest)",
+      "GrainEffectRoughness": "Off",
+      "DevelopmentDynamicRange": 100,
+      "LensModulationOptimizer": "On",
+      "Quality": "FINE   "
+    }
+  },
+  {
+    "trial": "dr400-request",
+    "patches": [
+      [
+        533,
+        400
+      ]
+    ],
+    "seconds": 10.854,
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "width": 6000,
+    "height": 4000,
+    "failure": null,
+    "metadata": {
+      "FilmMode": "Classic Chrome",
+      "Saturation": "+4 (highest)",
+      "WhiteBalance": "Auto",
+      "WhiteBalanceFineTune": "Red +60, Blue -80",
+      "HighlightTone": "-1 (medium soft)",
+      "ShadowTone": "-1 (medium soft)",
+      "Sharpness": "0 (normal)",
+      "NoiseReduction": "-4 (weakest)",
+      "GrainEffectRoughness": "Off",
+      "DevelopmentDynamicRange": 400,
+      "LensModulationOptimizer": "On",
+      "Quality": "FINE   "
+    }
+  },
+  {
+    "trial": "highlight-minus2",
+    "patches": [
+      [
+        573,
+        -20
+      ]
+    ],
+    "seconds": 10.83,
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "width": 6000,
+    "height": 4000,
+    "failure": null,
+    "metadata": {
+      "FilmMode": "Classic Chrome",
+      "Saturation": "+4 (highest)",
+      "WhiteBalance": "Auto",
+      "WhiteBalanceFineTune": "Red +60, Blue -80",
+      "HighlightTone": "-2 (soft)",
+      "ShadowTone": "-1 (medium soft)",
+      "Sharpness": "0 (normal)",
+      "NoiseReduction": "-4 (weakest)",
+      "GrainEffectRoughness": "Off",
+      "DevelopmentDynamicRange": 200,
+      "LensModulationOptimizer": "On",
+      "Quality": "FINE   "
+    }
+  },
+  {
+    "trial": "highlight-plus4",
+    "patches": [
+      [
+        573,
+        40
+      ]
+    ],
+    "seconds": 10.845,
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "width": 6000,
+    "height": 4000,
+    "failure": null,
+    "metadata": {
+      "FilmMode": "Classic Chrome",
+      "Saturation": "+4 (highest)",
+      "WhiteBalance": "Auto",
+      "WhiteBalanceFineTune": "Red +60, Blue -80",
+      "HighlightTone": "+4 (hardest)",
+      "ShadowTone": "-1 (medium soft)",
+      "Sharpness": "0 (normal)",
+      "NoiseReduction": "-4 (weakest)",
+      "GrainEffectRoughness": "Off",
+      "DevelopmentDynamicRange": 200,
+      "LensModulationOptimizer": "On",
+      "Quality": "FINE   "
+    }
+  },
+  {
+    "trial": "shadow-minus2",
+    "patches": [
+      [
+        577,
+        -20
+      ]
+    ],
+    "seconds": 10.897,
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "width": 6000,
+    "height": 4000,
+    "failure": null,
+    "metadata": {
+      "FilmMode": "Classic Chrome",
+      "Saturation": "+4 (highest)",
+      "WhiteBalance": "Auto",
+      "WhiteBalanceFineTune": "Red +60, Blue -80",
+      "HighlightTone": "-1 (medium soft)",
+      "ShadowTone": "-2 (soft)",
+      "Sharpness": "0 (normal)",
+      "NoiseReduction": "-4 (weakest)",
+      "GrainEffectRoughness": "Off",
+      "DevelopmentDynamicRange": 200,
+      "LensModulationOptimizer": "On",
+      "Quality": "FINE   "
+    }
+  },
+  {
+    "trial": "shadow-plus4",
+    "patches": [
+      [
+        577,
+        40
+      ]
+    ],
+    "seconds": 10.832,
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "width": 6000,
+    "height": 4000,
+    "failure": null,
+    "metadata": {
+      "FilmMode": "Classic Chrome",
+      "Saturation": "+4 (highest)",
+      "WhiteBalance": "Auto",
+      "WhiteBalanceFineTune": "Red +60, Blue -80",
+      "HighlightTone": "-1 (medium soft)",
+      "ShadowTone": "+4 (hardest)",
+      "Sharpness": "0 (normal)",
+      "NoiseReduction": "-4 (weakest)",
+      "GrainEffectRoughness": "Off",
+      "DevelopmentDynamicRange": 200,
+      "LensModulationOptimizer": "On",
+      "Quality": "FINE   "
+    }
+  },
+  {
+    "trial": "color-minus4",
+    "patches": [
+      [
+        581,
+        -40
+      ]
+    ],
+    "seconds": 10.797,
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "width": 6000,
+    "height": 4000,
+    "failure": null,
+    "metadata": {
+      "FilmMode": "Classic Chrome",
+      "Saturation": "-4 (lowest)",
+      "WhiteBalance": "Auto",
+      "WhiteBalanceFineTune": "Red +60, Blue -80",
+      "HighlightTone": "-1 (medium soft)",
+      "ShadowTone": "-1 (medium soft)",
+      "Sharpness": "0 (normal)",
+      "NoiseReduction": "-4 (weakest)",
+      "GrainEffectRoughness": "Off",
+      "DevelopmentDynamicRange": 200,
+      "LensModulationOptimizer": "On",
+      "Quality": "FINE   "
+    }
+  },
+  {
+    "trial": "sharpness-minus4",
+    "patches": [
+      [
+        585,
+        -40
+      ]
+    ],
+    "seconds": 10.739,
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "width": 6000,
+    "height": 4000,
+    "failure": null,
+    "metadata": {
+      "FilmMode": "Classic Chrome",
+      "Saturation": "+4 (highest)",
+      "WhiteBalance": "Auto",
+      "WhiteBalanceFineTune": "Red +60, Blue -80",
+      "HighlightTone": "-1 (medium soft)",
+      "ShadowTone": "-1 (medium soft)",
+      "Sharpness": "-4 (softest)",
+      "NoiseReduction": "-4 (weakest)",
+      "GrainEffectRoughness": "Off",
+      "DevelopmentDynamicRange": 200,
+      "LensModulationOptimizer": "On",
+      "Quality": "FINE   "
+    }
+  },
+  {
+    "trial": "sharpness-plus4",
+    "patches": [
+      [
+        585,
+        40
+      ]
+    ],
+    "seconds": 10.871,
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "width": 6000,
+    "height": 4000,
+    "failure": null,
+    "metadata": {
+      "FilmMode": "Classic Chrome",
+      "Saturation": "+4 (highest)",
+      "WhiteBalance": "Auto",
+      "WhiteBalanceFineTune": "Red +60, Blue -80",
+      "HighlightTone": "-1 (medium soft)",
+      "ShadowTone": "-1 (medium soft)",
+      "Sharpness": "+4 (hardest)",
+      "NoiseReduction": "-4 (weakest)",
+      "GrainEffectRoughness": "Off",
+      "DevelopmentDynamicRange": 200,
+      "LensModulationOptimizer": "On",
+      "Quality": "FINE   "
+    }
+  },
+  {
+    "trial": "noise-plus4",
+    "patches": [
+      [
+        589,
+        20480
+      ]
+    ],
+    "seconds": 10.787,
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "width": 6000,
+    "height": 4000,
+    "failure": null,
+    "metadata": {
+      "FilmMode": "Classic Chrome",
+      "Saturation": "+4 (highest)",
+      "WhiteBalance": "Auto",
+      "WhiteBalanceFineTune": "Red +60, Blue -80",
+      "HighlightTone": "-1 (medium soft)",
+      "ShadowTone": "-1 (medium soft)",
+      "Sharpness": "0 (normal)",
+      "NoiseReduction": "+4 (strongest)",
+      "GrainEffectRoughness": "Off",
+      "DevelopmentDynamicRange": 200,
+      "LensModulationOptimizer": "On",
+      "Quality": "FINE   "
+    }
+  },
+  {
+    "trial": "wb-red-minus9",
+    "patches": [
+      [
+        561,
+        -9
+      ]
+    ],
+    "seconds": 10.902,
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "width": 6000,
+    "height": 4000,
+    "failure": null,
+    "metadata": {
+      "FilmMode": "Classic Chrome",
+      "Saturation": "+4 (highest)",
+      "WhiteBalance": "Auto",
+      "WhiteBalanceFineTune": "Red -180, Blue -80",
+      "HighlightTone": "-1 (medium soft)",
+      "ShadowTone": "-1 (medium soft)",
+      "Sharpness": "0 (normal)",
+      "NoiseReduction": "-4 (weakest)",
+      "GrainEffectRoughness": "Off",
+      "DevelopmentDynamicRange": 200,
+      "LensModulationOptimizer": "On",
+      "Quality": "FINE   "
+    }
+  },
+  {
+    "trial": "wb-blue-plus9",
+    "patches": [
+      [
+        565,
+        9
+      ]
+    ],
+    "seconds": 10.828,
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "width": 6000,
+    "height": 4000,
+    "failure": null,
+    "metadata": {
+      "FilmMode": "Classic Chrome",
+      "Saturation": "+4 (highest)",
+      "WhiteBalance": "Auto",
+      "WhiteBalanceFineTune": "Red +60, Blue +180",
+      "HighlightTone": "-1 (medium soft)",
+      "ShadowTone": "-1 (medium soft)",
+      "Sharpness": "0 (normal)",
+      "NoiseReduction": "-4 (weakest)",
+      "GrainEffectRoughness": "Off",
+      "DevelopmentDynamicRange": 200,
+      "LensModulationOptimizer": "On",
+      "Quality": "FINE   "
+    }
+  },
+  {
+    "trial": "wb-auto",
+    "patches": [
+      [
+        553,
+        2
+      ],
+      [
+        557,
+        2
+      ]
+    ],
+    "seconds": 10.831,
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "width": 6000,
+    "height": 4000,
+    "failure": null,
+    "metadata": {
+      "FilmMode": "Classic Chrome",
+      "Saturation": "+4 (highest)",
+      "WhiteBalance": "Auto",
+      "WhiteBalanceFineTune": "Red +60, Blue -80",
+      "HighlightTone": "-1 (medium soft)",
+      "ShadowTone": "-1 (medium soft)",
+      "Sharpness": "0 (normal)",
+      "NoiseReduction": "-4 (weakest)",
+      "GrainEffectRoughness": "Off",
+      "DevelopmentDynamicRange": 200,
+      "LensModulationOptimizer": "On",
+      "Quality": "FINE   "
+    }
+  },
+  {
+    "trial": "wb-daylight",
+    "patches": [
+      [
+        553,
+        2
+      ],
+      [
+        557,
+        4
+      ]
+    ],
+    "seconds": 10.856,
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "width": 6000,
+    "height": 4000,
+    "failure": null,
+    "metadata": {
+      "FilmMode": "Classic Chrome",
+      "Saturation": "+4 (highest)",
+      "WhiteBalance": "Daylight",
+      "WhiteBalanceFineTune": "Red +60, Blue -80",
+      "HighlightTone": "-1 (medium soft)",
+      "ShadowTone": "-1 (medium soft)",
+      "Sharpness": "0 (normal)",
+      "NoiseReduction": "-4 (weakest)",
+      "GrainEffectRoughness": "Off",
+      "DevelopmentDynamicRange": 200,
+      "LensModulationOptimizer": "On",
+      "Quality": "FINE   "
+    }
+  },
+  {
+    "trial": "wb-shade",
+    "patches": [
+      [
+        553,
+        2
+      ],
+      [
+        557,
+        32774
+      ]
+    ],
+    "seconds": 10.833,
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "width": 6000,
+    "height": 4000,
+    "failure": null,
+    "metadata": {
+      "FilmMode": "Classic Chrome",
+      "Saturation": "+4 (highest)",
+      "WhiteBalance": "Cloudy",
+      "WhiteBalanceFineTune": "Red +60, Blue -80",
+      "HighlightTone": "-1 (medium soft)",
+      "ShadowTone": "-1 (medium soft)",
+      "Sharpness": "0 (normal)",
+      "NoiseReduction": "-4 (weakest)",
+      "GrainEffectRoughness": "Off",
+      "DevelopmentDynamicRange": 200,
+      "LensModulationOptimizer": "On",
+      "Quality": "FINE   "
+    }
+  },
+  {
+    "trial": "wb-fluorescent1",
+    "patches": [
+      [
+        553,
+        2
+      ],
+      [
+        557,
+        32769
+      ]
+    ],
+    "seconds": 10.864,
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "width": 6000,
+    "height": 4000,
+    "failure": null,
+    "metadata": {
+      "FilmMode": "Classic Chrome",
+      "Saturation": "+4 (highest)",
+      "WhiteBalance": "Daylight Fluorescent",
+      "WhiteBalanceFineTune": "Red +60, Blue -80",
+      "HighlightTone": "-1 (medium soft)",
+      "ShadowTone": "-1 (medium soft)",
+      "Sharpness": "0 (normal)",
+      "NoiseReduction": "-4 (weakest)",
+      "GrainEffectRoughness": "Off",
+      "DevelopmentDynamicRange": 200,
+      "LensModulationOptimizer": "On",
+      "Quality": "FINE   "
+    }
+  },
+  {
+    "trial": "wb-fluorescent2",
+    "patches": [
+      [
+        553,
+        2
+      ],
+      [
+        557,
+        32770
+      ]
+    ],
+    "seconds": 10.799,
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "width": 6000,
+    "height": 4000,
+    "failure": null,
+    "metadata": {
+      "FilmMode": "Classic Chrome",
+      "Saturation": "+4 (highest)",
+      "WhiteBalance": "Day White Fluorescent",
+      "WhiteBalanceFineTune": "Red +60, Blue -80",
+      "HighlightTone": "-1 (medium soft)",
+      "ShadowTone": "-1 (medium soft)",
+      "Sharpness": "0 (normal)",
+      "NoiseReduction": "-4 (weakest)",
+      "GrainEffectRoughness": "Off",
+      "DevelopmentDynamicRange": 200,
+      "LensModulationOptimizer": "On",
+      "Quality": "FINE   "
+    }
+  },
+  {
+    "trial": "wb-fluorescent3",
+    "patches": [
+      [
+        553,
+        2
+      ],
+      [
+        557,
+        32771
+      ]
+    ],
+    "seconds": 10.802,
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "width": 6000,
+    "height": 4000,
+    "failure": null,
+    "metadata": {
+      "FilmMode": "Classic Chrome",
+      "Saturation": "+4 (highest)",
+      "WhiteBalance": "White Fluorescent",
+      "WhiteBalanceFineTune": "Red +60, Blue -80",
+      "HighlightTone": "-1 (medium soft)",
+      "ShadowTone": "-1 (medium soft)",
+      "Sharpness": "0 (normal)",
+      "NoiseReduction": "-4 (weakest)",
+      "GrainEffectRoughness": "Off",
+      "DevelopmentDynamicRange": 200,
+      "LensModulationOptimizer": "On",
+      "Quality": "FINE   "
+    }
+  },
+  {
+    "trial": "wb-incandescent",
+    "patches": [
+      [
+        553,
+        2
+      ],
+      [
+        557,
+        6
+      ]
+    ],
+    "seconds": 10.817,
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "width": 6000,
+    "height": 4000,
+    "failure": null,
+    "metadata": {
+      "FilmMode": "Classic Chrome",
+      "Saturation": "+4 (highest)",
+      "WhiteBalance": "Incandescent",
+      "WhiteBalanceFineTune": "Red +60, Blue -80",
+      "HighlightTone": "-1 (medium soft)",
+      "ShadowTone": "-1 (medium soft)",
+      "Sharpness": "0 (normal)",
+      "NoiseReduction": "-4 (weakest)",
+      "GrainEffectRoughness": "Off",
+      "DevelopmentDynamicRange": 200,
+      "LensModulationOptimizer": "On",
+      "Quality": "FINE   "
+    }
+  },
+  {
+    "trial": "wb-underwater",
+    "patches": [
+      [
+        553,
+        2
+      ],
+      [
+        557,
+        8
+      ]
+    ],
+    "seconds": 10.828,
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "width": 6000,
+    "height": 4000,
+    "failure": null,
+    "metadata": {
+      "FilmMode": "Classic Chrome",
+      "Saturation": "+4 (highest)",
+      "WhiteBalance": "Underwater",
+      "WhiteBalanceFineTune": "Red +60, Blue -80",
+      "HighlightTone": "-1 (medium soft)",
+      "ShadowTone": "-1 (medium soft)",
+      "Sharpness": "0 (normal)",
+      "NoiseReduction": "-4 (weakest)",
+      "GrainEffectRoughness": "Off",
+      "DevelopmentDynamicRange": 200,
+      "LensModulationOptimizer": "On",
+      "Quality": "FINE   "
+    }
+  },
+  {
+    "trial": "wb-5000k",
+    "patches": [
+      [
+        553,
+        2
+      ],
+      [
+        557,
+        32775
+      ],
+      [
+        569,
+        5000
+      ]
+    ],
+    "seconds": 10.807,
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "width": 6000,
+    "height": 4000,
+    "failure": null,
+    "metadata": {
+      "FilmMode": "Classic Chrome",
+      "Saturation": "+4 (highest)",
+      "WhiteBalance": "Kelvin",
+      "WhiteBalanceFineTune": "Red +60, Blue -80",
+      "ColorTemperature": 5000,
+      "HighlightTone": "-1 (medium soft)",
+      "ShadowTone": "-1 (medium soft)",
+      "Sharpness": "0 (normal)",
+      "NoiseReduction": "-4 (weakest)",
+      "GrainEffectRoughness": "Off",
+      "DevelopmentDynamicRange": 200,
+      "LensModulationOptimizer": "On",
+      "Quality": "FINE   "
+    }
+  },
+  {
+    "trial": "exposure-plus-two-thirds",
+    "patches": [
+      [
+        529,
+        667
+      ]
+    ],
+    "seconds": 10.819,
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "width": 6000,
+    "height": 4000,
+    "failure": null,
+    "metadata": {
+      "FilmMode": "Classic Chrome",
+      "Saturation": "+4 (highest)",
+      "WhiteBalance": "Auto",
+      "WhiteBalanceFineTune": "Red +60, Blue -80",
+      "HighlightTone": "-1 (medium soft)",
+      "ShadowTone": "-1 (medium soft)",
+      "Sharpness": "0 (normal)",
+      "NoiseReduction": "-4 (weakest)",
+      "GrainEffectRoughness": "Off",
+      "DevelopmentDynamicRange": 200,
+      "LensModulationOptimizer": "On",
+      "Quality": "FINE   "
+    }
+  },
+  {
+    "trial": "exposure-minus-two-thirds",
+    "patches": [
+      [
+        529,
+        -667
+      ]
+    ],
+    "seconds": 10.809,
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "width": 6000,
+    "height": 4000,
+    "failure": null,
+    "metadata": {
+      "FilmMode": "Classic Chrome",
+      "Saturation": "+4 (highest)",
+      "WhiteBalance": "Auto",
+      "WhiteBalanceFineTune": "Red +60, Blue -80",
+      "HighlightTone": "-1 (medium soft)",
+      "ShadowTone": "-1 (medium soft)",
+      "Sharpness": "0 (normal)",
+      "NoiseReduction": "-4 (weakest)",
+      "GrainEffectRoughness": "Off",
+      "DevelopmentDynamicRange": 200,
+      "LensModulationOptimizer": "On",
+      "Quality": "FINE   "
+    }
+  },
+  {
+    "trial": "lmo-off",
+    "patches": [
+      [
+        593,
+        2
+      ]
+    ],
+    "seconds": 10.799,
+    "exitCode": 0,
+    "readbackMatches": true,
+    "cleanupVerified": true,
+    "closeConfirmed": true,
+    "width": 6000,
+    "height": 4000,
+    "failure": null,
+    "metadata": {
+      "FilmMode": "Classic Chrome",
+      "Saturation": "+4 (highest)",
+      "WhiteBalance": "Auto",
+      "WhiteBalanceFineTune": "Red +60, Blue -80",
+      "HighlightTone": "-1 (medium soft)",
+      "ShadowTone": "-1 (medium soft)",
+      "Sharpness": "0 (normal)",
+      "NoiseReduction": "-4 (weakest)",
+      "GrainEffectRoughness": "Off",
+      "DevelopmentDynamicRange": 200,
+      "LensModulationOptimizer": "Off",
+      "Quality": "FINE   "
+    }
+  }
+]

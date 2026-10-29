@@ -1,3 +1,4 @@
+import FujiCameraCore
 import Foundation
 import SwiftData
 
@@ -23,7 +24,13 @@ import SwiftData
 @Model final class CatalogCollectionRecord {
     @Attribute(.unique) var key: String
     var snapshotIDs: Data
+    var declaration: Data? = nil
     init(snapshotIDs: Data) { key = "latest"; self.snapshotIDs = snapshotIDs }
+}
+
+struct RecipeCollectionDeclaration: Codable, Sendable, Equatable {
+    let slots: [RecipeSlot]
+    let context: CameraExecutionContext
 }
 
 @Model final class CatalogPhoneRecipeRecord {
@@ -63,4 +70,10 @@ import SwiftData
         operationID = version.operationID; versionID = version.id; sourceID = version.sourceID
         outputAssetID = version.outputAssetID; exportedAt = version.exportedAt; self.payload = payload
     }
+}
+
+@Model final class CatalogFormatRecord {
+    @Attribute(.unique) var key: String
+    var version: Int
+    init(version: Int) { self.key = "value-payloads"; self.version = version }
 }

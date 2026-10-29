@@ -1,3 +1,4 @@
+import FujiCameraCore
 import Foundation
 
 enum ExportCoordinatorError: Error, Sendable, Equatable {
@@ -71,7 +72,7 @@ actor ExportCoordinator {
         let epoch = admissionEpoch
         do {
             guard !sources.isEmpty, Set(sources.map(\.id)).count == sources.count else { throw ExportCoordinatorError.invalidSubmission }
-            try recipe.requireRenderable()
+            try recipe.requireRenderable(using: RecipeCodecRegistry())
             try await validateCamera(recipe)
             for source in sources { try await validateSource(source); try checkStop(); guard epoch == admissionEpoch else { throw ExportCoordinatorError.stopped } }
             let job = ExportJob(id: UUID(), submittedAt: Date(), recipeSnapshot: recipe,
@@ -291,6 +292,7 @@ actor ExportCoordinator {
     private func render(_ raw: PreparedRAW, recipe: RecipeSnapshot, jobID: UUID, index: Int) async throws -> CameraJPEG {
         try checkStop()
         let context = try await validateCamera(recipe)
+        guard raw.metadata.cameraModel == context.model else { throw ResourceError.incompatibleCamera(raw.metadata.cameraModel) }
         let key = RenderKey(sourceID: raw.sourceID, sourceRevision: raw.sourceRevision, sourceSHA256: raw.sha256,
             settingsDigest: recipe.settingsDigest, cameraContext: context, width: raw.metadata.recordedGeometry.width,
             height: raw.metadata.recordedGeometry.height, orientation: raw.metadata.orientation,
@@ -427,10 +429,10 @@ actor ExportCoordinator {
         if case .incompatible(let model) = await pool.compatibility(for: source) { throw ResourceError.incompatibleCamera(model) }
     }
     @discardableResult private func validateCamera(_ recipe: RecipeSnapshot) async throws -> CameraExecutionContext {
-        try recipe.requireRenderable()
-        let settings = try recipe.normalizedSettings, current = try await camera.executionContext()
+        try recipe.requireRenderable(using: RecipeCodecRegistry())
+        let settings = try recipe.settings(using: RecipeCodecRegistry()), current = try await camera.executionContext()
         guard recipe.cameraContext.model == current.model, recipe.cameraContext.firmware == current.firmware,
-              recipe.cameraContext.capability == current.capability, settings.supportVersion == current.supportVersion else {
+              recipe.cameraContext.capability == current.capability, (try RecipeCodecRegistry().supportVersion(for: recipe.cameraContext)) == current.supportVersion else {
             throw CameraServiceError.unsupportedContext
         }
         return current
