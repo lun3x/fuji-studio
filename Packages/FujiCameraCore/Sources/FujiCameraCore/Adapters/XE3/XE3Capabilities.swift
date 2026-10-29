@@ -16,10 +16,21 @@ public enum XE3Capabilities {
       .init(support: .supported, minimum: min, maximum: max, step: step)
     }
     let settings: [RecipeSettingID: SettingCapability] = [
-      .film: choices(FilmSimulation.allCases.map(RecipeSettingValue.film)),
+      .film: choices(
+        FilmSimulation.allCases.filter {
+          XE3NativeRecipeFields.films.values.contains($0)
+        }.map(RecipeSettingValue.film)),
       .grain: choices(GrainStrength.allCases.map { .grain(.init(strength: $0, size: nil)) }),
-      .dynamicRange: choices([100, 200, 400].map(RecipeSettingValue.integer)),
-      .whiteBalance: choices(WhiteBalanceMode.allCases.map(RecipeSettingValue.whiteBalance)),
+      .dynamicRange: .init(
+        support: .supported,
+        editableChoices: [0, 100, 200, 400].map {
+          .init(value: .integer($0), label: $0 == 0 ? "Auto" : "\($0)%")
+        },
+        renderableChoices: [100, 200, 400].map { .init(value: .integer($0), label: "\($0)%") }),
+      .whiteBalance: choices(
+        WhiteBalanceMode.allCases.filter {
+          XE3NativeRecipeFields.whiteBalances.values.contains($0)
+        }.map(RecipeSettingValue.whiteBalance)),
       .whiteBalanceRed: range(-9, 9), .whiteBalanceBlue: range(-9, 9),
       .kelvin: choices(verifiedKelvin.sorted().map(RecipeSettingValue.integer)),
       .highlight: range(-20, 40, 10), .shadow: range(-20, 40, 10), .color: range(-40, 40, 10),

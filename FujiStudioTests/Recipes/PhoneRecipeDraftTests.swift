@@ -5,7 +5,44 @@ import Testing
 @testable import FujiStudio
 
 struct PhoneRecipeDraftTests {
-  @Test(arguments: WhiteBalanceMode.allCases)
+  @Test func xt5EditorOffersAndReopensEveryDocumentedSelector() throws {
+    let phone = try ProductionProfileFixture().bank.copiedToPhone()
+    let original = PhoneRecipeDraft(recipe: phone)
+    #expect(original.choices(for: .film).count == 20)
+    #expect(original.choices(for: .whiteBalance).count == 14)
+    #expect(
+      original.choices(for: .dynamicRange).map(\.value)
+        == [400, 200, 100, 0].map(RecipeSettingValue.integer))
+    #expect(RecipeSettingID.dynamicRange.label(for: .integer(0)) == "Auto")
+    for id in [RecipeSettingID.film, .whiteBalance, .dynamicRange] {
+      for choice in original.choices(for: id) {
+        var draft = PhoneRecipeDraft(recipe: phone)
+        draft.setValue(choice.value, for: id)
+        let saved = PhoneRecipe(id: phone.id, snapshot: try draft.makeSnapshot())
+        let reopened = PhoneRecipeDraft(recipe: saved)
+        #expect(reopened.value(for: id) == choice.value)
+        #expect(!reopened.hasChanges)
+      }
+    }
+  }
+  @Test func xt5TemperatureUsesTenKelvinSteps() throws {
+    let phone = try ProductionProfileFixture().bank.copiedToPhone()
+    for kelvin in [2500, 5310, 10000] {
+      var draft = PhoneRecipeDraft(recipe: phone)
+      draft.temperature = String(kelvin)
+      let saved = try draft.makeSnapshot()
+      #expect(try RecipeCodecRegistry().editableValues(saved)[.kelvin] == .integer(kelvin))
+    }
+    for kelvin in [2490, 2501, 5301, 10001] {
+      var draft = PhoneRecipeDraft(recipe: phone)
+      draft.temperature = String(kelvin)
+      #expect(throws: PhoneRecipeEditingError.invalidTemperature) { try draft.makeSnapshot() }
+    }
+  }
+  @Test(arguments: [
+    WhiteBalanceMode.auto, .daylight, .shade, .fluorescent1, .fluorescent2, .fluorescent3,
+    .incandescent, .underwater, .temperature,
+  ])
   func calibratedXE3PresetsRemainRenderableAfterOfflineEdits(_ mode: WhiteBalanceMode) throws {
     let phone = try fixtureXE3Recipe().copiedToPhone()
     var draft = PhoneRecipeDraft(recipe: phone)
@@ -140,7 +177,7 @@ struct PhoneRecipeDraftTests {
       #expect(throws: PhoneRecipeEditingError.invalidTemperature) { try draft.makeSnapshot() }
     }
     var invalid = PhoneRecipeDraft(recipe: original)
-    invalid.setValue(.integer(200), for: .dynamicRange)
+    invalid.setValue(.integer(300), for: .dynamicRange)
     #expect(throws: PhoneRecipeEditingError.self) { try invalid.makeSnapshot() }
     #expect(try original.snapshot.settings(using: RecipeCodecRegistry()).dynamicRange == 400)
   }
