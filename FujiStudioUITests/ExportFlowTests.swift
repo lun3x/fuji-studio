@@ -6,13 +6,13 @@ final class ExportFlowTests: AppFlowTestCase {
         let app = launch()
         app.cells["grid.source-0"].tap()
         let versions = app.buttons["workspace.versions"], export = app.buttons["workspace.export"]
-        XCTAssertTrue(versions.waitUntilExists(timeout: 5))
+        XCTAssertTrue(versions.waitForExistence(timeout: 5))
         XCTAssertFalse(export.exists)
         let versionFrame = versions.frame
         wait { app.buttons["app.status"].label.contains("Camera ready") }
         XCTAssertFalse(export.exists)
         recipe(3, in: app)
-        XCTAssertTrue(export.waitUntilExists(timeout: 5))
+        XCTAssertTrue(export.waitForExistence(timeout: 5))
         XCTAssertFalse(versions.exists)
         XCTAssertFalse(app.scrollViews["version.options"].exists)
         XCTAssertEqual(export.frame, versionFrame)
@@ -23,11 +23,11 @@ final class ExportFlowTests: AppFlowTestCase {
         XCTAssertFalse(versions.exists)
         tap(app.buttons["recipe.control"], in: app)
         tap(app.buttons["recipe.none"], in: app)
-        XCTAssertTrue(versions.waitUntilExists(timeout: 5))
+        XCTAssertTrue(versions.waitForExistence(timeout: 5))
         XCTAssertFalse(export.exists)
         XCTAssertEqual(versions.frame, versionFrame)
         versions.tap()
-        XCTAssertTrue(app.buttons["version.raw"].waitUntilExists(timeout: 5))
+        XCTAssertTrue(app.buttons["version.raw"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["version.cameraJPEG"].exists)
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "version.saved.")).firstMatch.exists)
         XCTAssertFalse(app.buttons["version.preview"].exists)
@@ -40,7 +40,7 @@ final class ExportFlowTests: AppFlowTestCase {
         wait { app.buttons["app.status"].label.contains("Camera ready") }
         recipe(3, in: app)
         let export = app.buttons["workspace.export"]
-        XCTAssertTrue(export.waitUntilExists(timeout: 5))
+        XCTAssertTrue(export.waitForExistence(timeout: 5))
         wait { app.buttons["fixture.finishPreview"].value as? String == "Loading preview" }
         XCTAssertFalse(export.isEnabled, "Export starts grey while the preview is being prepared")
         for _ in 0..<3 {
@@ -61,7 +61,7 @@ final class ExportFlowTests: AppFlowTestCase {
     func testPairedC3PreviewSingleExportAndTrackedVersion() {
         let app = launch()
         app.cells["grid.source-0"].tap()
-        XCTAssertTrue(app.scrollViews["viewer.image"].waitUntilExists(timeout: 5))
+        XCTAssertTrue(app.scrollViews["viewer.image"].waitForExistence(timeout: 5))
         wait { app.buttons["app.status"].label.contains("Camera ready") }
         recipe(3, in: app)
         wait { app.scrollViews["viewer.image"].exists && !app.descendants(matching: .any)["viewer.status"].exists }
@@ -77,7 +77,7 @@ final class ExportFlowTests: AppFlowTestCase {
         saved.tap()
         XCTAssertTrue(app.scrollViews["viewer.image"].exists)
         app.buttons["app.status"].tap()
-        XCTAssertTrue(app.staticTexts["export.counts"].waitUntilExists(timeout: 5))
+        XCTAssertTrue(app.staticTexts["export.counts"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["export.counts"].label.contains("1 saved"))
         XCTAssertEqual(app.staticTexts["export.status"].label, "Export saved")
         shot(app, "Single export tracked and saved")

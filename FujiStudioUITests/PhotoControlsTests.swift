@@ -6,14 +6,14 @@ final class PhotoControlsTests: AppFlowTestCase {
         let app = launch(["--fixture-held-photo"])
         app.cells["grid.source-0"].tap()
         let viewer = app.scrollViews["viewer.image"], loading = app.descendants(matching: .any)["viewer.loading"]
-        XCTAssertTrue(viewer.waitUntilExists(timeout: 5))
+        XCTAssertTrue(viewer.waitForExistence(timeout: 5))
         wait { !loading.exists }
         viewer.pinch(withScale: 2, velocity: 1)
         func zoom() -> Double { Double((viewer.value as? String ?? "").split(separator: ",").first ?? "") ?? -1 }
         let frame = viewer.frame, previousZoom = zoom()
         XCTAssertGreaterThan(previousZoom, 1.1)
         app.cells["grid.source-2"].tap()
-        XCTAssertTrue(loading.waitUntilExists(timeout: 5))
+        XCTAssertTrue(loading.waitForExistence(timeout: 5))
         XCTAssertTrue(viewer.exists)
         XCTAssertEqual(viewer.frame, frame)
         XCTAssertEqual(zoom(), previousZoom, accuracy: 0.01)
@@ -29,12 +29,12 @@ final class PhotoControlsTests: AppFlowTestCase {
     func testFloatingStatusAndRightAlignedPhotoControlsGiveSpaceBackToPhoto() {
         let app = launch()
         app.cells["grid.source-0"].tap()
-        XCTAssertTrue(app.scrollViews["viewer.image"].waitUntilExists(timeout: 5))
+        XCTAssertTrue(app.scrollViews["viewer.image"].waitForExistence(timeout: 5))
         assertFloatingPhotoControls(app)
         XCTAssertEqual(app.buttons["app.status"].frame.width, app.buttons["workspace.versions"].frame.width, accuracy: 1)
         XCTAssertEqual(app.buttons["app.status"].frame.height, app.buttons["workspace.versions"].frame.height, accuracy: 1)
         tap(app.buttons["app.status"], in: app)
-        XCTAssertTrue(app.staticTexts["app.access"].waitUntilExists(timeout: 5))
+        XCTAssertTrue(app.staticTexts["app.access"].waitForExistence(timeout: 5))
         app.buttons["Done"].tap()
         wait { app.buttons["app.status"].label.contains("Camera ready") }
         assertFloatingPhotoControls(app)
@@ -45,7 +45,7 @@ final class PhotoControlsTests: AppFlowTestCase {
         let app = launch()
         app.cells["grid.source-0"].tap()
         let viewer = app.scrollViews["viewer.image"], versions = app.buttons["workspace.versions"]
-        XCTAssertTrue(viewer.waitUntilExists(timeout: 5))
+        XCTAssertTrue(viewer.waitForExistence(timeout: 5))
         for id in ["viewer.zoomOut", "viewer.fit", "viewer.zoomIn"] { XCTAssertFalse(app.buttons[id].exists) }
         XCTAssertEqual(viewer.frame.maxY, app.buttons["drawer.toggle"].frame.minY, accuracy: 1, "The photo should reach the tray without reserved control rows")
         XCTAssertTrue(versions.exists)
@@ -57,15 +57,15 @@ final class PhotoControlsTests: AppFlowTestCase {
         XCTAssertFalse(app.buttons["version.cameraJPEG"].exists, "Versions appear only in the menu")
         versions.tap()
         let raw = app.buttons["version.raw"], jpeg = app.buttons["version.cameraJPEG"]
-        XCTAssertTrue(jpeg.waitUntilExists(timeout: 5))
+        XCTAssertTrue(jpeg.waitForExistence(timeout: 5))
         XCTAssertTrue(jpeg.isSelected)
         XCTAssertGreaterThanOrEqual(jpeg.frame.minY, raw.frame.maxY)
         raw.tap()
         wait { versions.value as? String == "RAW" }
-        XCTAssertTrue(viewer.waitUntilExists(timeout: 5))
+        XCTAssertTrue(viewer.waitForExistence(timeout: 5))
         XCTAssertFalse(raw.exists)
         versions.tap(); app.buttons["version.cameraJPEG"].tap()
-        XCTAssertTrue(viewer.waitUntilExists(timeout: 5))
+        XCTAssertTrue(viewer.waitForExistence(timeout: 5))
         let before = versions.value as? String
         versions.tap()
         viewer.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.8)).tap()
@@ -105,7 +105,7 @@ final class PhotoControlsTests: AppFlowTestCase {
     func testLargestTextVersionMenuScrollsToFullSavedLabel() {
         let app = launch(["--fixture-accessibility"])
         app.cells["grid.source-0"].tap()
-        XCTAssertTrue(app.scrollViews["viewer.image"].waitUntilExists(timeout: 5))
+        XCTAssertTrue(app.scrollViews["viewer.image"].waitForExistence(timeout: 5))
         wait { app.buttons["app.status"].label.contains("Camera ready") }
         recipe(1, in: app)
         wait { app.buttons["workspace.export"].isEnabled }
@@ -144,7 +144,7 @@ final class PhotoControlsTests: AppFlowTestCase {
         recipe(1, in: app)
         wait { app.buttons["workspace.export"].isEnabled }
         let viewer = app.scrollViews["viewer.image"], grid = app.collectionViews["photoGrid"]
-        XCTAssertTrue(viewer.waitUntilExists(timeout: 5))
+        XCTAssertTrue(viewer.waitForExistence(timeout: 5))
         func magnitude() -> Double { Double((viewer.value as? String ?? "").split(separator: ",").first ?? "") ?? -1 }
         func inspect(_ name: String) {
             let floating = ["recipe.control", "workspace.export"]
@@ -169,7 +169,7 @@ final class PhotoControlsTests: AppFlowTestCase {
             // scroll the zoom view. Use the same screen taps as recipe selection
             // and verify the menus actually open and dismiss without an export.
             tap(app.buttons["recipe.control"], in: app)
-            XCTAssertTrue(app.buttons["recipe.slot.1"].waitUntilExists(timeout: 5))
+            XCTAssertTrue(app.buttons["recipe.slot.1"].waitForExistence(timeout: 5))
             tap(app.buttons["app.status"], in: app)
             XCTAssertTrue(app.buttons["recipe.slot.1"].waitForNonExistence(timeout: 3))
             XCTAssertFalse(app.buttons["app.status"].label.contains("saved"))
@@ -211,7 +211,7 @@ final class PhotoControlsTests: AppFlowTestCase {
         XCTAssertGreaterThanOrEqual(app.buttons["drawer.toggle"].frame.minY, bottom)
         shot(app, "AX5 dark measured app controls and expanded drawer")
         app.buttons["app.status"].tap()
-        XCTAssertTrue(app.buttons["app.managePhotos"].waitUntilExists(timeout: 5))
+        XCTAssertTrue(app.buttons["app.managePhotos"].waitForExistence(timeout: 5))
         shot(app, "AX5 scrollable status and limited-access management")
     }
 }

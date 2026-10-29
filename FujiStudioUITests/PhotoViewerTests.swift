@@ -24,7 +24,7 @@ final class PhotoViewerTests: XCTestCase {
     }
     private func selectVersion(_ identifier: String, in app: XCUIApplication) {
         app.buttons["workspace.versions"].tap()
-        XCTAssertTrue(app.buttons[identifier].waitUntilExists(timeout: 5))
+        XCTAssertTrue(app.buttons[identifier].waitForExistence(timeout: 5))
         app.buttons[identifier].tap()
     }
 
@@ -34,13 +34,13 @@ final class PhotoViewerTests: XCTestCase {
         app.launchArguments = ["--viewer-fixture", "--viewer-loading-controls"]
         app.launch()
         let viewer = image(app)
-        XCTAssertTrue(viewer.waitUntilExists(timeout: 10))
+        XCTAssertTrue(viewer.waitForExistence(timeout: 10))
         viewer.pinch(withScale: 2, velocity: 1)
         let frame = viewer.frame, zoom = try requiredValues(app)
         let advance = app.buttons["fixture.loading"]
         let loading = app.descendants(matching: .any)["viewer.loading"]
         advance.tap()
-        XCTAssertTrue(loading.waitUntilExists(timeout: 3))
+        XCTAssertTrue(loading.waitForExistence(timeout: 3))
         XCTAssertFalse(app.descendants(matching: .any)["viewer.status"].exists)
         XCTAssertEqual(viewer.frame, frame)
         XCTAssertEqual(loading.frame.midX, frame.midX, accuracy: 1)
@@ -72,12 +72,12 @@ final class PhotoViewerTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--viewer-fixture", "--viewer-loading-controls"]
         app.launch()
-        XCTAssertTrue(image(app).waitUntilExists(timeout: 10))
+        XCTAssertTrue(image(app).waitForExistence(timeout: 10))
         selectVersion("version.raw", in: app)
         let advance = app.buttons["fixture.loading"]
         let loading = app.descendants(matching: .any)["viewer.loading"]
         advance.tap()
-        XCTAssertTrue(loading.waitUntilExists(timeout: 3))
+        XCTAssertTrue(loading.waitForExistence(timeout: 3))
         XCTAssertFalse(image(app).exists)
         XCTAssertEqual(loading.label, "Loading preview")
         let frame = loading.frame
@@ -98,7 +98,7 @@ final class PhotoViewerTests: XCTestCase {
 
     func testZoomPersistsAcrossMatchingVersionsAndResetsForNewSource() throws {
         let app = launch(), viewer = image(app)
-        XCTAssertTrue(viewer.waitUntilExists(timeout: 10))
+        XCTAssertTrue(viewer.waitForExistence(timeout: 10))
         guard viewer.exists else { return }
         viewer.pinch(withScale: 2.5, velocity: 1)
         viewer.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.55))
@@ -115,21 +115,18 @@ final class PhotoViewerTests: XCTestCase {
     }
 
     private func requiredValues(_ app: XCUIApplication) throws -> [Double] {
-        let ready = NSPredicate { _, _ in
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             let measured = self.metrics(app)
             return measured.count == 5 && measured.allSatisfy(\.isFinite)
-        }
-        if !ready.evaluate(with: nil) {
-            let expectation = XCTNSPredicateExpectation(predicate: ready, object: nil)
-            XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: 5), .completed, "Viewer must publish all finite metrics after version/source changes")
-        }
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed, "Viewer must publish all finite metrics after version/source changes")
         let measured = metrics(app)
         return try XCTUnwrap(measured.count == 5 && measured.allSatisfy(\.isFinite) ? Array(measured.prefix(3)) : nil, "Missing or malformed viewer metrics")
     }
 
     func testPinchMaximumZoomPanViewportResizeAndDoubleTapFit() {
         let app = launch(), viewer = image(app)
-        XCTAssertTrue(viewer.waitUntilExists(timeout: 10))
+        XCTAssertTrue(viewer.waitForExistence(timeout: 10))
         guard viewer.exists else { return }
         viewer.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.5)).doubleTap()
         XCTAssertEqual(values(app).first ?? 0, 2, accuracy: 0.01)
@@ -174,7 +171,7 @@ final class PhotoViewerTests: XCTestCase {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["FUJI_STUDIO_NATIVE_ROTATION"] == "1",
             "Native device rotation remains an unverified device gate; enable explicitly on a suitable runtime/device.")
         let app = launch(), viewer = image(app)
-        XCTAssertTrue(viewer.waitUntilExists(timeout: 10))
+        XCTAssertTrue(viewer.waitForExistence(timeout: 10))
         viewer.doubleTap()
         let before = values(app), size = viewer.frame.size
         XCUIDevice.shared.orientation = .landscapeLeft
@@ -187,12 +184,12 @@ final class PhotoViewerTests: XCTestCase {
 
     func testZoomSurvivesUnavailableVersionAndFullDetailReturns() {
         let app = launch(), viewer = image(app)
-        XCTAssertTrue(viewer.waitUntilExists(timeout: 10))
+        XCTAssertTrue(viewer.waitForExistence(timeout: 10))
         guard viewer.exists else { return }
         viewer.doubleTap()
         let before = values(app)
         selectVersion("version.raw", in: app)
-        XCTAssertTrue(app.descendants(matching: .any)["viewer.unavailable"].waitUntilExists(timeout: 3))
+        XCTAssertTrue(app.descendants(matching: .any)["viewer.unavailable"].waitForExistence(timeout: 3))
         selectVersion("version.cameraJPEG", in: app)
         let after = values(app)
         XCTAssertEqual(before.count, 3); XCTAssertEqual(after.count, 3)
@@ -202,10 +199,10 @@ final class PhotoViewerTests: XCTestCase {
 
     func testUnavailableRAWAndManualVersionResistsLatePreview() {
         let app = launch()
-        XCTAssertTrue(image(app).waitUntilExists(timeout: 10))
+        XCTAssertTrue(image(app).waitForExistence(timeout: 10))
         guard image(app).exists else { return }
         selectVersion("version.raw", in: app)
-        XCTAssertTrue(app.descendants(matching: .any)["viewer.unavailable"].waitUntilExists(timeout: 3))
+        XCTAssertTrue(app.descendants(matching: .any)["viewer.unavailable"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.descendants(matching: .any)["viewer.unavailable"].label.contains("RAW display unavailable"))
         selectVersion("version.cameraJPEG", in: app)
         app.buttons["fixture.latePreview"].tap()

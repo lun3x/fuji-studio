@@ -5,7 +5,7 @@ final class DrawerGestureTests: WorkspaceTestCase {
     func testCollapsedRowsAndExpandedBrowseTapPreserveViewerFrame() {
         let app = launch(), grid = app.collectionViews["photoGrid"]
         let side = tile(app, 0).frame.width, viewer = app.scrollViews["viewer.image"]
-        XCTAssertTrue(viewer.waitUntilExists(timeout: 10))
+        XCTAssertTrue(viewer.waitForExistence(timeout: 10))
         XCTAssertGreaterThan(grid.frame.height, side)
         XCTAssertLessThan(grid.frame.height, side * 2)
         XCTAssertEqual(viewer.frame.width, grid.frame.width, accuracy: 0.5)

@@ -198,7 +198,7 @@ final class AppFlowTests: AppFlowTestCase {
         XCTAssertFalse(app.alerts.firstMatch.exists)
         XCTAssertFalse(XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.firstMatch.exists)
         app.cells["grid.source-0"].tap()
-        XCTAssertTrue(app.scrollViews["viewer.image"].waitUntilExists(timeout: 5))
+        XCTAssertTrue(app.scrollViews["viewer.image"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["workspace.export"].exists)
         shot(app, "Automatically connected paired original")
     }
@@ -207,7 +207,7 @@ final class AppFlowTests: AppFlowTestCase {
         let app = launch(["--fixture-initial-inactive", "--fixture-scene-controls"])
         XCTAssertFalse(app.buttons["app.connect"].exists)
         app.buttons["app.status"].tap()
-        XCTAssertTrue(app.staticTexts["app.camera"].waitUntilExists(timeout: 5))
+        XCTAssertTrue(app.staticTexts["app.camera"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["app.camera"].label.contains("Plug in a supported Fujifilm camera"), app.staticTexts["app.camera"].label)
         app.buttons["Done"].tap()
         app.buttons["fixture.foreground"].tap()
@@ -223,7 +223,7 @@ final class AppFlowTests: AppFlowTestCase {
         }
         app.cells["grid.source-0"].tap()
         let versions = app.buttons["workspace.versions"]
-        XCTAssertTrue(versions.waitUntilExists(timeout: 5))
+        XCTAssertTrue(versions.waitForExistence(timeout: 5))
         wait { app.scrollViews["viewer.image"].exists && !app.descendants(matching: .any)["viewer.loading"].exists }
         let frame = status.frame
         XCTAssertEqual(frame.width, versions.frame.width, accuracy: 1)
@@ -247,7 +247,7 @@ final class AppFlowTests: AppFlowTestCase {
         let app = launch(["--fixture-disconnected-camera"])
         tap(app.buttons["recipe.control"], in: app)
         let none = app.buttons["recipe.none"]
-        XCTAssertTrue(none.waitUntilExists(timeout: 5))
+        XCTAssertTrue(none.waitForExistence(timeout: 5))
         XCTAssertTrue(none.isSelected)
         XCTAssertTrue(none.isEnabled)
         for slot in 1...7 {
@@ -262,7 +262,7 @@ final class AppFlowTests: AppFlowTestCase {
         app.buttons["fixture.plugInCamera"].tap()
         wait { app.buttons["app.status"].label.contains("Camera ready") }
         tap(app.buttons["recipe.control"], in: app)
-        XCTAssertTrue(none.waitUntilExists(timeout: 5))
+        XCTAssertTrue(none.waitForExistence(timeout: 5))
         XCTAssertTrue(none.isSelected)
         for slot in 1...6 { XCTAssertTrue(app.buttons["recipe.slot.\(slot)"].isEnabled) }
         XCTAssertFalse(app.buttons["recipe.slot.7"].isEnabled)
@@ -272,7 +272,7 @@ final class AppFlowTests: AppFlowTestCase {
     func testPreviewDisconnectClearsRecipeAndAutomaticallyReconnectsAtLargestText() {
         let app = launch(["--fixture-preview-failure", "--fixture-accessibility"])
         app.cells["grid.source-0"].tap()
-        XCTAssertTrue(app.scrollViews["viewer.image"].waitUntilExists(timeout: 5))
+        XCTAssertTrue(app.scrollViews["viewer.image"].waitForExistence(timeout: 5))
         wait { app.buttons["app.status"].label.contains("Camera ready") }
         recipe(1, in: app)
         wait { app.buttons["recipe.control"].label == "No recipe selected" }
@@ -282,7 +282,7 @@ final class AppFlowTests: AppFlowTestCase {
         XCTAssertFalse(app.buttons["workspace.export"].exists)
         wait { app.buttons["app.status"].label.contains("Camera ready") }
         tap(app.buttons["recipe.control"], in: app)
-        XCTAssertTrue(app.buttons["recipe.none"].waitUntilExists(timeout: 5))
+        XCTAssertTrue(app.buttons["recipe.none"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["recipe.none"].isSelected)
         XCTAssertTrue(app.buttons["recipe.none"].isEnabled)
         for slot in 1...6 { XCTAssertTrue(app.buttons["recipe.slot.\(slot)"].isEnabled) }

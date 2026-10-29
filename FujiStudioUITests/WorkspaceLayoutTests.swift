@@ -25,7 +25,7 @@ final class WorkspaceLayoutTests: WorkspaceTestCase {
         app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
             dx: app.scrollViews["recipe.options"].frame.maxX - 6, dy: copy.frame.midY)).tap()
         let phone = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.phone.")).firstMatch
-        XCTAssertTrue(phone.waitUntilExists(timeout: 5))
+        XCTAssertTrue(phone.waitForExistence(timeout: 5))
         XCTAssertTrue(app.segmentedControls["recipe.collection"].buttons["Phone"].isSelected)
         XCTAssertEqual(app.buttons["recipe.control"].label, previous)
         XCTAssertFalse(phone.isSelected)
@@ -50,7 +50,7 @@ final class WorkspaceLayoutTests: WorkspaceTestCase {
         XCTAssertTrue(app.buttons["recipe.control"].label.contains("C3"))
         let recipeFrame = app.buttons["recipe.control"].frame
         app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: recipeFrame.midX, dy: recipeFrame.midY)).tap()
-        XCTAssertTrue(app.buttons["recipe.slot.3"].waitUntilExists(timeout: 5))
+        XCTAssertTrue(app.buttons["recipe.slot.3"].waitForExistence(timeout: 5))
 
         XCTAssertTrue(app.buttons["recipe.slot.3"].isSelected)
         let names = ["Soft daylight", "Warm shadows", "Mountain greens", "Quiet colour", "Evening light", "Monochrome", "Unsupported import"]

@@ -16,7 +16,7 @@ class AppFlowTestCase: XCTestCase {
 
     func launch(_ flags: [String] = []) -> XCUIApplication {
         let app = XCUIApplication(); app.launchArguments = ["--ui-fixtures"] + flags; app.launch()
-        XCTAssertTrue(app.buttons["workspace.select"].waitUntilExists(timeout: 10))
+        XCTAssertTrue(app.buttons["workspace.select"].waitForExistence(timeout: 10))
         return app
     }
 
@@ -27,24 +27,23 @@ class AppFlowTestCase: XCTestCase {
 
     func recipe(_ slot: Int, in app: XCUIApplication) {
         tap(app.buttons["recipe.control"], in: app)
-        XCTAssertTrue(app.buttons["recipe.slot.\(slot)"].waitUntilExists(timeout: 5))
+        XCTAssertTrue(app.buttons["recipe.slot.\(slot)"].waitForExistence(timeout: 5))
         tap(app.buttons["recipe.slot.\(slot)"], in: app)
     }
 
     func clearRecipe(in app: XCUIApplication) {
         tap(app.buttons["recipe.control"], in: app)
-        XCTAssertTrue(app.buttons["recipe.none"].waitUntilExists(timeout: 5))
+        XCTAssertTrue(app.buttons["recipe.none"].waitForExistence(timeout: 5))
         tap(app.buttons["recipe.none"], in: app)
     }
 
     func version(_ identifier: String, in app: XCUIApplication) -> XCUIElement {
         if app.buttons["workspace.versions"].exists { app.buttons["workspace.versions"].tap() }
         let button = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", identifier)).firstMatch
-        XCTAssertTrue(button.waitUntilExists(timeout: 5)); return button
+        XCTAssertTrue(button.waitForExistence(timeout: 5)); return button
     }
 
     func wait(_ condition: @escaping () -> Bool) {
-        if condition() { return }
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in condition() }, object: nil)], timeout: 10), .completed)
     }
 
@@ -105,7 +104,7 @@ class AppFlowTestCase: XCTestCase {
             app.buttons["fixture.background"].tap()
             app.buttons["fixture.foreground"].tap()
         }
-        XCTAssertTrue(app.buttons["fixture.finishSave"].waitUntilExists(timeout: 5))
+        XCTAssertTrue(app.buttons["fixture.finishSave"].waitForExistence(timeout: 5))
         app.buttons["fixture.finishSave"].tap()
         wait { app.buttons["app.status"].label.contains("Export paused") }
         app.buttons["app.status"].tap()

@@ -38,12 +38,12 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
         let app = launch(["--fixture-disconnected-camera"])
         tap(app.buttons["recipe.control"], in: app); app.buttons["recipe.copy.3"].tap()
         let phoneQuery = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.phone."))
-        XCTAssertTrue(phoneQuery.firstMatch.waitUntilExists(timeout: 5))
+        XCTAssertTrue(phoneQuery.firstMatch.waitForExistence(timeout: 5))
         let id = phoneQuery.firstMatch.identifier
         let edit = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.edit.")).firstMatch
         XCTAssertTrue(edit.isEnabled); XCTAssertFalse(phoneQuery.firstMatch.isEnabled)
         edit.tap()
-        XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitUntilExists(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitForExistence(timeout: 5))
         app.buttons["recipe.editor.setting.film"].tap()
         app.buttons["PROVIA / Standard"].tap()
         replaceText(app.textFields["recipe.editor.name"], with: "My Provia")
@@ -66,11 +66,11 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
         let app = launch(["--fixture-disconnected-camera"])
         tap(app.buttons["recipe.control"], in: app); app.buttons["recipe.copy.3"].tap()
         let edit = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.edit.")).firstMatch
-        XCTAssertTrue(edit.waitUntilExists(timeout: 5)); edit.tap()
+        XCTAssertTrue(edit.waitForExistence(timeout: 5)); edit.tap()
         let highlights = app.buttons["recipe.editor.setting.highlight"]
         reveal(highlights, in: app); highlights.tap()
         let labels = ["+4", "+3.5", "+3", "+2.5", "+2", "+1.5", "+1", "+0.5", "0", "-0.5", "-1", "-1.5", "-2"]
-        XCTAssertTrue(app.buttons[labels[0]].waitUntilExists(timeout: 5))
+        XCTAssertTrue(app.buttons[labels[0]].waitForExistence(timeout: 5))
         for (upper, lower) in zip(labels, labels.dropFirst()) {
             XCTAssertLessThan(app.buttons[upper].frame.minY, app.buttons[lower].frame.minY)
         }
@@ -87,14 +87,14 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
         let app = launch(["--fixture-disconnected-camera"])
         tap(app.buttons["recipe.control"], in: app); app.buttons["recipe.copy.3"].tap()
         let edit = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.edit.")).firstMatch
-        XCTAssertTrue(edit.waitUntilExists(timeout: 5)); edit.tap()
+        XCTAssertTrue(edit.waitForExistence(timeout: 5)); edit.tap()
         let balance = app.buttons["recipe.editor.setting.whiteBalance"]
         reveal(balance, in: app); balance.tap(); app.buttons["Colour temperature"].tap()
         let temperature = app.textFields["recipe.editor.temperature"]
         reveal(temperature, in: app); replaceText(temperature, with: "10001")
         shot(app, "Phone editor temperature draft before validation")
         app.buttons["recipe.editor.save"].tap()
-        XCTAssertTrue(app.staticTexts["recipe.editor.error"].waitUntilExists(timeout: 5))
+        XCTAssertTrue(app.staticTexts["recipe.editor.error"].waitForExistence(timeout: 5))
         XCTAssertEqual(temperature.value as? String, "10001")
         replaceText(temperature, with: "5200")
         app.buttons["recipe.editor.save"].tap()
@@ -107,8 +107,8 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
         let app = launch(["--fixture-disconnected-camera", "--fixture-accessibility"])
         tap(app.buttons["recipe.control"], in: app); app.buttons["recipe.copy.1"].tap()
         let edit = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.edit.")).firstMatch
-        XCTAssertTrue(edit.waitUntilExists(timeout: 5)); XCTAssertGreaterThanOrEqual(edit.frame.width, 44)
-        edit.tap(); XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitUntilExists(timeout: 5))
+        XCTAssertTrue(edit.waitForExistence(timeout: 5)); XCTAssertGreaterThanOrEqual(edit.frame.width, 44)
+        edit.tap(); XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitForExistence(timeout: 5))
         XCTAssertGreaterThan(app.textFields["recipe.editor.name"].frame.height, 44,
                              "The editor must inherit the largest accessibility text size")
         let effect = app.buttons["recipe.editor.setting.grainEffect"]

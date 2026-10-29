@@ -43,7 +43,7 @@ final class WorkspaceAccessibilityTests: WorkspaceTestCase {
         assertRecipeControlUsable(app)
         shot(app, "Workspace AX5 expanded")
         openRecipeMenu(app)
-        XCTAssertTrue(app.staticTexts["recipe.stale"].waitUntilExists(timeout: 5))
+        XCTAssertTrue(app.staticTexts["recipe.stale"].waitForExistence(timeout: 5))
         let options = app.scrollViews["recipe.options"]
         for _ in 0..<16 {
             let refresh = app.buttons["recipe.refresh"].frame
@@ -91,11 +91,11 @@ final class WorkspaceAccessibilityTests: WorkspaceTestCase {
         XCTAssertFalse(app.buttons["workspace.versions"].frame.intersects(app.buttons["recipe.control"].frame))
         app.buttons["workspace.versions"].tap()
         app.buttons["version.raw"].tap()
-        XCTAssertTrue(app.descendants(matching: .any)["viewer.unavailable"].waitUntilExists(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["viewer.unavailable"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.buttons["recipe.control"].label, "No recipe selected")
         app.buttons["workspace.versions"].tap()
         app.buttons["version.cameraJPEG"].tap()
-        XCTAssertTrue(app.scrollViews["viewer.image"].waitUntilExists(timeout: 5))
+        XCTAssertTrue(app.scrollViews["viewer.image"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.buttons["workspace.versions"].value as? String, "Original camera JPEG")
         shot(app, "Workspace AX5 collapsed, zoom and versions usable")
     }

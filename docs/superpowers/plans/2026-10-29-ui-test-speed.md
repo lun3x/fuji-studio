@@ -53,3 +53,5 @@
 - [x] Verify trace root cause and review the three deferred cleanup changes.
 - [x] Run the five affected rotation cases: all passed. The prior 60.52-second cleanup idle wait now targets SpringBoard and took 0.026 seconds; full dark geometry test took 11.725 seconds.
 - [ ] Run the full default suite with the cleanup fix, record result, remove the new simulator, and publish final evidence.
+- Fresh-simulator parallel run with the broad existence shortcuts failed numeric-picker geometry and initial AX5 Select hit-testing, before affected rotation cleanup ran. Reverted every existence/predicate shortcut, removed ElementWaits.swift, and restored the original XCTest polling throughout. Original seven affected cases then all passed (258.11 seconds). Conservation check now verifies all 64 bodies against baseline after only normalizing the three safe deferred cleanup additions.
+- Final validation will erase/reboot the task simulator before running the default full suite, so success cannot depend on warmed UI state. The accepted performance changes are bounded parallelism, feature-class scheduling, verbose-diagnostic opt-in, and the measured rotation-cleanup fix.

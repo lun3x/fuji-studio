@@ -7,7 +7,7 @@ class WorkspaceTestCase: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--workspace-fixture"] + flags
         app.launch()
-        XCTAssertTrue(app.buttons["drawer.toggle"].waitUntilExists(timeout: 10))
+        XCTAssertTrue(app.buttons["drawer.toggle"].waitForExistence(timeout: 10))
         return app
     }
 
@@ -30,7 +30,7 @@ class WorkspaceTestCase: XCTestCase {
         let control = app.buttons["recipe.control"], rect = control.frame
         let before = [app.staticTexts["fixture.viewed"].label, countLabel(app), app.staticTexts["fixture.exportCount"].label, control.label]
         app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: rect.midX, dy: rect.midY)).tap()
-        XCTAssertTrue(app.buttons["recipe.slot.3"].waitUntilExists(timeout: 5), file: file, line: line)
+        XCTAssertTrue(app.buttons["recipe.slot.3"].waitForExistence(timeout: 5), file: file, line: line)
         // Tap above the popover in the status region; native outside dismissal swallows it.
         let outside = app.buttons["app.status"].frame
         app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: outside.midX, dy: outside.midY)).tap()
@@ -41,7 +41,7 @@ class WorkspaceTestCase: XCTestCase {
     func openRecipeMenu(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
         let rect = app.buttons["recipe.control"].frame
         app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: rect.midX, dy: rect.midY)).tap()
-        XCTAssertTrue(app.buttons["recipe.none"].waitUntilExists(timeout: 5), file: file, line: line)
+        XCTAssertTrue(app.buttons["recipe.none"].waitForExistence(timeout: 5), file: file, line: line)
     }
 
     func assertExportControlUsable(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
