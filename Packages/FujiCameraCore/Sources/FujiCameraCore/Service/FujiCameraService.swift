@@ -110,7 +110,7 @@ public actor FujiCameraService: CameraServing {
       throw Self.failure(error)
     }
   }
-  private func connectOwned(epoch: UInt64) async throws {
+  private func connectOwned(epoch: UInt64, requireEmptyOutput: Bool = false) async throws {
     guard epoch == admissionEpoch else { throw CameraServiceError.cancelled }
     try Task.checkCancellation()
     if let operationError { throw operationError }
@@ -128,9 +128,10 @@ public actor FujiCameraService: CameraServing {
     do {
       context = try await openVerified(epoch: epoch)
       let pending = try journal.unresolved()
-      if !pending.isEmpty {
+      if !pending.isEmpty || requireEmptyOutput {
         guard try await handles().isEmpty else {
-          throw CameraServiceError.uncertainOperation(pending[0].id)
+          if let first = pending.first { throw CameraServiceError.uncertainOperation(first.id) }
+          throw CameraServiceError.preexistingObjects
         }
         // Fresh empty view reconciles absence only. Old acknowledgements/files stay honest;
         // no trigger/delete is replayed and no old uncertain file becomes a success.
@@ -529,7 +530,10 @@ public actor FujiCameraService: CameraServing {
     throw CameraServiceError.timeout
   }
   private func handles() async throws -> [UInt32] {
-    try FujiConversionCodec.objectHandles(await send(0x1007, [UInt32.max, 0, 0]).data)
+    let data = try await send(0x1007, [UInt32.max, 0, 0]).data
+    do { return try FujiConversionCodec.objectHandles(data) } catch {
+      throw CameraServiceError.invalidMetadata("The camera returned an invalid list of temporary conversion outputs.")
+    }
   }
   private func admit(epoch: UInt64) async throws -> CameraExecutionContext {
     if let operationError { throw operationError }
@@ -578,11 +582,16 @@ public actor FujiCameraService: CameraServing {
     _ = try? await owner.value
   }
   public func resetConnection() async throws {
+    guard !Task.isCancelled else { throw CameraServiceError.cancelled }
     admissionEpoch &+= 1
     let epoch = admissionEpoch
     stopRequested = true
+    // Once admitted, a lifecycle reset drains even if its UI task is cancelled.
+    let owner = Task.detached {
+      try await self.gate.withExclusiveAccess { try await self.resetOwned(epoch: epoch) }
+    }
     do {
-      try await gate.withExclusiveAccess { try await self.resetOwned(epoch: epoch) }
+      try await owner.value
     } catch { throw Self.failure(error) }
   }
   private func resetOwned(epoch: UInt64) async throws {
@@ -590,7 +599,8 @@ public actor FujiCameraService: CameraServing {
     try Task.checkCancellation()
     stopRequested = false
     do {
-      if nativeSession != nil {
+      if let expected = nativeSession,
+        let current = try? await session.currentSession(), current.generation == expected.generation {
         do { try await reconcileForReset() } catch {
           // An explicit reset still tries one native close/reopen when metadata
           // cannot be trusted. No unknown object is deleted; only a fresh empty
@@ -602,10 +612,10 @@ public actor FujiCameraService: CameraServing {
       context = nil
       operationError = nil
       guard await closeUncancelled(publishState: false) else { throw CameraServiceError.closeUnconfirmed }
-      try await connectOwned(epoch: epoch)
+      try await connectOwned(epoch: epoch, requireEmptyOutput: true)
     } catch {
       let failure = Self.failure(error)
-      if let retained = await sessionToRetain(after: failure) {
+      if epoch == admissionEpoch, let retained = await currentNativeSession() {
         pause(failure, message: "Reset could not finish. " + Self.validationMessage(failure), session: retained)
       }
       throw failure
@@ -678,11 +688,14 @@ public actor FujiCameraService: CameraServing {
   }
   private func sessionToRetain(after failure: CameraServiceError) async -> CameraSession? {
     switch failure {
-    case .invalidOutput, .ownershipChanged, .profileReadbackMismatch, .unsupportedProfile,
+    case .invalidOutput, .invalidMetadata, .ownershipChanged, .profileReadbackMismatch, .unsupportedProfile,
       .unsupportedContext, .preexistingObjects, .uncertainOperation, .recipeImportFailed,
       .transport(.responseCode): break
     default: return nil
     }
+    return await currentNativeSession()
+  }
+  private func currentNativeSession() async -> CameraSession? {
     guard !stopRequested, let expected = nativeSession,
       let current = try? await session.currentSession(), current.generation == expected.generation,
       !stopRequested, nativeSession == expected else { return nil }
@@ -716,6 +729,7 @@ public actor FujiCameraService: CameraServing {
   private static func validationMessage(_ failure: CameraServiceError) -> String {
     switch failure {
     case .invalidOutput: "The camera returned unreadable or unexpected conversion output."
+    case .invalidMetadata(let message): message
     case .ownershipChanged: "The camera's temporary conversion output changed unexpectedly."
     case .profileReadbackMismatch: "The camera returned different processing settings than were sent."
     case .unsupportedProfile: "The camera returned processing settings this app does not recognize."
@@ -723,6 +737,7 @@ public actor FujiCameraService: CameraServing {
     case .preexistingObjects, .uncertainOperation: "An unfinished conversion could not be safely cleared. Reset the camera connection to try again."
     case .recipeImportFailed: "The camera returned an incomplete or unexpected recipe collection."
     case .transport(.responseCode(let code)): "The camera declined the operation (error \(String(format: "0x%04X", code)))."
+    case .storage: "The app could not save the camera operation record."
     default: safeFailure(failure)
     }
   }

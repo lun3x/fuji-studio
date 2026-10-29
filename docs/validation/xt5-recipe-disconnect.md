@@ -62,3 +62,46 @@ recorded before that stricter diagnostic stops after one trial.
   listing confirmed the installed bundle was running.
 
 No new physical-camera transaction is claimed by these checks.
+
+## Separate output-metadata failure and explicit reset
+
+A later report on 2026-10-29 involved a camera that continued flashing after
+unplugging and switching its power off. The phone's latest three operation
+records show two completed conversions followed by an acknowledged trigger and
+an output handle, then `invalidOutput` before ObjectInfo/storage metadata had
+been saved. This is a separate failure from the LMO mismatch above. The journal
+recorded confirmed native closure; that does not establish that camera firmware
+finished processing or recovered.
+
+While the camera was stuck, macOS USB enumeration showed no Fujifilm device.
+After the user removed/reinserted the battery, enumeration returned. One
+read-only Mac session successfully read DeviceInfo and USB mode 6, observed an
+empty object view, and confirmed native closure. No conversion or deletion was
+performed by that probe. The rejected metadata was lost across the reset, so
+the precise firmware-lockup cause remains unproven. Private phone records and
+probe evidence are retained outside the repository.
+
+At the user's request, metadata validation failures now retain a valid native
+session, publish a connected attention state, and block further conversions.
+The camera icon turns red; the existing status page shows the specific error
+and a **Reset camera connection** action. Rejected ObjectInfo and storage
+datasets are saved before decoding, bounded to 4 KiB each. Invalid handle
+datasets are treated as metadata errors rather than native transport failures.
+
+Reset is a single explicit lifecycle operation. It first reconciles missing
+output or discards a failed temporary conversion only with same-session
+ownership, an acknowledged trigger following an empty view, the exact handle,
+recognized temporary storage, stable metadata, and two matching payload reads.
+An exclusive deletion marker prevents replay. Discard evidence is separate
+from the original rejected metadata, and discarded output never becomes a
+successful render. If metadata or ownership cannot be trusted, reset still
+tries one native close/reopen without deleting that output. It returns ready
+only after a fresh empty view; otherwise the error remains visible. Real USB
+loss, native transaction failure, and unconfirmed closure retain their existing
+lifecycle handling.
+
+Camera-core regressions cover retained errors, explicit reset followed by a
+new render, persistent malformed metadata, unsafe/changed outputs, ambiguous
+deletion, cancellation, and settling a previously unconfirmed native close.
+These software checks do not prove recovery from firmware that no longer
+enumerates over USB.

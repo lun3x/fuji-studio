@@ -148,8 +148,8 @@ struct XT5ProductionCameraServiceTests {
             await #expect(throws:CameraServiceError.self) { try await service.resetConnection() }
             let deletes=await wire.deletes
             #expect(deletes == (mode == .deleteRejected ? [77] : []))
-            #expect(await wire.closes == 0)
-            #expect(try await service.executionContext() == context)
+            #expect(await wire.closes == 1)
+            #expect(try await service.executionContext() != context)
             await #expect(throws:CameraServiceError.self) { try await service.resetConnection() }
             #expect(await wire.deletes == deletes);#expect(await wire.triggers == 1)
             await service.disconnect()
@@ -166,6 +166,102 @@ struct XT5ProductionCameraServiceTests {
         try await service.resetConnection()
         #expect(try journal.load(failed.id).phase == .reconciledMissing)
         #expect(await wire.triggers == 1);#expect(await wire.deletes.isEmpty)
+        await service.disconnect()
+    }
+    @Test func resetAttemptsNativeReopenWhenRejectedMetadataPersists() async throws {
+        for mode in [ProductionSession.Mode.wrongOutputFormat, .malformedOutputInfo, .oversizedOutputInfo] {
+            for clears in [false, true] {
+                let f=try ProductionOperationFixture();defer { f.remove() }
+                let wire=ProductionSession(fixture:f,mode:mode)
+                let journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"), filePolicy: IOSCameraJournalFilePolicy())
+                let service=makeService(wire,journal);try await service.connect()
+                await #expect(throws:CameraServiceError.self) { try await service.render(raw:f.raw,recipe:f.profile.bank,policy:.fullSizeFineRecordedGeometry) }
+                let failed=try #require(journal.unresolved().first)
+                await wire.clearOutputWhenClosed(clears)
+                if clears { try await service.resetConnection() }
+                else { await #expect(throws:CameraServiceError.self) { try await service.resetConnection() } }
+                #expect(await wire.closes == 1);#expect(await wire.connects == 2)
+                #expect(await wire.deletes.isEmpty);#expect(await wire.triggers == 1)
+                let record=try journal.load(failed.id)
+                #expect(record.objectInfo == failed.objectInfo && !record.deleteIntent)
+                #expect(record.phase == (clears ? .reconciledMissing : .uncertain))
+                var states=await service.states().makeAsyncIterator()
+                if clears {
+                    guard case .ready = await states.next() else { Issue.record("Fresh empty reset must become ready");return }
+                } else {
+                    guard case .attentionRequired = await states.next() else { Issue.record("Unresolved reset must remain in error");return }
+                }
+                await service.disconnect()
+            }
+        }
+    }
+    @Test func invalidHandleMetadataRetainsTheSession() async throws {
+        for mode in [ProductionSession.Mode.duplicateOutputHandles, .zeroOutputHandle] {
+            let f=try ProductionOperationFixture();defer { f.remove() }
+            let wire=ProductionSession(fixture:f,mode:mode)
+            let journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"), filePolicy: IOSCameraJournalFilePolicy())
+            let service=makeService(wire,journal);try await service.connect()
+            let context=try await service.executionContext()
+            await #expect(throws:CameraServiceError.self) { try await service.render(raw:f.raw,recipe:f.profile.bank,policy:.fullSizeFineRecordedGeometry) }
+            #expect(await wire.closes == 0)
+            #expect(try await service.executionContext() == context)
+            var states=await service.states().makeAsyncIterator()
+            guard case .attentionRequired(_, let message) = await states.next() else { Issue.record("Invalid handle metadata must retain a connected error");return }
+            #expect(message.contains("list"))
+            await service.disconnect()
+        }
+    }
+    @Test func cancelledResetCannotStrandAReadySession() async throws {
+        let f=try ProductionOperationFixture();defer { f.remove() }
+        let wire=ProductionSession(fixture:f)
+        let journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"), filePolicy: IOSCameraJournalFilePolicy())
+        let gate=SerialCameraGate(),service=makeService(wire,journal,gate:gate)
+        try await service.connect();let original=try await service.executionContext()
+        let cancelled=Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            await #expect(throws:CameraServiceError.cancelled) { try await service.resetConnection() }
+        }
+        await cancelled.value
+        #expect(try await service.executionContext() == original)
+        #expect(await wire.closes == 0)
+        let barrier=FixtureBarrier()
+        let holder=Task { try await gate.withExclusiveAccess { await barrier.wait() } }
+        await barrier.entered()
+        let reset=Task { try await service.resetConnection() }
+        while await gate.queuedOperationCount == 0 { await Task.yield() }
+        reset.cancel()
+        await barrier.release();_ = try await holder.value
+        try await reset.value
+        #expect(try await service.executionContext() != original)
+        #expect(await wire.closes == 1);#expect(await wire.connects == 2)
+        await service.disconnect()
+    }
+    @Test func resetNeverReportsReadyWhileUnknownObjectsRemain() async throws {
+        let f=try ProductionOperationFixture();defer { f.remove() }
+        let wire=ProductionSession(fixture:f,mode:.preexisting)
+        let journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"), filePolicy: IOSCameraJournalFilePolicy())
+        let service=makeService(wire,journal);try await service.connect()
+        await #expect(throws:CameraServiceError.self) { try await service.render(raw:f.raw,recipe:f.profile.bank,policy:.fullSizeFineRecordedGeometry) }
+        #expect(try journal.unresolved().isEmpty)
+        await #expect(throws:CameraServiceError.self) { try await service.resetConnection() }
+        #expect(await wire.closes == 1);#expect(await wire.connects == 2)
+        #expect(await wire.deletes.isEmpty);#expect(await wire.triggers == 0)
+        var states=await service.states().makeAsyncIterator()
+        guard case .attentionRequired = await states.next() else { Issue.record("Unknown output must remain blocked");return }
+        await service.disconnect()
+    }
+    @Test func resetCanSettleAPreviouslyUnconfirmedNativeClose() async throws {
+        let f=try ProductionOperationFixture();defer { f.remove() }
+        let wire=ProductionSession(fixture:f,mode:.wrongOutputFormat)
+        let journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"), filePolicy: IOSCameraJournalFilePolicy())
+        let service=makeService(wire,journal);try await service.connect()
+        await #expect(throws:CameraServiceError.self) { try await service.render(raw:f.raw,recipe:f.profile.bank,policy:.fullSizeFineRecordedGeometry) }
+        await wire.setMode(.closeFails)
+        await #expect(throws:CameraServiceError.closeUnconfirmed) { try await service.resetConnection() }
+        await wire.setMode(.normal)
+        try await service.resetConnection()
+        #expect(await wire.connects == 2);#expect(await wire.closes == 2)
+        #expect(await wire.deletes == [77]);#expect(await wire.triggers == 1)
         await service.disconnect()
     }
     @Test func invalidFineOrMissingLMOCannotProduceCameraJPEGOrDelete() async throws {
@@ -289,7 +385,7 @@ struct XT5ProductionCameraServiceTests {
 }
 
 actor ProductionSession: CameraSessionTransport {
-    enum Mode { case normal,preexisting,profileRejected,readbackMismatch,wrongStorage,replacedHandle,payloadChanged,deleteRejected,nonemptyAfterDelete,staleAfterTrigger,triggerRejected,closeFails,wrongOutputFormat,malformedOutputInfo,oversizedOutputInfo }
+    enum Mode { case normal,preexisting,profileRejected,readbackMismatch,wrongStorage,replacedHandle,payloadChanged,deleteRejected,nonemptyAfterDelete,staleAfterTrigger,triggerRejected,closeFails,wrongOutputFormat,malformedOutputInfo,oversizedOutputInfo,duplicateOutputHandles,zeroOutputHandle }
     let fixture:ProductionOperationFixture,holdOpcode:UInt16?
     let holdStates:Bool
     var mode:Mode
@@ -306,9 +402,11 @@ actor ProductionSession: CameraSessionTransport {
     func connect() throws { connects += 1;if mode == .closeFails && closes > 0 { throw PTPError.sessionClosing };connected=true;emit(.sessionOpen(snapshot())) }
     func currentSession() throws -> CameraSession { guard connected else { throw PTPError.notConnected };return snapshot() }
     private var closeBarrier: FixtureBarrier?
+    private var clearsOutputOnClose = false
     private(set) var closeEntered = false
     func holdClose(_ barrier: FixtureBarrier) { closeBarrier = barrier }
-    func close() async throws { closeEntered = true;if let closeBarrier { await closeBarrier.wait() };closes += 1;connected=false;emit(.disconnected);if mode == .closeFails { throw PTPError.timeout } }
+    func close() async throws { closeEntered = true;if let closeBarrier { await closeBarrier.wait() };closes += 1;connected=false;if clearsOutputOnClose { outputPresent=false };emit(.disconnected);if mode == .closeFails { throw PTPError.timeout } }
+    func clearOutputWhenClosed(_ clears: Bool) { clearsOutputOnClose=clears }
     func snapshot()->CameraSession { .init(generation:generation,connection:.init(name:"Synthetic",usbVendorID:0x04cb,usbProductID:0x2fc)) }
     func emit(_ state:CameraState) { subscribers.forEach { $0.yield(state) } }
     func simulatePhysicalReconnect(empty:Bool) { connected=false;generation += 1;outputPresent = !empty;mode = .normal }
@@ -337,7 +435,7 @@ actor ProductionSession: CameraSessionTransport {
             if mode == .staleAfterTrigger { generation += 1 };bytes=Data()
         case (0x1007,[UInt32.max,0,0]):
             views += 1
-            let handles:[UInt32]=mode == .preexisting ? [99] : !outputPresent ? [] : [mode == .replacedHandle && views > 3 ? 88 : 77]
+            let handles:[UInt32]=mode == .preexisting ? [99] : !outputPresent ? [] : mode == .duplicateOutputHandles ? [77,77] : mode == .zeroOutputHandle ? [0] : [mode == .replacedHandle && views > 3 ? 88 : 77]
             bytes=ObjectObservationFixture.word(UInt32(handles.count))+handles.reduce(Data()) { $0+ObjectObservationFixture.word($1) }
         case (0x1008,[77]):
             var info=ObjectObservationFixture.info(byteCount:4);info.replaceSubrange(26..<34,with:Data(repeating:0,count:8));info.replaceSubrange(42..<44,with:ProtocolProbeFixtures.word(2055))

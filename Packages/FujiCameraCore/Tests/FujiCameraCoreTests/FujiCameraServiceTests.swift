@@ -98,8 +98,8 @@ struct FujiCameraServiceTests {
             }
             #expect(await wire.commands.allSatisfy { ![0x1009,0x100B].contains($0.opcode) })
             #expect(await wire.triggers == 1)
-            #expect(await wire.closes == 1)
-            #expect(try await service.executionContext() != context)
+            #expect(await wire.closes == 0)
+            #expect(try await service.executionContext() == context)
             let commands=await wire.commands
             await #expect(throws:CameraServiceError.self) { try await service.connect() }
             await #expect(throws:CameraServiceError.self) { try await service.render(raw:f.raw,recipe:f.profile.bank,policy:.fullSizeFineRecordedGeometry) }
@@ -147,8 +147,8 @@ struct FujiCameraServiceTests {
             await #expect(throws:CameraServiceError.self) { try await service.resetConnection() }
             let deletes=await wire.deletes
             #expect(deletes == (mode == .deleteRejected ? [77] : []))
-            #expect(await wire.closes == 0)
-            #expect(try await service.executionContext() == context)
+            #expect(await wire.closes == 1)
+            #expect(try await service.executionContext() != context)
             await #expect(throws:CameraServiceError.self) { try await service.resetConnection() }
             #expect(await wire.deletes == deletes);#expect(await wire.triggers == 1)
             await service.disconnect()
@@ -193,6 +193,75 @@ struct FujiCameraServiceTests {
                 await service.disconnect()
             }
         }
+    }
+    @Test func invalidHandleMetadataRetainsTheSession() async throws {
+        for mode in [ProductionSession.Mode.duplicateOutputHandles, .zeroOutputHandle] {
+            let f=try ProductionOperationFixture();defer { f.remove() }
+            let wire=ProductionSession(fixture:f,mode:mode)
+            let journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"), filePolicy: TestJournalFilePolicy())
+            let service=makeService(wire,journal);try await service.connect()
+            let context=try await service.executionContext()
+            await #expect(throws:CameraServiceError.self) { try await service.render(raw:f.raw,recipe:f.profile.bank,policy:.fullSizeFineRecordedGeometry) }
+            #expect(await wire.closes == 0)
+            #expect(try await service.executionContext() == context)
+            var states=await service.states().makeAsyncIterator()
+            guard case .attentionRequired(_, let message) = await states.next() else { Issue.record("Invalid handle metadata must retain a connected error");return }
+            #expect(message.contains("list"))
+            await service.disconnect()
+        }
+    }
+    @Test func cancelledResetCannotStrandAReadySession() async throws {
+        let f=try ProductionOperationFixture();defer { f.remove() }
+        let wire=ProductionSession(fixture:f)
+        let journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"), filePolicy: TestJournalFilePolicy())
+        let gate=SerialCameraGate(),service=makeService(wire,journal,gate:gate)
+        try await service.connect();let original=try await service.executionContext()
+        let cancelled=Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            await #expect(throws:CameraServiceError.cancelled) { try await service.resetConnection() }
+        }
+        await cancelled.value
+        #expect(try await service.executionContext() == original)
+        #expect(await wire.closes == 0)
+        let barrier=FixtureBarrier()
+        let holder=Task { try await gate.withExclusiveAccess { await barrier.wait() } }
+        await barrier.entered()
+        let reset=Task { try await service.resetConnection() }
+        while await gate.queuedOperationCount == 0 { await Task.yield() }
+        reset.cancel()
+        await barrier.release();_ = try await holder.value
+        try await reset.value
+        #expect(try await service.executionContext() != original)
+        #expect(await wire.closes == 1);#expect(await wire.connects == 2)
+        await service.disconnect()
+    }
+    @Test func resetNeverReportsReadyWhileUnknownObjectsRemain() async throws {
+        let f=try ProductionOperationFixture();defer { f.remove() }
+        let wire=ProductionSession(fixture:f,mode:.preexisting)
+        let journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"), filePolicy: TestJournalFilePolicy())
+        let service=makeService(wire,journal);try await service.connect()
+        await #expect(throws:CameraServiceError.self) { try await service.render(raw:f.raw,recipe:f.profile.bank,policy:.fullSizeFineRecordedGeometry) }
+        #expect(try journal.unresolved().isEmpty)
+        await #expect(throws:CameraServiceError.self) { try await service.resetConnection() }
+        #expect(await wire.closes == 1);#expect(await wire.connects == 2)
+        #expect(await wire.deletes.isEmpty);#expect(await wire.triggers == 0)
+        var states=await service.states().makeAsyncIterator()
+        guard case .attentionRequired = await states.next() else { Issue.record("Unknown output must remain blocked");return }
+        await service.disconnect()
+    }
+    @Test func resetCanSettleAPreviouslyUnconfirmedNativeClose() async throws {
+        let f=try ProductionOperationFixture();defer { f.remove() }
+        let wire=ProductionSession(fixture:f,mode:.wrongOutputFormat)
+        let journal=try CameraOperationJournal(directory:f.directory.appendingPathComponent("journal"), filePolicy: TestJournalFilePolicy())
+        let service=makeService(wire,journal);try await service.connect()
+        await #expect(throws:CameraServiceError.self) { try await service.render(raw:f.raw,recipe:f.profile.bank,policy:.fullSizeFineRecordedGeometry) }
+        await wire.setMode(.closeFails)
+        await #expect(throws:CameraServiceError.closeUnconfirmed) { try await service.resetConnection() }
+        await wire.setMode(.normal)
+        try await service.resetConnection()
+        #expect(await wire.connects == 2);#expect(await wire.closes == 2)
+        #expect(await wire.deletes == [77]);#expect(await wire.triggers == 1)
+        await service.disconnect()
     }
     @Test func invalidFineOrMissingLMOCannotProduceCameraJPEGOrDelete() async throws {
         for missing in [false,true] {
@@ -315,7 +384,7 @@ struct FujiCameraServiceTests {
 }
 
 actor ProductionSession: CameraSessionTransport {
-    enum Mode { case normal,preexisting,profileRejected,readbackMismatch,wrongStorage,replacedHandle,payloadChanged,deleteRejected,nonemptyAfterDelete,staleAfterTrigger,triggerRejected,closeFails,wrongOutputFormat,malformedOutputInfo,oversizedOutputInfo }
+    enum Mode { case normal,preexisting,profileRejected,readbackMismatch,wrongStorage,replacedHandle,payloadChanged,deleteRejected,nonemptyAfterDelete,staleAfterTrigger,triggerRejected,closeFails,wrongOutputFormat,malformedOutputInfo,oversizedOutputInfo,duplicateOutputHandles,zeroOutputHandle }
     let fixture:ProductionOperationFixture,holdOpcode:UInt16?
     let holdStates:Bool
     var mode:Mode
@@ -365,7 +434,7 @@ actor ProductionSession: CameraSessionTransport {
             if mode == .staleAfterTrigger { generation += 1 };bytes=Data()
         case (0x1007,[UInt32.max,0,0]):
             views += 1
-            let handles:[UInt32]=mode == .preexisting ? [99] : !outputPresent ? [] : [mode == .replacedHandle && views > 3 ? 88 : 77]
+            let handles:[UInt32]=mode == .preexisting ? [99] : !outputPresent ? [] : mode == .duplicateOutputHandles ? [77,77] : mode == .zeroOutputHandle ? [0] : [mode == .replacedHandle && views > 3 ? 88 : 77]
             bytes=ObjectObservationFixture.word(UInt32(handles.count))+handles.reduce(Data()) { $0+ObjectObservationFixture.word($1) }
         case (0x1008,[77]):
             var info=ObjectObservationFixture.info(byteCount:4);info.replaceSubrange(26..<34,with:Data(repeating:0,count:8));info.replaceSubrange(42..<44,with:ProtocolProbeFixtures.word(2055))
