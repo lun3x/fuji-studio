@@ -115,6 +115,7 @@ actor FixtureLibrary: PhotoLibraryReading, PhotoEditReading {
     private var materializeFailures: [String: ResourceError] = [:]
     private var discoveryLimit: Int?
     private var revisionBytes: [String: Data] = [:]
+    private var pairedJPEGBytes: [SourceID: Data] = [:]
     private(set) var materializations = 0
     private var observers: [AsyncStream<LibraryChange>.Continuation] = []
     private(set) var rawReads = 0, changeSubscriptions = 0, discoveryRequests = 0
@@ -182,12 +183,30 @@ actor FixtureLibrary: PhotoLibraryReading, PhotoEditReading {
         edits[id] = nil
         observers.forEach { $0.yield(LibraryChange(changedIDs: [id], removedIDs: [], accessScopeChanged: false)) }
     }
+    func replaceWithPair(_ source: PhotoSource, id: String, jpeg: CameraJPEG) throws {
+        guard let position = index.firstIndex(where: { $0.id == source.id }),
+              index[position].originalResources == source.originalResources,
+              source.originalResources.jpeg == nil else { throw ResourceError.resourceChanged }
+        let revision = "pair-\(id)"
+        let raw = ResourceToken(assetID: id, role: .alternateOriginal,
+            contentTypeIdentifier: source.originalResources.raf.contentTypeIdentifier, format: .raf,
+            originalFilename: source.originalResources.raf.originalFilename, discriminator: "pair-raw", sourceRevision: revision)
+        let compressed = ResourceToken(assetID: id, role: .primaryOriginal, contentTypeIdentifier: "public.jpeg",
+            format: .jpeg, originalFilename: "paired.JPG", discriminator: "pair-jpeg", sourceRevision: revision)
+        revisionBytes[revision] = try revisionBytes[source.resourceRevision] ?? Data(contentsOf: image.fileURL)
+        pairedJPEGBytes[id] = try Data(contentsOf: jpeg.fileURL)
+        index[position] = PhotoSource(id: id, originalResources: .init(raf: raw, jpeg: compressed),
+            captureDate: source.captureDate, location: source.location, resourceRevision: revision, compatibility: source.compatibility)
+        edits[source.id] = nil
+        observers.forEach { $0.yield(LibraryChange(changedIDs: [id], removedIDs: [source.id], accessScopeChanged: false)) }
+    }
     func changes() -> AsyncStream<LibraryChange> {
         changeSubscriptions += 1
         return AsyncStream { observers.append($0) }
     }
     func materialize(_ resource: ResourceToken, progress: @escaping @Sendable (Double) -> Void) async throws -> LocalResource {
-        let bytes = resource.format == .raf && undecodableRAW ? Data(repeating:42,count:256) : try revisionBytes[resource.sourceRevision] ?? Data(contentsOf: image.fileURL)
+        let pairedJPEG = resource.format == .jpeg ? pairedJPEGBytes[resource.assetID] : nil
+        let bytes = resource.format == .raf && undecodableRAW ? Data(repeating:42,count:256) : try pairedJPEG ?? revisionBytes[resource.sourceRevision] ?? Data(contentsOf: image.fileURL)
         if let barrier = materializeBarriers[resource.assetID] { await barrier.wait() }
         try Task.checkCancellation()
         if let error = materializeFailures[resource.assetID] { throw error }
@@ -359,34 +378,54 @@ actor FixtureWriter: PhotoLibraryWriting {
     private var barrier: FixtureBarrier?
     private(set) var requests: [PhotoSaveRequest] = []
     private var found: [UUID: SavedAsset] = [:]
+    private var replacements: [SourceID: SourceID] = [:]
+    func sourceReplacements() async throws -> [SourceID: SourceID] { replacements }
     init(reader: FixtureLibrary, uncertain: Bool) { self.reader = reader; self.uncertain = uncertain }
     func holdSave(_ barrier: FixtureBarrier) { self.barrier = barrier }
     func saveJPEG(_ request: PhotoSaveRequest, onPlaceholder: @escaping @Sendable (String) -> Void) async throws -> SavedAsset {
         requests.append(request)
-        let id = request.originalEdit?.source.id ?? "fixture-export-\(request.operationID.uuidString)"; onPlaceholder(id)
+        let id = outputID(request); onPlaceholder(id)
         if let barrier { await barrier.wait() }
         if uncertain { throw PhotoLibraryWriteError.uncertain(.missingConfirmation) }
         if let edit = request.originalEdit {
-            await reader.addOriginalEdit(.init(operationID: request.operationID, sourceID: edit.source.id, recipe: edit.recipe))
+            if edit.source.originalResources.jpeg == nil {
+                replacements[edit.source.id] = id
+                try await reader.replaceWithPair(edit.source, id: id, jpeg: request.jpeg)
+            } else { await reader.addOriginalEdit(.init(operationID: request.operationID, sourceID: edit.source.id, recipe: edit.recipe)) }
         } else { await reader.addOutput(id) }
-        return SavedAsset(assetID: id, operationID: request.operationID, photosGeometry: nil)
+        let asset = SavedAsset(assetID: id, operationID: request.operationID, photosGeometry: nil)
+        found[request.operationID] = asset
+        return asset
     }
     func makeSubmittedExportDiscoverable(_ operationID: UUID) async throws -> SavedAsset {
         guard let request = requests.first(where: { $0.operationID == operationID }) else { throw ResourceError.inaccessibleAsset("unsubmitted") }
-        let asset = SavedAsset(assetID: request.originalEdit?.source.id ?? "fixture-export-\(operationID.uuidString)", operationID: operationID, photosGeometry: nil)
+        let asset = SavedAsset(assetID: outputID(request), operationID: operationID, photosGeometry: nil)
         if let edit = request.originalEdit {
-            await reader.addOriginalEdit(.init(operationID: operationID, sourceID: edit.source.id, recipe: edit.recipe))
+            if edit.source.originalResources.jpeg == nil {
+                replacements[edit.source.id] = asset.assetID
+                try await reader.replaceWithPair(edit.source, id: asset.assetID, jpeg: request.jpeg)
+            } else { await reader.addOriginalEdit(.init(operationID: operationID, sourceID: edit.source.id, recipe: edit.recipe)) }
         } else { await reader.addOutput(asset.assetID) }
         found[operationID] = asset
         return asset
     }
     func findExport(operationID: UUID, knownAssetID: String?, originalAssetID: String?) async throws -> SaveLookup {
         if let originalAssetID {
+            if let replacement = replacements[originalAssetID], let asset = found[operationID], asset.assetID == replacement {
+                _ = try await reader.source(id: replacement)
+                return .found(asset)
+            }
             guard try await reader.currentAdjustment(assetID: originalAssetID)?.operationID == operationID else { return .notFound }
             return .found(SavedAsset(assetID: originalAssetID, operationID: operationID, photosGeometry: nil))
         }
         guard let asset = found[operationID], knownAssetID == nil || knownAssetID == asset.assetID else { return .notFound }
         return .found(asset)
+    }
+    private func outputID(_ request: PhotoSaveRequest) -> String {
+        if let edit = request.originalEdit {
+            return edit.source.originalResources.jpeg == nil ? "fixture-pair-\(request.operationID.uuidString)" : edit.source.id
+        }
+        return "fixture-export-\(request.operationID.uuidString)"
     }
 }
 

@@ -169,6 +169,7 @@ private actor ViewerLibrary: PhotoLibraryReading {
     }
 }
 private actor ViewerCatalog: CatalogStoring {
+    func replaceSource(_ sourceID: SourceID, with replacement: PhotoSource) throws { throw ViewerError.invalidVersion }
     let saved: [SavedVersion]
     var sourceIDs: [String] = []
     init(_ saved: [SavedVersion]) { self.saved = saved }

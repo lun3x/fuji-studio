@@ -8,6 +8,7 @@ import SwiftData
     @Attribute(.unique) var sourceID: String
     var payload: Data
     var availability: String
+    var replacementSourceID: String? = nil
     init(sourceID: String, payload: Data, availability: AssetAvailability = .available) {
         self.sourceID = sourceID
         self.payload = payload

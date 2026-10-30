@@ -1287,6 +1287,7 @@ import Testing
 
 /// Delegates to the same actual disk catalog; only the captured version-list return is delayed.
 private actor HeldVersionCatalog: CatalogStoring {
+    func replaceSource(_ sourceID: SourceID, with replacement: PhotoSource) async throws { try await base.replaceSource(sourceID, with: replacement) }
     let base: any CatalogStoring
     private var recipeSavesToFail = 0
     func failNextRecipeSave() { recipeSavesToFail += 1 }

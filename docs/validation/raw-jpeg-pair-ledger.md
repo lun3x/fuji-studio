@@ -16,3 +16,16 @@ metadata-loss and limited-access recovery regressions fail before fixing them.
 (including five corruption/change variants). This includes real byte read-back,
 metadata preservation, durable reopen, read-only recovery, and submitted-operation
 cancellation. Log: `/tmp/fuji-pair-service-final.log`.
+
+Task 2: complete. Writer routing, catalog alias ordering, selection replacement,
+and explicit cleanup recovery were observed failing before implementation.
+The app-level mixed-batch test then reproduced the lost selection and premature
+pause with replacement notifications before fixing their handling. The 26
+focused tests passed, followed by `Scripts/test-ios.sh --fast`: 583 Swift Testing
+tests and 20 XCTest cases passed. Logs: `/tmp/fuji-pair-app-green.log` and
+`/tmp/fuji-pair-fast.log`. The fixture replacement implementation moved into this
+task so the actual notification timing could be tested before the UI step.
+
+Task 3 in progress: the full RAW-only export UI flow reaches both exports and
+retains the same checked pair. Its first run failed only the expected Paired JPEG
+label assertion (`/tmp/fuji-pair-ui-red.log`).

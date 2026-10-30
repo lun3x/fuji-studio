@@ -28,6 +28,27 @@ actor SwiftDataCatalog: ModelActor, CatalogStoring {
             for source in sources { try upsert(source) }
         }
     }
+    func replaceSource(_ sourceID: SourceID, with replacement: PhotoSource) throws {
+        try write {
+            guard sourceID != replacement.id, let original = try sourceRecord(sourceID),
+                  original.replacementSourceID == nil || original.replacementSourceID == replacement.id,
+                  try associatedSourceID(replacement.id) != sourceID,
+                  replacement.originalResources.raf.assetID == replacement.id,
+                  replacement.originalResources.raf.role == .alternateOriginal,
+                  replacement.originalResources.jpeg?.assetID == replacement.id,
+                  replacement.originalResources.jpeg?.role == .primaryOriginal else {
+                throw CatalogError.invalidState("Invalid RAW+JPEG source replacement")
+            }
+            try upsert(replacement)
+            original.replacementSourceID = replacement.id
+            let records = try modelContext.fetch(FetchDescriptor<CatalogVersionRecord>(predicate: #Predicate { $0.sourceID == sourceID }))
+            for record in records {
+                var version = try decode(SavedVersion.self, record.payload)
+                version.sourceID = replacement.id
+                record.sourceID = replacement.id; record.payload = try encode(version)
+            }
+        }
+    }
 
     func replaceRecipes(_ collection: ImportedRecipeCollection) throws {
         let snapshots=collection.recipes,slots=collection.declaredSlots,execution=collection.context,support=collection.support
@@ -152,8 +173,9 @@ actor SwiftDataCatalog: ModelActor, CatalogStoring {
 
     func versions(sourceID: SourceID) throws -> [SavedVersion] {
         try read {
+            let associatedID = try associatedSourceID(sourceID)
             let request = FetchDescriptor<CatalogVersionRecord>(
-                predicate: #Predicate { $0.sourceID == sourceID }, sortBy: [SortDescriptor(\.exportedAt)])
+                predicate: #Predicate { $0.sourceID == associatedID }, sortBy: [SortDescriptor(\.exportedAt)])
             return try modelContext.fetch(request).map { try decode(SavedVersion.self, $0.payload) }
         }
     }
@@ -222,16 +244,21 @@ actor SwiftDataCatalog: ModelActor, CatalogStoring {
         try write {
             guard let record = try jobRecord(jobID) else { throw CatalogError.missingJob(jobID) }
             var job = try decode(ExportJob.self, record.payload)
-            guard let index = job.items.firstIndex(where: { $0.operationID == operationID }),
-                  version.operationID == operationID, version.sourceID == job.items[index].source.id,
-                  version.recipeSnapshot == job.recipeSnapshot, version.destination == job.destination,
+            guard let index = job.items.firstIndex(where: { $0.operationID == operationID }) else { throw CatalogError.conflictingOperation(operationID) }
+            let sourceID = job.items[index].source.id, associatedID = try associatedSourceID(sourceID)
+            guard version.operationID == operationID,
+                  version.sourceID == sourceID || version.sourceID == associatedID,
+                  version.recipeSnapshot == job.recipeSnapshot, version.destination == job.destination.forSource(job.items[index].source),
                   !version.outputAssetID.isEmpty,
-                  job.destination != .updateOriginal || version.outputAssetID == version.sourceID else {
+                  version.destination != .updateOriginal || version.outputAssetID == job.items[index].source.id,
+                  version.destination != .createPair || version.outputAssetID != job.items[index].source.id else {
                 throw CatalogError.conflictingOperation(operationID)
             }
+            var associated = version
+            associated.sourceID = associatedID
             if let canonical = try versionRecord(operationID) {
                 let saved = try decode(SavedVersion.self, canonical.payload)
-                guard sameConfirmation(saved, version), job.items[index].state == .saved(saved.id) else {
+                guard sameConfirmation(saved, associated), job.items[index].state == .saved(saved.id) else {
                     throw CatalogError.conflictingOperation(operationID)
                 }
                 return
@@ -256,7 +283,7 @@ actor SwiftDataCatalog: ModelActor, CatalogStoring {
                 predicate: #Predicate { $0.versionID == versionID })).isEmpty else {
                 throw CatalogError.conflictingOperation(operationID)
             }
-            modelContext.insert(CatalogVersionRecord(version: version, payload: try encode(version)))
+            modelContext.insert(CatalogVersionRecord(version: associated, payload: try encode(associated)))
             job.items[index].state = .saved(version.id)
             if job.items.allSatisfy({ if case .saved = $0.state { true } else { false } }) { job.state = .saved }
             record.payload = try encode(job)
@@ -361,6 +388,14 @@ actor SwiftDataCatalog: ModelActor, CatalogStoring {
 
     private func sourceRecord(_ id: String) throws -> CatalogSourceRecord? {
         try modelContext.fetch(FetchDescriptor<CatalogSourceRecord>(predicate: #Predicate { $0.sourceID == id })).first
+    }
+    private func associatedSourceID(_ id: SourceID) throws -> SourceID {
+        var current = id, visited = Set<SourceID>()
+        while let next = try sourceRecord(current)?.replacementSourceID {
+            guard visited.insert(current).inserted else { throw CatalogError.invalidState("Cyclic source replacement") }
+            current = next
+        }
+        return current
     }
     private func recipeRecord(_ id: UUID) throws -> CatalogRecipeRecord? {
         try modelContext.fetch(FetchDescriptor<CatalogRecipeRecord>(predicate: #Predicate { $0.snapshotID == id })).first

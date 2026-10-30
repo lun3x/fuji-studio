@@ -69,13 +69,14 @@ actor ExportCoordinator {
         return pair.stream
     }
     private func removeObserver(_ id: UUID) { observers[id] = nil }
+    func sourceReplacements() async throws -> [SourceID: SourceID] { try await writer.sourceReplacements() }
 
     func start(sources: [PhotoSource], recipe: RecipeSnapshot, destination: ExportDestination = .separatePhoto) async throws -> UUID {
         guard !suspended else { throw ExportCoordinatorError.stopped }
         try reserve()
         let epoch = admissionEpoch
         do {
-            guard !sources.isEmpty, Set(sources.map(\.id)).count == sources.count else { throw ExportCoordinatorError.invalidSubmission }
+            guard destination != .createPair, !sources.isEmpty, Set(sources.map(\.id)).count == sources.count else { throw ExportCoordinatorError.invalidSubmission }
             try recipe.requireRenderable(using: RecipeCodecRegistry())
             try await validateCamera(recipe)
             for source in sources { try await validateSource(source); try checkStop(); guard epoch == admissionEpoch else { throw ExportCoordinatorError.stopped } }
@@ -157,7 +158,7 @@ actor ExportCoordinator {
         try reserve()
         let epoch = admissionEpoch
         do {
-            try await reconcile(id)
+            try await reconcile(id, finishReplacements: true)
             var job = try await catalog.job(id: id)
             var released: [RenderKey] = []
             for index in job.items.indices {
@@ -388,7 +389,7 @@ actor ExportCoordinator {
         try await setState(id, index, .pendingSave(pending), stage: .pendingSave)
     }
 
-    private func reconcile(_ id: UUID, releaseFiles: Bool = true) async throws {
+    private func reconcile(_ id: UUID, releaseFiles: Bool = true, finishReplacements: Bool = false) async throws {
         let original = try await catalog.job(id: id)
         for index in original.items.indices {
             let job = try await catalog.job(id: id)
@@ -402,6 +403,9 @@ actor ExportCoordinator {
                 let lookup = try? await writer.findExport(operationID: pending.operationID, knownAssetID: pending.placeholderID,
                     originalAssetID: job.destination == .updateOriginal ? job.items[index].source.id : nil)
                 if case .found(let asset) = lookup {
+                    try await confirm(job, index, pending, asset, releaseFile: releaseFiles)
+                } else if finishReplacements, case .needsReplacementCleanup(let candidate) = lookup,
+                          let asset = try? await writer.completeReplacement(operationID: pending.operationID, assetID: candidate.assetID) {
                     try await confirm(job, index, pending, asset, releaseFile: releaseFiles)
                 } else {
                     pending.submission = .unknown(at: pending.submission.attemptedAt!)
@@ -417,7 +421,7 @@ actor ExportCoordinator {
               let at = pending.submission.attemptedAt else { throw CatalogError.conflictingOperation(pending.operationID) }
         let version = SavedVersion(id: UUID(), sourceID: job.items[index].source.id, outputAssetID: asset.assetID,
             recipeSnapshot: job.recipeSnapshot, operationID: pending.operationID, exportedAt: at, jpeg: pending.jpeg,
-            availability: .available, destination: job.destination)
+            availability: .available, destination: job.destination.forSource(job.items[index].source))
         try await catalog.confirmSaved(jobID: job.id, operationID: pending.operationID, version: version)
         if releaseFile { try await releaseIfUnreferenced(pending.jpeg.key) }
     }

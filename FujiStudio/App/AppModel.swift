@@ -35,6 +35,7 @@ import Observation
     @ObservationIgnored private var sceneTask: Task<Void, Never>?
     @ObservationIgnored private var submissionTask: Task<UUID, Error>?
     @ObservationIgnored private var libraryGeneration: UInt64 = 0
+    @ObservationIgnored private var sourceReplacements: [SourceID: SourceID] = [:]
     @ObservationIgnored private var displayIntent: UInt64 = 0
     @ObservationIgnored private var cameraEventGeneration: UInt64 = 0
     @ObservationIgnored private var importedSessions: Set<UUID> = []
@@ -365,11 +366,13 @@ import Observation
             await environment.exports.pauseActiveWork()
             return
         }
+        await adoptVerifiedReplacements()
+        guard generation == libraryGeneration else { return }
         var discovered: [SourceID: PhotoSource] = [:]
         do {
             for try await batch in await environment.reader.sources() {
                 guard generation == libraryGeneration else { return }
-                for source in batch { discovered[source.id] = knownCompatibility(source) }
+                for source in batch where sourceReplacements[source.id] == nil { discovered[source.id] = knownCompatibility(source) }
                 // Batches are additions. Keep the existing permitted index until the full pass ends.
                 var merged = Dictionary(uniqueKeysWithValues: sources.map { ($0.id, $0) })
                 merged.merge(discovered, uniquingKeysWith: { _, new in new })
@@ -398,6 +401,7 @@ import Observation
     }
 
     private func libraryChanged(_ event: LibraryChange) async {
+        await adoptVerifiedReplacements()
         var thumbnailIDs = event.changedIDs.union(event.removedIDs)
         if event.accessScopeChanged { thumbnailIDs.formUnion(sources.map(\.id)) }
         environment.thumbnails.invalidate(sourceIDs: thumbnailIDs)
@@ -406,7 +410,7 @@ import Observation
         }
         sources.removeAll { event.removedIDs.contains($0.id) }
         reduce(.libraryUpdated(sources: sources, access: state.libraryAccess))
-        if !event.removedIDs.isEmpty { await environment.exports.pauseActiveWork() }
+        if !event.removedIDs.subtracting(sourceReplacements.keys).isEmpty { await environment.exports.pauseActiveWork() }
         for id in event.removedIDs {
             try? await environment.catalog.setAvailability(assetID: id, availability: .inaccessible)
             await environment.cache.invalidate(sourceID: id)
@@ -414,6 +418,31 @@ import Observation
         reduce(.libraryUpdated(sources: sources, access: state.libraryAccess))
         await reloadLibrary()
         recoveryNeeded = true; await recoverWhenIdle()
+    }
+
+    private func adoptVerifiedReplacements() async {
+        let scope = libraryGeneration
+        do {
+            let replacements = try await environment.exports.sourceReplacements()
+            var accessible: [SourceID: SourceID] = [:]
+            for (previous, id) in replacements.sorted(by: { $0.key < $1.key }) {
+                var replacement: PhotoSource
+                do { replacement = try await environment.reader.source(id: id) }
+                catch ResourceError.inaccessibleAsset { continue }
+                catch ResourceError.authorization { continue }
+                guard scope == libraryGeneration else { return }
+                accessible[previous] = id
+                if sourceReplacements[previous] == id { continue }
+                if let original = sources.first(where: { $0.id == previous }) { replacement.compatibility = original.compatibility }
+                try await environment.catalog.replaceSource(previous, with: replacement)
+                guard scope == libraryGeneration else { return }
+                sourceReplacements[previous] = id
+                sources.removeAll { $0.id == previous || $0.id == id }
+                sources.append(replacement); sources = Self.sorted(sources)
+                reduce(.sourceReplaced(previous, with: replacement))
+            }
+            if scope == libraryGeneration { sourceReplacements = accessible }
+        } catch { message = Self.explain(error) }
     }
 
     private func cameraChanged(_ event: CameraState) {
@@ -762,7 +791,7 @@ import Observation
                 }
             }
         }
-        if event.terminal { await refreshVersions(); await recoverWhenIdle() }
+        if event.terminal { await adoptVerifiedReplacements(); await refreshVersions(); await recoverWhenIdle() }
     }
     private func applyProgress(_ event: ExportEvent) {
         exportEvent = event

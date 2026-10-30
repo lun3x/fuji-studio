@@ -2,7 +2,10 @@ import FujiCameraCore
 import Foundation
 
 enum ExportDestination: String, Sendable, Codable, Equatable {
-    case separatePhoto, updateOriginal
+    case separatePhoto, updateOriginal, createPair
+    func forSource(_ source: PhotoSource) -> Self {
+        self == .updateOriginal && source.originalResources.jpeg == nil ? .createPair : self
+    }
 }
 
 enum AssetAvailability: String, Sendable, Codable, Equatable {
@@ -12,7 +15,7 @@ enum AssetAvailability: String, Sendable, Codable, Equatable {
 /// A Photos operation identifies one deliberate exported item, independently of camera attempts.
 struct SavedVersion: Sendable, Codable, Equatable, Identifiable {
     let id: UUID
-    let sourceID: SourceID
+    var sourceID: SourceID
     let outputAssetID: String
     let recipeSnapshot: RecipeSnapshot
     let operationID: UUID

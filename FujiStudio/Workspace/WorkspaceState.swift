@@ -23,6 +23,7 @@ enum WorkspaceEffect: Sendable, Equatable {
 
 enum WorkspaceAction: Sendable {
     case sourceTapped(SourceID)
+    case sourceReplaced(SourceID, with: PhotoSource)
     case select, done
     /// Range sweep membership only; never changes viewed source or preview intent.
     case checkedSourcesReplaced(Set<SourceID>)
@@ -201,6 +202,16 @@ struct WorkspaceState: Sendable {
             }
         }
         switch action {
+        case .sourceReplaced(let previous, let replacement):
+            guard previous != replacement.id else { return [] }
+            sources[previous] = nil; sources[replacement.id] = replacement
+            photoFilterIndex.retain(Array(sources.values))
+            if checkedSourceIDs.remove(previous) != nil { checkedSourceIDs.insert(replacement.id) }
+            if viewedSourceID == previous {
+                viewedSourceID = replacement.id
+                displayedVersion = originalVersion
+                return requestPreview()
+            }
         case .cameraResetChanged(let resetting):
             isCameraResetting = resetting
             return reduce(.previewInterrupted)

@@ -45,4 +45,13 @@ protocol PhotoLibraryWriting: Sendable {
                   onPlaceholder: @escaping @Sendable (String) -> Void) async throws -> SavedAsset
     /// Absence is an observation, never authorization to resubmit an uncertain transaction.
     func findExport(operationID: UUID, knownAssetID: String?, originalAssetID: String?) async throws -> SaveLookup
+    func completeReplacement(operationID: UUID, assetID: String) async throws -> SavedAsset
+    func sourceReplacements() async throws -> [SourceID: SourceID]
+}
+
+extension PhotoLibraryWriting {
+    func completeReplacement(operationID: UUID, assetID: String) async throws -> SavedAsset {
+        throw PhotoLibraryWriteError.invalidOutput("This writer does not create RAW+JPEG pairs.")
+    }
+    func sourceReplacements() async throws -> [SourceID: SourceID] { [:] }
 }

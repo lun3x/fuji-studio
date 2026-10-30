@@ -101,6 +101,7 @@ struct ExportSuspensionTests {
 }
 
 actor SaveBoundaryCatalog: CatalogStoring {
+    func replaceSource(_ sourceID: SourceID, with replacement: PhotoSource) async throws { try await base.replaceSource(sourceID, with: replacement) }
     let base: any CatalogStoring
     let barrier: RenderLatch
     let holdSubmission: Bool
