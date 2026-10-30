@@ -81,11 +81,13 @@ final class CameraFilterTests: AppFlowTestCase {
         let filter = app.buttons["workspace.filter"], select = app.buttons["workspace.select"]
         XCTAssertEqual(select.frame.minX - filter.frame.maxX, 12, accuracy: 1)
         XCTAssertEqual(filter.frame.midY, select.frame.midY, accuracy: 1)
+        let filterBefore = filter.frame
         select.tap()
         let counter = app.staticTexts["workspace.count"]
         XCTAssertTrue(counter.waitForExistence(timeout: 5))
-        XCTAssertEqual(counter.frame.minX, 12, accuracy: 1)
-        XCTAssertEqual(select.frame.minX - filter.frame.maxX, 12, accuracy: 1)
+        XCTAssertEqual(filter.frame, filterBefore)
+        XCTAssertEqual(counter.frame.minX - filter.frame.maxX, 12, accuracy: 1)
+        XCTAssertEqual(select.frame.minX - counter.frame.maxX, 12, accuracy: 1)
         app.buttons["drawer.toggle"].tap()
         wait {
             app.buttons["workspace.filter"].frame.maxY < app.cells["grid.source-0"].frame.maxY &&
@@ -103,8 +105,10 @@ final class CameraFilterTests: AppFlowTestCase {
                 return window.width > window.height && abs(tray.height - window.height) < 1 &&
                     (orientation == .landscapeLeft ? abs(tray.maxX - window.maxX) < 1 : abs(tray.minX - window.minX) < 1)
             }
-            XCTAssertEqual(filter.frame.minY - select.frame.maxY, 12, accuracy: 1)
-            XCTAssertGreaterThan(counter.frame.minY, app.windows.firstMatch.frame.midY)
+            XCTAssertEqual(counter.frame.midY, select.frame.midY, accuracy: 1)
+            XCTAssertEqual(select.frame.minX - counter.frame.maxX, 12, accuracy: 1)
+            XCTAssertEqual(filter.frame.minY - counter.frame.maxY, 12, accuracy: 1)
+            XCTAssertLessThan(counter.frame.maxY, app.windows.firstMatch.frame.midY)
             XCTAssertTrue(filter.isHittable); XCTAssertTrue(select.isHittable)
             let screen = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
             screen.name = "Filter below Select with counter preserved \(orientation.rawValue)"; screen.lifetime = .keepAlways; add(screen)

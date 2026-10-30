@@ -7,6 +7,31 @@ final class PhotoGridTests: XCTestCase {
         XCTAssertTrue(app.collectionViews["photoGrid"].waitForExistence(timeout: 10)); return app
     }
     private func tile(_ app: XCUIApplication, _ n: Int) -> XCUIElement { app.cells["grid.source-\(n)"] }
+    func testDayCheckboxSelectsWholeDayFromBrowseAndReflectsPartialSelection() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--grid-fixture", "--fixture-dated-photos"]
+        app.launch()
+        let friday = app.buttons["grid.day.2026-10-23"]
+        XCTAssertTrue(friday.waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Fri, Oct 23, 2026"].exists)
+        friday.tap()
+        XCTAssertEqual(app.staticTexts["gridFixture.checked"].label, "Checked: 6")
+        XCTAssertEqual(friday.value as? String, "Checked")
+        XCTAssertEqual(app.staticTexts["gridFixture.viewed"].label, "Viewed: none")
+        tile(app, 0).tap()
+        XCTAssertEqual(friday.value as? String, "Partially selected")
+        friday.tap()
+        XCTAssertEqual(app.staticTexts["gridFixture.checked"].label, "Checked: 6")
+        let thursday = app.buttons["grid.day.2026-10-22"]
+        XCTAssertTrue(thursday.isHittable)
+        thursday.tap()
+        XCTAssertEqual(app.staticTexts["gridFixture.checked"].label, "Checked: 12")
+        friday.tap()
+        XCTAssertEqual(app.staticTexts["gridFixture.checked"].label, "Checked: 6")
+        XCTAssertEqual(friday.value as? String, "Unchecked")
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "Day dividers and checkboxes"; shot.lifetime = .keepAlways; add(shot)
+    }
     func testVerticalScrollBothModesAndSelectKeepsTileAndAnchor() {
         let app = launch(), grid = app.collectionViews["photoGrid"]
         let first = tile(app, 0).frame

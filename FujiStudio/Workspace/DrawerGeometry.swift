@@ -17,8 +17,9 @@ struct DrawerDetents: Equatable {
 enum DrawerGeometry {
     static let controlClearance: CGFloat = 8
     static func detents(container: CGSize, safeArea: EdgeInsets, headerHeight: CGFloat,
-                        grid: GridMetrics, recipeControlFrame: CGRect) -> DrawerDetents {
-        let collapsedGrid = grid.height(rows: 1) + safeArea.bottom
+                        grid: GridMetrics, recipeControlFrame: CGRect, dayHeaderHeight: CGFloat = 0,
+                        minimumGridHeight: CGFloat = 0) -> DrawerDetents {
+        let collapsedGrid = max(dayHeaderHeight + grid.height(rows: 1) + safeArea.bottom, minimumGridHeight)
         let collapsed = headerHeight + collapsedGrid
         let top = max(safeArea.top, recipeControlFrame.maxY + controlClearance)
         return DrawerDetents(containerHeight: container.height, collapsedHeight: collapsed,

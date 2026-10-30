@@ -4,6 +4,16 @@ import Testing
 @testable import FujiStudio
 
 struct PhotoTrayFilterTests {
+    @Test func daySelectionIncludesOnlyPhotosVisibleThroughTheCameraFilter() throws {
+        let f = try FilterFixture(); var state = f.state()
+        state.reduce(.photoFilterAssessed(f.one, camera: f.camera, result: .compatible))
+        state.reduce(.photoFilterSelected(.compatibleWithCamera))
+        state.reduce(.daySelectionToggled(["one", "two"]))
+        #expect(state.isSelecting)
+        #expect(state.checkedSourceIDs == ["one"])
+        state.reduce(.daySelectionToggled(["one", "two"]))
+        #expect(state.checkedSourceIDs.isEmpty)
+    }
     @Test(arguments: [false, true])
     func replacingTheSameCameraSessionKeepsCompatibleCheckedPhotos(attention: Bool) throws {
         let f = try FilterFixture(); var state = f.state()

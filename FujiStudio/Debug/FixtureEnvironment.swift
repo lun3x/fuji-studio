@@ -234,7 +234,7 @@ actor FixtureCamera: CameraServing {
         snapshots = recipes; self.image = image; self.root = root
         self.declaredSlots=declaredSlots ?? recipes.map { .init(id:$0.slot,label:"C\($0.slot)") }
         let first=recipes.first?.cameraContext
-        context = CameraExecutionContext(model:first?.model ?? "X-T5",firmware:first?.firmware ?? "4.31",capability:first?.capability ?? "X-T5_0200",supportVersion:first?.model == "X-E3" ? XE3Support.identifier : XT5WorkingProfile.supportVersion,sessionIdentity:UUID(),generation:0)
+        context = CameraExecutionContext(model:first?.model ?? "X-T5",firmware:first?.firmware ?? "4.31",capability:first?.capability ?? "X-T5_0200",supportVersion:first?.model == "X-E3" ? XE3Support.conversionVersion : XT5WorkingProfile.supportVersion,sessionIdentity:UUID(),generation:0)
     }
     func executionContext() throws -> CameraExecutionContext {
         switch state { case .ready, .busy, .attentionRequired: return context; default: throw CameraServiceError.notReady }

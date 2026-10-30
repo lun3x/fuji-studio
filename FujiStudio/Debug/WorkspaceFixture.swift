@@ -89,6 +89,8 @@ final class WorkspaceFixture {
     let state: WorkspaceState
     init() throws {
         let portrait = ProcessInfo.processInfo.arguments.contains("--fixture-portrait")
+        let dated = ProcessInfo.processInfo.arguments.contains("--fixture-dated-photos")
+        let firstDay = Calendar.current.date(from: DateComponents(year: 2026, month: 10, day: 23, hour: 12))!
         let size = portrait ? CGSize(width: 1200, height: 1800) : CGSize(width: 1800, height: 1200)
         geometry = ImageGeometry(encoded: PixelSize(width: Int(size.width), height: Int(size.height)), orientation: 1)
         sources = (0..<120).map { index in
@@ -96,7 +98,9 @@ final class WorkspaceFixture {
             return PhotoSource(id: id, originalResources: .init(raf: .init(assetID: id, role: .primaryOriginal,
                 contentTypeIdentifier: "com.fujifilm.raw-image", format: .raf, originalFilename: "GENERATED_\(index).RAF", discriminator: "raw"),
                 jpeg: .init(assetID: id, role: .alternateOriginal, contentTypeIdentifier: "public.jpeg", format: .jpeg,
-                    originalFilename: "GENERATED_\(index).JPG", discriminator: "jpeg")), captureDate: nil, location: nil, resourceRevision: "generated")
+                    originalFilename: "GENERATED_\(index).JPG", discriminator: "jpeg")),
+                captureDate: dated ? Calendar.current.date(byAdding: .day, value: -(index / 6), to: firstDay) : nil,
+                location: nil, resourceRevision: "generated")
         }
         let format = UIGraphicsImageRendererFormat(); format.scale = 1
         let data = UIGraphicsImageRenderer(size: size, format: format).jpegData(withCompressionQuality: 0.95) { renderer in
