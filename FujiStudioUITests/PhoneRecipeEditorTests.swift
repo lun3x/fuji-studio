@@ -66,7 +66,14 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
         reveal(app.buttons["recipe.editor.setting.film"], in: app)
         app.buttons["recipe.editor.setting.film"].tap()
-        app.buttons["PROVIA / Standard"].tap()
+        let provia = app.buttons["PROVIA / Standard"]
+        let filmMenu = app.collectionViews.containing(.button, identifier: "Classic Chrome").firstMatch
+        for _ in 0..<3 {
+            if provia.isHittable { break }
+            filmMenu.swipeDown()
+        }
+        XCTAssertTrue(provia.isHittable)
+        provia.tap()
         replaceText(app.textFields["recipe.editor.name"], with: "My Provia")
         shot(app, "Phone editor name and film draft")
         app.buttons["recipe.editor.save"].tap()
@@ -173,7 +180,9 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
         reveal(balance, in: app); balance.tap()
         XCTAssertFalse(app.buttons["Daylight"].exists)
         XCTAssertFalse(app.buttons["Custom 3"].exists)
-        app.buttons["Colour temperature"].tap()
+        // The iOS 27 picker reports a clipped collection's child as non-hittable
+        // despite its visible frame; use the same measured tap as other popup controls.
+        tap(app.buttons["Colour temperature"], in: app)
         app.buttons["recipe.editor.save"].tap()
         XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitForNonExistence(timeout: 5))
         XCTAssertTrue(phone.isEnabled)
