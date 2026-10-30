@@ -69,11 +69,18 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
         let provia = app.buttons["PROVIA / Standard"]
         let filmMenu = app.collectionViews.containing(.button, identifier: "Classic Chrome").firstMatch
         for _ in 0..<3 {
-            if provia.isHittable { break }
-            filmMenu.swipeDown()
+            if provia.exists { break }
+            // iOS 27 exposes a collection frame taller than its clipped popover.
+            // Start inside a visible row so the drag reaches the menu, not the form.
+            guard let visibleRow = filmMenu.buttons.allElementsBoundByIndex.first(where: { $0.isHittable }) else {
+                XCTFail("The film menu must expose a visible row for scrolling"); return
+            }
+            let start = visibleRow.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: 240)))
         }
-        XCTAssertTrue(provia.isHittable)
+        XCTAssertTrue(provia.waitForExistence(timeout: 5))
         provia.tap()
+        wait { app.buttons["recipe.editor.setting.film"].label.contains("PROVIA") }
         replaceText(app.textFields["recipe.editor.name"], with: "My Provia")
         shot(app, "Phone editor name and film draft")
         app.buttons["recipe.editor.save"].tap()
