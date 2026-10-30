@@ -43,7 +43,8 @@ final class PhotoGridController: UIViewController, UICollectionViewDelegateFlowL
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override func loadView() {
         view = collectionView
-        collectionView.backgroundColor = .systemBackground
+        collectionView.backgroundColor = .clear
+        collectionView.isOpaque = false
         collectionView.accessibilityIdentifier = "photoGrid"
         collectionView.alwaysBounceVertical = true
         collectionView.contentInsetAdjustmentBehavior = .never
