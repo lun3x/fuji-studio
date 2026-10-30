@@ -146,7 +146,7 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
         app.buttons["recipe.editor.cancel"].tap()
     }
 
-    func testXT5EditorOffersCameraSupportedFilmRangeAndBalance() {
+    func testXT5EditorOffersCameraSupportedFilmRangeAndBalance() throws {
         let app = launch()
         wait { app.buttons["app.status"].label.contains("Camera ready") }
         app.cells["grid.source-0"].tap()
@@ -155,6 +155,13 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
         let edit = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.edit.")).firstMatch
         XCTAssertTrue(edit.waitForExistence(timeout: 5)); edit.tap()
         let film = app.buttons["recipe.editor.setting.film"]
+        // Settle and dismiss the Name keyboard before a late presentation can cover a picker.
+        let name = app.textFields["recipe.editor.name"]
+        let originalName = try XCTUnwrap(name.value as? String)
+        name.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        reveal(film, in: app)
+        XCTAssertEqual(name.value as? String, originalName)
         film.tap()
         let astia = app.buttons["ASTIA / Soft"]
         let filmMenu = app.collectionViews.containing(.button, identifier: "Classic Chrome").firstMatch
