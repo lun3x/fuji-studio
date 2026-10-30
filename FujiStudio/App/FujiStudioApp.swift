@@ -151,7 +151,18 @@ private struct AppEntryView: View {
                     latestScenePhase = .inactive
                 }
                 #endif
+                #if DEBUG
+                let settings: AppSettings
+                if fixture {
+                    // Each UI fixture launch is isolated unless its test explicitly asks to
+                    // retain the same settings suite across relaunches.
+                    let suite = ProcessInfo.processInfo.environment["FUJI_STUDIO_SETTINGS_SUITE"] ?? "FujiStudioFixture-\(UUID())"
+                    settings = AppSettings(defaults: UserDefaults(suiteName: suite)!)
+                } else { settings = AppSettings() }
+                let owner = AppModel(environment: environment, settings: settings)
+                #else
                 let owner = AppModel(environment: environment)
+                #endif
                 model = owner
                 // Environment creation can outlive a scene transition while model is nil.
                 // Seed that phase before start() is allowed to begin camera discovery.

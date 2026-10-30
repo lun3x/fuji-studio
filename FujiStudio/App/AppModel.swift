@@ -28,6 +28,7 @@ import Observation
     var isLoadingPreview: Bool { state.isAwaitingRecipePreview }
     private(set) var isSuspended = false
     let environment: AppEnvironment
+    let settings: AppSettings
     @ObservationIgnored private var started = false
     @ObservationIgnored private var streams: [Task<Void, Never>] = []
     @ObservationIgnored private var displayTask: Task<Void, Never>?
@@ -81,9 +82,10 @@ import Observation
     var validationScene: (revision: UInt64, foreground: Bool) { (sceneRevision, foreground) }
     #endif
 
-    init(environment: AppEnvironment,
+    init(environment: AppEnvironment, settings: AppSettings? = nil,
          connectionRetryWait: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }) {
         self.environment = environment; self.connectionRetryWait = connectionRetryWait
+        self.settings = settings ?? AppSettings()
     }
     var imageStatusIsFailure: Bool { displayFailure != nil }
     var canResetCameraConnection: Bool {
@@ -722,6 +724,7 @@ import Observation
               !isSubmitting, !recovering, !isSuspended, let recipe = state.selectedRecipe else { return }
         isSubmitting = true
         let sources = state.effectiveSources, engine = environment.exports
+        let destination: ExportDestination = settings.updateOriginalInPhotos ? .updateOriginal : .separatePhoto
         // Revoke obsolete preparation before export reserves the shared scheduler/pool. An
         // already admitted native render remains independently owned by PreviewCoordinator.
         displayTask?.cancel(); displayIntent &+= 1; displayRequest = nil
@@ -730,7 +733,7 @@ import Observation
         if !hasCurrentSourceDisplay { displayFile = nil; availableDisplay = nil }
         imageStatus = displayFile == nil ? "Image loading stopped. Select the recipe again to retry." : displayFailure
         await environment.preview.invalidate()
-        let task = Task { try await engine.start(sources: sources, recipe: recipe) }
+        let task = Task { try await engine.start(sources: sources, recipe: recipe, destination: destination) }
         submissionTask = task
         do {
             let id = try await task.value

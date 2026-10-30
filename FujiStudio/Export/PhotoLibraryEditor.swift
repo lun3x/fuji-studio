@@ -22,6 +22,7 @@ protocol PhotoEditReading: Sendable {
 protocol PhotoEditingSession: AnyObject, Sendable {
     var assetID: String { get }
     var renderedContentURL: URL { get }
+    /// Throws only before submission. Every submitted transaction reports via completion.
     func commit(adjustment: PhotoEditAdjustment,
                 completion: @escaping @Sendable (Bool, NSError?) -> Void) throws
 }
@@ -45,7 +46,9 @@ struct PhotoLibraryEditor: Sendable {
               request.jpeg.settingsDigest == edit.recipe.settingsDigest else {
             throw PhotoLibraryWriteError.invalidOutput("The exported JPEG does not match the original and recipe.")
         }
-        let session = try await gateway.prepare(source: edit.source)
+        let session: any PhotoEditingSession
+        do { session = try await gateway.prepare(source: edit.source) }
+        catch { throw Self.preflightFailure(error) }
         guard session.assetID == edit.source.id else {
             throw PhotoLibraryWriteError.invalidOutput("Photos prepared a different original.")
         }
@@ -70,7 +73,17 @@ struct PhotoLibraryEditor: Sendable {
                     }
                 }
                 onPlaceholder(session.assetID)
-            } catch { continuation.resume(throwing: error) }
+            } catch { continuation.resume(throwing: Self.preflightFailure(error)) }
+        }
+    }
+
+    private static func preflightFailure(_ error: Error) -> Error {
+        if error is CancellationError { return error }
+        switch error {
+        case PhotoLibraryWriteError.authorization, PhotoLibraryWriteError.invalidOutput, PhotoLibraryWriteError.rejected:
+            return error
+        default:
+            return PhotoLibraryWriteError.invalidOutput("Photos could not prepare the original: \(error.localizedDescription)")
         }
     }
 

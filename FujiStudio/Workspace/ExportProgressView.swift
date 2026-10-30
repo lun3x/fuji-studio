@@ -123,8 +123,21 @@ struct AppWorkspaceView: View {
                         }
                         Button("Reload Photos") { Task { await model.reloadLibrary() } }
                         if model.isLoadingLibrary { ProgressView("Reading Photos…") }
+                        Divider()
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Settings").font(.headline)
+                            Toggle(isOn: Binding(get: { model.settings.updateOriginalInPhotos },
+                                                 set: { model.settings.updateOriginalInPhotos = $0 })) {
+                                Text("Update original in Photos").foregroundStyle(.red)
+                            }
+                            .tint(.red)
+                            .accessibilityIdentifier("settings.updateOriginalInPhotos")
+                            Text("Export to the existing photo instead of creating a separate JPEG. Originals are preserved; use Revert to Original in Photos to undo. Only the latest edit appears in image versions. Applies to new export jobs.")
+                                .font(.footnote).foregroundStyle(.secondary)
+                                .accessibilityIdentifier("settings.updateOriginalExplanation")
+                        }
                     }.padding()
-                }.navigationTitle("Fuji Studio status")
+                }.navigationTitle("Status & settings")
                     .toolbar { Button("Done") { statusPresented = false } }
             }
         }
@@ -153,7 +166,7 @@ struct AppWorkspaceView: View {
     }
     private var accessMessage: String {
         switch model.state.libraryAccess {
-        case .full: "Photos access is allowed. Original RAW and RAW + JPEG photos appear here; exports remain separate versions."
+        case .full: "Photos access is allowed. Original RAW and RAW + JPEG photos appear here."
         case .limited: "Only selected Photos are accessible. Use Manage Photos to include originals and saved outputs."
         case .denied: "Photos access is denied. Allow access in Settings to browse original photos."
         case .restricted: "Photos access is restricted on this device. Check your device's Settings."

@@ -84,6 +84,20 @@ import UniformTypeIdentifiers
         #expect(gateway.session.commits == 0)
     }
 
+    @Test func preparationLookupFailureCannotBecomeAnUncertainSubmittedSave() async throws {
+        let f = try RenderFixture(); defer { f.remove() }
+        let jpeg = try editJPEGFixture(f), gateway = TestPhotoEditGateway(root: f.root, assetID: f.source.id)
+        gateway.prepareFailure = .lookupFailed("iCloud is offline")
+        do {
+            _ = try await PhotoLibraryEditor(gateway: gateway).saveJPEG(
+                .init(jpeg: jpeg, operationID: UUID(), captureDate: nil, location: nil),
+                edit: .init(source: f.source, recipe: f.recipe)) { _ in }
+            Issue.record("An unavailable editing input must not be saved")
+        } catch PhotoLibraryWriteError.invalidOutput { }
+        catch { Issue.record("A pre-submission failure must be definitive: \(error)") }
+        #expect(gateway.session.commits == 0)
+    }
+
     @Test func cancelledSubmissionWaitsForPhotosAndRejectsActualFailure() async throws {
         let f = try RenderFixture(); defer { f.remove() }
         let jpeg = try editJPEGFixture(f), gateway = TestPhotoEditGateway(root: f.root, assetID: f.source.id)
