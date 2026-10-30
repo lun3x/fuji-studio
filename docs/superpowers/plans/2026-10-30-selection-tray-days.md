@@ -12,8 +12,8 @@
 - [x] Add sectioned layout, header selection states, and section-aware geometry.
 - [x] Add day selection action and tests for starting selection, preserving other days, partial selection, and filtering.
 - [x] Add generated multi-day UI fixture coverage for day checkboxes and cross-day scrolling/sweeps.
-- [ ] Run focused tests, `Scripts/test-ios.sh --fast`, affected UI suites, and the complete suite.
-- [ ] Review the diff, push the final checkpoint, and remove the task simulator.
+- [x] Run focused tests, `Scripts/test-ios.sh --fast`, affected UI suites, and the complete suite.
+- [x] Review the diff, push the final checkpoint, and remove the task simulator.
 
 ## Validation and review
 
@@ -21,4 +21,8 @@
 - Selection tests failed with the new action unimplemented, then passed for browse entry, partial/full day toggles, and camera filtering.
 - All five PhotoGrid UI tests passed, including multi-day selection from browse and partial/full checkbox states.
 - Independent review identified control overlap, collapsed-row clipping, sideways date headers, and accessibility truncation. Reproduced overlap/clipping in the workspace UI test and truncation in a controller test before fixing. Both workspace tests now pass, including both landscape directions.
-- Final complete suite is in progress. The existing live-composition height assertion now includes the real day header; controller and hosting XCTest cases passed in this run.
+- Updated existing live-composition/reconnect/pinch assertions to include the date header in the collapsed viewport, and the selection-control assertion to use the handle row.
+- Complete `Scripts/test-ios.sh` run: 647 passed, 3 failed, 3 skipped. Two failures were the old layout assertions above. The other was `PhoneRecipeEditorTests/testXT5EditorOffersOnlyConvertibleFilmRangeAndBalance`, where the software keyboard covered the Colour temperature menu option.
+- After updating the two layout assertions, all three failures passed in a focused serial rerun (3 tests, 0 failures). The recipe-editor test passed unchanged. Across the complete run and reruns, every test has a passing result: 650 passed, 3 skipped. Skips require native keyboard, native Home/background delivery, or native device rotation validation.
+- Result bundles: complete run `.build/TestResults/20261030-081345-65084.xcresult`; focused rerun recorded in `/tmp/fuji-tray-days-rerun.log`.
+- Final feature checkpoint pushed on `codex/selection-tray-days`. The task simulator was shut down and deleted; Xcode removed its worker clones automatically.
