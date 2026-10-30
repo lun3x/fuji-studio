@@ -14,10 +14,10 @@ marker for exact recovery. Only the current matching edit is selectable.
   hiding an older edit after a second export.
 - Affected `ExportFlowTests`: **7 passed**, **1 existing native Home-boundary test
   skipped**.
-- The complete iOS suite is pending final execution after the review fixes.
+- Complete `Scripts/test-ios.sh` run: **663 total, 660 passed, 0 failed, 3 skipped** using the supported four-worker mode.\n  Result bundle: `.build/TestResults/20261030-135111-38515.xcresult`.
 
 All iOS checks use the task-specific **Fuji Reversible Export** iPhone 15 Pro
-simulator (`C108EF1E-9E8D-4FE1-9A22-DC4D92068459`, iOS 27.0).
+simulator (`C108EF1E-9E8D-4FE1-9A22-DC4D92068459`, iOS 27.0). It was shut down and deleted after validation.
 The rendered settings screenshot was inspected: red label and switch, readable
 explanatory text, and working Done control.
 
@@ -39,7 +39,7 @@ live operation marker before and after transferring the edited JPEG.
 
 Jujutsu equivalents replaced Git-based workflow scripts, following the repository
 instructions. Stale test expectations were updated to the existing measured
-X-E3 conversion version and X-T5 DR200 support; no camera capability behavior was
+X-E3 conversion version (unit and UI fixtures) and X-T5 DR200 support; no camera capability behavior was
 changed. Two existing recipe-editor UI tests were corrected to scroll an
 off-screen menu option and use a measured tap for an iOS 27 popover child with
 incorrect accessibility hittability.

@@ -1,6 +1,6 @@
 # Reversible Export Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Add a persistent setting that saves exports as reversible Photos edits and hides replaced edits from the version picker.
 
@@ -46,13 +46,13 @@
 - Create `PhotoEditAdjustment: Codable, Sendable` containing operation ID, source ID, and frozen recipe, with an app-specific identifier and format version.
 - Isolate native editing behind a testable `PhotoEditGateway` that prepares an edit, commits it, and reads its adjustment marker.
 
-- [ ] Write failing tests: an original update targets the existing source ID, preserves source resources, and stores its operation/recipe; both RAW-only and paired inputs take this path.
-- [ ] Add failure tests: denied access, unsupported asset, missing JPEG, stale source, native transaction rejection, uncertain completion, cancellation retaining the output until completion, and recovery refusing a different/reverted adjustment.
-- [ ] Add a rotated-JPEG test asserting upright pixels/orientation and swapped geometry where appropriate.
-- [ ] Run `Scripts/test-ios.sh FujiStudioTests/PhotoLibraryEditorTests FujiStudioTests/ExportCoordinatorTests` with the task's `FUJI_STUDIO_DESTINATION`; confirm the new behavior fails before implementation.
-- [ ] Implement the interfaces above. Use `requestContentEditingInput`, `PHContentEditingOutput`, `PHAdjustmentData`, and `PHAssetChangeRequest.contentEditingOutput`; submit only after preparation. Keep preflight failures distinct from uncertain submissions.
-- [ ] Freeze destination in jobs, forward it to writer/recovery, and retain it in confirmed saved records. Extend catalog immutable-field/confirmation validation accordingly.
-- [ ] Verify the same focused suites and `Scripts/test-ios.sh --fast` pass; checkpoint with `jj` and push `codex/reversible-export`.
+- [x] Write failing tests: an original update targets the existing source ID, preserves source resources, and stores its operation/recipe; both RAW-only and paired inputs take this path.
+- [x] Add failure tests: denied access, unsupported asset, missing JPEG, stale source, native transaction rejection, uncertain completion, cancellation retaining the output until completion, and recovery refusing a different/reverted adjustment.
+- [x] Add a rotated-JPEG test asserting upright pixels/orientation and swapped geometry where appropriate.
+- [x] Run `Scripts/test-ios.sh FujiStudioTests/PhotoLibraryEditorTests FujiStudioTests/ExportCoordinatorTests` with the task's `FUJI_STUDIO_DESTINATION`; confirm the new behavior fails before implementation.
+- [x] Implement the interfaces above. Use `requestContentEditingInput`, `PHContentEditingOutput`, `PHAdjustmentData`, and `PHAssetChangeRequest.contentEditingOutput`; submit only after preparation. Keep preflight failures distinct from uncertain submissions.
+- [x] Freeze destination in jobs, forward it to writer/recovery, and retain it in confirmed saved records. Extend catalog immutable-field/confirmation validation accordingly.
+- [x] Verify the same focused suites and `Scripts/test-ios.sh --fast` pass; checkpoint with `jj` and push `codex/reversible-export`.
 
 ### Task 2: Correct current-edit resolution and version picker
 
@@ -67,12 +67,12 @@
 - Resolver uses original JPEG resources for `.separatePhoto` and an operation-verified edited resource for `.updateOriginal`.
 - Availability is per saved operation when multiple exports share one source asset. The version list excludes unavailable original updates while retaining existing separate-photo behavior.
 
-- [ ] Write failing tests: two original updates show only the matching latest operation; revert/external edit hides it; selecting stale records never displays unrelated pixels; RAW and camera JPEG remain available.
-- [ ] Add identity tests: reversible edits preserve original identity, while an actual changed original descriptor rejects stale resource tokens.
-- [ ] Run the affected selectors and observe the expected failures.
-- [ ] Implement operation-checked resource resolution and per-operation availability. Verify identity again after materializing the edited resource to reject races.
-- [ ] Make version-list filtering apply both on initial load and library changes. Refresh an already selected edited version when the library changes, without falsely treating source originals as replaced.
-- [ ] Run the affected selectors and `--fast`; checkpoint with `jj` and push the development bookmark.
+- [x] Write failing tests: two original updates show only the matching latest operation; revert/external edit hides it; selecting stale records never displays unrelated pixels; RAW and camera JPEG remain available.
+- [x] Add identity tests: reversible edits preserve original identity, while an actual changed original descriptor rejects stale resource tokens.
+- [x] Run the affected selectors and observe the expected failures.
+- [x] Implement operation-checked resource resolution and per-operation availability. Verify identity again after materializing the edited resource to reject races.
+- [x] Make version-list filtering apply both on initial load and library changes. Refresh an already selected edited version when the library changes, without falsely treating source originals as replaced.
+- [x] Run the affected selectors and `--fast`; checkpoint with `jj` and push the development bookmark.
 
 ### Task 3: Persistent settings and final validation
 
@@ -86,9 +86,9 @@
 - `AppModel` owns settings and snapshots `.updateOriginal` or `.separatePhoto` when the user starts an export.
 - Status sheet has a Settings section, red **Update original in Photos** toggle, and supporting text about preserved originals and Revert in Photos.
 
-- [ ] Write failing tests: default off, persistence across settings instances, isolation between test stores, and destination captured before any asynchronous export work.
-- [ ] Add a UI test that opens **Status & settings**, verifies the setting and explanatory text, toggles it, and verifies persistence after relaunch. Use an isolated fixture defaults store.
-- [ ] Run the focused tests to confirm the new cases fail, then implement the settings model, binding, and accurate status text for both modes.
-- [ ] Run `Scripts/test-ios.sh --fast`, the affected UI suite, and the complete `Scripts/test-ios.sh` suite using the isolated task simulator.
-- [ ] Inspect the settings screen and review the final diff against the spec. Address substantive findings and rerun affected checks.
-- [ ] Record validation and any physical PhotoKit RAW validation limit; checkpoint and push via Jujutsu. Shut down and delete the task simulator.
+- [x] Write failing tests: default off, persistence across settings instances, isolation between test stores, and destination captured before any asynchronous export work.
+- [x] Add a UI test that opens **Status & settings**, verifies the setting and explanatory text, toggles it, and verifies persistence after relaunch. Use an isolated fixture defaults store.
+- [x] Run the focused tests to confirm the new cases fail, then implement the settings model, binding, and accurate status text for both modes.
+- [x] Run `Scripts/test-ios.sh --fast`, the affected UI suite, and the complete `Scripts/test-ios.sh` suite using the isolated task simulator.
+- [x] Inspect the settings screen and review the final diff against the spec. Address substantive findings and rerun affected checks.
+- [x] Record validation and any physical PhotoKit RAW validation limit; checkpoint and push via Jujutsu. Shut down and delete the task simulator.
