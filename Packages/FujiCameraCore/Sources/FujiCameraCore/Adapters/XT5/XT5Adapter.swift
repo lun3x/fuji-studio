@@ -70,7 +70,7 @@ public struct XT5Adapter: FujiCameraAdapter {
     let patch = try XT5WorkingProfile.make(baseline: baseline, recipe: recipe, metadata: source)
     return PreparedConversion(
       bytes: patch.bytes, requested: patch.settings, source: source,
-      supportVersion: support.supportVersion, expectedLensOptimizer: true,
+      supportVersion: support.supportVersion, expectedLensOptimizer: patch.effectiveLensOptimizer,
       baselineSHA256: patch.baselineSHA256, candidateSHA256: patch.candidateSHA256)
   }
   public func validateOutput(_ jpeg: Data, conversion: PreparedConversion) throws

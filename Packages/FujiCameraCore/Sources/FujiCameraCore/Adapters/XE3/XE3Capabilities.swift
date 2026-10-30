@@ -47,7 +47,7 @@ public enum XE3Capabilities {
   }()
   public static func validate(_ settings: RecipeSettings) throws {
     guard settings.colorChrome == nil, settings.colorChromeBlue == nil,
-      settings.clarityTenths == nil, settings.lensOptimizerRequested == nil,
+      settings.clarityTenths == nil,
       settings.grain.size == nil
     else { throw CameraServiceError.unsupportedSettings }
     for (id, value) in settings.values {

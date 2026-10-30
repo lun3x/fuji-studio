@@ -99,16 +99,16 @@ struct XE3OutputValidationTests {
       return
     }
   }
-  @Test func lensOptimizerMismatchStillBlocksXE3Publication() throws {
+  @Test func lensOptimizerCanBeEffectivelyOffForAnXE3Photo() throws {
     let image = CoreJPEGFixture(
       model: "X-E3", lensOptimizer: 0, fields: entries(xe3MakerFields())
     ).inject(into: try ObjectObservationFixture.jpeg())
     let result = try XE3Adapter().validateOutput(image, conversion: conversion())
-    guard case .rejected(let mismatch) = result.admission else {
-      Issue.record("X-T5 adjustment policy must not relax X-E3 validation")
+    guard case .accepted(let report) = result.admission else {
+      Issue.record("A requested On may be adjusted Off for the photo")
       return
     }
-    #expect(mismatch.field == "lensOptimizer")
+    #expect(report.lensOptimizerRequested && !report.lensOptimizerEffective && report.lensOptimizerAdjusted)
   }
   @Test func monochromeSaturationIdentifiesFilterAndColorRemainsProtocolEvidence() throws {
     var fields = xe3MakerFields()

@@ -3,13 +3,12 @@ import Foundation
 public struct RecipeCodecRegistry: Sendable {
   public init() {}
   public func assess(_ snapshot: RecipeSnapshot) -> RecipeAssessment {
-    if snapshot.cameraContext.model == "X-E3" { return XE3RecipeCodec.assess(snapshot) }
     do {
-      return RecipeAssessment(settings: try requireModelSettings(snapshot), issues: [])
+      return RecipeAssessment(settings: try applicationSettings(snapshot), issues: [])
     } catch CameraServiceError.unsupportedContext {
       return .init(settings: nil, issues: [.unsupportedCameraContext])
     } catch {
-      return .init(settings: try? editableSettings(snapshot), issues: [.unsupportedMeasuredDomain])
+      return .init(settings: nil, issues: [.unsupportedMeasuredDomain])
     }
   }
   public func requireSettings(_ snapshot: RecipeSnapshot) throws -> RecipeSettings {

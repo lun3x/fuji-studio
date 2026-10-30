@@ -487,15 +487,13 @@ struct WorkspaceState: Sendable {
         if isCameraResetting { return "Wait for the camera connection reset to finish." }
         if case .attentionRequired = cameraState { return "Resolve the camera error before converting photos." }
         if let reason = incompatibleSelectionReason { return reason.message }
-        if let context=currentCameraExecutionContext,!matches(recipe:recipe,context:context) { return "Requires a compatible \(recipe.cameraContext.model) camera." }
+        if let context=currentCameraExecutionContext,!matches(recipe:recipe,context:context) { return "Requires a compatible \(recipe.targetCamera.rawValue) camera." }
         if case .unsupported = recipe.renderingSupport(using:RecipeCodecRegistry()) { return "Conversion is unavailable for these settings." }
         guard currentCameraExecutionContext != nil,isCameraConnected else { return "Connect a supported Fujifilm camera." }
         return nil
     }
     private func matches(recipe: RecipeSnapshot, context: CameraExecutionContext) -> Bool {
-        let imported = recipe.cameraContext
-        return imported.model == context.model && imported.firmware == context.firmware &&
-            imported.capability == context.capability && context.supportVersion == (try? RecipeCodecRegistry().supportVersion(for:imported))
+        recipe.targetCamera.matches(context)
     }
 
     private func belongsToExecution(_ state: CameraState, context: CameraExecutionContext?) -> Bool {

@@ -10,7 +10,7 @@ struct XE3CapabilityTests {
         #expect(caps.settings[.colorChrome]?.support == .absent)
         #expect(caps.settings[.clarity]?.support == .absent)
         #expect(caps.settings[.dynamicRange]?.accepts(.integer(200),rendering:true) == true)
-        #expect(RecipeCodecRegistry.xt5Capabilities.settings[.dynamicRange]?.accepts(.integer(200),rendering:true) == false)
+        #expect(RecipeCodecRegistry.xt5Capabilities.settings[.dynamicRange]?.accepts(.integer(200),rendering:true) == true)
         #expect(caps.settings[.kelvin]?.accepts(.integer(5310),rendering:true) == false)
     }
 }

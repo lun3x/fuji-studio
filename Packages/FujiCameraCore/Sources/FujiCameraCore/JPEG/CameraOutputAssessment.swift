@@ -38,7 +38,8 @@ extension CameraOutputAssessment {
         metadata: metadata,
         admission: .rejected(.init(field: field, requested: requested, observed: observed)))
     }
-    if lmo != conversion.expectedLensOptimizer && !allowLensOptimizerAdjustment {
+    let permittedAdjustment = allowLensOptimizerAdjustment && conversion.expectedLensOptimizer && !lmo
+    if lmo != conversion.expectedLensOptimizer && !permittedAdjustment {
       return reject("lensOptimizer", String(conversion.expectedLensOptimizer), String(lmo))
     }
     var evidence: [RecipeSettingID: SettingEvidence] = [.lensOptimizer: .jpegObserved]
@@ -70,8 +71,9 @@ extension CameraOutputAssessment {
       supportVersion: conversion.supportVersion, requested: conversion.requested,
       dormantGrainSizeNotSerialized: conversion.requested.grain.strength == .off,
       inactiveKelvinPreserved: conversion.requested.whiteBalance != .temperature,
-      lensOptimizerRequested: conversion.expectedLensOptimizer, lensOptimizerEffective: lmo,
-      lensOptimizerAdjusted: lmo != conversion.expectedLensOptimizer,
+      lensOptimizerRequested: conversion.requested.lensOptimizerRequested ?? conversion.expectedLensOptimizer,
+      lensOptimizerEffective: lmo,
+      lensOptimizerAdjusted: lmo != (conversion.requested.lensOptimizerRequested ?? conversion.expectedLensOptimizer),
       evidence:
         "Exact profile readback and model-qualified JPEG identity/FINE/geometry; evidence source recorded per setting.",
       evidenceBySetting: evidence, dynamicRangeEffective: conversion.effectiveDynamicRange)
