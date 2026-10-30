@@ -124,6 +124,8 @@ extension RecipeSettingValue {
         + (grain.size.map { " · \($0.rawValue.capitalized)" } ?? "")
     case .effect(let strength): strength.rawValue.capitalized
     case .integer(let value): String(value)
+    case .option(let option): option.label
+    case .unknown(let value): "Unknown (\(value))"
     }
   }
 }

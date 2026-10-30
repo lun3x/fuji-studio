@@ -71,7 +71,9 @@ public struct RecipeSettings: Codable, Sendable, Hashable {
 public enum RecipeSettingID: String, CaseIterable, Codable, Sendable, Hashable {
   case film, dynamicRange, grain, colorChrome, colorChromeBlue, whiteBalance, whiteBalanceRed,
     whiteBalanceBlue, kelvin, highlight, shadow, color, sharpness, noiseReduction, clarity,
-    lensOptimizer
+    lensOptimizer, grainSize, dynamicRangePriority, monochromeWarmCool, monochromeMagentaGreen,
+    smoothSkin, longExposureNoiseReduction, colorSpace, imageSize, aspectRatio, imageQuality,
+    rawRecording, outputFormat, iso
 }
 public enum RecipeSettingValue: Codable, Sendable, Hashable {
   case film(FilmSimulation)
@@ -79,6 +81,8 @@ public enum RecipeSettingValue: Codable, Sendable, Hashable {
   case grain(GrainSettings)
   case effect(EffectStrength)
   case integer(Int)
+  case option(RecipeOption)
+  case unknown(String)
 }
 public enum SettingEvidence: String, Codable, Sendable, Hashable {
   case jpegObserved, profileConfirmed

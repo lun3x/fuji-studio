@@ -1,6 +1,6 @@
 # Standard recipes across camera models
 
-Status: proposed design, awaiting user approval. The user explicitly chose to include every recipe setting offered by the supported cameras, including settings not currently modeled.
+Status: implementation design, incorporating the user's full-inventory scope and subsequent default/per-photo corrections.
 
 ## Intent
 
@@ -35,11 +35,11 @@ Audit the still-image recipe/image-quality settings of both supported models, ra
 | Monochromatic colour, warm/cool and magenta/green | Independent signed axes, −18…18 | 0 / 0 |
 | Smooth skin | Off, Weak, Strong | Off |
 | Long exposure noise reduction | Off, On | Off |
-| Lens modulation optimizer | Off, On | Off |
+| Lens modulation optimizer | Off, On | On |
 | Colour space | sRGB, Adobe RGB | sRGB |
 | Image size and aspect | Large/Medium/Small; 3:2, 4:3, 16:9, 5:4, 1:1 | Large, 3:2 |
-| Image quality | Fine, Normal, Fine+RAW, Normal+RAW, RAW | Fine |
-| RAW recording | Uncompressed, Lossless compressed, Compressed | Uncompressed |
+| Image quality | Fine, Normal, Fine+RAW, Normal+RAW, RAW | Fine+RAW |
+| RAW recording | Uncompressed, Lossless compressed, Compressed | Lossless compressed |
 | Output format | JPEG, HEIF | JPEG |
 | ISO selection | Camera-supported fixed levels and Auto 1/2/3 | Auto 1 |
 
@@ -75,7 +75,7 @@ Initial fields and proposed defaults:
 | Clarity | 0 |
 | Additional settings | Defaults from the inventory above |
 
-These defaults are design proposals. DR100 and 5000 K are neutral, valid shared values in the existing supported domains. Lens optimizer is already a modeled identity but lacks an editable capability; add its camera-domain choices as part of the full inventory. Do not mistake an existing forced conversion-profile behavior for complete support for applying both values.
+DR100 and 5000 K are neutral, valid shared values in the existing supported domains. The user specified Lens modulation optimizer On, Fine+RAW image quality, and Lossless compressed RAW recording. Add lens optimizer's camera-domain choices as part of the full inventory.
 
 Provide one global setting catalog with the union of known enum choices and numeric domains, explicit defaults, and stable setting identities. Camera profiles narrow that catalog using their own support flags, choices, ranges, and steps. Include the complete audited inventory above; the scope does not claim coverage of future Fujifilm models.
 
@@ -109,6 +109,8 @@ Require a connected supported camera matching the recipe's selected target model
 
 Each adapter maps the resulting semantic values to its own native profile words. Validate active values and unresolved dependencies before upload or trigger. Skip settings physically absent from the camera, not supported-but-unimplemented processing requests. For a supported processing/output setting that the application cannot reproduce, refuse conversion explicitly instead of ignoring it, replacing it with a fixed profile value, or returning a result with mismatched quality, size, format, or colour space. Capture-only intent is retained as such and does not claim to alter a captured RAF. Keep the current transport serialization, readback checks, output validation, dynamic-range source cap, cleanup ownership, and journal recovery guarantees.
 
+Lens modulation optimizer has a per-photo effective value: keep the saved request On, but omit it or set Off when the particular photo cannot support it. This adjustment must not make the recipe invalid or change its stored request. Preserve the existing analogous DR cap: a DR400 request on a DR200/DR100 source produces at most DR200/DR100. Record requested and effective lens-optimizer and DR values separately. Monochromatic colour axes remain visible and grey/disabled for film simulations that do not support them, without clearing their stored values.
+
 Changing the target changes execution eligibility throughout the chooser, previews, export coordinator, and service. Original import context remains provenance only; connection matching for execution uses the target model and the currently verified adapter profile. Advance conversion/cache support versions when the request representation changes.
 
 ## Validation
@@ -119,6 +121,7 @@ Changing the target changes execution eligibility throughout the chooser, previe
 - Test that invalid available fields disable Save, unavailable/inactive fields do not, and selecting valid replacements restores Save. Repeat validation at persistence and application boundaries.
 - Save/reopen canonical recipes after retargeting and verify stable chooser identity, revised snapshot identity, complete values, target, and original provenance.
 - Inspect generated conversion bytes to prove physically unavailable settings are omitted and never leak through source-model bytes; verify that supported-but-unimplemented active requests are explicitly refused; exercise preview/export model matching and existing output/journal guarantees.
+- Verify default LMO On, Fine+RAW, and Lossless compressed; test per-photo LMO Off adjustment without mutating the saved request, and the one-way rule that a requested Off cannot become On. Verify monochromatic colour controls disable on colour films and re-enable with retained values on compatible monochrome films.
 - Add affected editor UI coverage for visible disabled rows, grey unselectable choices, preserved invalid selections, Save enablement, and camera switching at large text sizes.
 - Run the core package tests, `Scripts/test-ios.sh --fast` during iteration, affected UI suites, and the complete `Scripts/test-ios.sh` suite on the task simulator for final validation.
 
