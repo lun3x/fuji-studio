@@ -72,13 +72,13 @@ workspace `sourceReplaced` event. Add internal `ExportDestination.createPair`.
 **Files:** Modify `VersionList.swift`, the settings explanation, fixture writer
 and library, affected version/settings unit/UI tests, and validation report.
 
-- [ ] Write a failing end-to-end UI test: select a RAW-only source, export with
+- [x] Write a failing end-to-end UI test: select a RAW-only source, export with
   the setting enabled, keep one checked replacement with RAW and Paired JPEG;
   a second export edits that same pair and shows only the latest edit.
-- [ ] Implement fixture replacement and picker/copy behavior. Run affected UI
+- [x] Implement fixture replacement and picker/copy behavior. Run affected UI
   suites, then the complete `Scripts/test-ios.sh` on the isolated simulator.
-- [ ] Obtain one read-only whole-change review; fix material issues with observed
+- [x] Obtain one read-only whole-change review; fix material issues with observed
   failing regressions, then appropriate suite verification.
 - [ ] Build signed Release, verify the exact bundle, install and launch on the
   user's connected iPhone under existing installation authorization.
-- [ ] Record results, clean up the simulator, and push final documentation.
+- [x] Record results, clean up the simulator, and push final documentation.

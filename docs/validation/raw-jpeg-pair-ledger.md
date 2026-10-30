@@ -58,4 +58,16 @@ The first complete run (`20261030-162912-10159.xcresult`) had 685 total, 680 pas
 (`testPhoneEditorSavesNameAndFilmOfflineAndCancelDiscardsChanges` and
 `testXT5EditorOffersOnlyConvertibleFilmRangeAndBalance`); RAW pair, export and
 selection checks passed. A complete run after the final preparation fix is in
-progress.
+progress at that checkpoint.
+
+Final complete run after the preparation fix: 686 total, 681 passed, 2 failed,
+3 skipped (`20261030-164343-14198.xcresult`). The same two existing editor-menu
+tests failed; their isolated serial retry is running. The exact signed Release
+bundle verified successfully. Initial phone installation failed because
+Louisphone became unavailable (CoreDevice 4016); requested reconnection.
+
+Task 3 validation: both editor tests passed unchanged in the serial retry
+(`20261030-165204-17475.xcresult`). The full parallel run's failures remain
+reported, rather than relabeling that run as passed. Task simulator shutdown and
+deletion were verified. Code and validation are pushed; physical installation is
+the only remaining item, pending the phone's reconnection.

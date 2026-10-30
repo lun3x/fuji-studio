@@ -43,9 +43,17 @@ primary / RAW alternate layout follows Apple's
 - Final failure-path checks also reproduced and corrected the classification of
   initial journal/RAW preparation failures. These are now retryable failures;
   uncertain prior Photos submissions remain protected from resubmission.
+- Complete final suite: **686 total, 681 passed, 2 failed, 3 skipped**. Result:
+  `.build/TestResults/20261030-164343-14198.xcresult`. Both failures were existing
+  recipe-editor menu interactions: saving a name/film offline and choosing
+  convertible X-T5 options. The complete run remains recorded as failed; the
+  RAW pair, settings, export, selection and recovery checks passed.
+- Both editor tests passed unchanged in the isolated serial retry (2 passed,
+  0 failed): `.build/TestResults/20261030-165204-17475.xcresult`.
 
 The task uses the isolated **Fuji RAW JPEG Pair** iPhone 15 Pro simulator
 (`6EDC06ED-9750-44CA-B4E9-EA18FF712131`, iOS 27.0).
+It was shut down and deleted after validation.
 
 ## Native validation boundary
 
@@ -54,3 +62,13 @@ with an injected Photos boundary. No real-library export or removal was executed
 on the phone. Actual PhotoKit classification, metadata retention and album order
 still require a user export; their runtime read-back checks must pass before the
 app requests removal of the original asset.
+
+## Phone build
+
+Release for code checkpoint `4411d32c` built with development team `AZH3P824F3`
+and the automatic `Apple Development` identity. The exact bundle at
+`.build/PhoneInstall/Build/Products/Release-iphoneos/FujiStudio.app` passed
+`codesign --verify --deep --strict`.
+
+The first installation attempt could not reach Louisphone (CoreDevice error
+4016; device listed unavailable). Installation is pending reconnection.
