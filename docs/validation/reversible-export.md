@@ -14,10 +14,13 @@ marker for exact recovery. Only the current matching edit is selectable.
   hiding an older edit after a second export.
 - Affected `ExportFlowTests`: **7 passed**, **1 existing native Home-boundary test
   skipped**.
-- Complete `Scripts/test-ios.sh` run: **663 total, 660 passed, 0 failed, 3 skipped** using the supported four-worker mode.\n  Result bundle: `.build/TestResults/20261030-135111-38515.xcresult`.
+- Complete `Scripts/test-ios.sh` run: **663 total, 660 passed, 0 failed, 3 skipped**
+  using the supported four-worker mode.
+  Result bundle: `.build/TestResults/20261030-135111-38515.xcresult`.
 
 All iOS checks use the task-specific **Fuji Reversible Export** iPhone 15 Pro
-simulator (`C108EF1E-9E8D-4FE1-9A22-DC4D92068459`, iOS 27.0). It was shut down and deleted after validation.
+simulator (`C108EF1E-9E8D-4FE1-9A22-DC4D92068459`, iOS 27.0). It was shut down
+and deleted after validation.
 The rendered settings screenshot was inspected: red label and switch, readable
 explanatory text, and working Done control.
 
