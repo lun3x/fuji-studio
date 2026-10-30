@@ -51,6 +51,37 @@ or new Photos asset.
 Final review: the only Important finding is fixed with RED→GREEN coverage. No
 Critical or Minor findings, declined judgments, or deferred findings.
 
+The complete four-worker run stalled in simulator UI runners and was interrupted
+(`20261030-183918-36895.xcresult`: 645 recorded, 631 passed, 14 failed). This is
+not a passing validation result. Its cleanup UI test and unit checks passed. A
+complete two-worker retry with idle sleep inhibited was started afterward.
+That retry also stalled in simulator screenshot/event synthesis and was
+interrupted (`20261030-211921-39128.xcresult`: 631 recorded, 623 passed, 8 failed).
+The complete suite remains unverified; neither interrupted run is reported as
+passing. The isolated recovery UI check, final fast suite and corrected native
+read-only verification passed as recorded above. Both runs' worker clones were
+removed by Xcode; task simulator shutdown/deletion was verified.
+
 The task uses the isolated **Fuji Pair Cleanup Recovery** iPhone 15 Pro simulator
 (`2C7BE0E1-B50E-40C7-A80E-FFD03E8E79A3`). Native diagnostics only inspect existing
 Photos assets; they do not create or delete photos.
+
+## Physical verification and installation
+
+The corrected read-only diagnostic passed on Louisphone
+(`.build/PhoneDiagnostics-5.xcresult`). Journal enumeration now succeeds and the
+user's existing pair is classified as `needsReplacementCleanup`, with matching
+RAW/JPEG hashes, no pair metadata differences, and only the old asset's
+modification date differing. No Photos assets were created or removed.
+
+Code checkpoint `3bcbc195` built in Release using development team `AZH3P824F3`
+and automatic `Apple Development` signing. The exact bundle under
+`.build/PhoneInstall/Build/Products/Release-iphoneos/FujiStudio.app` passed
+`codesign --verify --deep --strict` and installed successfully on Louisphone.
+The first normal launch attempt lost its remote service connection (CoreDevice
+4000); the device then became unavailable (4016). No fixture or test launch
+arguments were supplied. Installation had already completed successfully.
+After reconnection, a normal launch was attempted again and Photos' host phone
+was locked (CoreDevice 10002 / FBSOpenApplicationErrorDomain 7). The installed
+Release app must be opened manually after unlocking; no successful remote
+normal launch is claimed.
