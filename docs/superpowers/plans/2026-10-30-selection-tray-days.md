@@ -26,3 +26,11 @@
 - After updating the two layout assertions, all three failures passed in a focused serial rerun (3 tests, 0 failures). The recipe-editor test passed unchanged. Across the complete run and reruns, every test has a passing result: 650 passed, 3 skipped. Skips require native keyboard, native Home/background delivery, or native device rotation validation.
 - Result bundles: complete run `.build/TestResults/20261030-081345-65084.xcresult`; focused rerun recorded in `/tmp/fuji-tray-days-rerun.log`.
 - Final feature checkpoint pushed on `codex/selection-tray-days`. The task simulator was shut down and deleted; Xcode removed its worker clones automatically.
+
+## Physical iPhone installation — 2026-10-30
+
+- Rebased the day-divider changes onto latest origin main (`db935a1b`) to retain the source dynamic-range conversion fix.
+- Updated the X-E3 test receipt fixture to use `XE3Support.conversionVersion` after that upstream version change. Its model-switch test initially failed three assertions with the old fixture version; the complete unit rerun passed (555 Swift Testing cases and 23 XCTest cases).
+- Built Release for the connected physical iPhone 15 Pro with automatic signing, team `AZH3P824F3`, and `Apple Development` identity.
+- `codesign --verify --deep --strict` passed for `.build/PhoneInstall/Build/Products/Release-iphoneos/FujiStudio.app`. Installed that exact bundle and successfully launched `com.lun3x.FujiStudio` without fixture or test arguments.
+- Removed the isolated simulator used for the unit rerun.
