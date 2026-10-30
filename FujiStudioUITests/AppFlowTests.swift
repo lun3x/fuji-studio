@@ -103,9 +103,11 @@ final class AppFlowTests: AppFlowTestCase {
         tap(app.buttons["recipe.none"], in: app)
         XCTAssertTrue(app.scrollViews["viewer.image"].isHittable)
         for id in ["viewer.zoomOut", "viewer.fit", "viewer.zoomIn"] { XCTAssertFalse(app.buttons[id].exists) }
-        let grid = app.collectionViews["photoGrid"], side = app.cells["grid.source-0"].frame.width
+        let grid = app.collectionViews["photoGrid"], first = app.cells["grid.source-0"].frame
+        let side = first.width, headerHeight = first.minY - grid.frame.minY
         XCTAssertGreaterThan(grid.frame.height, side)
-        XCTAssertLessThan(grid.frame.height, side * 2)
+        XCTAssertGreaterThan(headerHeight, 0)
+        XCTAssertEqual(grid.frame.height, headerHeight + side + 34, accuracy: 1)
         let frame = app.scrollViews["viewer.image"].frame
         app.buttons["drawer.toggle"].tap(); wait { app.buttons["drawer.toggle"].value as? String == "Expanded" }
         XCTAssertFalse(app.buttons["viewer.zoomIn"].exists)

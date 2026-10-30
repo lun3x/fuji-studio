@@ -16,6 +16,7 @@ struct GridViewport: Equatable {
     let size: CGSize
     let contentOffset: CGPoint
     let visibleSourceIDs: [SourceID]
+    let dayHeaderHeight: CGFloat
 }
 
 enum DrawerScrollDrag: Equatable {
@@ -38,12 +39,14 @@ struct PhotoGrid: UIViewControllerRepresentable {
     var allowsDrawerCollapse = false
     var onSourceTapped: (SourceID) -> Void
     var onCheckedChanged: (Set<SourceID>) -> Void
+    var onDayTapped: (Set<SourceID>) -> Void = { _ in }
     var onViewportChanged: (GridViewport) -> Void = { _ in }
     var onDrawerDrag: (DrawerScrollDrag) -> Void = { _ in }
 
     func makeUIViewController(context: Context) -> PhotoGridController { PhotoGridController(thumbnails: thumbnails) }
     func updateUIViewController(_ controller: PhotoGridController, context: Context) {
         controller.onSourceTapped = onSourceTapped; controller.onCheckedChanged = onCheckedChanged
+        controller.onDayTapped = onDayTapped
         controller.onViewportChanged = onViewportChanged
         controller.onDrawerDrag = onDrawerDrag
         controller.update(sources: sources, checked: checkedSourceIDs, selecting: isSelecting,

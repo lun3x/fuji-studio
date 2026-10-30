@@ -26,6 +26,7 @@ struct WorkspaceView<StatusControl: View>: View {
     @ViewBuilder var statusControl: () -> StatusControl
     var onViewportChanged: (GridViewport) -> Void = { _ in }
     @State private var drawerHeaderHeight: CGFloat = 0
+    @State private var dayHeaderHeight: CGFloat = 0
     @State private var statusHeight: CGFloat = 0
     @State private var controlHeight: CGFloat = 0
     @State private var scrollRequest: GridScrollRequest?
@@ -53,10 +54,10 @@ struct WorkspaceView<StatusControl: View>: View {
             // Only a real image-status message reserves space below the image. The two
             // photo controls and camera indicator float over it in every layout.
             let statusReserve = orientation == .portrait && imageGeometry != nil && imageStatus != nil && imageLoading == nil ? statusHeight + 8 : 0
-            let available = size.height - safe.bottom - drawerHeaderHeight - controlFrame.maxY - DrawerGeometry.controlClearance - statusReserve - 44
+            let available = size.height - safe.bottom - drawerHeaderHeight - dayHeaderHeight - controlFrame.maxY - DrawerGeometry.controlClearance - statusReserve - 44
             let gridMetrics = DrawerGeometry.gridMetrics(width: contentWidth, availableGridHeight: available)
             let detents = DrawerGeometry.detents(container: size, safeArea: safe, headerHeight: drawerHeaderHeight,
-                grid: gridMetrics, recipeControlFrame: controlFrame)
+                grid: gridMetrics, recipeControlFrame: controlFrame, dayHeaderHeight: dayHeaderHeight)
             let viewerHeight = max(1, size.height - detents.collapsedHeight - photoTop)
             let viewerSize = orientation.layoutSize(CGSize(width: contentWidth, height: viewerHeight))
             let controlSideInset = max(44, controlHeight) + 16
@@ -87,7 +88,13 @@ struct WorkspaceView<StatusControl: View>: View {
                                 gridMetrics: gridMetrics, bottomInset: safe.bottom,
                                 contentRotation: orientation.contentRotation, allowsDrawerCollapse: state.drawerDetent == .expanded,
                                 onSourceTapped: { onAction(.sourceTapped($0)) },
-                                onCheckedChanged: { onAction(.checkedSourcesReplaced($0)) }, onViewportChanged: onViewportChanged,
+                                onCheckedChanged: { onAction(.checkedSourcesReplaced($0)) },
+                                onDayTapped: { onAction(.daySelectionToggled($0)) }, onViewportChanged: { viewport in
+                                    if dayHeaderHeight != viewport.dayHeaderHeight {
+                                        Task { @MainActor in dayHeaderHeight = viewport.dayHeaderHeight }
+                                    }
+                                    onViewportChanged(viewport)
+                                },
                                 onDrawerDrag: onDrawerDrag)
                                 .anchorPreference(key: TrayBoundsKey.self, value: .bounds) { $0 }
                                 .overlay {
@@ -120,11 +127,6 @@ struct WorkspaceView<StatusControl: View>: View {
                 GeometryReader { overlay in
                     if let anchor {
                         let frame = overlay[anchor]
-                        selectionControls.padding(12)
-                            .padding(.top, orientation == .portrait ? 0 : windowSafe.top)
-                            .padding(.bottom, orientation == .portrait ? 0 : windowSafe.bottom)
-                            .frame(width: frame.width, height: frame.height, alignment: orientation.trayControlAlignment)
-                            .position(x: frame.midX, y: frame.midY)
                         if state.photoFilter == .compatibleWithCamera,
                            !visibleIDs.isEmpty,
                            state.photoFilterPendingCount > 0 || state.photoFilterUnavailableCount > 0 {
@@ -139,6 +141,18 @@ struct WorkspaceView<StatusControl: View>: View {
                                 .position(x: frame.midX, y: frame.midY)
                                 .allowsHitTesting(false)
                         }
+                    }
+                }
+            }
+            .overlayPreferenceValue(DrawerHeaderBoundsKey.self) { anchor in
+                GeometryReader { overlay in
+                    if let anchor {
+                        let frame = overlay[anchor]
+                        selectionControls
+                            .padding(.horizontal, orientation == .portrait ? 12 : 0)
+                            .padding(.vertical, orientation == .portrait ? 0 : 12)
+                            .frame(width: frame.width, height: frame.height)
+                            .position(x: frame.midX, y: frame.midY)
                     }
                 }
             }

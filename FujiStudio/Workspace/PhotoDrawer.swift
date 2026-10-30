@@ -44,6 +44,7 @@ struct PhotoDrawer<Grid: View>: View {
             }
             .contentShape(Rectangle())
             .onGeometryChange(for: CGFloat.self, of: { $0.size.height }, action: onHeaderHeightChanged)
+            .anchorPreference(key: DrawerHeaderBoundsKey.self, value: .bounds) { $0 }
             .highPriorityGesture(DragGesture(minimumDistance: 8, coordinateSpace: .named("workspace"))
                 .updating($isDragging) { _, state, _ in state = true }
                 .onChanged { value in
@@ -91,6 +92,13 @@ struct PhotoDrawer<Grid: View>: View {
             detent = next
         }
         if next == .collapsed, notifyCollapse { onManualCollapse() }
+    }
+}
+
+struct DrawerHeaderBoundsKey: PreferenceKey {
+    static var defaultValue: Anchor<CGRect>? { nil }
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+        value = nextValue() ?? value
     }
 }
 

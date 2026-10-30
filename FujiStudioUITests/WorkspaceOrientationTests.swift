@@ -15,6 +15,24 @@ final class WorkspaceOrientationTests: XCTestCase {
         let frame = element.frame
         app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: frame.midX, dy: frame.midY)).tap()
     }
+    func testDayHeadersAndCheckboxesWorkInBothLandscapeDirections() {
+        defer { XCUIDevice.shared.orientation = .portrait }
+        for orientation in [UIDeviceOrientation.landscapeRight, .landscapeLeft] {
+            let app = launch(["--fixture-dated-photos"], orientation: orientation)
+            let day = app.buttons["grid.day.2026-10-23"]
+            XCTAssertTrue(day.waitForExistence(timeout: 5))
+            XCTAssertFalse(day.frame.intersects(app.buttons["workspace.select"].frame))
+            let date = app.staticTexts["Fri, Oct 23, 2026"]
+            XCTAssertTrue(date.exists)
+            XCTAssertGreaterThan(date.frame.width, 40)
+            tap(day, in: app)
+            XCTAssertEqual(day.value as? String, "Checked")
+            XCTAssertEqual(app.staticTexts["workspace.count"].label, "6 selected")
+            let shot = XCTAttachment(screenshot: app.screenshot())
+            shot.name = "Upright day divider \(orientation.rawValue)"; shot.lifetime = .keepAlways; add(shot)
+            app.terminate()
+        }
+    }
 
     private func assertTrayFillsScreenHeight(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
         let window = app.windows.firstMatch.frame

@@ -104,7 +104,8 @@ final class PhotoControlsTests: AppFlowTestCase {
         XCTAssertFalse(app.buttons["workspace.none"].exists)
         XCTAssertFalse(app.staticTexts["workspace.count"].exists)
         XCTAssertEqual(select.label, "Select")
-        XCTAssertGreaterThanOrEqual(select.frame.minY, grid.frame.minY)
+        XCTAssertGreaterThanOrEqual(select.frame.minY, app.buttons["drawer.toggle"].frame.minY)
+        XCTAssertLessThanOrEqual(select.frame.maxY, grid.frame.minY + 0.5)
         XCTAssertEqual(select.frame.maxX, grid.frame.maxX - 12, accuracy: 1)
         app.cells["grid.source-0"].tap()
         let frame = app.cells["grid.source-0"].frame
@@ -198,9 +199,10 @@ final class PhotoControlsTests: AppFlowTestCase {
             shot(app, name)
         }
         inspect("AX5 collapsed enabled export and pinch inspection")
-        let frame = viewer.frame, side = app.cells["grid.source-0"].frame.width
+        let frame = viewer.frame, first = app.cells["grid.source-0"].frame
+        let side = first.width, dayHeaderHeight = first.minY - grid.frame.minY
         XCTAssertGreaterThan(grid.frame.height, side)
-        XCTAssertLessThan(grid.frame.height, side * 2)
+        XCTAssertEqual(grid.frame.height, dayHeaderHeight + side + 34, accuracy: 1)
         app.buttons["workspace.select"].tap()
         XCTAssertEqual(app.cells["grid.source-0"].frame.width, side, accuracy: 0.5)
         app.buttons["drawer.toggle"].tap(); wait { app.buttons["drawer.toggle"].value as? String == "Expanded" }
@@ -211,7 +213,7 @@ final class PhotoControlsTests: AppFlowTestCase {
         XCTAssertEqual(viewer.frame, frame)
         XCTAssertEqual(app.cells["grid.source-0"].frame.width, side, accuracy: 0.5)
         XCTAssertGreaterThan(grid.frame.height, side)
-        XCTAssertLessThan(grid.frame.height, side * 2)
+        XCTAssertEqual(grid.frame.height, dayHeaderHeight + side + 34, accuracy: 1)
         inspect("AX5 recollapsed pinch inspection remains operable without export")
         // Floating controls over letterboxing can report isHittable == false to XCTest.
         // Verify a real screen tap still exports the selected recipe after inspection.

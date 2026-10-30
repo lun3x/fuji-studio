@@ -2,7 +2,7 @@ import FujiCameraCore
 import UIKit
 
 @MainActor
-final class PhotoGridController: UIViewController, UICollectionViewDelegate, UICollectionViewDataSourcePrefetching, UIGestureRecognizerDelegate {
+final class PhotoGridController: UIViewController, UICollectionViewDelegateFlowLayout, UICollectionViewDataSourcePrefetching, UIGestureRecognizerDelegate {
     private let layout = UICollectionViewFlowLayout()
     private(set) lazy var collectionView = UICollectionView(frame: .zero, collectionViewLayout: layout)
     private var dataSource: UICollectionViewDiffableDataSource<Int, SourceID>!
@@ -10,6 +10,8 @@ final class PhotoGridController: UIViewController, UICollectionViewDelegate, UIC
     private var sources: [PhotoSource] = []
     private var byID: [SourceID: PhotoSource] = [:]
     private var indices: [SourceID: Int] = [:]
+    private var sections: [PhotoDaySection] = []
+    private var paths: [SourceID: IndexPath] = [:]
     private var checked: Set<SourceID> = []
     private var selecting = false
     private var contentRotation: CGFloat = 0
@@ -25,12 +27,14 @@ final class PhotoGridController: UIViewController, UICollectionViewDelegate, UIC
     private var lastViewport: GridViewport?
     private var suppliedMetrics: GridMetrics?
     private var layoutSize: CGSize = .zero
+    private var layoutHeaderHeight: CGFloat = 0
     private var allowsDrawerCollapse = false
     private var drawerPanOrigin: CGFloat?
     private var pullingDrawer = false
     private lazy var sweepGesture = UIPanGestureRecognizer(target: self, action: #selector(sweepChanged))
     var onSourceTapped: (SourceID) -> Void = { _ in }
     var onCheckedChanged: (Set<SourceID>) -> Void = { _ in }
+    var onDayTapped: (Set<SourceID>) -> Void = { _ in }
     var onViewportChanged: (GridViewport) -> Void = { _ in }
     var onDrawerDrag: (DrawerScrollDrag) -> Void = { _ in }
 
@@ -48,9 +52,15 @@ final class PhotoGridController: UIViewController, UICollectionViewDelegate, UIC
                      collectionView.leftEdgeEffect, collectionView.rightEdgeEffect] { edge.isHidden = true }
         collectionView.delegate = self; collectionView.prefetchDataSource = self
         collectionView.register(PhotoGridCell.self, forCellWithReuseIdentifier: "photo")
+        collectionView.register(PhotoDayHeader.self, forSupplementaryViewOfKind: UICollectionView.elementKindSectionHeader, withReuseIdentifier: "day")
         dataSource = UICollectionViewDiffableDataSource<Int, SourceID>(collectionView: collectionView) { [weak self] collection, path, id in
             guard let self, let source = self.byID[id], let cell = collection.dequeueReusableCell(withReuseIdentifier: "photo", for: path) as? PhotoGridCell else { return nil }
             self.configure(cell, source: source); return cell
+        }
+        dataSource.supplementaryViewProvider = { [weak self] collection, kind, path in
+            guard let self, let header = collection.dequeueReusableSupplementaryView(ofKind: kind, withReuseIdentifier: "day", for: path) as? PhotoDayHeader else { return nil }
+            self.configure(header, section: path.section)
+            return header
         }
         sweepGesture.delegate = self
         sweepGesture.maximumNumberOfTouches = 1
@@ -65,21 +75,26 @@ final class PhotoGridController: UIViewController, UICollectionViewDelegate, UIC
         if layoutSize != .zero && layoutSize != size { finishSweep(cancelled: true) }
         layoutSize = size
         let next = suppliedMetrics ?? GridGeometry.metrics(width: size.width)
-        if next != metrics {
+        let headerHeight = firstDayHeaderHeight
+        if next != metrics || headerHeight != layoutHeaderHeight {
             finishSweep(cancelled: true)
             let anchor = captureAnchor()
             metrics = next; layout.itemSize = CGSize(width: next.tileWidth, height: next.tileHeight)
+            layoutHeaderHeight = headerHeight
             layout.minimumInteritemSpacing = next.spacing; layout.minimumLineSpacing = next.spacing
             layout.sectionInset = next.insets
             layout.invalidateLayout(); collectionView.layoutIfNeeded(); restoreAnchor(anchor)
             refreshVisible()
+            refreshHeaders()
         }
         // Task11 submits a new request with the final collapsed viewport. Use actual bounds here.
         if let request = pendingScroll {
-            if let index = indices[request.sourceID] {
+            if let rect = itemRect(request.sourceID) {
                 if request.afterViewportHeight.map({ abs($0 - collectionView.bounds.height) < 0.5 }) ?? true {
-                    let y = metrics.offsetToReveal(index: index, viewportHeight: max(1, collectionView.bounds.height - collectionView.contentInset.bottom),
-                        currentOffset: collectionView.contentOffset.y, itemCount: sources.count)
+                    let height = max(1, collectionView.bounds.height - collectionView.contentInset.bottom)
+                    let offset = collectionView.contentOffset.y
+                    let needed = rect.minY < offset ? rect.minY : rect.maxY > offset + height ? rect.maxY - height : offset
+                    let y = min(maxOffset, max(0, needed))
                     collectionView.setContentOffset(CGPoint(x: 0, y: y), animated: false)
                     pendingScroll = nil
                 }
@@ -97,24 +112,35 @@ final class PhotoGridController: UIViewController, UICollectionViewDelegate, UIC
         suppliedMetrics = gridMetrics
         collectionView.contentInset.bottom = max(0, bottomInset)
         collectionView.verticalScrollIndicatorInsets.bottom = max(0, bottomInset)
-        let idsChanged = self.sources.map(\.id) != sources.map(\.id)
+        let nextSections = PhotoDaySection.grouped(sources)
+        let idsChanged = sections != nextSections
         if idsChanged || !allowsDrawerCollapse { cancelDrawerPan() }
         self.allowsDrawerCollapse = allowsDrawerCollapse
         let metadataChanged = self.sources != sources
         if sweeping && (idsChanged || !selecting) { finishSweep(cancelled: true) }
         let anchor = idsChanged ? captureAnchor() : nil
         if metadataChanged {
-            self.sources = sources
             byID = Dictionary(sources.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
         }
-        if idsChanged { indices = Dictionary(sources.enumerated().map { ($0.element.id, $0.offset) }, uniquingKeysWith: { _, last in last }) }
+        if idsChanged {
+            sections = nextSections
+            self.sources = sections.flatMap(\.sourceIDs).compactMap { byID[$0] }
+            indices = Dictionary(self.sources.enumerated().map { ($0.element.id, $0.offset) }, uniquingKeysWith: { _, last in last })
+            paths = Dictionary(uniqueKeysWithValues: sections.enumerated().flatMap { section, day in
+                day.sourceIDs.enumerated().map { ($0.element, IndexPath(item: $0.offset, section: section)) }
+            })
+        } else if metadataChanged { self.sources = self.sources.compactMap { byID[$0.id] } }
         self.checked = checked; self.selecting = selecting; self.viewed = viewed
         if idsChanged {
             prefetched.formIntersection(Set(byID.keys))
-            var snapshot = NSDiffableDataSourceSnapshot<Int, SourceID>(); snapshot.appendSections([0]); snapshot.appendItems(sources.map(\.id))
+            var snapshot = NSDiffableDataSourceSnapshot<Int, SourceID>()
+            for (index, section) in sections.enumerated() {
+                snapshot.appendSections([index]); snapshot.appendItems(section.sourceIDs, toSection: index)
+            }
             dataSource.applySnapshotUsingReloadData(snapshot)
             collectionView.layoutIfNeeded(); restoreAnchor(anchor)
         }
+        refreshHeaders()
         for case let cell as PhotoGridCell in collectionView.visibleCells {
             if let id = cell.sourceID, let source = byID[id] {
                 cell.contentView.transform = CGAffineTransform(rotationAngle: contentRotation)
@@ -130,6 +156,47 @@ final class PhotoGridController: UIViewController, UICollectionViewDelegate, UIC
         cell.configure(source: source, selecting: selecting, checked: checked.contains(source.id), viewed: source.id == viewed,
             thumbnails: thumbnails, pixelSize: pixelSize, onTap: { [weak self] in self?.onSourceTapped(source.id) })
     }
+    private func configure(_ header: PhotoDayHeader, section: Int) {
+        guard sections.indices.contains(section), let date = sections[section].date else { return }
+        let ids = Set(sections[section].sourceIDs)
+        header.configure(date: date, selectedCount: selecting ? checked.intersection(ids).count : 0, totalCount: ids.count, rotation: contentRotation,
+            onToggle: { [weak self] in self?.onDayTapped(ids) })
+    }
+    private func refreshHeaders() {
+        for path in collectionView.indexPathsForVisibleSupplementaryElements(ofKind: UICollectionView.elementKindSectionHeader) {
+            if let header = collectionView.supplementaryView(forElementKind: UICollectionView.elementKindSectionHeader, at: path) as? PhotoDayHeader {
+                configure(header, section: path.section)
+            }
+        }
+    }
+    func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout,
+                        referenceSizeForHeaderInSection section: Int) -> CGSize {
+        CGSize(width: collectionView.bounds.width, height: sections[section].date.map {
+            PhotoDayHeader.height(date: $0, width: collectionView.bounds.width, rotation: contentRotation, traits: traitCollection)
+        } ?? 0)
+    }
+    private var firstDayHeaderHeight: CGFloat {
+        sections.first?.date.map { PhotoDayHeader.height(date: $0, width: collectionView.bounds.width, rotation: contentRotation, traits: traitCollection) } ?? 0
+    }
+    private var maxOffset: CGFloat {
+        max(0, collectionView.contentSize.height - collectionView.bounds.height + collectionView.contentInset.bottom)
+    }
+    private func itemRect(_ id: SourceID) -> CGRect? {
+        paths[id].flatMap { layout.layoutAttributesForItem(at: $0)?.frame }
+    }
+    /// Clamp header/gap positions to the next day's nearest tile while extending a sweep.
+    private func index(at point: CGPoint) -> Int? {
+        for section in sections {
+            guard let first = section.sourceIDs.first, let last = section.sourceIDs.last,
+                  let firstRect = itemRect(first), let lastRect = itemRect(last) else { continue }
+            if point.y <= lastRect.maxY || last == sources.last?.id {
+                let local = CGPoint(x: point.x, y: point.y - firstRect.minY + metrics.insets.top)
+                guard let localIndex = metrics.index(at: local, itemCount: section.sourceIDs.count), let base = indices[first] else { return nil }
+                return base + localIndex
+            }
+        }
+        return nil
+    }
     private var pixelSize: CGSize {
         let scale = view.window?.screen.scale ?? traitCollection.displayScale
         return CGSize(width: metrics.tileWidth * scale, height: metrics.tileWidth * scale)
@@ -142,19 +209,20 @@ final class PhotoGridController: UIViewController, UICollectionViewDelegate, UIC
     private struct Anchor { let candidates: [SourceID]; let delta: CGFloat }
     private func captureAnchor() -> Anchor? {
         collectionView.layoutIfNeeded()
+        guard collectionView.contentOffset.y > 0 else { return nil }
         let paths = collectionView.indexPathsForVisibleItems.sorted()
-        guard let path = paths.first, path.item < sources.count else { return nil }
-        return Anchor(candidates: Array(sources[path.item...].map(\.id)) + sources[..<path.item].reversed().map(\.id),
-                      delta: collectionView.contentOffset.y - metrics.rect(index: path.item).minY)
+        guard let path = paths.first, let id = dataSource.itemIdentifier(for: path), let index = indices[id], let rect = itemRect(id) else { return nil }
+        return Anchor(candidates: Array(sources[index...].map(\.id)) + sources[..<index].reversed().map(\.id),
+                      delta: collectionView.contentOffset.y - rect.minY)
     }
     private func restoreAnchor(_ anchor: Anchor?) {
-        guard let anchor, let id = anchor.candidates.first(where: { byID[$0] != nil }), let index = sources.firstIndex(where: { $0.id == id }) else { return }
-        let maxY = max(0, metrics.height(rows: metrics.contentRows(itemCount: sources.count)) - collectionView.bounds.height + collectionView.contentInset.bottom)
-        collectionView.contentOffset.y = min(maxY, max(0, metrics.rect(index: index).minY + anchor.delta))
+        guard let anchor, let id = anchor.candidates.first(where: { byID[$0] != nil }), let rect = itemRect(id) else { return }
+        collectionView.contentOffset.y = min(maxOffset, max(0, rect.minY + anchor.delta))
     }
     private func publishViewport() {
         let viewport = GridViewport(metrics: metrics, size: collectionView.bounds.size, contentOffset: collectionView.contentOffset,
-            visibleSourceIDs: collectionView.indexPathsForVisibleItems.sorted().compactMap { dataSource.itemIdentifier(for: $0) })
+            visibleSourceIDs: collectionView.indexPathsForVisibleItems.sorted().compactMap { dataSource.itemIdentifier(for: $0) },
+            dayHeaderHeight: firstDayHeaderHeight)
         if viewport != lastViewport { lastViewport = viewport; onViewportChanged(viewport) }
     }
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
@@ -241,8 +309,8 @@ final class PhotoGridController: UIViewController, UICollectionViewDelegate, UIC
         let visible = collectionView.indexPathsForVisibleItems.sorted().compactMap { dataSource.itemIdentifier(for: $0) }
         // UIKit may promote prefetched cells without a cancellation callback. Retire old
         // preheating as the viewport moves, keeping at most one viewport on either side.
-        let low = metrics.index(at: CGPoint(x: 0, y: collectionView.contentOffset.y - collectionView.bounds.height), itemCount: sources.count) ?? 0
-        let high = metrics.index(at: CGPoint(x: collectionView.bounds.width, y: collectionView.contentOffset.y + 2 * collectionView.bounds.height), itemCount: sources.count) ?? 0
+        let low = index(at: CGPoint(x: 0, y: collectionView.contentOffset.y - collectionView.bounds.height)) ?? 0
+        let high = index(at: CGPoint(x: collectionView.bounds.width, y: collectionView.contentOffset.y + 2 * collectionView.bounds.height)) ?? 0
         prefetched = Set(prefetched.filter { id in indices[id].map { (low...high).contains($0) } ?? false })
         let nearby = prefetched.subtracting(visible).sorted { (indices[$0] ?? 0) < (indices[$1] ?? 0) }
         thumbnails.cache(sourceIDs: Array((visible + nearby).prefix(120)), pixelSize: pixelSize)
@@ -250,7 +318,7 @@ final class PhotoGridController: UIViewController, UICollectionViewDelegate, UIC
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard gestureRecognizer === sweepGesture, selecting, !sources.isEmpty else { return false }
         let v = sweepGesture.velocity(in: collectionView)
-        return abs(v.x) > abs(v.y) * 1.5
+        return collectionView.indexPathForItem(at: sweepGesture.location(in: collectionView)) != nil && abs(v.x) > abs(v.y) * 1.5
     }
     @objc private func sweepChanged(_ gesture: UIPanGestureRecognizer) {
         // Keep finger in viewport coordinates while content moves below it.
@@ -264,7 +332,7 @@ final class PhotoGridController: UIViewController, UICollectionViewDelegate, UIC
         case .began:
             guard selecting else { return }
             let start = CGPoint(x: finger.x, y: finger.y + collectionView.contentOffset.y) - translation
-            guard let index = metrics.index(at: start, itemCount: sources.count) else { return }
+            guard collectionView.indexPathForItem(at: start) != nil, let index = index(at: start) else { return }
             sweep.begin(index: index, checked: checked, orderedIDs: sources.map(\.id)); sweeping = true
             updateSweep()
             let link = CADisplayLink(target: self, selector: #selector(edgeTick)); link.add(to: .main, forMode: .common); displayLink = link
@@ -275,7 +343,7 @@ final class PhotoGridController: UIViewController, UICollectionViewDelegate, UIC
         }
     }
     private func updateSweep() {
-        guard sweeping, let index = metrics.index(at: CGPoint(x: finger.x, y: finger.y + collectionView.contentOffset.y), itemCount: sources.count) else { return }
+        guard sweeping, let index = index(at: CGPoint(x: finger.x, y: finger.y + collectionView.contentOffset.y)) else { return }
         let value = sweep.update(index: index)
         if checked != value { checked = value; onCheckedChanged(value); refreshMembership() }
     }
@@ -283,6 +351,7 @@ final class PhotoGridController: UIViewController, UICollectionViewDelegate, UIC
         for case let cell as PhotoGridCell in collectionView.visibleCells {
             cell.membership(selecting: selecting, checked: cell.sourceID.map(checked.contains) ?? false, viewed: cell.sourceID == viewed)
         }
+        refreshHeaders()
     }
     @objc private func edgeTick(_ link: CADisplayLink) {
         let edge: CGFloat = min(60, collectionView.bounds.height / 4)
