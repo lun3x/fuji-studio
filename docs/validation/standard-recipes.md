@@ -41,7 +41,8 @@ DR behavior remains the existing cap by capture DR, with missing/unrecognized ca
 - Both new UI cases passed: retained invalid half-step and blocked Save when retargeting, plus retained monochromatic colour across film changes. The first run exposed native Picker's selected-disabled entry still being enabled; explicit disabled Menu actions fixed it and the regression passed.
 - Fresh independent branch review found four Important issues: captured-state LMO inference, unread X-E3 ISO, ignored Long exposure NR On, and generic conversion refusals. Four regression tests first failed with five assertions; the fixes pass in the complete 159-test core suite, including synthetic availability parsing and one-way output checks.
 - Laptop consumer: six tests passed after correcting its existing fixture to declare capture DR400, matching the DR400 JPEG it supplies. Missing capture DR correctly caps conversion to DR100 and must not be excused by test data.
-- Complete iOS suite is running; final results and simulator cleanup will be appended after completion. No physical iPhone installation or new camera conversion sweep is claimed.
+- The first complete iOS run reported 635 passes, three failures and three existing gated skips (641 unique cases). Two tests still expected pre-review behavior: a mixed-model save had not explicitly selected unread X-E3 ISO, and a workspace assertion expected a generic refusal. The remaining UI test attempted a clipped White Balance menu entry. Updated the expectations and scrolled that menu entry into view.
+- Latest main `5b57f92b` (PR #42) merged without conflicts. The focused integrated rerun passed all 42 relevant unit tests and the previously failing White Balance UI case. The complete integrated suite is running; final results and simulator cleanup will be appended after completion. No physical iPhone installation or new camera conversion sweep is claimed.
 
 ## Implementation rulings
 

@@ -2,6 +2,21 @@ import XCTest
 
 @MainActor
 final class WorkspaceLayoutTests: WorkspaceTestCase {
+    func testDayCheckboxAvoidsTrayControlsAndCollapsedTrayShowsFullPhotoRow() {
+        let app = launch(["--fixture-dated-photos"])
+        let day = app.buttons["grid.day.2026-10-23"]
+        XCTAssertTrue(day.waitForExistence(timeout: 5))
+        XCTAssertFalse(day.frame.intersects(app.buttons["workspace.select"].frame))
+        let grid = app.collectionViews["photoGrid"].frame
+        let first = app.cells["grid.source-0"].frame
+        XCTAssertGreaterThanOrEqual(first.minY, grid.minY)
+        XCTAssertLessThanOrEqual(first.maxY, grid.maxY - 34 + 1)
+        day.tap()
+        XCTAssertEqual(app.staticTexts["workspace.count"].label, "6 selected")
+        XCTAssertEqual(day.value as? String, "Checked")
+        XCTAssertFalse(app.staticTexts["Fri, Oct 23, 2026"].frame.intersects(app.staticTexts["workspace.count"].frame))
+        shot(app, "Workspace day divider and selection controls")
+    }
     func testRecipeRowsRespondToBlankPadding() {
         let app = launch()
         openRecipeMenu(app)

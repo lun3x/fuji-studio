@@ -5,8 +5,8 @@ import UIKit
 
 @MainActor
 final class PhotoGridControllerTests: XCTestCase {
-    private func source(_ id: String) -> PhotoSource {
-        PhotoSource(id: id, originalResources: .init(raf: .init(assetID: id, role: .primaryOriginal, contentTypeIdentifier: "com.fujifilm.raw-image", format: .raf, originalFilename: "GENERATED.RAF", discriminator: "raw"), jpeg: nil), captureDate: nil, location: nil, resourceRevision: "fixture")
+    private func source(_ id: String, date: Date? = nil) -> PhotoSource {
+        PhotoSource(id: id, originalResources: .init(raf: .init(assetID: id, role: .primaryOriginal, contentTypeIdentifier: "com.fujifilm.raw-image", format: .raf, originalFilename: "GENERATED.RAF", discriminator: "raw"), jpeg: nil), captureDate: date, location: nil, resourceRevision: "fixture")
     }
     private func host(_ controller: PhotoGridController, height: CGFloat = 400) -> UIWindow {
         let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first!
@@ -15,6 +15,95 @@ final class PhotoGridControllerTests: XCTestCase {
         window.rootViewController = controller; window.makeKeyAndVisible()
         controller.view.frame = window.bounds; controller.view.setNeedsLayout(); controller.view.layoutIfNeeded()
         return window
+    }
+    func testCaptureDaysStartSeparateRowsWithDateAndCheckbox() throws {
+        let friday = Calendar.current.date(from: DateComponents(year: 2026, month: 10, day: 23, hour: 12))!
+        let saturday = Calendar.current.date(byAdding: .day, value: 1, to: friday)!
+        let controller = PhotoGridController(thumbnails: GridThumbnailSpy())
+        controller.update(sources: [source("a", date: saturday), source("b", date: friday), source("c", date: friday)],
+            checked: ["b"], selecting: true, viewed: "a", scrollRequest: nil)
+        let window = host(controller, height: 600)
+        defer { controller.stop(); window.isHidden = true }
+        XCTAssertEqual(controller.collectionView.numberOfSections, 2)
+        guard controller.collectionView.numberOfSections == 2 else { return }
+        XCTAssertEqual(controller.collectionView.numberOfItems(inSection: 0), 1)
+        XCTAssertEqual(controller.collectionView.numberOfItems(inSection: 1), 2)
+        let header = try XCTUnwrap(controller.collectionView.supplementaryView(forElementKind: UICollectionView.elementKindSectionHeader,
+            at: IndexPath(item: 0, section: 1)))
+        XCTAssertTrue(header.subviews.contains { ($0 as? UILabel)?.text == "Fri, Oct 23, 2026" })
+        let checkbox = try XCTUnwrap(header.subviews.compactMap { $0 as? UIButton }.first)
+        XCTAssertEqual(checkbox.accessibilityValue, "Partially selected")
+        var toggled: Set<SourceID> = []
+        controller.onDayTapped = { toggled = $0 }
+        checkbox.sendActions(for: .touchUpInside)
+        XCTAssertEqual(toggled, ["b", "c"])
+        let photo = try XCTUnwrap(controller.collectionView.layoutAttributesForItem(at: IndexPath(item: 0, section: 1)))
+        XCTAssertGreaterThanOrEqual(photo.frame.minY, header.frame.maxY)
+    }
+    func testDateMetadataChangeRegroupsExistingPhotoIDs() {
+        let friday = Calendar.current.date(from: DateComponents(year: 2026, month: 10, day: 23, hour: 12))!
+        let saturday = Calendar.current.date(byAdding: .day, value: 1, to: friday)!
+        let controller = PhotoGridController(thumbnails: GridThumbnailSpy())
+        controller.update(sources: [source("a", date: friday), source("b", date: friday)],
+            checked: [], selecting: false, viewed: nil, scrollRequest: nil)
+        let window = host(controller)
+        defer { controller.stop(); window.isHidden = true }
+        controller.update(sources: [source("a", date: saturday), source("b", date: friday)],
+            checked: [], selecting: false, viewed: nil, scrollRequest: nil)
+        XCTAssertEqual(controller.collectionView.numberOfSections, 2)
+    }
+    func testDayCheckboxLeadsDateInPortraitAndSitsBelowItInBothLandscapeDirections() throws {
+        let date = Calendar.current.date(from: DateComponents(year: 2026, month: 10, day: 23, hour: 12))!
+        for rotation: CGFloat in [0, -.pi / 2, .pi / 2] {
+            let header = PhotoDayHeader(frame: CGRect(x: 0, y: 0, width: 390, height: rotation == 0 ? 44 : 88))
+            header.configure(date: date, selectedCount: 0, totalCount: 6, rotation: rotation, onToggle: {})
+            header.layoutIfNeeded()
+            let label = try XCTUnwrap(header.subviews.compactMap { $0 as? UILabel }.first)
+            let checkbox = try XCTUnwrap(header.subviews.compactMap { $0 as? UIButton }.first)
+            if rotation == 0 { XCTAssertLessThanOrEqual(checkbox.frame.maxX, label.frame.minX) }
+            else {
+                let canvas = CGAffineTransform(rotationAngle: -rotation)
+                XCTAssertEqual(checkbox.frame.applying(canvas).minY - label.frame.applying(canvas).maxY, 8, accuracy: 0.5)
+            }
+        }
+    }
+    func testDateHeaderWrapsToFitLargestAccessibilityText() throws {
+        let date = Calendar.current.date(from: DateComponents(year: 2026, month: 10, day: 23, hour: 12))!
+        let controller = PhotoGridController(thumbnails: GridThumbnailSpy())
+        controller.traitOverrides.preferredContentSizeCategory = .accessibilityExtraExtraExtraLarge
+        controller.update(sources: [source("a", date: date)], checked: [], selecting: false, viewed: nil, scrollRequest: nil)
+        let window = host(controller, height: 600)
+        defer { controller.stop(); window.isHidden = true }
+        let header = try XCTUnwrap(controller.collectionView.supplementaryView(forElementKind: UICollectionView.elementKindSectionHeader,
+            at: IndexPath(item: 0, section: 0)))
+        let label = try XCTUnwrap(header.subviews.compactMap { $0 as? UILabel }.first)
+        let required = (try XCTUnwrap(label.text) as NSString).boundingRect(with: CGSize(width: label.bounds.width, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: label.font!], context: nil)
+        XCTAssertGreaterThanOrEqual(label.bounds.height, ceil(required.height))
+    }
+    func testSweepCrossesDayHeadersAndRevealUsesSectionFrames() throws {
+        let friday = Calendar.current.date(from: DateComponents(year: 2026, month: 10, day: 23, hour: 12))!
+        let thursday = Calendar.current.date(byAdding: .day, value: -1, to: friday)!
+        let controller = PhotoGridController(thumbnails: GridThumbnailSpy())
+        let sources = [source("a", date: friday), source("b", date: friday), source("c", date: thursday), source("d", date: thursday)]
+        var checked: Set<SourceID> = []
+        controller.onCheckedChanged = { checked = $0 }
+        controller.update(sources: sources, checked: [], selecting: true, viewed: "d", scrollRequest: nil)
+        let window = host(controller, height: 600)
+        defer { controller.stop(); window.isHidden = true }
+        let first = try XCTUnwrap(controller.collectionView.layoutAttributesForItem(at: IndexPath(item: 0, section: 0))).frame
+        let nextDay = try XCTUnwrap(controller.collectionView.layoutAttributesForItem(at: IndexPath(item: 0, section: 1))).frame
+        controller.handleSweep(state: .began, viewportLocation: CGPoint(x: first.midX, y: first.midY), translation: .zero)
+        controller.handleSweep(state: .changed, viewportLocation: CGPoint(x: nextDay.midX, y: nextDay.midY), translation: .zero)
+        XCTAssertEqual(checked, ["a", "b", "c"])
+        controller.handleSweep(state: .ended, viewportLocation: CGPoint(x: nextDay.midX, y: nextDay.midY), translation: .zero)
+        controller.update(sources: sources, checked: checked, selecting: true, viewed: "d",
+            scrollRequest: GridScrollRequest(sourceID: "d", afterViewportHeight: 100))
+        controller.view.frame.size.height = 100
+        controller.view.setNeedsLayout(); controller.view.layoutIfNeeded()
+        let last = try XCTUnwrap(controller.collectionView.layoutAttributesForItem(at: IndexPath(item: 1, section: 1))).frame
+        XCTAssertEqual(controller.collectionView.contentOffset.y, last.maxY - 100, accuracy: 0.01)
+        XCTAssertEqual(controller.collectionView.cellForItem(at: IndexPath(item: 0, section: 1))?.accessibilityValue, "Checked")
     }
     func testLandscapePhotoPullProjectsWindowMovementOntoDrawerAxis() {
         for (rotation, horizontal): (CGFloat, CGFloat) in [(-.pi / 2, -60), (.pi / 2, 60)] {

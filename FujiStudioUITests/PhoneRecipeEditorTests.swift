@@ -66,20 +66,21 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
         reveal(app.buttons["recipe.editor.setting.film"], in: app)
         app.buttons["recipe.editor.setting.film"].tap()
-        app.buttons["PROVIA / Standard"].tap()
-        replaceText(app.textFields["recipe.editor.name"], with: "My Provia")
+        // Exercise film persistence with an option visible beside the current Classic Chrome choice.
+        app.buttons["ACROS"].tap()
+        replaceText(app.textFields["recipe.editor.name"], with: "My ACROS")
         shot(app, "Phone editor name and film draft")
         app.buttons["recipe.editor.save"].tap()
         XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitForNonExistence(timeout: 5))
-        XCTAssertTrue(app.buttons[id].label.contains("My Provia"))
+        XCTAssertTrue(app.buttons[id].label.contains("My ACROS"))
         XCTAssertFalse(app.buttons[id].isEnabled)
         edit.tap()
-        XCTAssertEqual(app.textFields["recipe.editor.name"].value as? String, "My Provia")
+        XCTAssertEqual(app.textFields["recipe.editor.name"].value as? String, "My ACROS")
         let film = app.buttons["recipe.editor.setting.film"]
-        XCTAssertTrue(film.label.contains("PROVIA") || (film.value as? String ?? "").contains("PROVIA"))
+        XCTAssertTrue(film.label.contains("ACROS") || (film.value as? String ?? "").contains("ACROS"))
         replaceText(app.textFields["recipe.editor.name"], with: "Discard me")
         app.buttons["recipe.editor.cancel"].tap()
-        XCTAssertTrue(app.buttons[id].label.contains("My Provia"))
+        XCTAssertTrue(app.buttons[id].label.contains("My ACROS"))
         XCTAssertEqual(phoneQuery.count, 1)
     }
 
@@ -172,7 +173,14 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
         reveal(balance, in: app); balance.tap()
         XCTAssertTrue(app.buttons["Daylight"].isEnabled)
         XCTAssertTrue(app.buttons["Custom 3"].isEnabled)
-        app.buttons["Colour temperature"].tap()
+        let temperatureChoice = app.buttons["Colour temperature"]
+        let balanceMenu = app.collectionViews.containing(.button, identifier: "Colour temperature").firstMatch
+        for _ in 0..<5 {
+            if temperatureChoice.isHittable { break }
+            balanceMenu.swipeUp()
+        }
+        XCTAssertTrue(temperatureChoice.isHittable)
+        temperatureChoice.tap()
         app.buttons["recipe.editor.save"].tap()
         XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitForNonExistence(timeout: 5))
         XCTAssertTrue(phone.isEnabled)

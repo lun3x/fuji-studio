@@ -26,10 +26,12 @@ struct WorkspaceView<StatusControl: View>: View {
     @ViewBuilder var statusControl: () -> StatusControl
     var onViewportChanged: (GridViewport) -> Void = { _ in }
     @State private var drawerHeaderHeight: CGFloat = 0
+    @State private var dayHeaderHeight: CGFloat = 0
     @State private var statusHeight: CGFloat = 0
     @State private var controlHeight: CGFloat = 0
     @State private var scrollRequest: GridScrollRequest?
     @State private var orientation = WorkspaceOrientation.portrait
+    @State private var selectionControlSize = CGSize(width: 112, height: 44)
 
     var body: some View {
         GeometryReader { proxy in
@@ -53,10 +55,11 @@ struct WorkspaceView<StatusControl: View>: View {
             // Only a real image-status message reserves space below the image. The two
             // photo controls and camera indicator float over it in every layout.
             let statusReserve = orientation == .portrait && imageGeometry != nil && imageStatus != nil && imageLoading == nil ? statusHeight + 8 : 0
-            let available = size.height - safe.bottom - drawerHeaderHeight - controlFrame.maxY - DrawerGeometry.controlClearance - statusReserve - 44
+            let available = size.height - safe.bottom - drawerHeaderHeight - dayHeaderHeight - controlFrame.maxY - DrawerGeometry.controlClearance - statusReserve - 44
             let gridMetrics = DrawerGeometry.gridMetrics(width: contentWidth, availableGridHeight: available)
             let detents = DrawerGeometry.detents(container: size, safeArea: safe, headerHeight: drawerHeaderHeight,
-                grid: gridMetrics, recipeControlFrame: controlFrame)
+                grid: gridMetrics, recipeControlFrame: controlFrame, dayHeaderHeight: dayHeaderHeight,
+                minimumGridHeight: orientation == .portrait ? 0 : selectionControlSize.width + 24)
             let viewerHeight = max(1, size.height - detents.collapsedHeight - photoTop)
             let viewerSize = orientation.layoutSize(CGSize(width: contentWidth, height: viewerHeight))
             let controlSideInset = max(44, controlHeight) + 16
@@ -86,8 +89,17 @@ struct WorkspaceView<StatusControl: View>: View {
                                 viewedSourceID: state.viewedSourceID, thumbnails: thumbnails, scrollRequest: scrollRequest,
                                 gridMetrics: gridMetrics, bottomInset: safe.bottom,
                                 contentRotation: orientation.contentRotation, allowsDrawerCollapse: state.drawerDetent == .expanded,
+                                dayHeaderControlsSize: orientation == .portrait
+                                    ? CGSize(width: selectionControlSize.width + 76, height: selectionControlSize.height + 24)
+                                    : CGSize(width: selectionControlSize.width + 24, height: selectionControlSize.height + 80 + windowSafe.top),
                                 onSourceTapped: { onAction(.sourceTapped($0)) },
-                                onCheckedChanged: { onAction(.checkedSourcesReplaced($0)) }, onViewportChanged: onViewportChanged,
+                                onCheckedChanged: { onAction(.checkedSourcesReplaced($0)) },
+                                onDayTapped: { onAction(.daySelectionToggled($0)) }, onViewportChanged: { viewport in
+                                    if dayHeaderHeight != viewport.dayHeaderHeight {
+                                        Task { @MainActor in dayHeaderHeight = viewport.dayHeaderHeight }
+                                    }
+                                    onViewportChanged(viewport)
+                                },
                                 onDrawerDrag: onDrawerDrag)
                                 .anchorPreference(key: TrayBoundsKey.self, value: .bounds) { $0 }
                                 .overlay {
@@ -204,16 +216,22 @@ struct WorkspaceView<StatusControl: View>: View {
     }
     private var selectionControls: some View {
         GlassEffectContainer(spacing: 12) {
-            DeviceAnchoredRow(orientation: orientation, spacing: 12, leadingItems: state.isSelecting ? 1 : 0,
+            DeviceAnchoredRow(orientation: orientation, spacing: 12, leadingItems: 0,
                 reversesAxis: orientation == .landscapeLeft) {
-                if state.isSelecting {
-                    count.padding(.horizontal, 12).frame(minHeight: 44)
-                        .glassEffect(.regular, in: .capsule)
-                        .allowsHitTesting(false)
-                }
                 PhotoFilterMenu(selected: state.photoFilter, cameraModel: state.photoFilterCamera?.model,
                     onSelect: { onAction(.photoFilterSelected($0)) })
-                selectionButton
+                TraySelectionControlLayout {
+                    selectionCountSizingLabel.hidden().frame(maxWidth: .infinity, maxHeight: .infinity).overlay {
+                        if state.isSelecting { selectionCount }
+                    }
+                    clearSelectionLabel.hidden().frame(maxWidth: .infinity, maxHeight: .infinity).overlay {
+                        if state.isSelecting { clearSelectionButton }
+                    }
+                    selectLabel.hidden().frame(maxWidth: .infinity, maxHeight: .infinity).overlay {
+                        if !state.isSelecting { selectButton }
+                    }
+                }
+                .onGeometryChange(for: CGSize.self, of: { $0.size }) { selectionControlSize = $0 }
             }
         }
     }
@@ -240,26 +258,46 @@ struct WorkspaceView<StatusControl: View>: View {
                 .accessibilityIdentifier("filter.unavailable")
         }
     }
-    private var selectionButton: some View {
-        Button { onAction(state.isSelecting ? .done : .select) } label: {
-            Group {
-                if state.isSelecting {
-                    Image(systemName: "xmark").frame(width: 44, height: 44)
-                } else {
-                    Text("Select").fixedSize().padding(.horizontal, 16).frame(minHeight: 44)
-                }
-            }
-            .font(.callout.weight(.semibold)).contentShape(.capsule)
+    private var clearSelectionButton: some View {
+        Button { onAction(.done) } label: {
+            clearSelectionLabel.contentShape(.circle)
         }.buttonStyle(.plain)
             .glassEffect(.regular.interactive(), in: .capsule)
-            .accessibilityLabel(state.isSelecting ? "Cancel selection" : "Select")
+            .accessibilityLabel("Cancel selection")
             .accessibilityIdentifier("workspace.select")
     }
-    private var count: some View {
-        Label("\(state.checkedSourceIDs.count)", systemImage: "checkmark.circle")
+    private var clearSelectionLabel: some View {
+        Image(systemName: "xmark").font(.callout.weight(.semibold)).frame(width: 44, height: 44)
+    }
+    private var selectLabel: some View {
+        Text("Select").font(.callout.weight(.semibold)).padding(.horizontal, 16).frame(minHeight: 44)
+    }
+    private var selectButton: some View {
+        Button { onAction(.select) } label: {
+            selectLabel.frame(maxWidth: .infinity, maxHeight: .infinity).contentShape(.capsule)
+        }.buttonStyle(.plain)
+            .glassEffect(.regular.interactive(), in: .capsule)
+            .accessibilityLabel("Select")
+            .accessibilityIdentifier("workspace.select")
+    }
+    private var selectionCountSizingLabel: some View {
+        Label(String(max(sources.count, state.checkedSourceIDs.count)), systemImage: "checkmark.circle")
+            .font(.caption).monospacedDigit().lineLimit(1).fixedSize()
+            .padding(.horizontal, 12).frame(minHeight: 44)
+    }
+    private var selectionCount: some View {
+        selectionCountSizingLabel.hidden()
+            .overlay {
+                Label(String(state.checkedSourceIDs.count), systemImage: "checkmark.circle")
+                    .font(.caption).monospacedDigit().lineLimit(1).fixedSize()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .glassEffect(.regular, in: .capsule)
+            .accessibilityElement(children: .ignore)
+            .accessibilityAddTraits(.isStaticText)
             .accessibilityLabel("\(state.checkedSourceIDs.count) selected")
             .accessibilityIdentifier("workspace.count")
-            .font(.caption).monospacedDigit().lineLimit(1).fixedSize()
+            .allowsHitTesting(false)
     }
 }
 

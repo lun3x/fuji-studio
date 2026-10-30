@@ -18,6 +18,7 @@ struct DeclaredRecipeCollectionTests {
     try await catalog.saveJob(job)
     var draft = PhoneRecipeDraft(recipe: original)
     draft.name = "Offline XE3"
+    draft.setValue(.option(.auto1), for: .iso)
     let edited = try await catalog.updatePhoneRecipe(draft)
     #expect(edited.id == original.id && edited.snapshot.id != original.snapshot.id)
     #expect(edited.snapshot.importedSettings.first { $0.code == 99 }?.raw == Data([0xaa, 0xbb]))
@@ -63,7 +64,7 @@ struct DeclaredRecipeCollectionTests {
   private func remap(_ r: RecipeSnapshot, slot: Int) -> RecipeSnapshot {
     .init(
       id: UUID(), slot: slot, name: r.name, importedName: r.importedName,
-      importedSettings: r.importedSettings, settingsDigest: r.settingsDigest,
+      importedSettings: r.importedSettings, settingsDigest: r.sourceSettingsDigest,
       cameraContext: r.cameraContext, importedAt: r.importedAt, renderingIssues: r.renderingIssues)
   }
 }

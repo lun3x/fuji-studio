@@ -415,7 +415,9 @@ struct WorkspaceStateTests {
         recipes[2] = f.copy(recipes[2], settings: [], digest: "unsupported")
         #expect(state.reduce(.recipesLoaded(recipes,slots:RecipeCodecRegistry.xt5Capabilities.bankSlots)).isEmpty)
         #expect(state.selectedRecipe?.id == recipes[2].id)
-        #expect(state.exportDisabledReason == .unsupportedRecipe([.unsupportedMeasuredDomain]))
+        #expect(state.exportDisabledReason == .unsupportedRecipe([
+            .unsupportedSetting(.film, .unknown("Invalid imported settings"))
+        ]))
         #expect(state.exportDisabledReason?.message.isEmpty == false)
     }
 
