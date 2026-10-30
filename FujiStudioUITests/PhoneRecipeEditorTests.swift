@@ -177,7 +177,12 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
         let balanceMenu = app.collectionViews.containing(.button, identifier: "Colour temperature").firstMatch
         for _ in 0..<5 {
             if temperatureChoice.isHittable { break }
-            balanceMenu.swipeUp()
+            // iOS can report the menu's full content height beyond the screen.
+            // Keep the drag inside its visible upper portion, above the form.
+            let origin = balanceMenu.coordinate(withNormalizedOffset: .zero)
+            origin.withOffset(CGVector(dx: balanceMenu.frame.width / 2, dy: 180))
+                .press(forDuration: 0.05, thenDragTo: origin.withOffset(
+                    CGVector(dx: balanceMenu.frame.width / 2, dy: 50)))
         }
         XCTAssertTrue(temperatureChoice.isHittable)
         temperatureChoice.tap()
