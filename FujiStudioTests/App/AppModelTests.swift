@@ -4,6 +4,33 @@ import Testing
 @testable import FujiStudio
 
 @MainActor struct AppModelTests {
+    @Test func repeatedOriginalUpdatesAndRevertHideOldVersionsAndKeepOriginals() async throws {
+        let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment)
+        await model.start(automaticallyConnect: false); await model.connect()
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
+        model.send(.sourceTapped("source-0"))
+        let source = try await f.reader.source(id: "source-0")
+        let firstRecipe = try #require(model.state.recipes.first { $0.slot == 3 })
+        _ = try await f.environment.exports.start(sources: [source], recipe: firstRecipe, destination: .updateOriginal)
+        await eventually { model.savedVersions.count == 1 }
+        let first = try #require(model.savedVersions.first)
+        model.send(.versionSelected(.saved(first.id)))
+        await eventually { model.displayFile != nil && model.imageStatus == nil }
+        let secondRecipe = try #require(model.state.recipes.first { $0.slot == 2 })
+        _ = try await f.environment.exports.start(sources: [source], recipe: secondRecipe, destination: .updateOriginal)
+        await eventually { model.savedVersions.count == 1 && model.savedVersions.first?.id != first.id }
+        #expect(model.savedVersions.first?.recipeSnapshot == secondRecipe)
+        #expect(model.state.displayedVersion != .saved(first.id))
+        let latest = try #require(model.savedVersions.first)
+        model.send(.versionSelected(.saved(latest.id)))
+        await eventually { model.displayFile != nil && model.imageStatus == nil }
+        await f.reader.revertEdit("source-0")
+        await eventually { model.savedVersions.isEmpty && model.state.displayedVersion == .cameraJPEG }
+        #expect(try await f.reader.source(id: "source-0").originalResources == source.originalResources)
+        #expect(try await f.reader.source(id: "source-0").resourceRevision == source.resourceRevision)
+        #expect(try await f.environment.catalog.versions(sourceID: "source-0").count == 2)
+    }
+
     @Test func resetDoesNotRevokeAnActivePreview() async throws {
         let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment), barrier = FixtureBarrier()
         defer { Task { await barrier.release() } }

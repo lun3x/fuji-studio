@@ -28,7 +28,12 @@ struct VersionList: View {
            jpeg.role != .adjusted, jpeg.format == .jpeg {
             result.append(Entry(id: .cameraJPEG, label: "Original camera JPEG", accessibilityIdentifier: "version.cameraJPEG"))
         }
-        let own = saved.filter { $0.sourceID == source.id }.sorted {
+        let latestEdit = saved.filter { $0.sourceID == source.id && $0.destination == .updateOriginal }.max {
+            $0.exportedAt == $1.exportedAt ? $0.id.uuidString < $1.id.uuidString : $0.exportedAt < $1.exportedAt
+        }?.id
+        let own = saved.filter {
+            $0.sourceID == source.id && ($0.destination == .separatePhoto || ($0.id == latestEdit && $0.availability == .available))
+        }.sorted {
             $0.exportedAt == $1.exportedAt ? $0.id.uuidString < $1.id.uuidString : $0.exportedAt < $1.exportedAt
         }
         let format = DateFormatter()

@@ -23,6 +23,25 @@ struct PhotoResourceDescriptor: Sendable {
     var byteCount: Int64? = nil
     var revision: String = ""
 
+    /// Originals are immutable PhotoKit resources. Appearance edits and metadata changes
+    /// must not invalidate their identity or cancel a batch that is editing those assets.
+    static func assignRevisions(_ resources: [Self], modificationDate: Date?) -> [Self] {
+        func identity(_ resource: Self) -> String {
+            "\(resource.resourceType)|\(resource.contentTypeIdentifier)|\(resource.filename)|\(resource.byteCount ?? -1)"
+        }
+        func digest(_ value: String) -> String {
+            SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
+        }
+        let originals = resources.filter { $0.token.role != .adjusted }.map(identity).sorted().joined(separator: "\n")
+        let originalRevision = digest(originals)
+        let editedRevision = digest("\(modificationDate?.timeIntervalSince1970 ?? 0)|" + resources.map(identity).sorted().joined(separator: "\n"))
+        return resources.map {
+            var resource = $0
+            resource.revision = resource.token.role == .adjusted ? editedRevision : originalRevision
+            return resource
+        }
+    }
+
     var token: ResourceToken {
         let role: ResourceRole = switch PHAssetResourceType(rawValue: resourceType) {
         case .photo: .primaryOriginal
@@ -291,14 +310,11 @@ actor PhotoLibraryReader: PhotoLibraryReading {
 
     static func descriptors(_ asset: PHAsset, resources supplied: [PHAssetResource]? = nil) -> [PhotoResourceDescriptor] {
         let resources = supplied ?? PHAssetResource.assetResources(for: asset)
-        let identities = resources.map { "\($0.type.rawValue)|\($0.contentType.identifier)|\($0.filename ?? "")" }.sorted().joined(separator: "\n")
-        let revision = SHA256.hash(data: Data("\(asset.modificationDate?.timeIntervalSince1970 ?? 0)|\(identities)".utf8))
-            .map { String(format: "%02x", $0) }.joined()
-        return resources.map {
+        return PhotoResourceDescriptor.assignRevisions(resources.map {
             PhotoResourceDescriptor(assetID: asset.localIdentifier, resourceType: $0.type.rawValue,
                                     contentTypeIdentifier: $0.contentType.identifier, filename: $0.filename ?? "",
-                                    byteCount: $0.dataSize.map(Int64.init), revision: revision)
-        }
+                                    byteCount: $0.dataSize.map(Int64.init))
+        }, modificationDate: asset.modificationDate)
     }
 
     private func makeSource(_ asset: PHAsset) throws -> PhotoSource {
@@ -320,6 +336,12 @@ actor PhotoLibraryReader: PhotoLibraryReading {
         case .notDetermined: .notDetermined
         @unknown default: .restricted
         }
+    }
+}
+
+extension ResourceToken {
+    var isCurrentEditedJPEG: Bool {
+        role == .adjusted && format == .jpeg && discriminator.hasPrefix("\(PHAssetResourceType.fullSizePhoto.rawValue)|")
     }
 }
 

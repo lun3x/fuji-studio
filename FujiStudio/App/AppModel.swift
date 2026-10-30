@@ -917,26 +917,40 @@ import Observation
         do {
             let records = try await environment.catalog.versions(sourceID: id)
             guard isCurrent() else { return }
+            var editedAvailability: [UUID: AssetAvailability] = [:]
             for record in records {
                 let availability: AssetAvailability
                 do {
-                    let resources = try await environment.reader.resources(assetID: record.outputAssetID)
-                    let originals = resources.filter { $0.assetID == record.outputAssetID && $0.format == .jpeg && $0.role != .adjusted }
-                    availability = originals.count == 1 ? .available : .inaccessible
+                    availability = try await environment.resolver.availability(of: record)
                 } catch ResourceError.inaccessibleAsset { availability = .inaccessible }
                 catch ResourceError.authorization { availability = .inaccessible }
+                catch where record.destination == .updateOriginal { availability = .inaccessible }
                 catch { continue } // A transient lookup failure is not proof of deletion.
                 guard isCurrent() else { return }
+                if record.destination == .updateOriginal {
+                    // Several operations share an asset. Its latest marker determines each
+                    // record's availability; the asset-wide catalog setter cannot express it.
+                    editedAvailability[record.id] = availability
+                    continue
+                }
                 if availability != record.availability {
                     try await environment.catalog.setAvailability(assetID: record.outputAssetID, availability: availability)
                     guard isCurrent() else { return }
                 }
             }
-            let versions = try await environment.catalog.versions(sourceID: id)
+            let versions = try await environment.catalog.versions(sourceID: id).map { record in
+                var current = record
+                if record.destination == .updateOriginal { current.availability = editedAvailability[record.id] ?? .inaccessible }
+                return current
+            }
             guard isCurrent() else { return }
-            savedVersions = versions
+            savedVersions = versions.filter { $0.destination == .separatePhoto || $0.availability == .available }
             if case .saved(let selected) = state.displayedVersion,
                let version = versions.first(where: { $0.id == selected }), version.availability != .available {
+                if version.destination == .updateOriginal {
+                    send(.versionSelected(sources.first(where: { $0.id == id })?.originalResources.jpeg == nil ? .raw : .cameraJPEG))
+                    return
+                }
                 displayIntent &+= 1
                 displayTask?.cancel(); displayRequest = nil; availableDisplay = nil
                 displayFile = nil

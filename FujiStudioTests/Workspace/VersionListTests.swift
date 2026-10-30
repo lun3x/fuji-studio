@@ -6,6 +6,21 @@ import Testing
 
 @MainActor
 struct VersionListTests {
+    @Test func replacedAndRevertedOriginalEditsDisappearButSeparateExportsRemain() throws {
+        let f = try RenderFixture(); defer { f.remove() }
+        let jpeg = try f.jpeg()
+        var old = saved(f, jpeg: jpeg, exportedAt: Date(timeIntervalSince1970: 100))
+        old.destination = .updateOriginal
+        var latest = saved(f, jpeg: jpeg, exportedAt: Date(timeIntervalSince1970: 200))
+        latest.destination = .updateOriginal
+        let separate = saved(f, jpeg: jpeg, availability: .deleted)
+        #expect(VersionList(source: f.source, saved: [old, separate, latest]).entries.map(\.id)
+            == [.raw, .saved(separate.id), .saved(latest.id)])
+        old.availability = .missing; latest.availability = .missing
+        #expect(VersionList(source: f.source, saved: [old, separate, latest]).entries.map(\.id)
+            == [.raw, .saved(separate.id)])
+    }
+
     @Test func savedPhoneVersionShowsPhoneIdentityInsteadOfItsOriginalCameraSlot() throws {
         let f = try RenderFixture(); defer { f.remove() }
         let recipe = f.recipe(named: "Phone preset").copiedToPhone()
