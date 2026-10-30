@@ -116,8 +116,10 @@ struct PhotoLibraryPairer: Sendable {
         let observation = try await observeOriginal(sourceID)
         let originalState = observation.state
         if intent.phase != .removed, let originalState {
-            guard originalState == intent.originalState.afterPairInsertion(),
-                  verified.state.hasSameMetadata(as: intent.originalState) else { throw ResourceError.resourceChanged }
+            guard originalState.assetID == intent.source.id,
+                  originalState.hasSameMetadata(as: intent.originalState.afterPairInsertion()),
+                  verified.state.hasSameMetadata(as: intent.originalState),
+                  sameOriginal(try await reader.source(id: sourceID), intent.source) else { throw ResourceError.resourceChanged }
         }
         let confirmedRemoval = intent.phase == .removed || (originalState == nil && observation.absenceConfirmed)
         intent.verified = verified
@@ -131,7 +133,7 @@ struct PhotoLibraryPairer: Sendable {
         guard let intent = try await journal.intent(operationID), intent.pairedAssetID == assetID else {
             throw PhotoLibraryWriteError.uncertain(.missingConfirmation)
         }
-        return try await finish(intent, assetID: assetID)
+        return try await finish(intent, assetID: assetID, explicitRemoval: true)
     }
     func hasIntent(_ operationID: UUID) async throws -> Bool { try await journal.intent(operationID) != nil }
     func sourceReplacements() async throws -> [SourceID: SourceID] {
@@ -147,17 +149,32 @@ struct PhotoLibraryPairer: Sendable {
         return result
     }
 
-    private func finish(_ original: PhotoPairIntent, assetID: String) async throws -> SavedAsset {
+    private func finish(_ original: PhotoPairIntent, assetID: String, explicitRemoval: Bool = false) async throws -> SavedAsset {
         var intent = original
-        let verified = try await verify(intent, assetID: assetID)
-        if intent.phase == .removed { return saved(intent, assetID: assetID) }
+        if intent.phase == .removed {
+            _ = try await verify(intent, assetID: assetID)
+            return saved(intent, assetID: assetID)
+        }
         let observation = try await observeOriginal(intent.source.id)
         let originalState = observation.state
+        if originalState == nil && !observation.absenceConfirmed { throw PhotoLibraryWriteError.uncertain(.authorization) }
+        let verified = try await verify(intent, assetID: assetID)
         if let originalState {
-            guard originalState == intent.originalState.afterPairInsertion(), verified.state.hasSameMetadata(as: intent.originalState),
+            let expected = intent.originalState.afterPairInsertion()
+            guard originalState.assetID == intent.source.id,
+                  (explicitRemoval ? originalState.hasSameMetadata(as: expected) : originalState == expected),
+                  verified.state.hasSameMetadata(as: intent.originalState),
                   sameOriginal(try await reader.source(id: intent.source.id), intent.source) else { throw ResourceError.resourceChanged }
-        } else if !observation.absenceConfirmed { throw PhotoLibraryWriteError.uncertain(.authorization) }
+            let raw = try await reader.materialize(intent.source.originalResources.raf, progress: { _ in })
+            defer { try? FileManager.default.removeItem(at: raw.fileURL) }
+            guard raw.token == intent.source.originalResources.raf,
+                  try ResourceChecksum.sha256(raw.fileURL) == intent.rawSHA256 else { throw ResourceError.checksumMismatch }
+        }
+        let finalObservation = try await observeOriginal(intent.source.id)
+        guard finalObservation.state == originalState,
+              originalState != nil || finalObservation.absenceConfirmed else { throw ResourceError.resourceChanged }
         intent.verified = verified; intent.phase = .verified; intent.pairedAssetID = assetID
+        intent.removalOriginalState = originalState
         try await journal.store(intent) // A removal notification must already have a durable alias.
         try await requireAccess()
         try Task.checkCancellation()
@@ -173,10 +190,11 @@ struct PhotoLibraryPairer: Sendable {
         try await requireAccess()
         guard assetID != intent.source.id, let state = try await gateway.state(assetID: assetID) else { throw ResourceError.resourceChanged }
         let source = try await reader.source(id: assetID)
+        // Photos normalizes the RAF filename to the JPEG stem; its role and exact bytes
+        // identify the copied original, independently of that new filename.
         guard let jpeg = source.originalResources.jpeg, jpeg.assetID == assetID, jpeg.format == .jpeg,
               jpeg.role == .primaryOriginal, jpeg.originalFilename == intent.filename,
-              source.originalResources.raf.role == .alternateOriginal,
-              source.originalResources.raf.originalFilename == intent.source.originalResources.raf.originalFilename else {
+              source.originalResources.raf.role == .alternateOriginal else {
             throw ResourceError.resourceChanged
         }
         let raw = try await reader.materialize(source.originalResources.raf, progress: { _ in })

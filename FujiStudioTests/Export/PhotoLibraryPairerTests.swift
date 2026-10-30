@@ -4,6 +4,44 @@ import Testing
 @testable import FujiStudio
 
 @MainActor struct PhotoLibraryPairerTests {
+    @Test func PhotosRenamingThePairedRAWDoesNotOverrideByteVerification() async throws {
+        let f = try RenderFixture(); defer { f.remove() }
+        let jpeg = try editJPEGFixture(f), library = try PairTestLibrary(f, jpeg: jpeg)
+        await library.setFault("rawRenamed")
+        let saved = try await pairer(f, library).saveJPEG(request(f, jpeg), edit: .init(source: f.source, recipe: f.recipe)) { _ in }
+        #expect(saved.assetID == "paired-asset")
+        #expect(await library.removals == 1)
+    }
+    @Test func verifiedPairWithAnOlderReversibleEditCanBeFinishedExplicitlyWithoutAnotherCreation() async throws {
+        let f = try RenderFixture(); defer { f.remove() }
+        let jpeg = try editJPEGFixture(f), library = try PairTestLibrary(f, jpeg: jpeg), request = request(f, jpeg)
+        let service = pairer(f, library)
+        await library.setFault("originalChanged")
+        do { _ = try await service.saveJPEG(request, edit: .init(source: f.source, recipe: f.recipe)) { _ in } }
+        catch PhotoLibraryWriteError.uncertain { }
+        let asset = SavedAsset(assetID: "paired-asset", operationID: request.operationID, photosGeometry: nil)
+        #expect(try await service.findExport(operationID: request.operationID, sourceID: f.source.id, knownAssetID: asset.assetID)
+            == .needsReplacementCleanup(asset))
+        #expect(await library.removals == 0)
+        #expect(try await service.completeReplacement(operationID: request.operationID, assetID: asset.assetID) == asset)
+        #expect(await library.creations == 1)
+        #expect(await library.removals == 1)
+    }
+    @Test(arguments: [false, true])
+    func explicitCleanupStillRejectsAChangedRAWOrAnEditDuringVerification(_ bytesChanged: Bool) async throws {
+        let f = try RenderFixture(); defer { f.remove() }
+        let jpeg = try editJPEGFixture(f), library = try PairTestLibrary(f, jpeg: jpeg), request = request(f, jpeg)
+        let service = pairer(f, library)
+        await library.setFault("removeRejected")
+        do { _ = try await service.saveJPEG(request, edit: .init(source: f.source, recipe: f.recipe)) { _ in } }
+        catch PhotoLibraryWriteError.uncertain { }
+        if bytesChanged { await library.setFault(nil); await library.corruptOriginalRAW() }
+        else { await library.setFault("lateOriginalChange") }
+        do { _ = try await service.completeReplacement(operationID: request.operationID, assetID: "paired-asset"); Issue.record("A changed original must be retained") }
+        catch { }
+        #expect(await library.originalExists)
+        #expect(await library.removals == 0)
+    }
     @Test func copiesOriginalBytesAndMetadataAndVerifiesBothResourcesBeforeRemovingRAW() async throws {
         let f = try RenderFixture(); defer { f.remove() }
         let jpeg = try editJPEGFixture(f), library = try PairTestLibrary(f, jpeg: jpeg)
@@ -175,7 +213,8 @@ import Testing
 actor PairTestLibrary: PhotoLibraryReading, PhotoPairGateway {
     let fixture: RenderFixture
     let originalMetadata: PhotoPairAssetState
-    private let raw: Data, jpeg: Data
+    private var raw: Data
+    private let jpeg: Data
     private var pairRAW: Data?
     private var pairJPEG: Data?
     private var paired: PhotoSource?
@@ -201,6 +240,7 @@ actor PairTestLibrary: PhotoLibraryReading, PhotoPairGateway {
     }
     func setFault(_ fault: String?) { self.fault = fault }
     func corruptPairRAW() { pairRAW = Data([0]) }
+    func corruptOriginalRAW() { raw = Data([0]) }
     func access() -> LibraryAccess { accessValue }
     func setAccess(_ value: LibraryAccess) { accessValue = value }
     func holdCreation(_ gate: RenderLatch) { creationGate = gate }
@@ -226,7 +266,8 @@ actor PairTestLibrary: PhotoLibraryReading, PhotoPairGateway {
         if fault == "jpeg" { pairJPEG = Data([0]) }
         let id = "paired-asset", revision = "paired-revision"
         let raf = ResourceToken(assetID: id, role: .alternateOriginal, contentTypeIdentifier: "com.fuji.raw-image",
-            format: .raf, originalFilename: fixture.token.originalFilename, discriminator: "pair-raw", sourceRevision: revision)
+            format: .raf, originalFilename: fault == "rawRenamed" ? "FujiStudio-renamed.RAF" : fixture.token.originalFilename,
+            discriminator: "pair-raw", sourceRevision: revision)
         let jpeg = ResourceToken(assetID: id, role: .primaryOriginal, contentTypeIdentifier: "public.jpeg",
             format: .jpeg, originalFilename: intent.filename, discriminator: "pair-jpeg", sourceRevision: revision)
         paired = .init(id: id, originalResources: .init(raf: raf, jpeg: jpeg), captureDate: intent.source.captureDate,
@@ -241,7 +282,7 @@ actor PairTestLibrary: PhotoLibraryReading, PhotoPairGateway {
     func matchingAssets(filename: String) -> [String] { paired?.originalResources.jpeg?.originalFilename == filename ? ["paired-asset"] : [] }
     func removeOriginal(intent: PhotoPairIntent, verified: PhotoPairVerified) throws {
         if fault == "removeRejected" { throw PhotoLibraryWriteError.rejected(.authorization) }
-        guard state(assetID: intent.source.id) == intent.originalState.afterPairInsertion(),
+        guard state(assetID: intent.source.id) == (intent.removalOriginalState ?? intent.originalState.afterPairInsertion()),
               state(assetID: verified.source.id) == verified.state else { throw ResourceError.resourceChanged }
         removals += 1; events.append("remove"); originalExists = false
     }
@@ -272,6 +313,9 @@ actor PairTestLibrary: PhotoLibraryReading, PhotoPairGateway {
         }
         if fault == "originalReordered", resource.assetID == "paired-asset", resource.format == .jpeg {
             originalAlbumPosition = 9
+        }
+        if fault == "lateOriginalChange", resource.assetID == "paired-asset", resource.format == .jpeg {
+            fault = "originalChanged"
         }
         return LocalResource(token: resource, fileURL: url, checksum: try ResourceChecksum.sha256(url))
     }

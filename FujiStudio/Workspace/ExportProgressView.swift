@@ -8,6 +8,8 @@ struct ExportProgressView: View {
     let onResume: () -> Void
     let onRetry: () -> Void
     let onReconcile: () -> Void
+    var canFinishReplacement: Bool = false
+    var onFinishReplacement: () -> Void = {}
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -25,7 +27,13 @@ struct ExportProgressView: View {
                 Button(event.stopRequested ? "Stopping safely…" : "Cancel remaining", action: onCancel).disabled(event.stopRequested)
                     .accessibilityIdentifier("export.cancel")
             } else if event.summary.unresolved > 0 {
-                Text("Photos has not confirmed this save. Reconciliation checks the same operation; it does not create a replacement export.")
+                if event.summary.replacementCleanup > 0 {
+                    Text("The RAW+JPEG pair is verified. Finish replacement removes the old RAW-only asset and its previous Photos edits. The unchanged RAW and exported JPEG remain in the pair.")
+                    Button("Finish replacement", action: onFinishReplacement).disabled(!canFinishReplacement)
+                        .accessibilityIdentifier("export.finishReplacement")
+                } else {
+                    Text("Photos has not confirmed this save. Reconciliation checks the same operation; it does not create a replacement export.")
+                }
                 Button("Check Photos again", action: onReconcile).accessibilityIdentifier("export.reconcile")
             } else {
                 if event.summary.unprocessed > 0 {
@@ -51,6 +59,8 @@ struct ExportProgressView: View {
         }
     }
     static func status(_ event: ExportEvent) -> String {
+        if event.terminal, event.summary.replacementCleanup > 0,
+           event.summary.replacementCleanup == event.summary.unresolved { return "RAW+JPEG saved — removal pending" }
         if event.stage == .unresolved || (event.terminal && event.summary.unresolved > 0) { return "Save unconfirmed" }
         if event.stopRequested { return "Stopping after the current operation" }
         switch event.stage {
@@ -117,7 +127,9 @@ struct AppWorkspaceView: View {
                         ForEach(model.progressEvents, id: \.jobID) { event in
                             ExportProgressView(event: event, canResume: !model.isSuspended && !model.isSubmitting && !model.isResettingCamera && model.cameraError == nil && model.cameraResetError == nil && model.state.currentCameraExecutionContext != nil && model.state.isCameraReady,
                                 onCancel: { Task { await model.cancelExport(jobID: event.jobID) } }, onResume: { Task { await model.resumeExport(jobID: event.jobID) } },
-                                onRetry: { Task { await model.resumeExport(jobID: event.jobID, retry: true) } }, onReconcile: { Task { await model.reconcile() } })
+                                onRetry: { Task { await model.resumeExport(jobID: event.jobID, retry: true) } }, onReconcile: { Task { await model.reconcile() } },
+                                canFinishReplacement: model.canFinishReplacements,
+                                onFinishReplacement: { Task { await model.finishReplacement(jobID: event.jobID) } })
                                 .accessibilityElement(children: .contain).accessibilityIdentifier("export.job.\(event.jobID.uuidString)")
                             Divider()
                         }

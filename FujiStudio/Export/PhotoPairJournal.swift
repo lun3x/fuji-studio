@@ -46,6 +46,7 @@ struct PhotoPairIntent: Codable, Sendable, Equatable {
     var phase: Phase = .prepared
     var pairedAssetID: String?
     var verified: PhotoPairVerified?
+    var removalOriginalState: PhotoPairAssetState?
     var filename: String { "FujiStudio-\(operationID.uuidString).jpg" }
 }
 
@@ -65,7 +66,7 @@ actor PhotoPairJournal {
         return try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
             .filter { $0.pathExtension == "json" }.map { file in
                 let intent = try JSONDecoder().decode(PhotoPairIntent.self, from: Data(contentsOf: file))
-                guard file == url(intent.operationID) else { throw ResourceError.resourceChanged }
+                guard file.lastPathComponent == url(intent.operationID).lastPathComponent else { throw ResourceError.resourceChanged }
                 return intent
             }
     }

@@ -78,7 +78,7 @@ struct NativePhotoPairGateway: PhotoPairGateway {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             PHPhotoLibrary.shared().performChanges {
                 do {
-                    guard try Self.snapshot(intent.source.id) == intent.originalState.afterPairInsertion(),
+                    guard try Self.snapshot(intent.source.id) == (intent.removalOriginalState ?? intent.originalState.afterPairInsertion()),
                           try Self.snapshot(verified.source.id) == verified.state else { throw ResourceError.resourceChanged }
                     let original = try NativePhotoEditGateway.asset(intent.source.id)
                     let pair = try NativePhotoEditGateway.asset(verified.source.id)

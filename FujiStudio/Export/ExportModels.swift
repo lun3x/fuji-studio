@@ -51,6 +51,8 @@ struct PendingSave: Sendable, Codable, Equatable {
     let jpeg: CameraJPEG
     var placeholderID: String?
     var submission: SaveSubmission
+    /// A verified pair exists; only explicit removal of the old RAW asset remains.
+    var replacementCleanupAssetID: String?
 
     init(operationID: UUID, jpeg: CameraJPEG, placeholderID: String? = nil,
          submission: SaveSubmission = .notSubmitted) {

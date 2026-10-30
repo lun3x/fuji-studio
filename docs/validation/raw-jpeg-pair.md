@@ -20,7 +20,7 @@ paired JPEG as an original.
   in the snapshot guards, including the offset caused by inserting the new pair.
 - Changed assets, metadata loss, denied removal or interruption retain the old
   RAW and leave the export unresolved. Passive recovery never changes Photos;
-  explicit Resume can finish removal using the existing verified pair.
+  explicit Finish replacement can finish removal using the existing verified pair.
 - Confirmed removal is journaled separately. Otherwise an absent original counts
   as removed only with full access before and after the lookup.
 - Verified aliases preserve checked/viewed selection and export history. Frozen

@@ -108,7 +108,7 @@ private struct AppEntryView: View {
                 #if DEBUG
                 if fixture {
                     let flags = ProcessInfo.processInfo.arguments
-                    let bundle = try await FixtureEnvironment.make(access: flags.contains("--fixture-denied") ? .denied : flags.contains("--fixture-limited") ? .limited : .full, uncertain: flags.contains("--fixture-unknown-save"),cameraModel:flags.contains("--fixture-xe3") ? "X-E3" : "X-T5",slotCount:flags.contains("--fixture-three-slots") ? 3 : 7,mixedModels:flags.contains("--fixture-mixed-models"),undecodableRAW:flags.contains("--fixture-raw-unavailable"),filterSources:flags.contains("--fixture-filter-sources"))
+                    let bundle = try await FixtureEnvironment.make(access: flags.contains("--fixture-denied") ? .denied : flags.contains("--fixture-limited") ? .limited : .full, uncertain: flags.contains("--fixture-unknown-save"),cameraModel:flags.contains("--fixture-xe3") ? "X-E3" : "X-T5",slotCount:flags.contains("--fixture-three-slots") ? 3 : 7,mixedModels:flags.contains("--fixture-mixed-models"),undecodableRAW:flags.contains("--fixture-raw-unavailable"),filterSources:flags.contains("--fixture-filter-sources"),pairCleanupPending:flags.contains("--fixture-pair-cleanup-pending"))
                     environment = bundle.environment
                     if flags.contains("--fixture-filter-unavailable") {
                         await bundle.reader.failMaterialize("source-1", error: .retrievalFailed("Fixture offline photo"))

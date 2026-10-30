@@ -823,6 +823,21 @@ import Observation
         } catch { message = Self.explain(error); restoreIdle() }
     }
     func reconcile() async { recoveryNeeded = true; await recoverWhenIdle() }
+    var canFinishReplacements: Bool {
+        foreground && !isSuspended && !isResettingCamera && !isSubmitting && !recovering && state.activeJobID == nil
+    }
+    func finishReplacement(jobID: UUID) async {
+        let target = unfinishedEvents[jobID] ?? (exportEvent?.jobID == jobID ? exportEvent : nil)
+        guard canFinishReplacements, let target, target.terminal, target.summary.replacementCleanup > 0 else { return }
+        isSubmitting = true
+        defer { isSubmitting = false }
+        do {
+            try await environment.exports.finishReplacements(jobID: jobID)
+            if exportEvent?.jobID != jobID || exportEvent?.terminal != true || exportEvent?.sequence == target.sequence {
+                reduce(.activeJobChanged(jobID)); updateIdle()
+            }
+        } catch { message = Self.explain(error); restoreIdle() }
+    }
     private func recoverWhenIdle() async {
         if !recoveryNeeded { recoveryNeeded = exportEvent == nil }
         guard recoveryNeeded, !recovering, !isSubmitting, state.activeJobID == nil else { return }
