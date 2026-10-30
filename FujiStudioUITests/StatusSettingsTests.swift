@@ -1,6 +1,40 @@
 import XCTest
+import UIKit
 
 @MainActor final class StatusSettingsTests: AppFlowTestCase {
+    func testOriginalUpdateRefreshesCheckedTrayThumbnail() throws {
+        let app = launch()
+        app.buttons["app.status"].tap()
+        let setting = app.switches["settings.updateOriginalInPhotos"]
+        XCTAssertTrue(setting.waitForExistence(timeout: 5))
+        if !setting.isHittable { app.swipeUp() }
+        setting.tap(); app.buttons["Done"].tap()
+        app.cells["grid.source-0"].tap()
+        wait { app.buttons["app.status"].label.contains("Camera ready") }
+        app.buttons["workspace.select"].tap()
+        recipe(3, in: app)
+        wait { app.buttons["workspace.export"].isEnabled }
+        let tile = app.cells["grid.source-0"]
+        let before = try centerPixel(tile.screenshot().image)
+        XCTAssertEqual(tile.value as? String, "Checked")
+        app.buttons["workspace.export"].tap()
+        wait { app.buttons["app.status"].label.contains("1 saved") }
+        XCTAssertNotEqual(try centerPixel(tile.screenshot().image), before)
+        XCTAssertEqual(tile.value as? String, "Checked")
+        XCTAssertEqual(app.staticTexts["workspace.count"].label, "1 selected")
+        shot(app, "Edited thumbnail updates without changing checked selection")
+    }
+
+    private func centerPixel(_ image: UIImage) throws -> [UInt8] {
+        let cgImage = try XCTUnwrap(image.cgImage)
+        var pixel = [UInt8](repeating: 0, count: 4)
+        let context = try XCTUnwrap(CGContext(data: &pixel, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.draw(cgImage, in: CGRect(x: -CGFloat(cgImage.width) / 2, y: -CGFloat(cgImage.height) / 2,
+            width: CGFloat(cgImage.width), height: CGFloat(cgImage.height)))
+        return pixel
+    }
+
     func testStatusContainsPersistentExportSetting() {
         let app = XCUIApplication()
         app.launchArguments = ["--ui-fixtures"]

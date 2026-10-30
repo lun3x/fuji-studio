@@ -211,6 +211,7 @@ private struct WorkspaceHostingHarness: View {
     func request(sourceID: SourceID, pixelSize: CGSize, completion: @escaping @MainActor (UIImage?) -> Void) -> UUID { completion(nil); return UUID() }
     func cancel(_ token: UUID) {}
     func cache(sourceIDs: [SourceID], pixelSize: CGSize) {}
+    func invalidate(sourceIDs: Set<SourceID>) {}
 }
 
 @MainActor

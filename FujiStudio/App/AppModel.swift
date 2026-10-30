@@ -398,6 +398,9 @@ import Observation
     }
 
     private func libraryChanged(_ event: LibraryChange) async {
+        var thumbnailIDs = event.changedIDs.union(event.removedIDs)
+        if event.accessScopeChanged { thumbnailIDs.formUnion(sources.map(\.id)) }
+        environment.thumbnails.invalidate(sourceIDs: thumbnailIDs)
         if !hasCurrentSourceDisplay, event.accessScopeChanged || !event.removedIDs.isEmpty {
             displayFile = nil; availableDisplay = nil
         }

@@ -60,5 +60,6 @@ private final class GeneratedGridThumbnails: GridThumbnailProviding {
     }
     func cancel(_ token: UUID) {}
     func cache(sourceIDs: [SourceID], pixelSize: CGSize) {}
+    func invalidate(sourceIDs: Set<SourceID>) {}
 }
 #endif
