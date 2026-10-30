@@ -18,16 +18,22 @@ struct NativePhotoPairGateway: PhotoPairGateway {
         return try await withCheckedThrowingContinuation { continuation in
             PHPhotoLibrary.shared().performChanges {
                 do {
+                    let original = try NativePhotoEditGateway.asset(intent.source.id)
                     guard try Self.snapshot(intent.source.id) == intent.originalState,
-                          try NativePhotoEditGateway.matchesOriginal(NativePhotoEditGateway.asset(intent.source.id), source: intent.source) else {
+                          original.canPerform(.delete), try NativePhotoEditGateway.matchesOriginal(original, source: intent.source) else {
                         throw ResourceError.resourceChanged
                     }
                     let albumChanges = try intent.originalState.albumIDs.map { id in
                         guard let album = PHAssetCollection.fetchAssetCollections(withLocalIdentifiers: [id], options: nil).firstObject,
-                              album.canPerform(.addContent), let change = PHAssetCollectionChangeRequest(for: album) else {
+                              album.canPerform(.addContent) else {
                             throw PhotoLibraryWriteError.invalidOutput("An original album is no longer writable.")
                         }
-                        return change
+                        let options = PHFetchOptions(); options.includeHiddenAssets = true
+                        let contents = PHAsset.fetchAssets(in: album, options: options), position = contents.index(of: original)
+                        guard position != NSNotFound, let change = PHAssetCollectionChangeRequest(for: album, assets: contents) else {
+                            throw PhotoLibraryWriteError.invalidOutput("The original album changed while preparing the pair.")
+                        }
+                        return (change, position)
                     }
                     let asset = PHAssetCreationRequest.forAsset()
                     let metadata = intent.originalState
@@ -49,7 +55,7 @@ struct NativePhotoPairGateway: PhotoPairGateway {
                     asset.originalResourceChoice = .compressed
                     guard let placeholder = asset.placeholderForCreatedAsset else { throw PhotoLibraryWriteError.invalidOutput("Photos did not allocate the paired asset.") }
                     outcome.setID(placeholder.localIdentifier)
-                    for change in albumChanges { change.addAssets([placeholder] as NSArray) }
+                    for (change, position) in albumChanges { change.insertAssets([placeholder] as NSArray, at: IndexSet(integer: position)) }
                     onPlaceholder(placeholder.localIdentifier)
                 } catch { outcome.setError(error) }
             } completionHandler: { success, error in
@@ -72,7 +78,7 @@ struct NativePhotoPairGateway: PhotoPairGateway {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             PHPhotoLibrary.shared().performChanges {
                 do {
-                    guard try Self.snapshot(intent.source.id) == intent.originalState,
+                    guard try Self.snapshot(intent.source.id) == intent.originalState.afterPairInsertion(),
                           try Self.snapshot(verified.source.id) == verified.state else { throw ResourceError.resourceChanged }
                     let original = try NativePhotoEditGateway.asset(intent.source.id)
                     let pair = try NativePhotoEditGateway.asset(verified.source.id)
@@ -97,13 +103,20 @@ struct NativePhotoPairGateway: PhotoPairGateway {
         guard let asset = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: options).firstObject else { return nil }
         let albums = PHAssetCollection.fetchAssetCollectionsContaining(asset, with: .album, options: nil)
         var ids: [String] = []
-        albums.enumerateObjects { album, _, _ in
-            if album.assetCollectionSubtype == .albumRegular, album.canPerform(.addContent) { ids.append(album.localIdentifier) }
+        var positions: [String: Int] = [:], inconsistent = false
+        let albumOptions = PHFetchOptions(); albumOptions.includeHiddenAssets = true
+        albums.enumerateObjects { album, _, stop in
+            if album.assetCollectionSubtype == .albumRegular, album.canPerform(.addContent) {
+                let contents = PHAsset.fetchAssets(in: album, options: albumOptions), position = contents.index(of: asset)
+                guard position != NSNotFound else { inconsistent = true; stop.pointee = true; return }
+                ids.append(album.localIdentifier); positions[album.localIdentifier] = position
+            }
         }
+        guard !inconsistent else { throw ResourceError.resourceChanged }
         return PhotoPairAssetState(assetID: id, modificationDate: asset.modificationDate, captureDate: asset.creationDate,
             location: asset.location.map { .init(latitude: $0.coordinate.latitude, longitude: $0.coordinate.longitude, altitude: $0.altitude) },
             isFavorite: asset.isFavorite, isHidden: asset.isHidden, caption: asset.extendedMetadata.caption,
-            rating: asset.rating.rawValue, keywords: asset.extendedMetadata.keywords.sorted(), albumIDs: ids.sorted())
+            rating: asset.rating.rawValue, keywords: asset.extendedMetadata.keywords.sorted(), albumIDs: ids.sorted(), albumPositions: positions)
     }
 }
 

@@ -13,11 +13,18 @@ struct PhotoPairAssetState: Codable, Sendable, Equatable {
     let rating: Int
     let keywords: [String]
     let albumIDs: [String]
+    var albumPositions: [String: Int] = [:]
 
     func hasSameMetadata(as other: Self) -> Bool {
         captureDate == other.captureDate && location == other.location && isFavorite == other.isFavorite &&
         isHidden == other.isHidden && caption == other.caption && rating == other.rating &&
-        keywords == other.keywords && albumIDs == other.albumIDs
+        keywords == other.keywords && albumIDs == other.albumIDs && albumPositions == other.albumPositions
+    }
+    /// Creation inserts the new pair immediately before the old asset in each album.
+    func afterPairInsertion() -> Self {
+        var value = self
+        value.albumPositions = albumPositions.mapValues { $0 + 1 }
+        return value
     }
 }
 

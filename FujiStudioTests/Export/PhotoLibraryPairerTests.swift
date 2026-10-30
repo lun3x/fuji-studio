@@ -19,7 +19,7 @@ import Testing
         #expect(try await service.sourceReplacements() == [f.source.id: "paired-asset"])
     }
 
-    @Test(arguments: ["raw", "jpeg", "originalChanged", "pairChanged", "metadataMissing"])
+    @Test(arguments: ["raw", "jpeg", "originalChanged", "pairChanged", "metadataMissing", "originalReordered"])
     func failedVerificationOrChangedAssetsNeverRemoveOriginal(_ fault: String) async throws {
         let f = try RenderFixture(); defer { f.remove() }
         let jpeg = try editJPEGFixture(f), library = try PairTestLibrary(f, jpeg: jpeg)
@@ -126,6 +126,29 @@ import Testing
         #expect(await library.removals == 0)
     }
 
+    @Test(arguments: [false, true])
+    func limitedToFullAccessCannotTurnAnInaccessibleOriginalIntoARemovalReceipt(_ cleanup: Bool) async throws {
+        let f = try RenderFixture(); defer { f.remove() }
+        let jpeg = try editJPEGFixture(f), library = try PairTestLibrary(f, jpeg: jpeg), request = request(f, jpeg)
+        let service = pairer(f, library)
+        await library.setFault("removeRejected")
+        do { _ = try await service.saveJPEG(request, edit: .init(source: f.source, recipe: f.recipe)) { _ in } }
+        catch PhotoLibraryWriteError.uncertain { }
+        await library.setFault(nil)
+        await library.expandAccessDuringOriginalLookup()
+        if cleanup {
+            await #expect(throws: PhotoLibraryWriteError.self) {
+                try await service.completeReplacement(operationID: request.operationID, assetID: "paired-asset")
+            }
+        } else {
+            #expect(try await service.findExport(operationID: request.operationID, sourceID: f.source.id,
+                knownAssetID: "paired-asset") == .inaccessible)
+        }
+        #expect(try await service.journal.intent(request.operationID)?.phase != .removed)
+        #expect(await library.originalExists)
+        #expect(await library.removals == 0)
+    }
+
     private func pairer(_ f: RenderFixture, _ library: PairTestLibrary) -> PhotoLibraryPairer {
         PhotoLibraryPairer(reader: library, gateway: library, journal: PhotoPairJournal(directory: f.root.appendingPathComponent("pairs")))
     }
@@ -146,6 +169,8 @@ actor PairTestLibrary: PhotoLibraryReading, PhotoPairGateway {
     private var pairState: PhotoPairAssetState?
     private var accessValue: LibraryAccess = .full
     private var creationGate: RenderLatch?
+    private var expandAccessOnLookup = false
+    private var originalAlbumPosition = 3
     private(set) var submittedFiles: [URL] = []
     private(set) var originalExists = true
     private(set) var creations = 0
@@ -157,17 +182,20 @@ actor PairTestLibrary: PhotoLibraryReading, PhotoPairGateway {
         raw = try Data(contentsOf: fixture.raw.fileURL); self.jpeg = try Data(contentsOf: jpeg.fileURL)
         originalMetadata = .init(assetID: fixture.source.id, modificationDate: Date(timeIntervalSince1970: 100),
             captureDate: Date(timeIntervalSince1970: 10), location: nil, isFavorite: true, isHidden: false,
-            caption: "Keep this caption", rating: 4, keywords: ["Travel"], albumIDs: ["album"])
+            caption: "Keep this caption", rating: 4, keywords: ["Travel"], albumIDs: ["album"], albumPositions: ["album": 3])
     }
     func setFault(_ fault: String?) { self.fault = fault }
     func corruptPairRAW() { pairRAW = Data([0]) }
     func access() -> LibraryAccess { accessValue }
     func setAccess(_ value: LibraryAccess) { accessValue = value }
     func holdCreation(_ gate: RenderLatch) { creationGate = gate }
+    func expandAccessDuringOriginalLookup() { accessValue = .limited; expandAccessOnLookup = true }
     func state(assetID: String) -> PhotoPairAssetState? {
         if assetID == fixture.source.id {
             guard originalExists else { return nil }
+            if expandAccessOnLookup { expandAccessOnLookup = false; accessValue = .full; return nil }
             var state = originalMetadata
+            state.albumPositions["album"] = originalAlbumPosition
             if fault == "originalChanged", creations > 0 { state.modificationDate = Date(timeIntervalSince1970: 200) }
             return state
         }
@@ -176,6 +204,7 @@ actor PairTestLibrary: PhotoLibraryReading, PhotoPairGateway {
     func createPair(intent: PhotoPairIntent, rawURL: URL, jpegURL: URL,
                     onPlaceholder: @escaping @Sendable (String) -> Void) async throws -> String {
         creations += 1; events.append("create"); createdMetadata = intent.originalState
+        originalAlbumPosition += 1
         submittedFiles = [rawURL, jpegURL]
         pairRAW = try Data(contentsOf: rawURL); pairJPEG = try Data(contentsOf: jpegURL)
         if fault == "raw" { pairRAW?.append(0) }
@@ -197,7 +226,7 @@ actor PairTestLibrary: PhotoLibraryReading, PhotoPairGateway {
     func matchingAssets(filename: String) -> [String] { paired?.originalResources.jpeg?.originalFilename == filename ? ["paired-asset"] : [] }
     func removeOriginal(intent: PhotoPairIntent, verified: PhotoPairVerified) throws {
         if fault == "removeRejected" { throw PhotoLibraryWriteError.rejected(.authorization) }
-        guard state(assetID: intent.source.id) == intent.originalState,
+        guard state(assetID: intent.source.id) == intent.originalState.afterPairInsertion(),
               state(assetID: verified.source.id) == verified.state else { throw ResourceError.resourceChanged }
         removals += 1; events.append("remove"); originalExists = false
     }
@@ -224,6 +253,9 @@ actor PairTestLibrary: PhotoLibraryReading, PhotoPairGateway {
         try data.write(to: url)
         if fault == "pairChanged", resource.assetID == "paired-asset", resource.format == .jpeg {
             pairState?.modificationDate = Date(timeIntervalSince1970: 300)
+        }
+        if fault == "originalReordered", resource.assetID == "paired-asset", resource.format == .jpeg {
+            originalAlbumPosition = 9
         }
         return LocalResource(token: resource, fileURL: url, checksum: try ResourceChecksum.sha256(url))
     }

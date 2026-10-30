@@ -39,14 +39,14 @@ new Photos identity without rewriting frozen jobs.
 `findExport(operationID:sourceID:knownAssetID:)`,
 `completeReplacement(operationID:assetID:)`, and `sourceReplacements()`.
 
-- [ ] Write tests proving exact RAW/JPEG verification before removal, metadata
+- [x] Write tests proving exact RAW/JPEG verification before removal, metadata
   forwarding, corrupt read-back/changed asset refusal, durable reopen, one
   creation across interruption, read-only lookup, and explicit cleanup retry.
-- [ ] Run the focused selector and observe missing behavior fail.
-- [ ] Implement durable intent storage, injected native boundary, byte/geometry
+- [x] Run the focused selector and observe missing behavior fail.
+- [x] Implement durable intent storage, injected native boundary, byte/geometry
   verification, and guarded removal. Map all failures after creation to uncertain.
-- [ ] Run `Scripts/test-ios.sh FujiStudioTests/PhotoLibraryPairerTests`; expect pass.
-- [ ] Checkpoint with `jj` and push the active bookmark.
+- [x] Run `Scripts/test-ios.sh FujiStudioTests/PhotoLibraryPairerTests`; expect pass.
+- [x] Checkpoint with `jj` and push the active bookmark.
 
 ### Task 2: Writer, recovery, catalog and workspace integration
 
@@ -59,13 +59,13 @@ new Photos identity without rewriting frozen jobs.
 `completeReplacement`/`sourceReplacements`, catalog `replaceSource`, and
 workspace `sourceReplaced` event. Add internal `ExportDestination.createPair`.
 
-- [ ] Write failing routing, recovery, alias/confirmation ordering, checked/viewed
+- [x] Write failing routing, recovery, alias/confirmation ordering, checked/viewed
   source replacement, history preservation and batch-continuation regressions.
-- [ ] Observe focused failures, then implement the interfaces. Keep pending JPEG
+- [x] Observe focused failures, then implement the interfaces. Keep pending JPEG
   pins until creation and cleanup are classified. Only explicit Resume may retry
   replacement cleanup. Frozen source snapshots remain immutable.
-- [ ] Run `Scripts/test-ios.sh --fast`; expect affected and existing unit checks pass.
-- [ ] Checkpoint with `jj` and push the active bookmark.
+- [x] Run `Scripts/test-ios.sh --fast`; expect affected and existing unit checks pass.
+- [x] Checkpoint with `jj` and push the active bookmark.
 
 ### Task 3: Picker, fixtures, settings and final validation
 

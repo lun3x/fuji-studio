@@ -29,3 +29,19 @@ task so the actual notification timing could be tested before the UI step.
 Task 3 in progress: the full RAW-only export UI flow reaches both exports and
 retains the same checked pair. Its first run failed only the expected Paired JPEG
 label assertion (`/tmp/fuji-pair-ui-red.log`).
+
+Final review: two P2 findings were reproduced and fixed in one pass. An original
+reordered within an album is now rejected, accounting for our own inserted pair.
+A limited-to-full permission transition cannot certify an inaccessible original
+as removed, in passive lookup or explicit cleanup. Both regressions were observed
+RED in `/tmp/fuji-pair-review-red.log`, then GREEN in the full fast unit run:
+585 Swift Testing tests and 20 XCTest cases passed (`/tmp/fuji-pair-review-green.log`).
+Affected UI checks after these fixes: 11 passed, 1 existing native Home-boundary
+skip (`.build/TestResults/20261030-162526-8348.xcresult`).
+
+The reviewer did not run tests; their runtime-result question is resolved by the
+main agent's observed outputs above. Actual native PhotoKit classification,
+metadata retention and album ordering remain untested on a real photo library.
+The installed API/SDK and native implementation were inspected, and every actual
+export must pass resource and metadata read-back guards before removal. Automated
+validation does not create or remove user photos on the phone.

@@ -91,14 +91,13 @@ struct PhotoLibraryPairer: Sendable {
             throw PhotoLibraryWriteError.ambiguousOperation(operationID)
         }
         let verified = try await verify(intent, assetID: id)
-        let originalState = try await gateway.state(assetID: sourceID)
+        let observation = try await observeOriginal(sourceID)
+        let originalState = observation.state
         if intent.phase != .removed, let originalState {
-            guard originalState == intent.originalState,
+            guard originalState == intent.originalState.afterPairInsertion(),
                   verified.state.hasSameMetadata(as: intent.originalState) else { throw ResourceError.resourceChanged }
         }
-        let currentAccess = await gateway.access()
-        guard currentAccess == .full || currentAccess == .limited else { return .inaccessible }
-        let confirmedRemoval = intent.phase == .removed || (originalState == nil && currentAccess == .full)
+        let confirmedRemoval = intent.phase == .removed || (originalState == nil && observation.absenceConfirmed)
         intent.verified = verified
         intent.pairedAssetID = id; intent.phase = confirmedRemoval ? .removed : .verified
         try await journal.store(intent)
@@ -129,14 +128,17 @@ struct PhotoLibraryPairer: Sendable {
     private func finish(_ original: PhotoPairIntent, assetID: String) async throws -> SavedAsset {
         var intent = original
         let verified = try await verify(intent, assetID: assetID)
-        let originalState = try await gateway.state(assetID: intent.source.id)
+        if intent.phase == .removed { return saved(intent, assetID: assetID) }
+        let observation = try await observeOriginal(intent.source.id)
+        let originalState = observation.state
         if let originalState {
-            guard originalState == intent.originalState, verified.state.hasSameMetadata(as: intent.originalState),
+            guard originalState == intent.originalState.afterPairInsertion(), verified.state.hasSameMetadata(as: intent.originalState),
                   sameOriginal(try await reader.source(id: intent.source.id), intent.source) else { throw ResourceError.resourceChanged }
-        } else if await gateway.access() != .full { throw PhotoLibraryWriteError.uncertain(.authorization) }
+        } else if !observation.absenceConfirmed { throw PhotoLibraryWriteError.uncertain(.authorization) }
         intent.verified = verified; intent.phase = .verified; intent.pairedAssetID = assetID
         try await journal.store(intent) // A removal notification must already have a durable alias.
         try await requireAccess()
+        try Task.checkCancellation()
         if originalState != nil {
             try await gateway.removeOriginal(intent: intent, verified: verified)
         }
@@ -171,6 +173,14 @@ struct PhotoLibraryPairer: Sendable {
     private func requireAccess() async throws {
         let access = await gateway.access()
         guard access == .full || access == .limited else { throw PhotoLibraryWriteError.authorization(access) }
+    }
+    private func observeOriginal(_ id: SourceID) async throws -> (state: PhotoPairAssetState?, absenceConfirmed: Bool) {
+        let before = await gateway.access()
+        guard before == .full || before == .limited else { throw PhotoLibraryWriteError.authorization(before) }
+        let state = try await gateway.state(assetID: id)
+        let after = await gateway.access()
+        guard after == .full || after == .limited else { throw PhotoLibraryWriteError.authorization(after) }
+        return (state, before == .full && after == .full)
     }
     private func sameOriginal(_ a: PhotoSource, _ b: PhotoSource) -> Bool {
         a.id == b.id && a.resourceRevision == b.resourceRevision && a.originalResources == b.originalResources

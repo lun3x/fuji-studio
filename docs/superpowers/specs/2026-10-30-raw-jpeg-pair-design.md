@@ -28,6 +28,9 @@ off by default and red.
   lost access, denied removal, or interruption retain the original and leave an
   unresolved export. Passive recovery never changes Photos. Explicit Resume
   finishes an existing verified replacement without another creation.
+- Album positions are included in the snapshot guards, accounting for insertion
+  immediately before the old asset. Absence of an original requires full access
+  before and after its lookup, unless a confirmed removal receipt already exists.
 - Persist verified replacement identity before removal. Remap current selection
   and catalog associations to the new asset, without altering frozen export jobs.
   A batch's own replacement notifications must not pause the batch.
