@@ -58,7 +58,8 @@ struct WorkspaceView<StatusControl: View>: View {
             let available = size.height - safe.bottom - drawerHeaderHeight - dayHeaderHeight - controlFrame.maxY - DrawerGeometry.controlClearance - statusReserve - 44
             let gridMetrics = DrawerGeometry.gridMetrics(width: contentWidth, availableGridHeight: available)
             let detents = DrawerGeometry.detents(container: size, safeArea: safe, headerHeight: drawerHeaderHeight,
-                grid: gridMetrics, recipeControlFrame: controlFrame, dayHeaderHeight: dayHeaderHeight)
+                grid: gridMetrics, recipeControlFrame: controlFrame, dayHeaderHeight: dayHeaderHeight,
+                minimumGridHeight: orientation == .portrait ? 0 : selectionControlSize.width + 24)
             let viewerHeight = max(1, size.height - detents.collapsedHeight - photoTop)
             let viewerSize = orientation.layoutSize(CGSize(width: contentWidth, height: viewerHeight))
             let controlSideInset = max(44, controlHeight) + 16
@@ -88,8 +89,9 @@ struct WorkspaceView<StatusControl: View>: View {
                                 viewedSourceID: state.viewedSourceID, thumbnails: thumbnails, scrollRequest: scrollRequest,
                                 gridMetrics: gridMetrics, bottomInset: safe.bottom,
                                 contentRotation: orientation.contentRotation, allowsDrawerCollapse: state.drawerDetent == .expanded,
-                                dayHeaderControlsSize: orientation == .portrait ? CGSize(width: selectionControlSize.width + 76,
-                                    height: selectionControlSize.height + 24) : .zero,
+                                dayHeaderControlsSize: orientation == .portrait
+                                    ? CGSize(width: selectionControlSize.width + 76, height: selectionControlSize.height + 24)
+                                    : CGSize(width: selectionControlSize.width + 24, height: selectionControlSize.height + 80 + windowSafe.top),
                                 onSourceTapped: { onAction(.sourceTapped($0)) },
                                 onCheckedChanged: { onAction(.checkedSourcesReplaced($0)) },
                                 onDayTapped: { onAction(.daySelectionToggled($0)) }, onViewportChanged: { viewport in
@@ -133,8 +135,6 @@ struct WorkspaceView<StatusControl: View>: View {
                         selectionControls.padding(12)
                             .padding(.top, orientation == .portrait ? 0 : windowSafe.top)
                             .padding(.bottom, orientation == .portrait ? 0 : windowSafe.bottom)
-                            .padding(.leading, orientation == .landscapeRight ? dayHeaderHeight : 0)
-                            .padding(.trailing, orientation == .landscapeLeft ? dayHeaderHeight : 0)
                             .frame(width: frame.width, height: frame.height, alignment: orientation.trayControlAlignment)
                             .position(x: frame.midX, y: frame.midY)
                         if state.photoFilter == .compatibleWithCamera,
@@ -220,7 +220,7 @@ struct WorkspaceView<StatusControl: View>: View {
                 reversesAxis: orientation == .landscapeLeft) {
                 PhotoFilterMenu(selected: state.photoFilter, cameraModel: state.photoFilterCamera?.model,
                     onSelect: { onAction(.photoFilterSelected($0)) })
-                TraySelectionControlLayout(orientation: orientation) {
+                TraySelectionControlLayout {
                     selectionCountSizingLabel.hidden().frame(maxWidth: .infinity, maxHeight: .infinity).overlay {
                         if state.isSelecting { selectionCount }
                     }

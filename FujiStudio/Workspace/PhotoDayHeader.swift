@@ -13,11 +13,22 @@ final class PhotoDayHeader: UICollectionReusableView {
         let font = UIFont.preferredFont(forTextStyle: .subheadline, compatibleWith: traits)
         let title = title(for: date)
         if rotation != 0 {
-            // The tray becomes a side panel. Keep its date upright, wrapping into a compact column.
+            // Fit the upright date between the top controls and the checkbox at the bottom.
             let widestWord = title.split(separator: " ").map { (String($0) as NSString).size(withAttributes: [.font: font]).width }.max() ?? 0
-            return max(88, ceil(widestWord) + 24)
+            var textWidth = max(64, ceil(widestWord))
+            let availableHeight = max(font.lineHeight, width - 60 - controlsSize.height)
+            let fullWidth = ceil((title as NSString).size(withAttributes: [.font: font]).width)
+            while textWidth < fullWidth && textHeight(title, width: textWidth, font: font) > availableHeight {
+                textWidth = min(fullWidth, textWidth + 12)
+            }
+            return textWidth + 24
         }
         return portraitGeometry(title: title, width: width, font: font, controlsSize: controlsSize).height
+    }
+
+    private static func textHeight(_ title: String, width: CGFloat, font: UIFont) -> CGFloat {
+        ceil((title as NSString).boundingRect(with: CGSize(width: width, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: font], context: nil).height)
     }
 
     private static func portraitGeometry(title: String, width: CGFloat, font: UIFont, controlsSize: CGSize)
@@ -69,7 +80,7 @@ final class PhotoDayHeader: UICollectionReusableView {
             let width = max(1, bounds.height - 24)
             let height = min(bounds.width - 72, ceil(dateLabel.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height))
             dateLabel.bounds = CGRect(x: 0, y: 0, width: width, height: max(1, height))
-            dateLabel.center = CGPoint(x: contentRotation > 0 ? bounds.width - 12 - dateLabel.bounds.height / 2 : 12 + dateLabel.bounds.height / 2,
+            dateLabel.center = CGPoint(x: contentRotation > 0 ? 60 + dateLabel.bounds.height / 2 : bounds.width - 60 - dateLabel.bounds.height / 2,
                                       y: bounds.midY)
             checkbox.center = CGPoint(x: contentRotation > 0 ? 30 : max(22, bounds.width - 30), y: bounds.midY)
         }

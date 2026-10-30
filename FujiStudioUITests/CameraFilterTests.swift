@@ -105,7 +105,8 @@ final class CameraFilterTests: AppFlowTestCase {
                 return window.width > window.height && abs(tray.height - window.height) < 1 &&
                     (orientation == .landscapeLeft ? abs(tray.maxX - window.maxX) < 1 : abs(tray.minX - window.minX) < 1)
             }
-            XCTAssertEqual(counter.frame.minY - select.frame.maxY, 12, accuracy: 1)
+            XCTAssertEqual(counter.frame.midY, select.frame.midY, accuracy: 1)
+            XCTAssertEqual(select.frame.minX - counter.frame.maxX, 12, accuracy: 1)
             XCTAssertEqual(filter.frame.minY - counter.frame.maxY, 12, accuracy: 1)
             XCTAssertLessThan(counter.frame.maxY, app.windows.firstMatch.frame.midY)
             XCTAssertTrue(filter.isHittable); XCTAssertTrue(select.isHittable)

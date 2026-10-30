@@ -63,7 +63,7 @@ final class PhotoGridControllerTests: XCTestCase {
             if rotation == 0 { XCTAssertLessThanOrEqual(checkbox.frame.maxX, label.frame.minX) }
             else {
                 let canvas = CGAffineTransform(rotationAngle: -rotation)
-                XCTAssertGreaterThan(checkbox.frame.applying(canvas).minY, label.frame.applying(canvas).maxY)
+                XCTAssertEqual(checkbox.frame.applying(canvas).minY - label.frame.applying(canvas).maxY, 8, accuracy: 0.5)
             }
         }
     }
