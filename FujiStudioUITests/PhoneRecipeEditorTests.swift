@@ -23,7 +23,7 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
         shot(app, "Existing ASTIA phone recipe is available for conversion")
     }
 
-    func testPhoneEditorGrainChoicesStayConvertibleAcrossSaveAndReopen() {
+    func testPhoneEditorGrainChoicesSurviveSaveAndReopen() {
         let app = launch(["--fixture-disconnected-camera"])
         tap(app.buttons["recipe.control"], in: app); app.buttons["recipe.copy.3"].tap()
         let edit = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.edit.")).firstMatch
@@ -31,14 +31,14 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
         let effect = app.buttons["recipe.editor.setting.grainEffect"]
         let size = app.buttons["recipe.editor.setting.grainSize"]
         XCTAssertTrue(effect.waitForExistence(timeout: 5))
-        effect.tap()
-        XCTAssertFalse(app.buttons["Weak"].exists)
+        reveal(effect, in: app); effect.tap()
+        XCTAssertTrue(app.buttons["Weak"].isEnabled)
         app.buttons["Off"].tap()
         XCTAssertFalse(size.isEnabled)
         effect.tap(); app.buttons["Strong"].tap()
         XCTAssertTrue(size.isEnabled)
         size.tap()
-        XCTAssertFalse(app.buttons["Large"].exists)
+        XCTAssertTrue(app.buttons["Large"].isEnabled)
         app.buttons["Small"].tap()
         shot(app, "Convertible X-T5 grain choices")
         app.buttons["recipe.editor.save"].tap()
@@ -118,8 +118,7 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
         let temperature = app.textFields["recipe.editor.temperature"]
         reveal(temperature, in: app); replaceText(temperature, with: "10001")
         shot(app, "Phone editor temperature draft before validation")
-        app.buttons["recipe.editor.save"].tap()
-        XCTAssertTrue(app.staticTexts["recipe.editor.error"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["recipe.editor.save"].isEnabled)
         XCTAssertEqual(temperature.value as? String, "10001")
         replaceText(temperature, with: "5200")
         app.buttons["recipe.editor.save"].tap()
@@ -146,7 +145,7 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
         app.buttons["recipe.editor.cancel"].tap()
     }
 
-    func testXT5EditorOffersOnlyConvertibleFilmRangeAndBalance() {
+    func testXT5EditorOffersCameraSupportedFilmRangeAndBalance() {
         let app = launch()
         wait { app.buttons["app.status"].label.contains("Camera ready") }
         app.cells["grid.source-0"].tap()
@@ -167,12 +166,12 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
         let dynamicRange = app.buttons["recipe.editor.setting.dynamicRange"]
         dynamicRange.tap()
         XCTAssertTrue(app.buttons["200%"].exists)
-        XCTAssertFalse(app.buttons["Auto"].exists)
+        XCTAssertTrue(app.buttons["Auto"].isEnabled)
         app.buttons["200%"].tap()
         let balance = app.buttons["recipe.editor.setting.whiteBalance"]
         reveal(balance, in: app); balance.tap()
-        XCTAssertFalse(app.buttons["Daylight"].exists)
-        XCTAssertFalse(app.buttons["Custom 3"].exists)
+        XCTAssertTrue(app.buttons["Daylight"].isEnabled)
+        XCTAssertTrue(app.buttons["Custom 3"].isEnabled)
         app.buttons["Colour temperature"].tap()
         app.buttons["recipe.editor.save"].tap()
         XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitForNonExistence(timeout: 5))

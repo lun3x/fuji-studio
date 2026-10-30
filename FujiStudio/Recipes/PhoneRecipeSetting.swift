@@ -37,13 +37,17 @@ extension RecipeSettingID {
   }
   func label(for value: RecipeSettingValue) -> String {
     guard case .integer(let n) = value else { return value.label }
-    if [.highlight, .shadow, .color, .sharpness, .clarity, .monochromeWarmCool,
-        .monochromeMagentaGreen].contains(self) {
+    if [
+      .highlight, .shadow, .color, .sharpness, .clarity, .monochromeWarmCool,
+      .monochromeMagentaGreen,
+    ].contains(self) {
       return n % 10 == 0 ? signed(n / 10) : String(format: "%+.1f", Double(n) / 10)
     }
     if [.whiteBalanceRed, .whiteBalanceBlue, .noiseReduction].contains(self) { return signed(n) }
     if self == .dynamicRange { return n == 0 ? "Auto" : "\(n)%" }
-    if [.lensOptimizer, .longExposureNoiseReduction].contains(self) { return n == 0 ? "Off" : "On" }
+    if [.lensOptimizer, .longExposureNoiseReduction].contains(self) {
+      return n == 0 ? "Off" : "On"
+    }
     return value.label
   }
   private func signed(_ n: Int) -> String { n > 0 ? "+\(n)" : "\(n)" }

@@ -10,7 +10,7 @@ struct ModelAwareWorkspaceTests {
     let recipes = (1...3).map { slot in
       RecipeSnapshot(
         id: UUID(), slot: slot, name: r.name, importedName: r.importedName,
-        importedSettings: r.importedSettings, settingsDigest: r.settingsDigest,
+        importedSettings: r.importedSettings, settingsDigest: r.sourceSettingsDigest,
         cameraContext: r.cameraContext, importedAt: r.importedAt, renderingIssues: [])
     }
     let receipt = fixtureCollection(recipes, slots: (1...3).map { .init(id: $0, label: "C\($0)") })
@@ -42,7 +42,7 @@ struct ModelAwareWorkspaceTests {
     let recipes = (1...7).map { slot in
       RecipeSnapshot(
         id: UUID(), slot: slot, name: recipe.name, importedName: recipe.importedName,
-        importedSettings: recipe.importedSettings, settingsDigest: recipe.settingsDigest,
+        importedSettings: recipe.importedSettings, settingsDigest: recipe.sourceSettingsDigest,
         cameraContext: recipe.cameraContext, importedAt: recipe.importedAt, renderingIssues: [])
     }
     let receipt = fixtureCollection(recipes)

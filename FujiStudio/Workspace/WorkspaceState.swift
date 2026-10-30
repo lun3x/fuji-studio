@@ -488,7 +488,12 @@ struct WorkspaceState: Sendable {
         if case .attentionRequired = cameraState { return "Resolve the camera error before converting photos." }
         if let reason = incompatibleSelectionReason { return reason.message }
         if let context=currentCameraExecutionContext,!matches(recipe:recipe,context:context) { return "Requires a compatible \(recipe.targetCamera.rawValue) camera." }
-        if case .unsupported = recipe.renderingSupport(using:RecipeCodecRegistry()) { return "Conversion is unavailable for these settings." }
+        if case .unsupported(let issues) = recipe.renderingSupport(using:RecipeCodecRegistry()) {
+            for case .unsupportedSetting(let id, let value) in issues {
+                return "Conversion is unavailable for \(id.title.lowercased()) set to \(id.label(for:value))."
+            }
+            return "Conversion is unavailable for these settings."
+        }
         guard currentCameraExecutionContext != nil,isCameraConnected else { return "Connect a supported Fujifilm camera." }
         return nil
     }

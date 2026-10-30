@@ -9,7 +9,7 @@ class AppFlowTestCase: XCTestCase {
         field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count) + value)
     }
 
-    func reveal(_ element: XCUIElement, in app: XCUIApplication) {
+    func reveal(_ element: XCUIElement, in app: XCUIApplication, towardsTop: Bool = false) {
         let form = app.descendants(matching: .any)["recipe.editor.form"].firstMatch
         let keyboard = app.keyboards.firstMatch
         if form.exists, keyboard.exists, keyboard.buttons["Return"].exists {
@@ -17,14 +17,29 @@ class AppFlowTestCase: XCTestCase {
             XCTAssertTrue(keyboard.waitForNonExistence(timeout: 5))
         }
         let container = form.exists ? form : app
-        for _ in 0..<8 { if element.isHittable { return }; container.swipeUp() }
-        XCTAssertTrue(element.isHittable)
+        for reverse in [false, true] {
+            for _ in 0..<16 {
+                if element.exists {
+                    if element.isHittable { return }
+                    let frame = element.frame
+                    if !frame.isEmpty, frame.minY < container.frame.minY { container.swipeDown() }
+                    else { container.swipeUp() }
+                } else if towardsTop != reverse { container.swipeDown() }
+                else { container.swipeUp() }
+            }
+        }
+        XCTAssertTrue(element.exists && element.isHittable)
     }
 
     func launch(_ flags: [String] = []) -> XCUIApplication {
         let app = XCUIApplication(); app.launchArguments = ["--ui-fixtures"] + flags; app.launch()
         XCTAssertTrue(app.buttons["workspace.select"].waitForExistence(timeout: 10))
         return app
+    }
+
+    func chooseAutoISO(in app: XCUIApplication) {
+        let iso = app.buttons["recipe.editor.setting.iso"]
+        reveal(iso, in: app);iso.tap();app.buttons["Auto 1"].tap()
     }
 
     func tap(_ element: XCUIElement, in app: XCUIApplication) {

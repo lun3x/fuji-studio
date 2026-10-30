@@ -3,7 +3,7 @@ import Foundation
 
 /// Measured frame structure with replaceable starting settings. Always patches fresh input.
 public struct XT5WorkingProfile: Sendable {
-  public static let supportVersion = "xt5-4.31-0200-structured-frame-v5-source-dr"
+  public static let supportVersion = "xt5-4.31-0200-structured-frame-v6-standard-recipes"
   public static let writableOffsets = [
     533, 541, 545, 549, 553, 557, 561, 565, 569, 573, 577, 581, 585, 589, 593, 609, 617,
   ]
@@ -30,7 +30,8 @@ public struct XT5WorkingProfile: Sendable {
   }
   public static func normalize(_ recipe: RecipeSnapshot) throws -> RecipeSettings {
     guard recipe.targetCamera == .xt5 else { throw CameraServiceError.unsupportedContext }
-    return try RecipeCodecRegistry().applicationSettings(recipe)
+    do { return try RecipeCodecRegistry().applicationSettings(recipe) }
+    catch { throw CameraServiceError.unsupportedSettings }
   }
   public static func make(baseline: Data, recipe: RecipeSnapshot, metadata: RAWMetadata) throws
     -> Self

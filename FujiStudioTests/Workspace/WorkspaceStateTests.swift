@@ -650,7 +650,7 @@ private struct WorkspaceFixture {
         let banks = try (1...7).map { try BatchFixture().bank(slot: $0, properties: profile.properties) }
         let common = banks[0].cameraContext
         recipes = banks.map { RecipeSnapshot(id: $0.id, slot: $0.slot, name: $0.name, importedName: $0.importedName,
-            importedSettings: $0.importedSettings, settingsDigest: $0.settingsDigest, cameraContext: common,
+            importedSettings: $0.importedSettings, settingsDigest: $0.sourceSettingsDigest, cameraContext: common,
             importedAt: $0.importedAt, renderingIssues: $0.renderingIssues) }
         let camera = recipes[0].cameraContext
         context = CameraExecutionContext(model: camera.model, firmware: camera.firmware, capability: camera.capability,
@@ -672,7 +672,7 @@ private struct WorkspaceFixture {
     }
     func copy(_ recipe: RecipeSnapshot, settings: [ImportedRecipeProperty]? = nil, digest: String? = nil) -> RecipeSnapshot {
         RecipeSnapshot(id: UUID(), slot: recipe.slot, name: recipe.name, importedName: recipe.importedName,
-            importedSettings: settings ?? recipe.importedSettings, settingsDigest: digest ?? recipe.settingsDigest,
+            importedSettings: settings ?? recipe.importedSettings, settingsDigest: digest ?? recipe.sourceSettingsDigest,
             cameraContext: recipes[0].cameraContext, importedAt: recipe.importedAt, renderingIssues: [])
     }
     func refreshedRecipes() throws -> [RecipeSnapshot] {
@@ -681,7 +681,7 @@ private struct WorkspaceFixture {
         properties[0xD192] = 1
         let changed = try BatchFixture().bank(slot: 3, properties: properties)
         return recipes.map { copy($0, settings: $0.slot == 3 ? changed.importedSettings : nil,
-            digest: $0.slot == 3 ? changed.settingsDigest : nil) }
+            digest: $0.slot == 3 ? changed.sourceSettingsDigest : nil) }
     }
     func key(_ request: WorkspacePreviewRequest) -> RenderKey {
         RenderKey(sourceID: request.sourceID, sourceRevision: request.sourceRevision, sourceSHA256: "synthetic-hash",

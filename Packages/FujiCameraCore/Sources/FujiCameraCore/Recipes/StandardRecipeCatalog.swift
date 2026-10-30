@@ -31,24 +31,28 @@ public enum StandardRecipeCatalog {
     -> SettingCapability
   {
     if camera == .xe3 {
-      if [.grainSize, .colorChrome, .colorChromeBlue, .clarity, .dynamicRangePriority,
-          .monochromeWarmCool, .monochromeMagentaGreen, .smoothSkin, .outputFormat].contains(id) {
+      if [
+        .grainSize, .colorChrome, .colorChromeBlue, .clarity, .dynamicRangePriority,
+        .monochromeWarmCool, .monochromeMagentaGreen, .smoothSkin, .outputFormat,
+      ].contains(id) {
         return .init(support: .absent)
       }
       switch id {
       case .film, .highlight, .shadow, .kelvin:
         return XE3Capabilities.measured.settings[id]!
       case .whiteBalance:
-        return options(WhiteBalanceMode.allCases.filter {
-          ![.autoWhitePriority, .autoAmbiencePriority].contains($0)
-        }.map(RecipeSettingValue.whiteBalance))
+        return options(
+          WhiteBalanceMode.allCases.filter {
+            ![.autoWhitePriority, .autoAmbiencePriority].contains($0)
+          }.map(RecipeSettingValue.whiteBalance))
       case .aspectRatio: return options([.ratio3x2, .ratio16x9, .ratio1x1])
       case .rawRecording: return options([.uncompressed, .losslessCompressed])
       case .iso:
-        return options(isoChoices.filter {
-          guard case .integer(let n) = $0 else { return true }
-          return n >= 100
-        })
+        return options(
+          isoChoices.filter {
+            guard case .integer(let n) = $0 else { return true }
+            return n >= 100
+          })
       default: break
       }
     }
@@ -67,9 +71,11 @@ public enum StandardRecipeCatalog {
   }
   private static let isoChoices: [RecipeSettingValue] =
     [RecipeOption.auto1, .auto2, .auto3].map(RecipeSettingValue.option)
-    + [64, 80, 100, 125, 160, 200, 250, 320, 400, 500, 640, 800, 1000, 1250, 1600,
-       2000, 2500, 3200, 4000, 5000, 6400, 8000, 10000, 12800, 25600, 51200]
-      .map(RecipeSettingValue.integer)
+    + [
+      64, 80, 100, 125, 160, 200, 250, 320, 400, 500, 640, 800, 1000, 1250, 1600,
+      2000, 2500, 3200, 4000, 5000, 6400, 8000, 10000, 12800, 25600, 51200,
+    ]
+    .map(RecipeSettingValue.integer)
   private static let global: [RecipeSettingID: SettingCapability] = [
     .film: options(FilmSimulation.allCases.map(RecipeSettingValue.film)),
     .grain: options(GrainStrength.allCases.map { .grain(.init(strength: $0, size: nil)) }),

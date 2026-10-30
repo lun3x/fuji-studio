@@ -36,6 +36,7 @@ public enum RecipeRenderingIssue: Sendable, Equatable, Codable {
   case conversionProfileUnvalidated
   case unmappedProperty(UInt16)
   case unsupportedValue(UInt16)
+  case unsupportedSetting(RecipeSettingID, RecipeSettingValue)
 }
 
 public enum RecipeImportError: Error, Sendable, Equatable {
@@ -83,13 +84,25 @@ public struct RecipeSnapshot: Sendable, Equatable, Codable, Identifiable {
     self.importedName = importedName
     self.importedSettings = importedSettings
     self.sourceSettingsDigest = settingsDigest
-    let standard = standardRecipe ?? StandardRecipeImport.decode(model: cameraContext.model, properties: importedSettings)
+    let standard =
+      standardRecipe
+      ?? StandardRecipeImport.decode(
+        model: cameraContext.model,
+        properties: importedSettings, sourceDigest: settingsDigest)
     self.standardRecipe = standard
     var canonical = Data("fuji.standard-recipe.v1\0\(standard.camera.rawValue)\0".utf8)
-    let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
     for id in RecipeSettingID.allCases.sorted(by: { $0.rawValue < $1.rawValue }) {
-      canonical.append(contentsOf: id.rawValue.utf8); canonical.append(0)
+      canonical.append(contentsOf: id.rawValue.utf8)
+      canonical.append(0)
       canonical.append(try! encoder.encode(standard.value(for: id)))
+    }
+    let known: Set<UInt16> = cameraContext.model == "X-E3" ? Set(1...14) : Set(0xD18E...0xD1A4)
+    for field in importedSettings.filter({ !known.contains($0.code) }).sorted(by: {
+      $0.code < $1.code
+    }) {
+      canonical.append(try! encoder.encode(field))
     }
     self.settingsDigest = ResourceChecksum.sha256(canonical)
     self.cameraContext = cameraContext
@@ -109,7 +122,8 @@ public struct RecipeSnapshot: Sendable, Equatable, Codable, Identifiable {
   }
 
   public func replacingStandardRecipe(_ recipe: StandardRecipe, name: String) -> RecipeSnapshot {
-    RecipeSnapshot(id: UUID(), slot: slot, name: name, importedName: importedName,
+    RecipeSnapshot(
+      id: UUID(), slot: slot, name: name, importedName: importedName,
       importedSettings: importedSettings, settingsDigest: sourceSettingsDigest,
       cameraContext: cameraContext, importedAt: importedAt, renderingIssues: renderingIssues,
       copiedFromRecipeID: copiedFromRecipeID, standardRecipe: recipe)

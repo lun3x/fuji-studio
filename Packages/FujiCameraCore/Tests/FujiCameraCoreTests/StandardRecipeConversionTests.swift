@@ -1,14 +1,25 @@
 import Foundation
 import Testing
+
 @testable import FujiCameraCore
 
 struct StandardRecipeConversionTests {
+  @Test func invalidDormantTemperatureDoesNotEnterTheConversionProfile() throws {
+    let f = try ProductionProfileFixture()
+    var recipe = f.bank.standardRecipe
+    recipe.setValue(.integer(Int.max), for: .kelvin)
+    #expect(recipe.invalidSettings.isEmpty)
+    let snapshot = f.bank.replacingStandardRecipe(recipe, name: f.bank.name)
+    #expect(try RecipeCodecRegistry().applicationSettings(snapshot).kelvin == 5000)
+  }
   @Test func nativeImportOverlaysSemanticValuesAndUsesDefaultsForAbsentFeatures() throws {
     let xt5 = try ProductionProfileFixture().bank
     #expect(xt5.standardRecipe.value(for: .lensOptimizer) == .integer(1))
     #expect(xt5.standardRecipe.value(for: .imageQuality) == .option(.fine))
     #expect(xt5.standardRecipe.value(for: .colorSpace) == .option(.sRGB))
-    let xe3 = try XE3BackupRecipeCodec.decode(syntheticXE3Backup(), context: xe3RecipeContext(), importedAt: Date()).recipes[0]
+    let xe3 = try XE3BackupRecipeCodec.decode(
+      syntheticXE3Backup(), context: xe3RecipeContext(), importedAt: Date()
+    ).recipes[0]
     #expect(xe3.standardRecipe.value(for: .colorChrome) == .effect(.off))
     #expect(xe3.standardRecipe.value(for: .grainSize) == .option(.small))
     #expect(xe3.standardRecipe.value(for: .rawRecording) == .option(.losslessCompressed))
@@ -21,7 +32,8 @@ struct StandardRecipeConversionTests {
     standard.setValue(.effect(.strong), for: .colorChrome)
     standard.setValue(.option(.large), for: .grainSize)
     standard.setValue(.integer(100), for: .dynamicRange)
-    let copy = imported.copiedToPhone().snapshot.replacingStandardRecipe(standard, name: "Other camera")
+    let copy = imported.copiedToPhone().snapshot.replacingStandardRecipe(
+      standard, name: "Other camera")
     #expect(copy.cameraContext == imported.cameraContext)
     #expect(copy.targetCamera == .xe3)
     #expect(copy.copiedFromRecipeID == imported.id)
@@ -43,7 +55,10 @@ struct StandardRecipeConversionTests {
     #expect(throws: (any Error).self) { try RecipeCodecRegistry().applicationSettings(imported) }
     var repaired = imported.standardRecipe
     repaired.setValue(.film(.provia), for: .film)
-    #expect(try RecipeCodecRegistry().applicationSettings(imported.replacingStandardRecipe(repaired, name: imported.name)).film == .provia)
+    #expect(
+      try RecipeCodecRegistry().applicationSettings(
+        imported.replacingStandardRecipe(repaired, name: imported.name)
+      ).film == .provia)
   }
 
   @Test func changingOnlyDormantMonochromaticValuesDoesNotAffectColourFilmApplication() throws {
@@ -51,10 +66,13 @@ struct StandardRecipeConversionTests {
     var recipe = imported.standardRecipe
     recipe.setValue(.integer(110), for: .monochromeWarmCool)
     let changed = imported.replacingStandardRecipe(recipe, name: imported.name)
-    #expect(try RecipeCodecRegistry().applicationSettings(changed) == RecipeCodecRegistry().applicationSettings(imported))
+    #expect(
+      try RecipeCodecRegistry().applicationSettings(changed)
+        == RecipeCodecRegistry().applicationSettings(imported))
     recipe.setValue(.film(.acros), for: .film)
     #expect(throws: (any Error).self) {
-      try RecipeCodecRegistry().applicationSettings(imported.replacingStandardRecipe(recipe, name: imported.name))
+      try RecipeCodecRegistry().applicationSettings(
+        imported.replacingStandardRecipe(recipe, name: imported.name))
     }
   }
 }

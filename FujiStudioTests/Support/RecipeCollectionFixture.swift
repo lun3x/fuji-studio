@@ -25,7 +25,7 @@ func fixtureCollection(
       model: recipeContext?.model ?? "X-T5", firmware: recipeContext?.firmware ?? "4.31",
       capability: recipeContext?.capability ?? "X-T5_0200",
       supportVersion: recipeContext?.model == "X-E3"
-        ? XE3Support.identifier : XT5WorkingProfile.supportVersion,
+        ? XE3Support.conversionVersion : XT5WorkingProfile.supportVersion,
       sessionIdentity: recipeContext?.sessionIdentity ?? UUID(),
       generation: recipeContext?.sessionGeneration ?? 1)
   let lookup=recipeContext ?? context.map { RecipeCameraContext(model:$0.model,firmware:$0.firmware,capability:$0.capability,sessionIdentity:$0.sessionIdentity,sessionGeneration:$0.generation) }

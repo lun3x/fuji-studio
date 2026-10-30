@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+
 @testable import FujiCameraCore
 
 struct StandardRecipeTests {
@@ -11,7 +12,8 @@ struct StandardRecipeTests {
     #expect(recipe.value(for: .rawRecording) == .option(.losslessCompressed))
     #expect(recipe.value(for: .monochromeWarmCool) == .integer(0))
     #expect(recipe.invalidSettings.isEmpty)
-    #expect(try JSONDecoder().decode(StandardRecipe.self, from: JSONEncoder().encode(recipe)) == recipe)
+    #expect(
+      try JSONDecoder().decode(StandardRecipe.self, from: JSONEncoder().encode(recipe)) == recipe)
     for id in RecipeSettingID.allCases {
       #expect(!StandardRecipeCatalog.choices(for: id).isEmpty)
     }

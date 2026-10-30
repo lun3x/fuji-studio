@@ -110,7 +110,7 @@ extension PreviewCoordinatorTests {
         #expect(await reader.count == 1)
         #expect(await camera.calls == 1)
         guard case .preview(let key) = await coordinator.displayedVersion else { Issue.record("Expected latest preview"); return }
-        #expect(key.sourceID == "second-source" && key.sourceRevision == "v3" && key.settingsDigest == "latest-settings")
+        #expect(key.sourceID == "second-source" && key.sourceRevision == "v3" && key.settingsDigest == newRecipe.settingsDigest)
     }
 
     @Test func renamedSameSettingsReuseKeepsOldRenderProvenanceAndNewRequestLabel() async throws {

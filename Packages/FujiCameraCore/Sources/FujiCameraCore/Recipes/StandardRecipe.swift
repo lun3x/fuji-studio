@@ -1,7 +1,8 @@
 import Foundation
 
 public enum RecipeCameraModel: String, Codable, CaseIterable, Sendable, Hashable {
-  case xt5 = "X-T5", xe3 = "X-E3"
+  case xt5 = "X-T5"
+  case xe3 = "X-E3"
   public var firmware: String { self == .xt5 ? "4.31" : "1.30" }
   public var capability: String { self == .xt5 ? "X-T5_0200" : XE3Support.identifier }
   public var supportVersion: String {
@@ -58,7 +59,9 @@ public struct StandardRecipe: Codable, Sendable, Equatable {
     if id == .grain, case .grain(let grain) = value {
       values[id] = .grain(.init(strength: grain.strength, size: nil))
       if let size = grain.size { values[.grainSize] = .option(size == .small ? .small : .large) }
-    } else { values[id] = value }
+    } else {
+      values[id] = value
+    }
   }
   public func isAvailable(_ id: RecipeSettingID) -> Bool {
     guard StandardRecipeCatalog.capability(for: id, camera: camera).support == .supported else {
@@ -82,7 +85,8 @@ public struct StandardRecipe: Codable, Sendable, Equatable {
     if id == .colorSpace, camera == .xt5, self.value(for: .outputFormat) == .option(.heif) {
       return value == .option(.sRGB)
     }
-    return StandardRecipeCatalog.capability(for: id, camera: camera).accepts(value, rendering: false)
+    return StandardRecipeCatalog.capability(for: id, camera: camera).accepts(
+      value, rendering: false)
   }
   public var invalidSettings: [RecipeSettingID] {
     RecipeSettingID.allCases.filter { isAvailable($0) && !accepts(value(for: $0), for: $0) }
@@ -94,7 +98,8 @@ public struct StandardRecipe: Codable, Sendable, Equatable {
     camera = try c.decode(RecipeCameraModel.self, forKey: .camera)
     values = try c.decode([RecipeSettingID: RecipeSettingValue].self, forKey: .values)
     guard Set(values.keys) == Set(RecipeSettingID.allCases) else {
-      throw DecodingError.dataCorruptedError(forKey: .values, in: c,
+      throw DecodingError.dataCorruptedError(
+        forKey: .values, in: c,
         debugDescription: "A standard recipe must contain every setting")
     }
   }
@@ -102,7 +107,9 @@ public struct StandardRecipe: Codable, Sendable, Equatable {
 
 extension FilmSimulation {
   public var supportsMonochromaticColor: Bool {
-    [.monochrome, .monochromeYellow, .monochromeRed, .monochromeGreen,
-     .acros, .acrosYellow, .acrosRed, .acrosGreen].contains(self)
+    [
+      .monochrome, .monochromeYellow, .monochromeRed, .monochromeGreen,
+      .acros, .acrosYellow, .acrosRed, .acrosGreen,
+    ].contains(self)
   }
 }

@@ -16,6 +16,7 @@ public struct FujiJPEGMetadata: Sendable, Equatable {
   public let make: String, model: String
   public let quality: FujiJPEGQuality
   public let lensOptimizer: Bool?
+  public let lensOptimizerAvailable: Bool?
   public let rendering: [RecipeSettingID: RecipeSettingValue]
   public let unrecognized: Set<RecipeSettingID>
   public func requireFine(width: Int, height: Int, orientation: Int, model: String) throws {
@@ -30,7 +31,7 @@ public struct FujiJPEGMetadata: Sendable, Equatable {
   }
   public init(
     width: Int, height: Int, orientation: Int, make: String, model: String,
-    quality: FujiJPEGQuality, lensOptimizer: Bool? = nil,
+    quality: FujiJPEGQuality, lensOptimizer: Bool? = nil, lensOptimizerAvailable: Bool? = nil,
     rendering: [RecipeSettingID: RecipeSettingValue] = [:], unrecognized: Set<RecipeSettingID> = []
   ) {
     self.width = width
@@ -40,6 +41,7 @@ public struct FujiJPEGMetadata: Sendable, Equatable {
     self.model = model
     self.quality = quality
     self.lensOptimizer = lensOptimizer
+    self.lensOptimizerAvailable = lensOptimizerAvailable
     self.rendering = rendering
     self.unrecognized = unrecognized
   }
@@ -270,6 +272,7 @@ public enum FujiJPEGMetadataReader {
     var rendering: [RecipeSettingID: RecipeSettingValue] = [:]
     var unrecognized: Set<RecipeSettingID> = []
     var lensOptimizer: Bool?
+    var lensOptimizerAvailable: Bool?
     var thumbnailMake: String?, thumbnailModel: String?, pixelWidth: Int?, pixelHeight: Int?,
       thumbnailOffset: Int?, thumbnailLength: Int?
     mutating func read(width: Int, height: Int) throws -> FujiJPEGMetadata {
@@ -303,7 +306,8 @@ public enum FujiJPEGMetadataReader {
       }
       return FujiJPEGMetadata(
         width: width, height: height, orientation: orientation, make: make, model: model,
-        quality: quality, lensOptimizer: lensOptimizer, rendering: rendering,
+        quality: quality, lensOptimizer: lensOptimizer, lensOptimizerAvailable: lensOptimizerAvailable,
+        rendering: rendering,
         unrecognized: unrecognized)
     }
     mutating func visit(_ offset: Int, kind: Kind, depth: Int) throws {
@@ -341,6 +345,7 @@ public enum FujiJPEGMetadataReader {
           let maker = try makerQuality(region.slice(e.value, e.length))
           quality = maker.quality
           lensOptimizer = maker.lensOptimizer
+          lensOptimizerAvailable = maker.lensOptimizerAvailable
           rendering = maker.rendering
           unrecognized = maker.unrecognized
         case 0xa002, 0xa003:
@@ -361,7 +366,7 @@ public enum FujiJPEGMetadataReader {
       }
     }
     private func makerQuality(_ note: Region) throws -> (
-      quality: FujiJPEGQuality, lensOptimizer: Bool?,
+      quality: FujiJPEGQuality, lensOptimizer: Bool?, lensOptimizerAvailable: Bool?,
       rendering: [RecipeSettingID: RecipeSettingValue], unrecognized: Set<RecipeSettingID>
     ) {
       guard note.starts(Array("FUJIFILM".utf8)) else {
@@ -385,6 +390,16 @@ public enum FujiJPEGMetadataReader {
         let value = try note.u32(entry.value, little: true)
         guard value == 0 || value == 1 else { throw FujiJPEGValidationError.conflictingMetadata }
         lensOptimizer = value == 1
+      }
+      // XRFC 1.27.0 uses this per-source scope independently of capture tag 0x1045.
+      // The native parser preserves the first 64-bit word of the three-rational payload.
+      // Missing, malformed, or unfamiliar flags remain unknown; capture Off is not a limit.
+      var lensOptimizerAvailable: Bool?
+      if let entry = dir.entries.first(where: { $0.tag == 0x4534 }),
+        entry.type == 5, entry.count == 3 {
+        let flag = UInt64(try note.u32(entry.value, little: true))
+          | (UInt64(try note.u32(entry.value + 4, little: true)) << 32)
+        if flag == 0 || flag == 1 { lensOptimizerAvailable = flag == 1 }
       }
       var values: [RecipeSettingID: RecipeSettingValue] = [:]
       var unknown: Set<RecipeSettingID> = []
@@ -494,7 +509,7 @@ public enum FujiJPEGMetadataReader {
           unknown.insert(.clarity)
         }
       }
-      return (quality, lensOptimizer, values, unknown)
+      return (quality, lensOptimizer, lensOptimizerAvailable, values, unknown)
 
     }
   }

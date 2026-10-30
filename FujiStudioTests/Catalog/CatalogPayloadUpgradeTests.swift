@@ -25,7 +25,7 @@ import Testing
     let recipes = (1...7).map { slot in
       RecipeSnapshot(
         id: UUID(), slot: slot, name: f.recipe.name, importedName: f.recipe.importedName,
-        importedSettings: f.recipe.importedSettings, settingsDigest: f.recipe.settingsDigest,
+        importedSettings: f.recipe.importedSettings, settingsDigest: f.recipe.sourceSettingsDigest,
         cameraContext: f.recipe.cameraContext, importedAt: f.recipe.importedAt,
         renderingIssues: f.recipe.renderingIssues)
     }

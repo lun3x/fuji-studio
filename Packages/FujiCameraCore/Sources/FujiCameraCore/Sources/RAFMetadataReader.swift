@@ -112,7 +112,8 @@ public struct RAFMetadataReader: Sendable {
       recordedAspect: PixelSize(width: aspect[1], height: aspect[0]),
       cropTop: origin[0], cropLeft: origin[1], orientation: orientation, compression: compression,
       bitDepth: sensor?.bits, rafVersion: version, captureDynamicRange: captureDynamicRange,
-      captureLensOptimizer: originalRendering?.lensOptimizer)
+      captureLensOptimizer: originalRendering?.lensOptimizer,
+      lensOptimizerAvailable: originalRendering?.lensOptimizerAvailable)
   }
 
   private func integer(_ data: Data, _ offset: Int, _ count: Int) -> Int {

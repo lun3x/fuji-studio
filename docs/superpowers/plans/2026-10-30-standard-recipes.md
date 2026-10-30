@@ -44,10 +44,10 @@
 
 **Interfaces:** `RecipeSnapshot.standardRecipe`, `targetCamera`, `replacingStandardRecipe(_:name:)`, `RecipeCodecRegistry.applicationSettings(_:)`; imported native evidence stays separate from canonical identity.
 
-- [ ] Write tests for import defaults/overlays/unknowns, retarget/save/reopen, canonical digest identity, and target-specific application that omits unavailable settings without mutating stored values.
-- [ ] Run focused tests to observe failures.
-- [ ] Make the standard payload authoritative and adapt native lowering, preview/export/service model checks and current persistence version. Preserve journal ownership and output checks.
-- [ ] Run the core suite; correct the three baseline DR200 assertions to match existing supported behavior; checkpoint/push.
+- [x] Write tests for import defaults/overlays/unknowns, retarget/save/reopen, canonical digest identity, and target-specific application that omits unavailable settings without mutating stored values.
+- [x] Run focused tests to observe failures.
+- [x] Make the standard payload authoritative and adapt native lowering, preview/export/service model checks and current persistence version. Preserve journal ownership and output checks.
+- [x] Run the core suite; correct the three baseline DR200 assertions to match existing supported behavior; checkpoint/push.
 
 ### Task 3: Camera-aware editor and save validation
 
@@ -55,10 +55,10 @@
 
 **Interfaces:** Draft `camera`, `canSave`, `isAvailable(_:)`, `isChoiceAvailable(_:for:)`, complete `choices(for:)`, semantic `makeSnapshot()`; UI binds to these shared rules.
 
-- [ ] Write failing draft tests for retargeting, save eligibility, persistent inactive values, full grey choice domains and monotone dependency behavior.
-- [ ] Implement camera first, all settings visible, disabled rows/choices, selected-invalid values, numeric temperature choices, and disabled Save until valid.
-- [ ] Run `Scripts/test-ios.sh --fast` on the task device, then affected editor UI suites. Update prior assertions that expected hidden rows or save-time validation errors.
-- [ ] Checkpoint/push.
+- [x] Write failing draft tests for retargeting, save eligibility, persistent inactive values, full grey choice domains and monotone dependency behavior.
+- [x] Implement camera first, all settings visible, disabled rows/choices, selected-invalid values, numeric temperature choices, and disabled Save until valid.
+- [x] Run `Scripts/test-ios.sh --fast` on the task device, then affected editor UI suites. Update prior assertions that expected hidden rows or save-time validation errors.
+- [x] Checkpoint/push.
 
 ### Task 4: Per-photo LMO request/effective adjustment and final verification
 
@@ -66,7 +66,7 @@
 
 **Interfaces:** Per-photo LMO support observation plus effective helper; requested recipe remains unchanged; `EffectiveRecipeReport` reports requested and effective values separately.
 
-- [ ] Write profile-byte and output tests for LMO default On, known unsupported photo → Off, requested Off staying Off, and retained DR400 request capped by capture DR.
-- [ ] Run and observe failures, then implement bounded profile changes and one-way output adjustment admission.
+- [x] Write profile-byte and output tests for LMO default On, known unsupported photo → Off, requested Off staying Off, and retained DR400 request capped by capture DR.
+- [x] Run and observe failures, then implement bounded profile changes and one-way output adjustment admission.
 - [ ] Run core suite, affected UI suites, full `Scripts/test-ios.sh`; inspect UI screenshots and record actual results.
 - [ ] Request a fresh whole-branch code review, fix actionable findings, rerun affected checks, checkpoint/push; delete the task simulator.

@@ -4,6 +4,20 @@ import Testing
 @testable import FujiCameraCore
 
 struct XE3OutputValidationTests {
+  @Test func requestedOffCannotPublishLensOptimizerOn() throws {
+    var settings = xe3Settings(); settings.lensOptimizerRequested = false
+    let base = conversion(settings)
+    let conversion = PreparedConversion(bytes: base.bytes, requested: settings, source: base.source,
+      supportVersion: base.supportVersion, expectedLensOptimizer: false,
+      baselineSHA256: base.baselineSHA256, candidateSHA256: base.candidateSHA256)
+    let image = CoreJPEGFixture(model: "X-E3", lensOptimizer: 1, fields: entries(xe3MakerFields()))
+      .inject(into: try ObjectObservationFixture.jpeg())
+    let result = try XE3Adapter().validateOutput(image, conversion: conversion)
+    guard case .rejected(let mismatch) = result.admission else {
+      Issue.record("A requested Off must never become On"); return
+    }
+    #expect(mismatch.field == "lensOptimizer")
+  }
   @Test func cappedDRIsAcceptedAndOriginalRequestIsRetained() throws {
     var fields = xe3MakerFields()
     fields[0x1403] = short(200)

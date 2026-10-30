@@ -7,6 +7,8 @@ public struct RecipeCodecRegistry: Sendable {
       return RecipeAssessment(settings: try applicationSettings(snapshot), issues: [])
     } catch CameraServiceError.unsupportedContext {
       return .init(settings: nil, issues: [.unsupportedCameraContext])
+    } catch StandardRecipeApplicationError.unsupportedSetting(let id, let value) {
+      return .init(settings: nil, issues: [.unsupportedSetting(id, value)])
     } catch {
       return .init(settings: nil, issues: [.unsupportedMeasuredDomain])
     }
@@ -124,7 +126,8 @@ extension RecipeSettingValue {
     case .effect(let strength): strength.rawValue.capitalized
     case .integer(let value): String(value)
     case .option(let option): option.label
-    case .unknown(let value): "Unknown (\(value))"
+    case .unknown(let value):
+      value == "Not read from camera" ? "Choose a value" : "Unknown (\(value))"
     }
   }
 }
