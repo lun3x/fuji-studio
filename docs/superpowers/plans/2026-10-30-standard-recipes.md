@@ -68,5 +68,5 @@
 
 - [x] Write profile-byte and output tests for LMO default On, known unsupported photo → Off, requested Off staying Off, and retained DR400 request capped by capture DR.
 - [x] Run and observe failures, then implement bounded profile changes and one-way output adjustment admission.
-- [ ] Run core suite, affected UI suites, full `Scripts/test-ios.sh`; inspect UI screenshots and record actual results.
-- [ ] Request a fresh whole-branch code review, fix actionable findings, rerun affected checks, checkpoint/push; delete the task simulator.
+- [x] Run core suite, affected UI suites, full `Scripts/test-ios.sh`; inspect UI screenshots and record actual results.
+- [x] Request a fresh whole-branch code review, fix actionable findings, rerun affected checks, checkpoint/push; delete the task simulator.
