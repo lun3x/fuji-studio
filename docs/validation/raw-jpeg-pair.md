@@ -34,12 +34,15 @@ primary / RAW alternate layout follows Apple's
 
 ## Checks
 
-- All fast unit checks: **585 Swift Testing tests and 20 XCTest cases passed**.
+- All fast unit checks: **586 Swift Testing tests and 20 XCTest cases passed**.
 - Affected RAW pair, settings and export UI suites: **11 passed, 1 existing native
   Home-boundary test skipped**. Result:
   `.build/TestResults/20261030-162526-8348.xcresult`.
 - Independent review found two P2 concurrency/recovery gaps. Both were reproduced
   with failing tests before fixing and covered by the passing checks above.
+- Final failure-path checks also reproduced and corrected the classification of
+  initial journal/RAW preparation failures. These are now retryable failures;
+  uncertain prior Photos submissions remain protected from resubmission.
 
 The task uses the isolated **Fuji RAW JPEG Pair** iPhone 15 Pro simulator
 (`6EDC06ED-9750-44CA-B4E9-EA18FF712131`, iOS 27.0).

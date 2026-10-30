@@ -81,7 +81,22 @@ import Testing
         do {
             _ = try await service.saveJPEG(request(f, jpeg), edit: .init(source: f.source, recipe: f.recipe)) { _ in }
             Issue.record("No Photos transaction is allowed without a durable intent")
-        } catch { }
+        } catch PhotoLibraryWriteError.invalidOutput { }
+        catch PhotoLibraryWriteError.rejected { }
+        catch { Issue.record("A failed preflight must be definitive, not an uncertain submission: \(error)") }
+        #expect(await library.creations == 0)
+        #expect(await library.originalExists)
+    }
+
+    @Test func unavailableOriginalPreparationIsDefinitiveAndNeverSubmits() async throws {
+        let f = try RenderFixture(); defer { f.remove() }
+        let jpeg = try editJPEGFixture(f), library = try PairTestLibrary(f, jpeg: jpeg)
+        await library.setFault("sourceUnavailable")
+        do {
+            _ = try await pairer(f, library).saveJPEG(request(f, jpeg), edit: .init(source: f.source, recipe: f.recipe)) { _ in }
+            Issue.record("An inaccessible RAW must not submit a pair")
+        } catch PhotoLibraryWriteError.invalidOutput { }
+        catch { Issue.record("Preparation must fail definitively: \(error)") }
         #expect(await library.creations == 0)
         #expect(await library.originalExists)
     }
@@ -233,6 +248,7 @@ actor PairTestLibrary: PhotoLibraryReading, PhotoPairGateway {
     func requestAccess() -> LibraryAccess { .full }
     func sources() -> AsyncThrowingStream<[PhotoSource], Error> { AsyncThrowingStream { $0.finish() } }
     func source(id: SourceID) throws -> PhotoSource {
+        if id == fixture.source.id, fault == "sourceUnavailable" { throw ResourceError.retrievalFailed("Original is offline") }
         if id == fixture.source.id, originalExists { return fixture.source }
         if let paired, id == paired.id { return paired }
         throw ResourceError.inaccessibleAsset(id)

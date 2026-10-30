@@ -45,3 +45,17 @@ metadata retention and album ordering remain untested on a real photo library.
 The installed API/SDK and native implementation were inspected, and every actual
 export must pass resource and metadata read-back guards before removal. Automated
 validation does not create or remove user photos on the phone.
+
+Final failure-path check: failed initial journal writes and unavailable RAW
+preparation were being propagated without proof that Photos had not been called.
+Both regressions failed in `/tmp/fuji-pair-preflight-red.log`. Preparation now has
+an explicit pre-submission error boundary; prior uncertain intents stay outside
+it. `Scripts/test-ios.sh --fast` then passed 586 Swift Testing tests and 20 XCTest
+cases (`/tmp/fuji-pair-preflight-green.log`). Release rebuilt successfully.
+
+The first complete run (`20261030-162912-10159.xcresult`) had 685 total, 680 passed,
+2 failed and 3 skipped. Both failures were existing recipe-editor picker tests
+(`testPhoneEditorSavesNameAndFilmOfflineAndCancelDiscardsChanges` and
+`testXT5EditorOffersOnlyConvertibleFilmRangeAndBalance`); RAW pair, export and
+selection checks passed. A complete run after the final preparation fix is in
+progress.

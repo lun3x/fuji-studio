@@ -23,45 +23,21 @@ struct PhotoLibraryPairer: Sendable {
 
     func saveJPEG(_ request: PhotoSaveRequest, edit: PhotoOriginalEdit,
                   onPlaceholder: @escaping @Sendable (String) -> Void) async throws -> SavedAsset {
-        try Task.checkCancellation()
-        try await requireAccess()
-        guard edit.source.originalResources.jpeg == nil,
-              request.jpeg.sourceID == edit.source.id,
-              request.jpeg.sourceRevision == edit.source.resourceRevision,
-              request.jpeg.settingsDigest == edit.recipe.settingsDigest,
-              try ResourceChecksum.sha256(request.jpeg.fileURL) == request.jpeg.outputSHA256,
-              try ImageGeometry.read(request.jpeg.fileURL) == ImageGeometry(encoded: .init(width: request.jpeg.width,
-                  height: request.jpeg.height), orientation: request.jpeg.orientation) else {
-            throw PhotoLibraryWriteError.invalidOutput("The paired export does not match this RAW and recipe.")
-        }
         if let previous = try await journal.intent(request.operationID), previous.phase != .rejected && previous.phase != .prepared {
-            guard previous.source == edit.source, previous.rawSHA256 == request.jpeg.sourceSHA256,
-                  previous.jpegSHA256 == request.jpeg.outputSHA256 else { throw ResourceError.resourceChanged }
-            switch try await findExport(operationID: request.operationID, sourceID: edit.source.id, knownAssetID: previous.pairedAssetID) {
-            case .found(let asset): return asset
-            case .needsReplacementCleanup(let asset): return try await completeReplacement(operationID: request.operationID, assetID: asset.assetID)
-            default: throw PhotoLibraryWriteError.uncertain(.missingConfirmation)
-            }
+            do {
+                guard previous.source == edit.source, previous.rawSHA256 == request.jpeg.sourceSHA256,
+                      previous.jpegSHA256 == request.jpeg.outputSHA256 else { throw ResourceError.resourceChanged }
+                switch try await findExport(operationID: request.operationID, sourceID: edit.source.id, knownAssetID: previous.pairedAssetID) {
+                case .found(let asset): return asset
+                case .needsReplacementCleanup(let asset): return try await completeReplacement(operationID: request.operationID, assetID: asset.assetID)
+                default: throw PhotoLibraryWriteError.uncertain(.missingConfirmation)
+                }
+            } catch { throw PhotoLibraryWriteError.uncertain(.missingConfirmation) }
         }
-        guard try await sourceReplacements()[edit.source.id] == nil else {
-            throw PhotoLibraryWriteError.invalidOutput("This RAW already has a verified replacement. Export its paired photo instead.")
-        }
-        let current = try await reader.source(id: edit.source.id)
-        guard sameOriginal(current, edit.source), let state = try await gateway.state(assetID: edit.source.id) else {
-            throw PhotoLibraryWriteError.invalidOutput("The original RAW is no longer available.")
-        }
-        let raw = try await reader.materialize(edit.source.originalResources.raf, progress: { _ in })
+        let prepared = try await prepare(request, edit: edit)
+        let raw = prepared.raw
+        var intent = prepared.intent
         defer { try? FileManager.default.removeItem(at: raw.fileURL) }
-        guard raw.token == edit.source.originalResources.raf,
-              try ResourceChecksum.sha256(raw.fileURL) == request.jpeg.sourceSHA256,
-              try await gateway.state(assetID: edit.source.id) == state,
-              sameOriginal(try await reader.source(id: edit.source.id), edit.source) else {
-            throw PhotoLibraryWriteError.invalidOutput("The original changed while preparing the pair.")
-        }
-        var intent = PhotoPairIntent(operationID: request.operationID, source: edit.source, originalState: state,
-            rawSHA256: request.jpeg.sourceSHA256, jpegSHA256: request.jpeg.outputSHA256,
-            width: request.jpeg.width, height: request.jpeg.height, orientation: request.jpeg.orientation)
-        try await journal.store(intent)
         try Task.checkCancellation()
         intent.phase = .submitted
         try await journal.store(intent)
@@ -79,6 +55,52 @@ struct PhotoLibraryPairer: Sendable {
             try await journal.store(intent)
             return try await finish(intent, assetID: assetID)
         } catch { throw PhotoLibraryWriteError.uncertain(.missingConfirmation) }
+    }
+
+    /// Every failure here is known to precede this operation's first Photos submission.
+    private func prepare(_ request: PhotoSaveRequest, edit: PhotoOriginalEdit) async throws -> (intent: PhotoPairIntent, raw: LocalResource) {
+        var retained: LocalResource?
+        do {
+            try Task.checkCancellation()
+            try await requireAccess()
+            guard edit.source.originalResources.jpeg == nil,
+                  request.jpeg.sourceID == edit.source.id, request.jpeg.sourceRevision == edit.source.resourceRevision,
+                  request.jpeg.settingsDigest == edit.recipe.settingsDigest,
+                  try ResourceChecksum.sha256(request.jpeg.fileURL) == request.jpeg.outputSHA256,
+                  try ImageGeometry.read(request.jpeg.fileURL) == ImageGeometry(encoded: .init(width: request.jpeg.width,
+                      height: request.jpeg.height), orientation: request.jpeg.orientation) else {
+                throw PhotoLibraryWriteError.invalidOutput("The paired export does not match this RAW and recipe.")
+            }
+            guard try await sourceReplacements()[edit.source.id] == nil else {
+                throw PhotoLibraryWriteError.invalidOutput("This RAW already has a verified replacement. Export its paired photo instead.")
+            }
+            let current = try await reader.source(id: edit.source.id)
+            guard sameOriginal(current, edit.source), let state = try await gateway.state(assetID: edit.source.id) else {
+                throw PhotoLibraryWriteError.invalidOutput("The original RAW is no longer available.")
+            }
+            let raw = try await reader.materialize(edit.source.originalResources.raf, progress: { _ in })
+            retained = raw
+            guard raw.token == edit.source.originalResources.raf,
+                  try ResourceChecksum.sha256(raw.fileURL) == request.jpeg.sourceSHA256,
+                  try await gateway.state(assetID: edit.source.id) == state,
+                  sameOriginal(try await reader.source(id: edit.source.id), edit.source) else {
+                throw PhotoLibraryWriteError.invalidOutput("The original changed while preparing the pair.")
+            }
+            let intent = PhotoPairIntent(operationID: request.operationID, source: edit.source, originalState: state,
+                rawSHA256: request.jpeg.sourceSHA256, jpegSHA256: request.jpeg.outputSHA256,
+                width: request.jpeg.width, height: request.jpeg.height, orientation: request.jpeg.orientation)
+            try await journal.store(intent)
+            return (intent, raw)
+        } catch {
+            if let retained { try? FileManager.default.removeItem(at: retained.fileURL) }
+            if error is CancellationError { throw error }
+            switch error {
+            case PhotoLibraryWriteError.authorization, PhotoLibraryWriteError.invalidOutput, PhotoLibraryWriteError.rejected: throw error
+            case ResourceError.authorization(let access): throw PhotoLibraryWriteError.authorization(access)
+            case ResourceError.insufficientStorage: throw PhotoLibraryWriteError.rejected(.insufficientStorage)
+            default: throw PhotoLibraryWriteError.invalidOutput("Photos could not prepare the RAW+JPEG pair: \(error.localizedDescription)")
+            }
+        }
     }
     func findExport(operationID: UUID, sourceID: String, knownAssetID: String?) async throws -> SaveLookup {
         guard var intent = try await journal.intent(operationID), intent.source.id == sourceID else { return .notFound }
