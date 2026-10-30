@@ -104,8 +104,8 @@ final class PhotoControlsTests: AppFlowTestCase {
         XCTAssertFalse(app.buttons["workspace.none"].exists)
         XCTAssertFalse(app.staticTexts["workspace.count"].exists)
         XCTAssertEqual(select.label, "Select")
-        XCTAssertGreaterThanOrEqual(select.frame.minY, app.buttons["drawer.toggle"].frame.minY)
-        XCTAssertLessThanOrEqual(select.frame.maxY, grid.frame.minY + 0.5)
+        XCTAssertGreaterThanOrEqual(select.frame.minY, grid.frame.minY)
+        XCTAssertFalse(select.frame.intersects(app.buttons["drawer.toggle"].frame))
         XCTAssertEqual(select.frame.maxX, grid.frame.maxX - 12, accuracy: 1)
         app.cells["grid.source-0"].tap()
         let frame = app.cells["grid.source-0"].frame

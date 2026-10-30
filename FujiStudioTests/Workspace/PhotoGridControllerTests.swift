@@ -52,6 +52,21 @@ final class PhotoGridControllerTests: XCTestCase {
             checked: [], selecting: false, viewed: nil, scrollRequest: nil)
         XCTAssertEqual(controller.collectionView.numberOfSections, 2)
     }
+    func testDayCheckboxLeadsDateInPortraitAndSitsBelowItInBothLandscapeDirections() throws {
+        let date = Calendar.current.date(from: DateComponents(year: 2026, month: 10, day: 23, hour: 12))!
+        for rotation: CGFloat in [0, -.pi / 2, .pi / 2] {
+            let header = PhotoDayHeader(frame: CGRect(x: 0, y: 0, width: 390, height: rotation == 0 ? 44 : 88))
+            header.configure(date: date, selectedCount: 0, totalCount: 6, rotation: rotation, onToggle: {})
+            header.layoutIfNeeded()
+            let label = try XCTUnwrap(header.subviews.compactMap { $0 as? UILabel }.first)
+            let checkbox = try XCTUnwrap(header.subviews.compactMap { $0 as? UIButton }.first)
+            if rotation == 0 { XCTAssertLessThanOrEqual(checkbox.frame.maxX, label.frame.minX) }
+            else {
+                let canvas = CGAffineTransform(rotationAngle: -rotation)
+                XCTAssertGreaterThan(checkbox.frame.applying(canvas).minY, label.frame.applying(canvas).maxY)
+            }
+        }
+    }
     func testDateHeaderWrapsToFitLargestAccessibilityText() throws {
         let date = Calendar.current.date(from: DateComponents(year: 2026, month: 10, day: 23, hour: 12))!
         let controller = PhotoGridController(thumbnails: GridThumbnailSpy())

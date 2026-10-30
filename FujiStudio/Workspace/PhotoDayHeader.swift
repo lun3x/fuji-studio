@@ -7,8 +7,9 @@ final class PhotoDayHeader: UICollectionReusableView {
     private let line = UIView()
     private var onToggle: () -> Void = {}
     private var contentRotation: CGFloat = 0
+    private var controlsSize: CGSize = .zero
 
-    static func height(date: Date, width: CGFloat, rotation: CGFloat, traits: UITraitCollection) -> CGFloat {
+    static func height(date: Date, width: CGFloat, rotation: CGFloat, traits: UITraitCollection, controlsSize: CGSize = .zero) -> CGFloat {
         let font = UIFont.preferredFont(forTextStyle: .subheadline, compatibleWith: traits)
         let title = title(for: date)
         if rotation != 0 {
@@ -16,9 +17,19 @@ final class PhotoDayHeader: UICollectionReusableView {
             let widestWord = title.split(separator: " ").map { (String($0) as NSString).size(withAttributes: [.font: font]).width }.max() ?? 0
             return max(88, ceil(widestWord) + 24)
         }
-        let text = (title as NSString).boundingRect(with: CGSize(width: max(1, width - 72), height: .greatestFiniteMagnitude),
+        return portraitGeometry(title: title, width: width, font: font, controlsSize: controlsSize).height
+    }
+
+    private static func portraitGeometry(title: String, width: CGFloat, font: UIFont, controlsSize: CGSize)
+        -> (height: CGFloat, textWidth: CGFloat, top: CGFloat) {
+        let available = max(1, width - 72 - controlsSize.width)
+        let widestWord = title.split(separator: " ").map { (String($0) as NSString).size(withAttributes: [.font: font]).width }.max() ?? 0
+        let belowControls = controlsSize.width > 0 && available < max(120, ceil(widestWord))
+        let textWidth = belowControls ? max(1, width - 72) : available
+        let top = belowControls ? controlsSize.height : 0
+        let text = (title as NSString).boundingRect(with: CGSize(width: textWidth, height: .greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: font], context: nil)
-        return max(44, ceil(text.height) + 20)
+        return (top + max(44, ceil(text.height) + 20), textWidth, top)
     }
 
     private static func title(for date: Date) -> String {
@@ -37,7 +48,7 @@ final class PhotoDayHeader: UICollectionReusableView {
         dateLabel.numberOfLines = 0
         dateLabel.textColor = .secondaryLabel
         dateLabel.accessibilityTraits = .header
-        checkbox.setPreferredSymbolConfiguration(.init(pointSize: 22, weight: .regular), forImageIn: .normal)
+        checkbox.setPreferredSymbolConfiguration(.init(pointSize: 24, weight: .regular), forImageIn: .normal)
         checkbox.addTarget(self, action: #selector(toggle), for: .touchUpInside)
         line.backgroundColor = .separator
         for child in [line, dateLabel, checkbox] { addSubview(child) }
@@ -48,21 +59,26 @@ final class PhotoDayHeader: UICollectionReusableView {
         super.layoutSubviews()
         line.frame = CGRect(x: 8, y: 0, width: max(0, bounds.width - 16), height: 1 / traitCollection.displayScale)
         checkbox.bounds = CGRect(x: 0, y: 0, width: 44, height: 44)
-        checkbox.center = CGPoint(x: max(22, bounds.width - 30), y: bounds.midY)
         if contentRotation == 0 {
-            dateLabel.bounds = CGRect(x: 0, y: 0, width: max(0, bounds.width - 72), height: bounds.height)
-            dateLabel.center = CGPoint(x: 12 + dateLabel.bounds.width / 2, y: bounds.midY)
+            let geometry = Self.portraitGeometry(title: dateLabel.text ?? "", width: bounds.width, font: dateLabel.font, controlsSize: controlsSize)
+            let height = max(1, bounds.height - geometry.top)
+            dateLabel.bounds = CGRect(x: 0, y: 0, width: geometry.textWidth, height: height)
+            dateLabel.center = CGPoint(x: 60 + dateLabel.bounds.width / 2, y: geometry.top + height / 2)
+            checkbox.center = CGPoint(x: 30, y: dateLabel.center.y)
         } else {
             let width = max(1, bounds.height - 24)
             let height = min(bounds.width - 72, ceil(dateLabel.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height))
             dateLabel.bounds = CGRect(x: 0, y: 0, width: width, height: max(1, height))
-            dateLabel.center = CGPoint(x: 12 + dateLabel.bounds.height / 2, y: bounds.midY)
+            dateLabel.center = CGPoint(x: contentRotation > 0 ? bounds.width - 12 - dateLabel.bounds.height / 2 : 12 + dateLabel.bounds.height / 2,
+                                      y: bounds.midY)
+            checkbox.center = CGPoint(x: contentRotation > 0 ? 30 : max(22, bounds.width - 30), y: bounds.midY)
         }
     }
 
-    func configure(date: Date, selectedCount: Int, totalCount: Int, rotation: CGFloat, onToggle: @escaping () -> Void) {
+    func configure(date: Date, selectedCount: Int, totalCount: Int, rotation: CGFloat, controlsSize: CGSize = .zero, onToggle: @escaping () -> Void) {
         self.onToggle = onToggle
         contentRotation = rotation
+        self.controlsSize = controlsSize
         dateLabel.transform = CGAffineTransform(rotationAngle: rotation)
         checkbox.transform = CGAffineTransform(rotationAngle: rotation)
         dateLabel.font = .preferredFont(forTextStyle: .subheadline, compatibleWith: traitCollection)
@@ -73,7 +89,8 @@ final class PhotoDayHeader: UICollectionReusableView {
         dateLabel.text = title
         let all = selectedCount == totalCount
         let partial = selectedCount > 0 && !all
-        checkbox.setImage(UIImage(systemName: all ? "checkmark.square.fill" : partial ? "minus.square" : "square"), for: .normal)
+        let colors = UIImage.SymbolConfiguration(paletteColors: all ? [.white, .systemBlue] : [.white.withAlphaComponent(0.75), .systemGray3])
+        checkbox.setImage(UIImage(systemName: "checkmark.circle.fill", withConfiguration: colors), for: .normal)
         checkbox.accessibilityLabel = "Select photos for \(title)"
         checkbox.accessibilityValue = all ? "Checked" : partial ? "Partially selected" : "Unchecked"
         checkbox.accessibilityHint = all ? "Deselect all photos for this day" : "Select all photos for this day"

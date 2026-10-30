@@ -28,6 +28,7 @@ final class PhotoGridController: UIViewController, UICollectionViewDelegateFlowL
     private var suppliedMetrics: GridMetrics?
     private var layoutSize: CGSize = .zero
     private var layoutHeaderHeight: CGFloat = 0
+    private var dayHeaderControlsSize: CGSize = .zero
     private var allowsDrawerCollapse = false
     private var drawerPanOrigin: CGFloat?
     private var pullingDrawer = false
@@ -102,13 +103,14 @@ final class PhotoGridController: UIViewController, UICollectionViewDelegateFlowL
         }
         publishViewport(); cacheVisible()
     }
-    func update(sources: [PhotoSource], checked: Set<SourceID>, selecting: Bool, viewed: SourceID?, scrollRequest: GridScrollRequest?, gridMetrics: GridMetrics? = nil, bottomInset: CGFloat = 0, contentRotation: CGFloat = 0, allowsDrawerCollapse: Bool = false) {
+    func update(sources: [PhotoSource], checked: Set<SourceID>, selecting: Bool, viewed: SourceID?, scrollRequest: GridScrollRequest?, gridMetrics: GridMetrics? = nil, bottomInset: CGFloat = 0, contentRotation: CGFloat = 0, allowsDrawerCollapse: Bool = false, dayHeaderControlsSize: CGSize = .zero) {
         loadViewIfNeeded()
         if self.contentRotation != contentRotation {
             cancelDrawerPan()
             finishSweep(cancelled: true)
         }
         self.contentRotation = contentRotation
+        self.dayHeaderControlsSize = dayHeaderControlsSize
         suppliedMetrics = gridMetrics
         collectionView.contentInset.bottom = max(0, bottomInset)
         collectionView.verticalScrollIndicatorInsets.bottom = max(0, bottomInset)
@@ -160,6 +162,7 @@ final class PhotoGridController: UIViewController, UICollectionViewDelegateFlowL
         guard sections.indices.contains(section), let date = sections[section].date else { return }
         let ids = Set(sections[section].sourceIDs)
         header.configure(date: date, selectedCount: selecting ? checked.intersection(ids).count : 0, totalCount: ids.count, rotation: contentRotation,
+            controlsSize: dayHeaderControlsSize,
             onToggle: { [weak self] in self?.onDayTapped(ids) })
     }
     private func refreshHeaders() {
@@ -172,11 +175,11 @@ final class PhotoGridController: UIViewController, UICollectionViewDelegateFlowL
     func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout,
                         referenceSizeForHeaderInSection section: Int) -> CGSize {
         CGSize(width: collectionView.bounds.width, height: sections[section].date.map {
-            PhotoDayHeader.height(date: $0, width: collectionView.bounds.width, rotation: contentRotation, traits: traitCollection)
+            PhotoDayHeader.height(date: $0, width: collectionView.bounds.width, rotation: contentRotation, traits: traitCollection, controlsSize: dayHeaderControlsSize)
         } ?? 0)
     }
     private var firstDayHeaderHeight: CGFloat {
-        sections.first?.date.map { PhotoDayHeader.height(date: $0, width: collectionView.bounds.width, rotation: contentRotation, traits: traitCollection) } ?? 0
+        sections.first?.date.map { PhotoDayHeader.height(date: $0, width: collectionView.bounds.width, rotation: contentRotation, traits: traitCollection, controlsSize: dayHeaderControlsSize) } ?? 0
     }
     private var maxOffset: CGFloat {
         max(0, collectionView.contentSize.height - collectionView.bounds.height + collectionView.contentInset.bottom)

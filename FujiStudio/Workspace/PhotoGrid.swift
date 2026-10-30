@@ -37,6 +37,7 @@ struct PhotoGrid: UIViewControllerRepresentable {
     var bottomInset: CGFloat = 0
     var contentRotation: CGFloat = 0
     var allowsDrawerCollapse = false
+    var dayHeaderControlsSize: CGSize = .zero
     var onSourceTapped: (SourceID) -> Void
     var onCheckedChanged: (Set<SourceID>) -> Void
     var onDayTapped: (Set<SourceID>) -> Void = { _ in }
@@ -51,7 +52,8 @@ struct PhotoGrid: UIViewControllerRepresentable {
         controller.onDrawerDrag = onDrawerDrag
         controller.update(sources: sources, checked: checkedSourceIDs, selecting: isSelecting,
                           viewed: viewedSourceID, scrollRequest: scrollRequest, gridMetrics: gridMetrics,
-                          bottomInset: bottomInset, contentRotation: contentRotation, allowsDrawerCollapse: allowsDrawerCollapse)
+                          bottomInset: bottomInset, contentRotation: contentRotation, allowsDrawerCollapse: allowsDrawerCollapse,
+                          dayHeaderControlsSize: dayHeaderControlsSize)
     }
     static func dismantleUIViewController(_ controller: PhotoGridController, coordinator: ()) { controller.stop() }
 }

@@ -31,6 +31,7 @@ struct WorkspaceView<StatusControl: View>: View {
     @State private var controlHeight: CGFloat = 0
     @State private var scrollRequest: GridScrollRequest?
     @State private var orientation = WorkspaceOrientation.portrait
+    @State private var selectionControlSize = CGSize(width: 112, height: 44)
 
     var body: some View {
         GeometryReader { proxy in
@@ -87,6 +88,8 @@ struct WorkspaceView<StatusControl: View>: View {
                                 viewedSourceID: state.viewedSourceID, thumbnails: thumbnails, scrollRequest: scrollRequest,
                                 gridMetrics: gridMetrics, bottomInset: safe.bottom,
                                 contentRotation: orientation.contentRotation, allowsDrawerCollapse: state.drawerDetent == .expanded,
+                                dayHeaderControlsSize: orientation == .portrait ? CGSize(width: selectionControlSize.width + 76,
+                                    height: selectionControlSize.height + 24) : .zero,
                                 onSourceTapped: { onAction(.sourceTapped($0)) },
                                 onCheckedChanged: { onAction(.checkedSourcesReplaced($0)) },
                                 onDayTapped: { onAction(.daySelectionToggled($0)) }, onViewportChanged: { viewport in
@@ -127,6 +130,13 @@ struct WorkspaceView<StatusControl: View>: View {
                 GeometryReader { overlay in
                     if let anchor {
                         let frame = overlay[anchor]
+                        selectionControls.padding(12)
+                            .padding(.top, orientation == .portrait ? 0 : windowSafe.top)
+                            .padding(.bottom, orientation == .portrait ? 0 : windowSafe.bottom)
+                            .padding(.leading, orientation == .landscapeRight ? dayHeaderHeight : 0)
+                            .padding(.trailing, orientation == .landscapeLeft ? dayHeaderHeight : 0)
+                            .frame(width: frame.width, height: frame.height, alignment: orientation.trayControlAlignment)
+                            .position(x: frame.midX, y: frame.midY)
                         if state.photoFilter == .compatibleWithCamera,
                            !visibleIDs.isEmpty,
                            state.photoFilterPendingCount > 0 || state.photoFilterUnavailableCount > 0 {
@@ -141,18 +151,6 @@ struct WorkspaceView<StatusControl: View>: View {
                                 .position(x: frame.midX, y: frame.midY)
                                 .allowsHitTesting(false)
                         }
-                    }
-                }
-            }
-            .overlayPreferenceValue(DrawerHeaderBoundsKey.self) { anchor in
-                GeometryReader { overlay in
-                    if let anchor {
-                        let frame = overlay[anchor]
-                        selectionControls
-                            .padding(.horizontal, orientation == .portrait ? 12 : 0)
-                            .padding(.vertical, orientation == .portrait ? 0 : 12)
-                            .frame(width: frame.width, height: frame.height)
-                            .position(x: frame.midX, y: frame.midY)
                     }
                 }
             }
@@ -218,16 +216,22 @@ struct WorkspaceView<StatusControl: View>: View {
     }
     private var selectionControls: some View {
         GlassEffectContainer(spacing: 12) {
-            DeviceAnchoredRow(orientation: orientation, spacing: 12, leadingItems: state.isSelecting ? 1 : 0,
+            DeviceAnchoredRow(orientation: orientation, spacing: 12, leadingItems: 0,
                 reversesAxis: orientation == .landscapeLeft) {
-                if state.isSelecting {
-                    count.padding(.horizontal, 12).frame(minHeight: 44)
-                        .glassEffect(.regular, in: .capsule)
-                        .allowsHitTesting(false)
-                }
                 PhotoFilterMenu(selected: state.photoFilter, cameraModel: state.photoFilterCamera?.model,
                     onSelect: { onAction(.photoFilterSelected($0)) })
-                selectionButton
+                TraySelectionControlLayout(orientation: orientation) {
+                    selectionCountSizingLabel.hidden().frame(maxWidth: .infinity, maxHeight: .infinity).overlay {
+                        if state.isSelecting { selectionCount }
+                    }
+                    clearSelectionLabel.hidden().frame(maxWidth: .infinity, maxHeight: .infinity).overlay {
+                        if state.isSelecting { clearSelectionButton }
+                    }
+                    selectLabel.hidden().frame(maxWidth: .infinity, maxHeight: .infinity).overlay {
+                        if !state.isSelecting { selectButton }
+                    }
+                }
+                .onGeometryChange(for: CGSize.self, of: { $0.size }) { selectionControlSize = $0 }
             }
         }
     }
@@ -254,26 +258,46 @@ struct WorkspaceView<StatusControl: View>: View {
                 .accessibilityIdentifier("filter.unavailable")
         }
     }
-    private var selectionButton: some View {
-        Button { onAction(state.isSelecting ? .done : .select) } label: {
-            Group {
-                if state.isSelecting {
-                    Image(systemName: "xmark").frame(width: 44, height: 44)
-                } else {
-                    Text("Select").fixedSize().padding(.horizontal, 16).frame(minHeight: 44)
-                }
-            }
-            .font(.callout.weight(.semibold)).contentShape(.capsule)
+    private var clearSelectionButton: some View {
+        Button { onAction(.done) } label: {
+            clearSelectionLabel.contentShape(.circle)
         }.buttonStyle(.plain)
             .glassEffect(.regular.interactive(), in: .capsule)
-            .accessibilityLabel(state.isSelecting ? "Cancel selection" : "Select")
+            .accessibilityLabel("Cancel selection")
             .accessibilityIdentifier("workspace.select")
     }
-    private var count: some View {
-        Label("\(state.checkedSourceIDs.count)", systemImage: "checkmark.circle")
+    private var clearSelectionLabel: some View {
+        Image(systemName: "xmark").font(.callout.weight(.semibold)).frame(width: 44, height: 44)
+    }
+    private var selectLabel: some View {
+        Text("Select").font(.callout.weight(.semibold)).padding(.horizontal, 16).frame(minHeight: 44)
+    }
+    private var selectButton: some View {
+        Button { onAction(.select) } label: {
+            selectLabel.frame(maxWidth: .infinity, maxHeight: .infinity).contentShape(.capsule)
+        }.buttonStyle(.plain)
+            .glassEffect(.regular.interactive(), in: .capsule)
+            .accessibilityLabel("Select")
+            .accessibilityIdentifier("workspace.select")
+    }
+    private var selectionCountSizingLabel: some View {
+        Label(String(max(sources.count, state.checkedSourceIDs.count)), systemImage: "checkmark.circle")
+            .font(.caption).monospacedDigit().lineLimit(1).fixedSize()
+            .padding(.horizontal, 12).frame(minHeight: 44)
+    }
+    private var selectionCount: some View {
+        selectionCountSizingLabel.hidden()
+            .overlay {
+                Label(String(state.checkedSourceIDs.count), systemImage: "checkmark.circle")
+                    .font(.caption).monospacedDigit().lineLimit(1).fixedSize()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .glassEffect(.regular, in: .capsule)
+            .accessibilityElement(children: .ignore)
+            .accessibilityAddTraits(.isStaticText)
             .accessibilityLabel("\(state.checkedSourceIDs.count) selected")
             .accessibilityIdentifier("workspace.count")
-            .font(.caption).monospacedDigit().lineLimit(1).fixedSize()
+            .allowsHitTesting(false)
     }
 }
 

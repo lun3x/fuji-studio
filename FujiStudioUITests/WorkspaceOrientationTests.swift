@@ -17,19 +17,37 @@ final class WorkspaceOrientationTests: XCTestCase {
     }
     func testDayHeadersAndCheckboxesWorkInBothLandscapeDirections() {
         defer { XCUIDevice.shared.orientation = .portrait }
-        for orientation in [UIDeviceOrientation.landscapeRight, .landscapeLeft] {
-            let app = launch(["--fixture-dated-photos"], orientation: orientation)
+        for (orientation, accessibility) in [(UIDeviceOrientation.landscapeRight, false), (.landscapeLeft, false),
+                                            (.landscapeRight, true), (.landscapeLeft, true)] {
+            let flags = ["--fixture-dated-photos"] + (accessibility ? ["--fixture-accessibility"] : [])
+            let app = launch(flags, orientation: orientation)
             let day = app.buttons["grid.day.2026-10-23"]
             XCTAssertTrue(day.waitForExistence(timeout: 5))
             XCTAssertFalse(day.frame.intersects(app.buttons["workspace.select"].frame))
             let date = app.staticTexts["Fri, Oct 23, 2026"]
             XCTAssertTrue(date.exists)
             XCTAssertGreaterThan(date.frame.width, 40)
+            XCTAssertLessThan(date.frame.maxY, day.frame.minY)
+            XCTAssertLessThan(date.frame.minY, app.windows.firstMatch.frame.midY)
+            XCTAssertGreaterThan(day.frame.minY, app.windows.firstMatch.frame.midY)
+            let filter = app.buttons["workspace.filter"], filterBefore = filter.frame
+            let selectBefore = app.buttons["workspace.select"].frame
+            XCTAssertGreaterThanOrEqual(selectBefore.minX, app.windows.firstMatch.frame.minX)
+            XCTAssertLessThanOrEqual(selectBefore.maxX, app.windows.firstMatch.frame.maxX)
+            XCTAssertFalse(date.frame.intersects(filterBefore))
+            XCTAssertFalse(date.frame.intersects(selectBefore))
             tap(day, in: app)
             XCTAssertEqual(day.value as? String, "Checked")
             XCTAssertEqual(app.staticTexts["workspace.count"].label, "6 selected")
+            XCTAssertEqual(filter.frame, filterBefore)
+            let count = app.staticTexts["workspace.count"].frame
+            let clear = app.buttons["workspace.select"].frame
+            XCTAssertLessThanOrEqual(clear.maxY, count.minY)
+            XCTAssertLessThanOrEqual(count.maxY, filter.frame.minY)
+            XCTAssertEqual(clear.minY, selectBefore.minY, accuracy: 0.5)
+            XCTAssertEqual(count.maxY, selectBefore.maxY, accuracy: 0.5)
             let shot = XCTAttachment(screenshot: app.screenshot())
-            shot.name = "Upright day divider \(orientation.rawValue)"; shot.lifetime = .keepAlways; add(shot)
+            shot.name = "Upright day divider \(orientation.rawValue) AX \(accessibility)"; shot.lifetime = .keepAlways; add(shot)
             app.terminate()
         }
     }

@@ -1,5 +1,7 @@
 # Selection tray day dividers
 
+Control placement and day-check styling are superseded by [the tray control layout revision](2026-10-30-tray-control-layout.md).
+
 **Goal:** Group photos by capture day, with a date on the left and a checkbox on the right that selects that day's photos.
 
 **Design:** Use collection view sections in the existing tray, preserving incoming photo order. Format dates as `Fri, Oct 23, 2026` using the current time zone. Undated photos have no date divider. A checkbox starts selection if needed, selects the whole visible day when partially selected, and deselects a fully selected day without affecting other days or the viewed photo. Filtered-out photos are excluded.
