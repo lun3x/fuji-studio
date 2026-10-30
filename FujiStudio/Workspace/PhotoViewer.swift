@@ -119,7 +119,6 @@ actor VersionImageResolver {
             return try await materialize(token, geometry: nil, progress: progress)
         case .saved(let id):
             guard let version = try await catalog.versions(sourceID: source.id).first(where: { $0.id == id && $0.sourceID == source.id }) else { throw ViewerError.invalidVersion }
-            guard version.availability == .available else { throw ViewerError.unavailable(version.availability) }
             if version.destination == .updateOriginal {
                 guard try await matchesCurrentEdit(version) else { throw ViewerError.invalidVersion }
                 let resources = try await library.resources(assetID: version.outputAssetID)
@@ -135,6 +134,7 @@ actor VersionImageResolver {
                 }
                 return file
             }
+            guard version.availability == .available else { throw ViewerError.unavailable(version.availability) }
             let originals = try await library.resources(assetID: version.outputAssetID).filter {
                 $0.assetID == version.outputAssetID && $0.format == .jpeg && $0.role != .adjusted
             }

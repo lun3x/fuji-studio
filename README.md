@@ -36,7 +36,8 @@ sets out the hardware feasibility gates, native app tasks, and acceptance checks
   items, and apply the same camera profile to the entire selection in one batch.
 - Apply an imported profile through the connected camera's conversion engine.
 - Preview recipes, compare original and saved versions, and export the viewed
-  photo or a batch as new Photos assets with the original capture dates.
+  photo or a batch as new Photos assets with the original capture dates, or as
+  reversible edits of the existing Photos items.
 - Browse through a vertically scrolling, expandable photo drawer and choose
   recipes from a floating menu using Apple's Liquid Glass design language.
 
@@ -45,6 +46,13 @@ sets out the hardware feasibility gates, native app tasks, and acceptance checks
 - Creating recipes from scratch.
 
 ## Status
+
+The camera status sheet also contains app settings. **Update original in Photos**
+is red and off by default. Enabling it saves each new export as a reversible edit
+of the existing RAW or RAW+JPEG item. Photos retains the original resources;
+**Revert to Original** in Photos removes the edit. Only the current matching edit
+appears in the version picker; replaced or reverted edits disappear. The setting
+persists across launches and is frozen when each export job starts.
 
 The recipe selector has Camera and Phone tabs. The copy icon beside an imported
 camera recipe saves its exact name/settings on the phone and opens the Phone tab
@@ -295,12 +303,16 @@ modulation optimization was source-adjusted to effective OFF in the observed
 runs; there is no universal ON guarantee.
 
 Keep the app foreground and the phone/camera connected during USB work. Exports
-freeze the submitted sources and recipe, then process sequentially. Background
+freeze the submitted sources, recipe and save destination, then process sequentially. Background
 or disconnect can pause work; confirmed outputs remain, and unconfirmed saves
 must reconcile before any replacement. Real interruption acceptance is still
-pending. Previews do not invoke Photos saving. Export creates separate JPEG
-assets with the original effective Photos capture date and available location;
-Photos controls equal-time tie order.
+pending. Previews do not invoke Photos saving. By default, export creates separate
+JPEG assets with the original effective Photos capture date and available
+location; Photos controls equal-time tie order. When **Update original in Photos**
+is enabled, export changes the existing asset's appearance through PhotoKit
+content editing, preserving its original RAW, camera JPEG and metadata. Interrupted
+edits reconcile using the exact operation recorded in adjustment data, and are
+never silently replaced with a new library item.
 
 ## Camera failure journals
 

@@ -27,7 +27,7 @@ struct PhotoResourceDescriptor: Sendable {
     /// must not invalidate their identity or cancel a batch that is editing those assets.
     static func assignRevisions(_ resources: [Self], modificationDate: Date?) -> [Self] {
         func identity(_ resource: Self) -> String {
-            "\(resource.resourceType)|\(resource.contentTypeIdentifier)|\(resource.filename)|\(resource.byteCount ?? -1)"
+            "\(resource.resourceType)|\(resource.contentTypeIdentifier)|\(resource.filename)"
         }
         func digest(_ value: String) -> String {
             SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()

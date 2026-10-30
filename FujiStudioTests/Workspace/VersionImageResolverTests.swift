@@ -6,7 +6,8 @@ import Testing
 
 @MainActor
 struct VersionImageResolverTests {
-    @Test func editedVersionReadsOnlyMatchingCurrentRenditionAndRejectsRacingReplacement() async throws {
+    @Test(arguments: [AssetAvailability.available, .inaccessible])
+    func editedVersionReadsOnlyMatchingCurrentRenditionAndRejectsRacingReplacement(_ storedAvailability: AssetAvailability) async throws {
         let f = try RenderFixture(); defer { f.remove() }
         let jpeg = try editJPEGFixture(f, orientation: 6)
         let upright = f.root.appendingPathComponent("normalized.JPG")
@@ -16,7 +17,7 @@ struct VersionImageResolverTests {
             originalFilename: "edited.JPG", discriminator: "5|public.jpeg|edited.JPG")
         let library = ViewerLibrary(original: upright, tokens: [f.token, token])
         let version = SavedVersion(id: UUID(), sourceID: f.source.id, outputAssetID: f.source.id, recipeSnapshot: f.recipe,
-            operationID: operation, exportedAt: Date(), jpeg: jpeg, availability: .available, destination: .updateOriginal)
+            operationID: operation, exportedAt: Date(), jpeg: jpeg, availability: storedAvailability, destination: .updateOriginal)
         let edits = SequenceEditReader([marker, marker])
         let resolver = VersionImageResolver(library: library, catalog: ViewerCatalog([version]), pool: RenderLibrary(f).pool(),
             rawRenderer: try RawDisplayRenderer(directory: f.root.appendingPathComponent("raw-display")), cache: try f.cache(), edits: edits)

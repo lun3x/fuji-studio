@@ -4,6 +4,25 @@ import Testing
 @testable import FujiStudio
 
 @MainActor struct AppModelTests {
+    @Test func currentEditOpensAfterPhotosAccessIsRestoredDespiteStaleCatalogFlag() async throws {
+        let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment)
+        await model.start(automaticallyConnect: false); await model.connect()
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
+        model.send(.sourceTapped("source-0"))
+        let source = try await f.reader.source(id: "source-0"), recipe = try #require(model.state.recipes.first { $0.slot == 3 })
+        _ = try await f.environment.exports.start(sources: [source], recipe: recipe, destination: .updateOriginal)
+        await eventually { model.savedVersions.count == 1 }
+        let version = try #require(model.savedVersions.first)
+        // libraryChanged persists this flag when an item leaves limited access. The current
+        // marker/resources are accessible again after the user restores that selection.
+        try await f.environment.catalog.setAvailability(assetID: source.id, availability: .inaccessible)
+        await model.reloadLibrary()
+        #expect(model.savedVersions.first?.availability == .available)
+        model.send(.versionSelected(.saved(version.id)))
+        await eventually { model.displayFile != nil && model.imageStatus == nil }
+        #expect(model.imageIdentity?.version == .saved(version.id))
+    }
+
     @Test func repeatedOriginalUpdatesAndRevertHideOldVersionsAndKeepOriginals() async throws {
         let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment)
         await model.start(automaticallyConnect: false); await model.connect()

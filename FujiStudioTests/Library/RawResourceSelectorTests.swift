@@ -5,6 +5,20 @@ import Foundation
 @testable import FujiStudio
 
 struct RawResourceSelectorTests {
+    @Test func downloadedSizeHintDoesNotChangeImmutableOriginalIdentity() throws {
+        let unknown = PhotoResourceDescriptor(assetID: "raw", resourceType: PHAssetResourceType.photo.rawValue,
+            contentTypeIdentifier: "com.fuji.raw-image", filename: "camera.RAF")
+        var known = unknown; known.byteCount = 123
+        let beforeDescriptors = PhotoResourceDescriptor.assignRevisions([unknown], modificationDate: nil)
+        let afterDescriptors = PhotoResourceDescriptor.assignRevisions([known], modificationDate: Date())
+        let before = try RawResourceSelector.select(beforeDescriptors.map(\.token)).raf
+        let after = try RawResourceSelector.select(afterDescriptors.map(\.token)).raf
+        #expect(before.sourceRevision == after.sourceRevision)
+        #expect(before == after)
+        #expect(Set([before, after]).count == 1)
+        #expect(beforeDescriptors.first?.token.byteCount == nil && afterDescriptors.first?.token.byteCount == 123)
+    }
+
     @Test func reversibleEditsKeepOriginalIdentityButInvalidateEditedTokens() throws {
         let raw = PhotoResourceDescriptor(assetID: "pair", resourceType: PHAssetResourceType.alternatePhoto.rawValue,
             contentTypeIdentifier: "com.fuji.raw-image", filename: "camera.RAF", byteCount: 123)
