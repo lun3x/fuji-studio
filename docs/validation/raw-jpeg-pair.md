@@ -71,4 +71,6 @@ and the automatic `Apple Development` identity. The exact bundle at
 `codesign --verify --deep --strict`.
 
 The first installation attempt could not reach Louisphone (CoreDevice error
-4016; device listed unavailable). Installation is pending reconnection.
+4016; device listed unavailable). After reconnection, the exact verified bundle
+installed successfully on the iPhone 15 Pro. `com.lun3x.FujiStudio` launched
+normally with no fixture or test arguments.

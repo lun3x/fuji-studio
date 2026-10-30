@@ -79,6 +79,6 @@ and library, affected version/settings unit/UI tests, and validation report.
   suites, then the complete `Scripts/test-ios.sh` on the isolated simulator.
 - [x] Obtain one read-only whole-change review; fix material issues with observed
   failing regressions, then appropriate suite verification.
-- [ ] Build signed Release, verify the exact bundle, install and launch on the
+- [x] Build signed Release, verify the exact bundle, install and launch on the
   user's connected iPhone under existing installation authorization.
 - [x] Record results, clean up the simulator, and push final documentation.

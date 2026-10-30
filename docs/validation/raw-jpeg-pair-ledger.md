@@ -71,3 +71,7 @@ Task 3 validation: both editor tests passed unchanged in the serial retry
 reported, rather than relabeling that run as passed. Task simulator shutdown and
 deletion were verified. Code and validation are pushed; physical installation is
 the only remaining item, pending the phone's reconnection.
+
+Task 3: complete after reconnection. Reverified the exact signed Release bundle,
+installed it successfully on Louisphone, and launched `com.lun3x.FujiStudio`
+normally without fixture/test arguments. No real-library export was executed.
