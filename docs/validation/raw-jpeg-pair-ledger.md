@@ -9,3 +9,10 @@ the same verified replacement identity; passive lookup remains read-only.
 
 Jujutsu replaces skill scripts that assume Git. Tests and completion evidence are
 recorded here rather than invoking scripts that would mutate Git state.
+
+Task 1: complete. Observed the missing service behavior fail; then observed
+metadata-loss and limited-access recovery regressions fail before fixing them.
+`Scripts/test-ios.sh FujiStudioTests/PhotoLibraryPairerTests` passed all 8 tests
+(including five corruption/change variants). This includes real byte read-back,
+metadata preservation, durable reopen, read-only recovery, and submitted-operation
+cancellation. Log: `/tmp/fuji-pair-service-final.log`.

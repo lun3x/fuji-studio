@@ -22,7 +22,7 @@ struct SavedAsset: Sendable, Equatable {
 }
 
 enum SaveLookup: Sendable, Equatable {
-    case found(SavedAsset), notFound, inaccessible
+    case found(SavedAsset), needsReplacementCleanup(SavedAsset), notFound, inaccessible
 }
 
 enum PhotoSaveFailure: Sendable, Equatable {
