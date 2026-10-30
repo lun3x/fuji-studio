@@ -49,6 +49,14 @@ final class StandardRecipeEditorTests: AppFlowTestCase {
       .firstMatch
     XCTAssertTrue(edit.waitForExistence(timeout: 5))
     edit.tap()
+    // Settle a delayed Name keyboard before opening the film menu.
+    let name = app.textFields["recipe.editor.name"]
+    let originalName = name.value as? String
+    XCTAssertNotNil(originalName)
+    name.tap()
+    XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+    reveal(app.buttons["recipe.editor.setting.film"], in: app)
+    XCTAssertEqual(name.value as? String, originalName)
     let warm = app.buttons["recipe.editor.setting.monochromeWarmCool"]
     reveal(warm, in: app)
     XCTAssertFalse(warm.isEnabled)
