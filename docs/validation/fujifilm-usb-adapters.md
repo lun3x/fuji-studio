@@ -195,3 +195,9 @@ On 2026-10-29 the user deferred the deliberate C4 export and saved-version test.
 Physical seven-bank import and C4 preview remain verified. Export/history,
 saved-version viewing and independent JPEG-file inspection remain pending until
 the user resumes testing.
+
+The later [X-E3 phone conversion audit](xe3-phone-conversion-audit.md) inspected
+104 actual phone-generated JPEGs and an original capture reference. It confirmed
+the film/WB/control encodings but found severe colour corruption when a DR400
+recipe exceeds a DR200 RAW's capture range. Readback and metadata acceptance
+alone do not establish source-specific rendering fidelity.

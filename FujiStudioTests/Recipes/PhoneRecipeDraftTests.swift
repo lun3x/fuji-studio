@@ -25,7 +25,6 @@ struct PhoneRecipeDraftTests {
   @Test func settingsOutsideConversionDomainCannotBeSaved() throws {
     let phone = try ProductionProfileFixture().bank.copiedToPhone()
     for (id, value): (RecipeSettingID, RecipeSettingValue) in [
-      (.dynamicRange, .integer(200)),
       (.dynamicRange, .integer(0)), (.whiteBalance, .whiteBalance(.daylight)),
       (.grain, .grain(.init(strength: .weak, size: .small))),
       (.grain, .grain(.init(strength: .strong, size: .large))),
@@ -90,7 +89,7 @@ struct PhoneRecipeDraftTests {
         == [WhiteBalanceMode.auto, .temperature].map(RecipeSettingValue.whiteBalance))
     #expect(
       original.choices(for: .dynamicRange).map(\.value)
-        == [400, 100].map(RecipeSettingValue.integer))
+        == [400, 200, 100].map(RecipeSettingValue.integer))
     #expect(RecipeSettingID.dynamicRange.label(for: .integer(0)) == "Auto")
     for id in [RecipeSettingID.film, .whiteBalance, .dynamicRange] {
       for choice in original.choices(for: id) {

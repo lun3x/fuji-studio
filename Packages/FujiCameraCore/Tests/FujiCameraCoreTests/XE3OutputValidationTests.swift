@@ -4,6 +4,50 @@ import Testing
 @testable import FujiCameraCore
 
 struct XE3OutputValidationTests {
+  @Test func cappedDRIsAcceptedAndOriginalRequestIsRetained() throws {
+    var fields = xe3MakerFields()
+    fields[0x1403] = short(200)
+    let image = CoreJPEGFixture(model: "X-E3", lensOptimizer: 1, fields: entries(fields)).inject(
+      into: try ObjectObservationFixture.jpeg())
+    let result = try XE3Adapter().validateOutput(
+      image, conversion: conversion(captureDynamicRange: 200))
+    guard case .accepted(let report) = result.admission else {
+      Issue.record("DR200 output must succeed for a DR400 recipe on a DR200 capture")
+      return
+    }
+    #expect(report.requested.dynamicRange == 400)
+    #expect(report.dynamicRangeEffective == 200 && report.dynamicRangeAdjusted)
+    let saved = try JSONEncoder().encode(report)
+    #expect(try JSONDecoder().decode(EffectiveRecipeReport.self, from: saved) == report)
+  }
+
+  @Test func requestedDRStillFailsWhenItExceedsEffectiveDR() throws {
+    let image = CoreJPEGFixture(model: "X-E3", lensOptimizer: 1, fields: entries(xe3MakerFields())).inject(
+      into: try ObjectObservationFixture.jpeg())
+    let result = try XE3Adapter().validateOutput(
+      image, conversion: conversion(captureDynamicRange: 200))
+    guard case .rejected(let mismatch) = result.admission else {
+      Issue.record("DR400 output must not pass when the effective request was DR200")
+      return
+    }
+    #expect(mismatch.field == "dynamicRange")
+  }
+
+  @Test func cappedDRDoesNotExcuseOtherSettingsMismatch() throws {
+    var fields = xe3MakerFields()
+    fields[0x1403] = short(200)
+    fields[0x1005] = short(2500)
+    let image = CoreJPEGFixture(model: "X-E3", lensOptimizer: 1, fields: entries(fields)).inject(
+      into: try ObjectObservationFixture.jpeg())
+    let result = try XE3Adapter().validateOutput(
+      image, conversion: conversion(captureDynamicRange: 200))
+    guard case .rejected(let mismatch) = result.admission else {
+      Issue.record("A deliberate DR limit must not allow other settings to drift")
+      return
+    }
+    #expect(mismatch.field == "kelvin")
+  }
+
   @Test func qualifiedSharpnessWinsOverCoarseEXIF() throws {
     var fields = xe3MakerFields()
     fields[0x1001] = short(0x84)
@@ -82,11 +126,11 @@ struct XE3OutputValidationTests {
     }
     #expect(report.evidenceBySetting?[.color] == .profileConfirmed)
   }
-  private func conversion(_ settings: RecipeSettings = xe3Settings()) -> PreparedConversion {
+  private func conversion(_ settings: RecipeSettings = xe3Settings(), captureDynamicRange: Int? = 400) -> PreparedConversion {
     let metadata = RAWMetadata(
       cameraModel: "X-E3", containerGeometry: .init(width: 4, height: 6),
       recordedGeometry: .init(width: 4, height: 6), recordedAspect: .init(width: 2, height: 3),
-      cropTop: 0, cropLeft: 0, orientation: 8)
+      cropTop: 0, cropLeft: 0, orientation: 8, captureDynamicRange: captureDynamicRange)
     return .init(
       bytes: Data(), requested: settings, source: metadata, supportVersion: XE3Support.identifier,
       expectedLensOptimizer: true, baselineSHA256: "baseline", candidateSHA256: "candidate")

@@ -37,7 +37,7 @@ struct XE3WorkingProfileTests {
       })
     #expect(
       (0..<601).filter { !allowed.contains($0) }.allSatisfy { patch.bytes[$0] == baseline[$0] })
-    #expect(patch.bytes[533] == 0x90 && patch.bytes[534] == 1)  // requested DR400 on DR200 capture
+    #expect(patch.bytes[533] == 0x90 && patch.bytes[534] == 1)  // DR400 recipe and capture
     #expect(patch.expectedLensOptimizer)
   }
   @Test func noiseReductionLookupCoversNineLevels() throws {
@@ -99,12 +99,12 @@ func xe3Baseline(_ name: String = "baseline-601") throws -> Data {
     Bundle.module.url(forResource: name, withExtension: "bin", subdirectory: "Fixtures/XE3/1.30"))
   return try Data(contentsOf: url)
 }
-func xe3Metadata(orientation: Int = 1) -> RAWMetadata {
+func xe3Metadata(orientation: Int = 1, captureDynamicRange: Int? = 400) -> RAWMetadata {
   .init(
     cameraModel: "X-E3", containerGeometry: .init(width: 6048, height: 4038),
     recordedGeometry: .init(width: 6000, height: 4000), recordedAspect: .init(width: 3, height: 2),
     cropTop: 21, cropLeft: 16, orientation: orientation, compression: .lossless, bitDepth: 14,
-    rafVersion: "0130")
+    rafVersion: "0130", captureDynamicRange: captureDynamicRange)
 }
 func xe3Settings() -> RecipeSettings {
   .init(

@@ -6,6 +6,47 @@ import Testing
 // These unique roots contain live SwiftData stores. Retain them for test-process/OS
 // cleanup: no public all-container close barrier makes in-test recursive unlink safe.
 struct ExportCoordinatorTests {
+    @Test(arguments: [false, true])
+    func stalePinnedExportRerendersOnlyWhenSaveWasNeverSubmitted(_ submitted: Bool) async throws {
+        let f = try RenderFixture()
+        let catalog = try SwiftDataCatalog(storeURL: f.root.appendingPathComponent("catalog.store"))
+        let cache = try f.cache(), reader = RenderLibrary(f), writer = ExportWriter(), camera = RenderCamera(f)
+        let oldContext = CameraExecutionContext(
+            model: f.context.model, firmware: f.context.firmware, capability: f.context.capability,
+            supportVersion: "xt5-4.31-0200-structured-frame-v4",
+            sessionIdentity: f.context.sessionIdentity, generation: f.context.generation)
+        let oldJPEG = try f.jpeg(key: f.key(context: oldContext))
+        try await cache.store(oldJPEG, key: oldJPEG.key)
+        let pinned = oldJPEG.relocated(to: try await cache.pin(oldJPEG.key))
+        let operationID = UUID()
+        let pending = PendingSave(operationID: operationID, jpeg: pinned,
+            submission: submitted ? .unknown(at: Date()) : .notSubmitted)
+        let job = ExportJob(id: UUID(), submittedAt: Date(), recipeSnapshot: f.recipe,
+            items: [ExportItem(source: f.source, operationID: operationID, state: .pendingSave(pending))], state: .paused)
+        try await catalog.saveJob(job)
+        let engine = ExportCoordinator(reader: reader, camera: camera, catalog: catalog, writer: writer,
+            pool: reader.pool(), cache: cache, scheduler: CameraWorkScheduler())
+        var events = await engine.events().makeAsyncIterator()
+        try await engine.resume(jobID: job.id)
+        _ = await terminal(&events, job.id)
+        if submitted {
+            #expect(await camera.calls == 0)
+            #expect(await writer.requests.isEmpty)
+            #expect(await cache.lookup(oldJPEG.key) != nil)
+            guard case .unresolved = try await catalog.job(id: job.id).items[0].state else {
+                Issue.record("An uncertain Photos transaction must remain reconciliable")
+                return
+            }
+        } else {
+            #expect(await camera.calls == 1)
+            #expect(await writer.requests.count == 1)
+            #expect(await writer.requests.first?.jpeg.cameraContext.supportVersion == XT5WorkingProfile.supportVersion)
+            #expect(await writer.requests.first?.operationID == operationID)
+            #expect(try await catalog.job(id: job.id).state == .saved)
+            #expect(await cache.lookup(oldJPEG.key) == nil)
+        }
+    }
+
     @Test func renamedCacheUsesChosenSnapshotAndDistinctPhotosOperation() async throws {
         let f = try RenderFixture()
         let catalog = try SwiftDataCatalog(storeURL: f.root.appendingPathComponent("catalog.store"))

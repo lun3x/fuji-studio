@@ -11,7 +11,7 @@ struct RAWMetadataCache: Sendable {
         let metadata: RAWMetadata
     }
     // Bump when structural parsing changes. Camera rules are reapplied to the stored metadata.
-    private let parserVersion = 1
+    private let parserVersion = 2
 
     func metadata(for token: ResourceToken) -> RAWMetadata? {
         guard let bytes = try? Data(contentsOf: file(for: token)),

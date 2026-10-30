@@ -54,6 +54,12 @@ public struct RAFMetadataReader: Sendable {
     guard (1...8).contains(orientation) else {
       throw ResourceError.invalidRAF("Invalid orientation")
     }
+    let captureDynamicRange: Int?
+    if case .integer(let value)? = (try? FujiJPEGMetadataReader.read(jpeg))?.rendering[.dynamicRange] {
+      captureDynamicRange = value
+    } else {
+      captureDynamicRange = nil
+    }
     let directory = try section(data, offsetField: 92, lengthField: 96, fileByteCount: fileByteCount)
     guard directory.count >= 4 else { throw ResourceError.invalidRAF("Truncated RAF directory") }
     let count = integer(directory, 0, 4)
@@ -104,7 +110,7 @@ public struct RAFMetadataReader: Sendable {
       recordedGeometry: PixelSize(width: crop[1], height: crop[0]),
       recordedAspect: PixelSize(width: aspect[1], height: aspect[0]),
       cropTop: origin[0], cropLeft: origin[1], orientation: orientation, compression: compression,
-      bitDepth: sensor?.bits, rafVersion: version)
+      bitDepth: sensor?.bits, rafVersion: version, captureDynamicRange: captureDynamicRange)
   }
 
   private func integer(_ data: Data, _ offset: Int, _ count: Int) -> Int {

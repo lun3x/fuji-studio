@@ -35,7 +35,7 @@ public struct RecipeCodecRegistry: Sendable {
   }
   public func supportVersion(for context: RecipeCameraContext) throws -> String {
     try verify(context)
-    return context.model == "X-E3" ? XE3Support.identifier : XT5WorkingProfile.supportVersion
+    return context.model == "X-E3" ? XE3Support.conversionVersion : XT5WorkingProfile.supportVersion
   }
   private func verify(_ context: RecipeCameraContext) throws {
     if context.model == "X-E3", context.firmware == "1.30",
@@ -76,7 +76,7 @@ public struct RecipeCodecRegistry: Sendable {
       .film: choice(FilmSimulation.allCases.map(RecipeSettingValue.film)),
       .dynamicRange: choice(
         [0, 100, 200, 400].map(RecipeSettingValue.integer),
-        rendering: [.integer(100), .integer(400)]),
+        rendering: [.integer(100), .integer(200), .integer(400)]),
       .grain: choice(grains, rendering: renderGrains), .colorChrome: choice(effects),
       .colorChromeBlue: choice(effects),
       .whiteBalance: choice(

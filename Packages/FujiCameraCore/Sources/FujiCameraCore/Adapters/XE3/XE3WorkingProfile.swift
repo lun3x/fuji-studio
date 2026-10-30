@@ -38,14 +38,15 @@ public enum XE3WorkingProfile {
     }
     let grain: [GrainStrength: Int] = [.off: 1, .weak: 2, .strong: 3]
     for (offset, value) in [
-      (533, settings.dynamicRange), (541, Int(film)), (545, grain[settings.grain.strength]!),
+      (533, source.effectiveDynamicRange(for: settings.dynamicRange)),
+      (541, Int(film)), (545, grain[settings.grain.strength]!),
       (553, 2), (557, Int(wb)), (561, settings.whiteBalanceRed), (565, settings.whiteBalanceBlue),
       (573, settings.highlightTenths), (577, settings.shadowTenths), (581, settings.colorTenths),
       (585, settings.sharpnessTenths), (589, Int(nr)),
     ] { put(value, offset) }
     if settings.whiteBalance == .temperature, let kelvin = settings.kelvin { put(kelvin, 569) }
     return .init(
-      bytes: output, requested: settings, source: source, supportVersion: XE3Support.identifier,
+      bytes: output, requested: settings, source: source, supportVersion: XE3Support.conversionVersion,
       expectedLensOptimizer: word(593) == 1, baselineSHA256: ResourceChecksum.sha256(baseline),
       candidateSHA256: ResourceChecksum.sha256(output))
   }

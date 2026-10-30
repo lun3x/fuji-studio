@@ -7,6 +7,27 @@ import UniformTypeIdentifiers
 @testable import FujiCameraCore
 
 struct XE3ServiceContractTests {
+  @Test func DR400RecipeOnDR200CaptureCompletesWithDR200OutputAndCleanup() async throws {
+    let f = try XE3ServiceFixture(orientation: 8, captureDynamicRange: 200, outputDynamicRange: 200)
+    defer { f.remove() }
+    let wire = XE3Session(f)
+    let journal = try CameraOperationJournal(
+      directory: f.root.appendingPathComponent("journal"), filePolicy: TestJournalFilePolicy())
+    let service = FujiCameraService(
+      session: wire, journal: journal, pollWait: {}, registry: .init(adapters: [XE3Adapter()]))
+    try await service.connect()
+    let result = try await service.render(raw: f.raw, recipe: f.recipe, policy: .fullSizeFineRecordedGeometry)
+    #expect(await wire.profile?.subdata(in: 533..<537) == Data([200, 0, 0, 0]))
+    #expect(result.effectiveRecipe.requested.dynamicRange == 400)
+    #expect(result.effectiveRecipe.dynamicRangeEffective == 200)
+    #expect(result.settingsDigest == f.recipe.settingsDigest)
+    #expect(try XE3RecipeCodec.decode(f.recipe).dynamicRange == 400)
+    #expect(try journal.load(result.operationID).phase == .completed)
+    #expect(try journal.unresolved().isEmpty)
+    #expect(await wire.deletes == [77])
+    await service.disconnect()
+  }
+
   @Test(arguments: [1, 8]) func zeroObjectDimensionsRequireRealJPEGGeometry(_ orientation: Int)
     async throws
   {
@@ -51,14 +72,14 @@ struct XE3ServiceContractTests {
 }
 struct XE3ServiceFixture: Sendable {
   let root: URL, raw: PreparedRAW, recipe: RecipeSnapshot, jpeg: Data, baseline: Data
-  init(orientation: Int, smallJPEG: Bool = false) throws {
+  init(orientation: Int, smallJPEG: Bool = false, captureDynamicRange: Int? = 400, outputDynamicRange: UInt16 = 400) throws {
     root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     let rawURL = root.appendingPathComponent("synthetic.RAF")
     try Data(repeating: 42, count: 256).write(to: rawURL)
     raw = PreparedRAW(
       fileURL: rawURL, sha256: try ResourceChecksum.sha256(rawURL), sourceID: "xe3",
-      sourceRevision: "v1", metadata: xe3Metadata(orientation: orientation))
+      sourceRevision: "v1", metadata: xe3Metadata(orientation: orientation, captureDynamicRange: captureDynamicRange))
     let fields: [UInt16: Data] = [
       1: Data([13]), 2: Data([3]), 3: Data([2]), 4: Data([8]), 5: Data([13]), 6: Data([11]),
       7: Data([6]), 8: Data([5]), 9: Data([2]), 10: Data([7]), 11: Data([4]), 12: Data([0]),
@@ -83,9 +104,11 @@ struct XE3ServiceFixture: Sendable {
       CGImageDestinationCreateWithData(bytes, UTType.jpeg.identifier as CFString, 1, nil))
     CGImageDestinationAddImage(actual, try #require(context.makeImage()), nil)
     #expect(CGImageDestinationFinalize(actual))
+    var makerFields = xe3MakerFields()
+    makerFields[0x1403] = short(outputDynamicRange)
     jpeg = CoreJPEGFixture(
       model: "X-E3", orientation: UInt16(orientation), lensOptimizer: 1,
-      fields: entries(xe3MakerFields()), pixelWidth: width, pixelHeight: height
+      fields: entries(makerFields), pixelWidth: width, pixelHeight: height
     ).inject(into: bytes as Data)
   }
   func remove() { try? FileManager.default.removeItem(at: root) }

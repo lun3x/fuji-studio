@@ -89,6 +89,9 @@ public struct PreparedConversion: Sendable {
   public let expectedLensOptimizer: Bool
   public let baselineSHA256: String
   public let candidateSHA256: String
+  public var effectiveDynamicRange: Int {
+    source.effectiveDynamicRange(for: requested.dynamicRange)
+  }
   public init(
     bytes: Data, requested: RecipeSettings, source: RAWMetadata, supportVersion: String,
     expectedLensOptimizer: Bool, baselineSHA256: String, candidateSHA256: String

@@ -2,6 +2,7 @@ import Foundation
 
 public enum XE3Support {
   public static let identifier = "xe3-1.30-FF129505-v1"
+  public static let conversionVersion = "xe3-1.30-FF129505-v2-source-dr"
 }
 public enum XE3Capabilities {
   // Every native preset was checked against the camera JPEG's Fuji ColorTemperature.

@@ -18,7 +18,7 @@ public struct XE3Adapter: FujiCameraAdapter {
     else { throw CameraServiceError.unsupportedContext }
     return .init(
       adapterID: id, model: model, firmware: device.firmware, capability: XE3Support.identifier,
-      capabilityOrigin: .applicationDefined, supportVersion: XE3Support.identifier,
+      capabilityOrigin: .applicationDefined, supportVersion: XE3Support.conversionVersion,
       capabilities: XE3Capabilities.measured)
   }
   public func importRecipes(

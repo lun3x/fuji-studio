@@ -96,7 +96,7 @@ struct XT5WorkingProfileTests {
 
 struct ProductionProfileFixture {
     let baseline:Data,properties:[UInt16:UInt16],bank:RecipeSnapshot
-    let metadata=RAWMetadata(cameraModel:"X-T5",containerGeometry:.init(width:7872,height:5196),recordedGeometry:.init(width:7728,height:5152),recordedAspect:.init(width:3,height:2),cropTop:21,cropLeft:12,orientation:8)
+    let metadata=RAWMetadata(cameraModel:"X-T5",containerGeometry:.init(width:7872,height:5196),recordedGeometry:.init(width:7728,height:5152),recordedAspect:.init(width:3,height:2),cropTop:21,cropLeft:12,orientation:8,captureDynamicRange:400)
     init() throws {
         var b=Data([29,0,8]);for c in "FF179502".utf16 { b.append(contentsOf:[UInt8(c),0]) };b.append(Data(repeating:0,count:513-b.count))
         let values:[Int32]=[2,7,7,2,0,400,0,15,1,3,1,0,3,-4,0,20,20,0,0,32768,2,1,0,1,3,0,0,2]

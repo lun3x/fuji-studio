@@ -81,11 +81,16 @@ public struct EffectiveRecipeReport: Sendable, Codable, Equatable {
   public let lensOptimizerAdjusted: Bool
   public let evidence: String
   public let evidenceBySetting: [RecipeSettingID: SettingEvidence]?
+  public let dynamicRangeEffective: Int?
+  public var dynamicRangeAdjusted: Bool {
+    dynamicRangeEffective.map { $0 != requested.dynamicRange } ?? false
+  }
   public init(
     supportVersion: String, requested: RecipeSettings,
     dormantGrainSizeNotSerialized: Bool, inactiveKelvinPreserved: Bool,
     lensOptimizerRequested: Bool, lensOptimizerEffective: Bool, lensOptimizerAdjusted: Bool,
-    evidence: String, evidenceBySetting: [RecipeSettingID: SettingEvidence]? = nil
+    evidence: String, evidenceBySetting: [RecipeSettingID: SettingEvidence]? = nil,
+    dynamicRangeEffective: Int? = nil
   ) {
     self.supportVersion = supportVersion
     self.requested = requested
@@ -96,6 +101,7 @@ public struct EffectiveRecipeReport: Sendable, Codable, Equatable {
     self.lensOptimizerAdjusted = lensOptimizerAdjusted
     self.evidence = evidence
     self.evidenceBySetting = evidenceBySetting
+    self.dynamicRangeEffective = dynamicRangeEffective
   }
 
 }
