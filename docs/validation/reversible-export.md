@@ -50,6 +50,12 @@ incorrect accessibility hittability.
 No deferred review findings remain. Historical payload compatibility shims were
 not added, following the project instruction.
 
+## Physical iPhone installation
+
+The Release build was signed with development team `AZH3P824F3`, verified with
+`codesign --verify --deep --strict`, and installed on the connected iPhone 15 Pro.
+`com.lun3x.FujiStudio` launched successfully with no fixture or test arguments.
+
 ## Physical-device limit
 
 The simulator fixtures exercise the app's writer, recovery and viewer contracts;
