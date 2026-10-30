@@ -260,6 +260,7 @@ private actor BaselineLibrary: PhotoLibraryReading {
     func source(id: SourceID) throws -> PhotoSource { Self.source(id) }
     func resources(assetID: String) -> [ResourceToken] { [] }
     func changes() -> AsyncStream<LibraryChange> { AsyncStream { $0.finish() } }
+    func rawMetadata(_ resource: ResourceToken) throws -> RAWMetadata { throw ResourceError.invalidRAF("Metadata is unavailable in this fixture") }
     func materialize(_ resource: ResourceToken, progress: @escaping @Sendable (Double) -> Void) throws -> LocalResource {
         materializedIDs.append(resource.assetID)
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -545,6 +546,7 @@ private actor PairedBaselineLibrary: PhotoLibraryReading {
     func source(id:SourceID) throws -> PhotoSource { make(id,revision:change == "postRevision" ? "new" : "revision") }
     func resources(assetID:String)->[ResourceToken] { let pair=make(assetID).originalResources;return [pair.raf]+(pair.jpeg.map { [$0] } ?? []) }
     func changes()->AsyncStream<LibraryChange> { AsyncStream { $0.finish() } }
+    func rawMetadata(_ resource: ResourceToken) throws -> RAWMetadata { throw ResourceError.invalidRAF("Metadata is unavailable in this fixture") }
     func materialize(_ resource:ResourceToken,progress:@escaping @Sendable(Double)->Void) async throws -> LocalResource {
         materialized.append(resource.assetID)
         let url=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

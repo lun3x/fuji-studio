@@ -4,6 +4,88 @@ import Testing
 @testable import FujiStudio
 
 struct OriginalResourcePoolTests {
+    @Test func filterAssessmentUsesMetadataWithoutMaterializingOriginal() async throws {
+        let f = try RenderFixture(); defer { f.remove() }
+        let reader = RenderLibrary(f), pool = reader.pool(), support = try fixtureCameraSupport(f.context)
+        #expect(try await pool.assess(source: f.source, for: support) == .supported(model: "X-T5"))
+        #expect(await reader.metadataReads == 1)
+        #expect(await reader.count == 0)
+    }
+
+    @Test func recreatedPoolReusesDiskMetadataAndReassessesForAnotherCamera() async throws {
+        let f = try RenderFixture(); defer { f.remove() }
+        let directory = f.root.appendingPathComponent("metadata"), reader = RenderLibrary(f)
+        let xt5 = try fixtureCameraSupport(f.context)
+        let first = OriginalResourcePool(reader: reader, metadataCacheDirectory: directory)
+        #expect(try await first.assess(source: f.source, for: xt5) == .supported(model: "X-T5"))
+        let second = OriginalResourcePool(reader: reader, metadataCacheDirectory: directory)
+        let xe3 = fixtureCollection([try fixtureXE3Recipe()], slots: [.init(id: 4, label: "C4")]).support
+        #expect(try await second.assess(source: f.source, for: xe3) == .incompatible(model: "X-T5"))
+        #expect(try await second.assess(source: f.source, for: xt5) == .supported(model: "X-T5"))
+        #expect(await second.compatibility(for: f.source) == .supported(model: "X-T5"))
+        #expect(await reader.metadataReads == 1)
+        #expect(await reader.count == 0)
+    }
+
+    @Test func diskCacheInvalidatesChangedRevisionAndOriginalToken() async throws {
+        let f = try RenderFixture(); defer { f.remove() }
+        let directory = f.root.appendingPathComponent("metadata"), reader = RenderLibrary(f), support = try fixtureCameraSupport(f.context)
+        _ = try await OriginalResourcePool(reader: reader, metadataCacheDirectory: directory).assess(source: f.source, for: support)
+        var token = f.token; token.sourceRevision = "new"
+        let revised = PhotoSource(id: f.source.id, originalResources: .init(raf: token), resourceRevision: "new")
+        let pool = OriginalResourcePool(reader: reader, metadataCacheDirectory: directory)
+        _ = try await pool.assess(source: revised, for: support)
+        token = ResourceToken(assetID: token.assetID, role: token.role, contentTypeIdentifier: token.contentTypeIdentifier,
+            format: .raf, originalFilename: "replaced.RAF", discriminator: "replacement", sourceRevision: "new")
+        let replaced = PhotoSource(id: revised.id, originalResources: .init(raf: token), resourceRevision: "new")
+        _ = try await pool.assess(source: replaced, for: support)
+        #expect(await reader.metadataReads == 3)
+        #expect(await reader.count == 0)
+    }
+
+    @Test(arguments: [false, true]) func corruptOrMissingCacheIsRebuilt(_ remove: Bool) async throws {
+        let f = try RenderFixture(); defer { f.remove() }
+        let directory = f.root.appendingPathComponent("metadata"), reader = RenderLibrary(f), support = try fixtureCameraSupport(f.context)
+        _ = try await OriginalResourcePool(reader: reader, metadataCacheDirectory: directory).assess(source: f.source, for: support)
+        let files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+        let file = try #require(files.first)
+        if remove { try FileManager.default.removeItem(at: file) }
+        else { try Data("incomplete JSON".utf8).write(to: file) }
+        #expect(try await OriginalResourcePool(reader: reader, metadataCacheDirectory: directory).assess(source: f.source, for: support) == .supported(model: "X-T5"))
+        #expect(await reader.metadataReads == 2)
+    }
+
+    @Test func unavailableCacheStorageDoesNotPreventAssessment() async throws {
+        let f = try RenderFixture(); defer { f.remove() }
+        let directory = f.root.appendingPathComponent("not-a-directory")
+        try Data([1]).write(to: directory)
+        let reader = RenderLibrary(f), support = try fixtureCameraSupport(f.context)
+        #expect(try await OriginalResourcePool(reader: reader, metadataCacheDirectory: directory).assess(source: f.source, for: support) == .supported(model: "X-T5"))
+        #expect(await reader.metadataReads == 1)
+        #expect(await reader.count == 0)
+    }
+
+    @Test func transientMetadataFailureDoesNotPoisonPersistentCache() async throws {
+        let f = try RenderFixture(); defer { f.remove() }
+        let directory = f.root.appendingPathComponent("metadata"), reader = RenderLibrary(f), support = try fixtureCameraSupport(f.context)
+        let pool = OriginalResourcePool(reader: reader, metadataCacheDirectory: directory)
+        await reader.failMetadata(.retrievalFailed("offline"))
+        await #expect(throws: ResourceError.retrievalFailed("offline")) { try await pool.assess(source: f.source, for: support) }
+        await reader.failMetadata(nil)
+        #expect(try await pool.assess(source: f.source, for: support) == .supported(model: "X-T5"))
+        _ = try await OriginalResourcePool(reader: reader, metadataCacheDirectory: directory).assess(source: f.source, for: support)
+        #expect(await reader.metadataReads == 2)
+    }
+
+    @Test func fullPreparationSeedsPersistentMetadata() async throws {
+        let f = try RenderFixture(); defer { f.remove() }
+        let directory = f.root.appendingPathComponent("metadata"), reader = RenderLibrary(f), support = try fixtureCameraSupport(f.context)
+        _ = try await reader.pool(metadataCacheDirectory: directory).withPreparedRAW(source: f.source) { $0.metadata }
+        #expect(try await OriginalResourcePool(reader: reader, metadataCacheDirectory: directory).assess(source: f.source, for: support) == .supported(model: "X-T5"))
+        #expect(await reader.metadataReads == 0)
+        #expect(await reader.count == 1)
+    }
+
     @Test func assessmentsReuseMetadataWithoutPoisoningOtherCameras() async throws {
         let f = try RenderFixture(); defer { f.remove() }
         let reader = RenderLibrary(f), pool = reader.pool()
@@ -13,20 +95,19 @@ struct OriginalResourcePoolTests {
         #expect(await pool.compatibility(for: f.source) == .supported(model: "X-T5"))
         #expect(try await pool.assess(source: f.source, for: xt5) == .supported(model: "X-T5"))
         #expect(try await pool.assess(source: f.source, for: xt5) == .supported(model: "X-T5"))
-        #expect(await reader.count == 1)
+        #expect(await reader.count == 0)
+        #expect(await reader.metadataReads == 1)
         #expect(await reader.files.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) })
     }
 
     @Test func matchingModelWithUnsupportedGeometryStaysExcluded() async throws {
         let f = try RenderFixture(); defer { f.remove() }
         let reader = RenderLibrary(f)
-        let pool = OriginalResourcePool(reader: reader, prepare: { local in
-            PreparedRAW(fileURL: local.fileURL, sha256: local.checksum, sourceID: local.token.assetID,
-                sourceRevision: local.token.sourceRevision, metadata: .init(cameraModel: "X-E3",
+        await reader.setMetadata(.init(cameraModel: "X-E3",
                 containerGeometry: .init(width: 6048, height: 4038), recordedGeometry: .init(width: 3000, height: 2000),
                 recordedAspect: .init(width: 3, height: 2), cropTop: 21, cropLeft: 16, orientation: 1,
                 compression: .lossless, bitDepth: 14, rafVersion: "0130"))
-        })
+        let pool = OriginalResourcePool(reader: reader)
         let support = fixtureCollection([try fixtureXE3Recipe()], slots: [.init(id: 4, label: "C4")]).support
         #expect(try await pool.assess(source: f.source, for: support) == .incompatible(model: "X-E3"))
         #expect(await pool.compatibility(for: f.source) == .supported(model: "X-E3"))
@@ -39,7 +120,8 @@ struct OriginalResourcePoolTests {
         var token = f.token; token.sourceRevision = "revised"
         let revised = PhotoSource(id: f.source.id, originalResources: .init(raf: token), resourceRevision: "revised")
         _ = try await pool.assess(source: revised, for: support)
-        #expect(await reader.count == 2)
+        #expect(await reader.count == 0)
+        #expect(await reader.metadataReads == 2)
     }
 
     @Test func decodeFailureDoesNotRevokeCameraConversion() async throws {

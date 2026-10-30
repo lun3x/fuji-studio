@@ -37,6 +37,11 @@ actor RenderLatch {
 actor RenderLibrary: PhotoLibraryReading {
     let fixture: RenderFixture
     var count = 0
+    var metadataReads = 0
+    var metadataOverride: RAWMetadata?
+    func setMetadata(_ metadata: RAWMetadata) { metadataOverride = metadata }
+    var metadataFailure: ResourceError?
+    func failMetadata(_ error: ResourceError?) { metadataFailure = error }
     var liveSource: PhotoSource?
     func setSource(_ source: PhotoSource) { liveSource = source }
     var files: [URL] = []
@@ -46,14 +51,19 @@ actor RenderLibrary: PhotoLibraryReading {
     func source(id: SourceID) -> PhotoSource { liveSource ?? fixture.source }
     func resources(assetID: String) -> [ResourceToken] { [fixture.token] }
     func changes() -> AsyncStream<LibraryChange> { AsyncStream { $0.finish() } }
+    func rawMetadata(_ resource: ResourceToken) throws -> RAWMetadata {
+        metadataReads += 1
+        if let metadataFailure { throw metadataFailure }
+        return metadataOverride ?? fixture.raw.metadata
+    }
     func materialize(_ resource: ResourceToken, progress: @escaping @Sendable (Double) -> Void) throws -> LocalResource {
         count += 1
         let file = fixture.root.appendingPathComponent("lease-\(count).RAF")
         try FileManager.default.copyItem(at: fixture.raw.fileURL, to: file); files.append(file)
         return LocalResource(token: resource, fileURL: file, checksum: fixture.raw.sha256)
     }
-    nonisolated func pool(gate: SerialCameraGate = SerialCameraGate()) -> OriginalResourcePool {
-        OriginalResourcePool(reader: self, gate: gate, prepare: { resource in
+    nonisolated func pool(gate: SerialCameraGate = SerialCameraGate(), metadataCacheDirectory: URL? = nil) -> OriginalResourcePool {
+        OriginalResourcePool(reader: self, gate: gate, metadataCacheDirectory: metadataCacheDirectory, prepare: { resource in
             PreparedRAW(fileURL: resource.fileURL, sha256: resource.checksum, sourceID: resource.token.assetID, sourceRevision: resource.token.sourceRevision, metadata: self.fixture.raw.metadata)
         })
     }

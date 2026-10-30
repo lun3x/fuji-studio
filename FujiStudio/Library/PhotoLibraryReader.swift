@@ -10,6 +10,7 @@ protocol PhotoLibraryReading: Sendable {
     func source(id: SourceID) async throws -> PhotoSource
     func resources(assetID: String) async throws -> [ResourceToken]
     func changes() async -> AsyncStream<LibraryChange>
+    func rawMetadata(_ resource: ResourceToken) async throws -> RAWMetadata
     func materialize(_ resource: ResourceToken, progress: @escaping @Sendable (Double) -> Void) async throws -> LocalResource
 }
 
@@ -216,22 +217,14 @@ actor PhotoLibraryReader: PhotoLibraryReading {
 
     func materialize(_ resource: ResourceToken, progress: @escaping @Sendable (Double) -> Void) async throws -> LocalResource {
         try Task.checkCancellation()
-        let asset = try asset(resource.assetID)
-        let all = PHAssetResource.assetResources(for: asset)
-        // Build descriptors from this exact snapshot; PhotoKit array order is not an identity.
-        let current = descriptors(asset, resources: all)
-        let matches = current.indices.filter { current[$0].token.discriminator == resource.discriminator }
-        guard matches.count == 1, let index = matches.first,
-              resource.sourceRevision == current[index].revision else {
-            throw ResourceError.resourceChanged
-        }
+        let original = try matchingResource(resource)
         let transfer = try ResourceFileTransfer(token: resource)
         let manager = PHAssetResourceManager.default()
         let options = PHAssetResourceRequestOptions()
         options.isNetworkAccessAllowed = true
         options.progressHandler = { progress(max(0, min(1, $0))) }
         let result = try await transfer.run { data, done in
-            let id = manager.requestData(for: all[index], options: options, dataReceivedHandler: data) { error in
+            let id = manager.requestData(for: original, options: options, dataReceivedHandler: data) { error in
                 done(error.map { ResourceFileTransfer.fileError($0) })
             }
             return { manager.cancelDataRequest(id) }
@@ -243,6 +236,37 @@ actor PhotoLibraryReader: PhotoLibraryReading {
         }
         progress(1)
         return result
+    }
+
+    func rawMetadata(_ resource: ResourceToken) async throws -> RAWMetadata {
+        try Task.checkCancellation()
+        guard resource.format == .raf, resource.role != .adjusted else { throw ResourceError.noOriginalRAF }
+        let original = try matchingResource(resource)
+        let transfer = ResourceMetadataTransfer(token: resource), manager = PHAssetResourceManager.default()
+        let options = PHAssetResourceRequestOptions()
+        options.isNetworkAccessAllowed = true
+        let metadata = try await transfer.run { data, done in
+            let id = manager.requestData(for: original, options: options, dataReceivedHandler: data) { error in
+                done(error.map { ResourceFileTransfer.fileError($0) })
+            }
+            return { manager.cancelDataRequest(id) }
+        }
+        try Task.checkCancellation()
+        _ = try matchingResource(resource)
+        return metadata
+    }
+
+    private func matchingResource(_ resource: ResourceToken) throws -> PHAssetResource {
+        let asset = try asset(resource.assetID)
+        let all = PHAssetResource.assetResources(for: asset)
+        // Build descriptors from this exact snapshot; PhotoKit array order is not an identity.
+        let current = descriptors(asset, resources: all)
+        let matches = current.indices.filter { current[$0].token.discriminator == resource.discriminator }
+        guard matches.count == 1, let index = matches.first,
+              resource.sourceRevision == current[index].revision else {
+            throw ResourceError.resourceChanged
+        }
+        return all[index]
     }
 
     private func authorizedAssets() throws -> PHFetchResult<PHAsset> {

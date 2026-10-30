@@ -240,12 +240,14 @@ import Testing
         model.send(.photoFilterSelected(.compatibleWithCamera))
         await eventually { model.state.photoFilterPendingCount == 0 }
         #expect(model.state.photoFilterUnavailableCount == 1)
-        #expect(await f.reader.rawReads == 2)
+        #expect(await f.reader.metadataReads == 2)
+        #expect(await f.reader.rawReads == 0)
         await f.reader.failMaterialize("source-0", error: nil)
         model.send(.photoFilterSelected(.allPhotos)); model.send(.photoFilterSelected(.compatibleWithCamera))
         await eventually { model.state.photoFilterPendingCount == 0 }
         #expect(model.state.photoFilterUnavailableCount == 0)
-        #expect(await f.reader.rawReads == 3)
+        #expect(await f.reader.metadataReads == 3)
+        #expect(await f.reader.rawReads == 0)
     }
 
     @Test func cameraFilterChecksWithoutRenderingAndReusesAssessments() async throws {
@@ -258,12 +260,14 @@ import Testing
         await eventually { model.state.photoFilterPendingCount == 0 }
         // Generic fixture geometry is deliberately outside the strict camera rules.
         #expect(model.state.visibleSourceIDs.isEmpty)
-        #expect(await f.reader.rawReads == 3)
+        #expect(await f.reader.metadataReads == 3)
+        #expect(await f.reader.rawReads == 0)
         #expect(await f.camera.renderCount == 0)
         #expect(await f.writer.requests.isEmpty)
         model.send(.photoFilterSelected(.allPhotos)); model.send(.photoFilterSelected(.compatibleWithCamera))
         await eventually { model.state.photoFilterPendingCount == 0 }
-        #expect(await f.reader.rawReads == 3)
+        #expect(await f.reader.metadataReads == 3)
+        #expect(await f.reader.rawReads == 0)
     }
 
     @Test func disabledFilterCancelsChecksAndRejectsLateOriginals() async throws {

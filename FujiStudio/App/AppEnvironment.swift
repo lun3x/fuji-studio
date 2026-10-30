@@ -59,11 +59,11 @@ import UIKit
             // Current viewer leases live in a different transient root; durable pins are untouched.
             try? fm.removeItem(at: display)
             let renderer = try RawDisplayRenderer(directory: display)
-            return (catalog, cache, journal, renderer)
+            return (catalog, cache, journal, renderer, caches.appendingPathComponent("raw-metadata", isDirectory: true))
         }.value
         let reader = PhotoLibraryReader()
         let camera = FujiCameraService(session: ImageCaptureSessionTransport(), journal: storage.2)
-        let pool = OriginalResourcePool(reader: reader)
+        let pool = OriginalResourcePool(reader: reader, metadataCacheDirectory: storage.4)
         let scheduler = CameraWorkScheduler()
         let resolver = VersionImageResolver(library: reader, catalog: storage.0, pool: pool, rawRenderer: storage.3, cache: storage.1)
         let preview = PreviewCoordinator(pool: pool, camera: camera, scheduler: scheduler, cache: storage.1, rawRenderer: storage.3,

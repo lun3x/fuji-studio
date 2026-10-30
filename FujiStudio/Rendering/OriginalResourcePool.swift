@@ -13,11 +13,14 @@ actor OriginalResourcePool {
     private let reader: any PhotoLibraryReading
     private let gate: SerialCameraGate
     private let prepare: Prepare
+    private let metadataCache: RAWMetadataCache?
     private var detected: [OriginalIdentity: RAWCompatibility] = [:]
-    private var metadata: [OriginalIdentity: RAWMetadata] = [:]
+    private var metadata: [ResourceToken: RAWMetadata] = [:]
     private var observers: [UUID: AsyncStream<[OriginalIdentity: RAWCompatibility]>.Continuation] = [:]
-    init(reader: any PhotoLibraryReading, gate: SerialCameraGate = SerialCameraGate(), prepare: @escaping Prepare = { try RAFMetadataReader().prepare($0) }) {
+    init(reader: any PhotoLibraryReading, gate: SerialCameraGate = SerialCameraGate(), metadataCacheDirectory: URL? = nil,
+         prepare: @escaping Prepare = { try RAFMetadataReader().prepare($0) }) {
         self.reader = reader; self.gate = gate; self.prepare = prepare
+        metadataCache = metadataCacheDirectory.map { RAWMetadataCache(directory: $0) }
     }
     func compatibilityChanges() -> AsyncStream<[OriginalIdentity: RAWCompatibility]> {
         let id = UUID(), pair = AsyncStream<[OriginalIdentity: RAWCompatibility]>.makeStream(bufferingPolicy: .bufferingNewest(1))
@@ -34,16 +37,33 @@ actor OriginalResourcePool {
         let token = source.originalResources.raf
         guard token.assetID == source.id, token.sourceRevision == source.resourceRevision,
               token.format == .raf, token.role != .adjusted else { throw ResourceError.resourceChanged }
-        if let metadata = metadata[OriginalIdentity(source)] {
-            return SourceCompatibility.assess(metadata, for: support)
+        let value: RAWMetadata
+        if let cached = cachedMetadata(for: token) { value = cached }
+        else {
+            value = try await gate.withExclusiveAccess {
+                try Task.checkCancellation()
+                // A queued viewer/conversion may have populated the cache while we waited.
+                if let cached = await self.cachedMetadata(for: token) { return cached }
+                let value = try await self.reader.rawMetadata(token)
+                try Task.checkCancellation()
+                await self.remember(value, source: source)
+                return value
+            }
         }
-        do {
-            return try await withPreparedRAW(source: source) { SourceCompatibility.assess($0.metadata, for: support) }
-        } catch ResourceError.incompatibleCamera(let model) {
-            return .incompatible(model: model)
-        }
+        record(SourceCompatibility.detected(value), source: source)
+        return SourceCompatibility.assess(value, for: support)
     }
-    private func remember(_ raw: PreparedRAW, source: PhotoSource) { metadata[OriginalIdentity(source)] = raw.metadata }
+    private func cachedMetadata(for token: ResourceToken) -> RAWMetadata? {
+        if let value = metadata[token] { return value }
+        guard let value = metadataCache?.metadata(for: token) else { return nil }
+        metadata[token] = value
+        return value
+    }
+    private func remember(_ value: RAWMetadata, source: PhotoSource) {
+        let token = source.originalResources.raf
+        metadata[token] = value
+        metadataCache?.store(value, for: token)
+    }
     private func record(_ compatibility: RAWCompatibility, source: PhotoSource) {
         let identity = OriginalIdentity(source)
         guard detected[identity] != compatibility else { return }
@@ -73,7 +93,7 @@ actor OriginalResourcePool {
             }
             guard raw.sourceID == source.id, raw.sourceRevision == source.resourceRevision,
                   raw.fileURL == resource.fileURL else { throw ResourceError.resourceChanged }
-            await self.remember(raw, source: source)
+            await self.remember(raw.metadata, source: source)
             let compatibility=SourceCompatibility.detected(raw.metadata)
             await self.record(compatibility, source: source)
             if case .incompatible(let model)=compatibility { throw ResourceError.incompatibleCamera(model) }

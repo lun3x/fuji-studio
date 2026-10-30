@@ -125,7 +125,7 @@ public enum ResourceError: Error, Sendable, Equatable {
   case checksumMismatch
 }
 
-public struct PixelSize: Sendable, Equatable, Hashable {
+public struct PixelSize: Sendable, Equatable, Hashable, Codable {
   public let width: Int
   public let height: Int
   public init(width: Int, height: Int) {
@@ -135,13 +135,13 @@ public struct PixelSize: Sendable, Equatable, Hashable {
 
 }
 
-public enum RAFCompression: UInt32, Sendable, Equatable {
+public enum RAFCompression: UInt32, Sendable, Equatable, Codable {
   case uncompressed = 0
   case lossless = 2
   case lossy = 3
 }
 
-public struct RAWMetadata: Sendable, Equatable {
+public struct RAWMetadata: Sendable, Equatable, Codable {
   public let cameraModel: String
   public let containerGeometry: PixelSize
   public let recordedGeometry: PixelSize

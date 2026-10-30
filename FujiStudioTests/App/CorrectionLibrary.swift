@@ -21,6 +21,13 @@ actor CorrectionLibrary: PhotoLibraryReading {
     func source(id: SourceID) async throws -> PhotoSource { try await base.source(id: id) }
     func resources(assetID: String) async throws -> [ResourceToken] { try await base.resources(assetID: assetID) }
     func changes() async -> AsyncStream<LibraryChange> { await base.changes() }
+    func rawMetadata(_ resource: ResourceToken) async throws -> RAWMetadata {
+        guard let bytes = rawBytes[resource.assetID] else { return try await base.rawMetadata(resource) }
+        guard let metadata = try RAFMetadataReader().metadata(in: bytes, fileByteCount: bytes.count) else {
+            throw ResourceError.invalidRAF("Truncated fixture")
+        }
+        return metadata
+    }
     func materialize(_ resource: ResourceToken, progress: @escaping @Sendable (Double) -> Void) async throws -> LocalResource {
         let key = resource.assetID + resource.format.rawValue
         if resource.format == .raf, receipts.values.contains(where: { $0.cancelled && !$0.cleanupComplete }) { admittedBeforeCleanup = true }
