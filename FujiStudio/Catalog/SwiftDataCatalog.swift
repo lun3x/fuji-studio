@@ -224,7 +224,9 @@ actor SwiftDataCatalog: ModelActor, CatalogStoring {
             var job = try decode(ExportJob.self, record.payload)
             guard let index = job.items.firstIndex(where: { $0.operationID == operationID }),
                   version.operationID == operationID, version.sourceID == job.items[index].source.id,
-                  version.recipeSnapshot == job.recipeSnapshot, !version.outputAssetID.isEmpty else {
+                  version.recipeSnapshot == job.recipeSnapshot, version.destination == job.destination,
+                  !version.outputAssetID.isEmpty,
+                  job.destination != .updateOriginal || version.outputAssetID == version.sourceID else {
                 throw CatalogError.conflictingOperation(operationID)
             }
             if let canonical = try versionRecord(operationID) {
@@ -294,7 +296,7 @@ actor SwiftDataCatalog: ModelActor, CatalogStoring {
     }
 
     private func sameSubmission(_ a: ExportJob, _ b: ExportJob) -> Bool {
-        a.id == b.id && a.submittedAt == b.submittedAt && a.recipeSnapshot == b.recipeSnapshot &&
+        a.id == b.id && a.submittedAt == b.submittedAt && a.recipeSnapshot == b.recipeSnapshot && a.destination == b.destination &&
         a.items.map(\.operationID) == b.items.map(\.operationID) && a.items.map(\.source) == b.items.map(\.source)
     }
 
@@ -327,7 +329,7 @@ actor SwiftDataCatalog: ModelActor, CatalogStoring {
 
     private func sameConfirmation(_ a: SavedVersion, _ b: SavedVersion) -> Bool {
         a.operationID == b.operationID && a.sourceID == b.sourceID && a.outputAssetID == b.outputAssetID &&
-        a.recipeSnapshot == b.recipeSnapshot && a.jpeg == b.jpeg && a.exportedAt == b.exportedAt
+        a.recipeSnapshot == b.recipeSnapshot && a.jpeg == b.jpeg && a.exportedAt == b.exportedAt && a.destination == b.destination
     }
 
     private func isUnfinished(_ job: ExportJob) -> Bool {

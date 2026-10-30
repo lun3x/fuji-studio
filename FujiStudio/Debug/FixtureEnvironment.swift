@@ -360,7 +360,7 @@ actor FixtureWriter: PhotoLibraryWriting {
         await reader.addOutput(asset.assetID); found[operationID] = asset
         return asset
     }
-    func findExport(operationID: UUID, knownAssetID: String?) -> SaveLookup {
+    func findExport(operationID: UUID, knownAssetID: String?, originalAssetID: String?) -> SaveLookup {
         guard let asset = found[operationID], knownAssetID == nil || knownAssetID == asset.assetID else { return .notFound }
         return .found(asset)
     }

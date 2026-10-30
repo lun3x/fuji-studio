@@ -1,6 +1,10 @@
 import FujiCameraCore
 import Foundation
 
+enum ExportDestination: String, Sendable, Codable, Equatable {
+    case separatePhoto, updateOriginal
+}
+
 enum AssetAvailability: String, Sendable, Codable, Equatable {
     case available, inaccessible, missing, deleted
 }
@@ -15,6 +19,7 @@ struct SavedVersion: Sendable, Codable, Equatable, Identifiable {
     let exportedAt: Date
     let jpeg: CameraJPEG
     var availability: AssetAvailability
+    var destination: ExportDestination = .separatePhoto
 
     var width: Int { jpeg.width }
     var height: Int { jpeg.height }
@@ -86,4 +91,5 @@ struct ExportJob: Sendable, Codable, Equatable, Identifiable {
     let recipeSnapshot: RecipeSnapshot
     var items: [ExportItem]
     var state: ExportJobState
+    var destination: ExportDestination = .separatePhoto
 }

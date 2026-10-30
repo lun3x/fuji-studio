@@ -111,7 +111,7 @@ struct PhotoLibraryWriterTests {
         let gateway = FakePhotoWriteGateway()
         gateway.known = .init(assetID: "wrong-operation", filename: "FujiStudio-other.jpg", photosGeometry: .init(width: 1, height: 1))
         gateway.matches = [.init(assetID: "correct-output", filename: "FujiStudio-11111111-2222-3333-4444-555555555555.jpg", photosGeometry: .init(width: 7728, height: 5152))]
-        let lookup = try await PhotoLibraryWriter(gateway: gateway).findExport(operationID: f.operationID, knownAssetID: "known")
+        let lookup = try await PhotoLibraryWriter(gateway: gateway).findExport(operationID: f.operationID, knownAssetID: "known", originalAssetID: nil)
         #expect(lookup == .found(.init(assetID: "correct-output", operationID: f.operationID, photosGeometry: .init(width: 7728, height: 5152))))
         #expect(gateway.lookups == ["id:known", "filename:FujiStudio-11111111-2222-3333-4444-555555555555.jpg"])
         #expect(gateway.assets.isEmpty)
@@ -122,7 +122,7 @@ struct PhotoLibraryWriterTests {
         let f = try WriterFixture(); defer { f.remove() }
         let gateway = FakePhotoWriteGateway(); gateway.accesses = [.limited]
         gateway.known = .init(assetID: "known", filename: "FujiStudio-11111111-2222-3333-4444-555555555555.jpg", photosGeometry: .init(width: 7728, height: 5152))
-        let lookup = try await PhotoLibraryWriter(gateway: gateway).findExport(operationID: f.operationID, knownAssetID: "known")
+        let lookup = try await PhotoLibraryWriter(gateway: gateway).findExport(operationID: f.operationID, knownAssetID: "known", originalAssetID: nil)
         #expect(lookup == .found(.init(assetID: "known", operationID: f.operationID, photosGeometry: .init(width: 7728, height: 5152))))
         #expect(gateway.lookups == ["id:known"])
     }
@@ -131,11 +131,11 @@ struct PhotoLibraryWriterTests {
     @Test func limitedAccessCannotProveAnUncertainSaveAbsent() async throws {
         for accesses: [LibraryAccess] in [[.limited], [.denied], [.restricted], [.notDetermined], [.full, .limited]] {
             let gateway = FakePhotoWriteGateway(); gateway.accesses = accesses
-            #expect(try await PhotoLibraryWriter(gateway: gateway).findExport(operationID: UUID(), knownAssetID: nil) == .inaccessible)
+            #expect(try await PhotoLibraryWriter(gateway: gateway).findExport(operationID: UUID(), knownAssetID: nil, originalAssetID: nil) == .inaccessible)
             #expect(gateway.assets.isEmpty)
         }
         let gateway = FakePhotoWriteGateway()
-        #expect(try await PhotoLibraryWriter(gateway: gateway).findExport(operationID: UUID(), knownAssetID: nil) == .notFound)
+        #expect(try await PhotoLibraryWriter(gateway: gateway).findExport(operationID: UUID(), knownAssetID: nil, originalAssetID: nil) == .notFound)
         #expect(gateway.assets.isEmpty)
     }
 
@@ -145,11 +145,11 @@ struct PhotoLibraryWriterTests {
         let gateway = FakePhotoWriteGateway()
         gateway.matches = ["one", "two"].map { .init(assetID: $0, filename: "FujiStudio-11111111-2222-3333-4444-555555555555.jpg", photosGeometry: .init(width: 7728, height: 5152)) }
         await #expect(throws: PhotoLibraryWriteError.ambiguousOperation(f.operationID)) {
-            _ = try await PhotoLibraryWriter(gateway: gateway).findExport(operationID: f.operationID, knownAssetID: nil)
+            _ = try await PhotoLibraryWriter(gateway: gateway).findExport(operationID: f.operationID, knownAssetID: nil, originalAssetID: nil)
         }
         gateway.lookupError = .lookupFailed("synthetic offline")
         await #expect(throws: PhotoLibraryWriteError.lookupFailed("synthetic offline")) {
-            _ = try await PhotoLibraryWriter(gateway: gateway).findExport(operationID: f.operationID, knownAssetID: nil)
+            _ = try await PhotoLibraryWriter(gateway: gateway).findExport(operationID: f.operationID, knownAssetID: nil, originalAssetID: nil)
         }
     }
 
@@ -158,7 +158,7 @@ struct PhotoLibraryWriterTests {
         let f = try WriterFixture(); defer { f.remove() }
         let gateway = FakePhotoWriteGateway(); gateway.accesses = [.full, .denied]
         gateway.known = .init(assetID: "known", filename: "FujiStudio-11111111-2222-3333-4444-555555555555.jpg", photosGeometry: .init(width: 5152, height: 7728))
-        #expect(try await PhotoLibraryWriter(gateway: gateway).findExport(operationID: f.operationID, knownAssetID: "known") == .inaccessible)
+        #expect(try await PhotoLibraryWriter(gateway: gateway).findExport(operationID: f.operationID, knownAssetID: "known", originalAssetID: nil) == .inaccessible)
     }
 
     // Catches treating Photos' oriented/edited dimensions as authoritative encoded geometry.
@@ -169,7 +169,7 @@ struct PhotoLibraryWriterTests {
         for observed in [PixelSize(width: 5152, height: 7728), PixelSize(width: 640, height: 480)] {
             let gateway = FakePhotoWriteGateway()
             gateway.known = .init(assetID: "known", filename: "FujiStudio-11111111-2222-3333-4444-555555555555.jpg", photosGeometry: observed)
-            #expect(try await PhotoLibraryWriter(gateway: gateway).findExport(operationID: f.operationID, knownAssetID: "known") == .found(.init(assetID: "known", operationID: f.operationID, photosGeometry: observed)))
+            #expect(try await PhotoLibraryWriter(gateway: gateway).findExport(operationID: f.operationID, knownAssetID: "known", originalAssetID: nil) == .found(.init(assetID: "known", operationID: f.operationID, photosGeometry: observed)))
         }
     }
 

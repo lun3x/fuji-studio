@@ -8,6 +8,7 @@ struct PhotoSaveRequest: Sendable {
     let operationID: UUID
     let captureDate: Date?
     let location: PhotoLocation?
+    var originalEdit: PhotoOriginalEdit? = nil
 
     var filename: String { "FujiStudio-\(operationID.uuidString).jpg" }
 }
@@ -43,5 +44,5 @@ protocol PhotoLibraryWriting: Sendable {
     func saveJPEG(_ request: PhotoSaveRequest,
                   onPlaceholder: @escaping @Sendable (String) -> Void) async throws -> SavedAsset
     /// Absence is an observation, never authorization to resubmit an uncertain transaction.
-    func findExport(operationID: UUID, knownAssetID: String?) async throws -> SaveLookup
+    func findExport(operationID: UUID, knownAssetID: String?, originalAssetID: String?) async throws -> SaveLookup
 }

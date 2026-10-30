@@ -33,11 +33,17 @@ protocol PhotoWriteGateway: Sendable {
 
 struct PhotoLibraryWriter: PhotoLibraryWriting {
     private let gateway: any PhotoWriteGateway
-    init(gateway: any PhotoWriteGateway = NativePhotoWriteGateway()) { self.gateway = gateway }
+    private let editor: PhotoLibraryEditor
+    init(gateway: any PhotoWriteGateway = NativePhotoWriteGateway(), editor: PhotoLibraryEditor = PhotoLibraryEditor()) {
+        self.gateway = gateway; self.editor = editor
+    }
 
     func saveJPEG(_ request: PhotoSaveRequest,
                   onPlaceholder: @escaping @Sendable (String) -> Void) async throws -> SavedAsset {
         try Task.checkCancellation()
+        if let edit = request.originalEdit {
+            return try await editor.saveJPEG(request, edit: edit, onPlaceholder: onPlaceholder)
+        }
         let access = await gateway.access()
         guard access == .full || access == .limited else { throw PhotoLibraryWriteError.authorization(access) }
         let url = request.jpeg.fileURL
@@ -79,8 +85,9 @@ struct PhotoLibraryWriter: PhotoLibraryWriting {
         }
     }
 
-    func findExport(operationID: UUID, knownAssetID: String?) async throws -> SaveLookup {
+    func findExport(operationID: UUID, knownAssetID: String?, originalAssetID: String?) async throws -> SaveLookup {
         try Task.checkCancellation()
+        if let originalAssetID { return try await editor.findExport(operationID: operationID, sourceID: originalAssetID) }
         let initialAccess = await gateway.access()
         guard initialAccess == .full || initialAccess == .limited else { return .inaccessible }
         let filename = "FujiStudio-\(operationID.uuidString).jpg"

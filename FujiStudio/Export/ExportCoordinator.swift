@@ -70,7 +70,7 @@ actor ExportCoordinator {
     }
     private func removeObserver(_ id: UUID) { observers[id] = nil }
 
-    func start(sources: [PhotoSource], recipe: RecipeSnapshot) async throws -> UUID {
+    func start(sources: [PhotoSource], recipe: RecipeSnapshot, destination: ExportDestination = .separatePhoto) async throws -> UUID {
         guard !suspended else { throw ExportCoordinatorError.stopped }
         try reserve()
         let epoch = admissionEpoch
@@ -80,7 +80,7 @@ actor ExportCoordinator {
             try await validateCamera(recipe)
             for source in sources { try await validateSource(source); try checkStop(); guard epoch == admissionEpoch else { throw ExportCoordinatorError.stopped } }
             let job = ExportJob(id: UUID(), submittedAt: Date(), recipeSnapshot: recipe,
-                items: sources.map { ExportItem(source: $0, operationID: UUID()) }, state: .queued)
+                items: sources.map { ExportItem(source: $0, operationID: UUID()) }, state: .queued, destination: destination)
             try await catalog.saveJob(job)
             launch(job, epoch: epoch)
             return job.id
@@ -351,7 +351,9 @@ actor ExportCoordinator {
         let result: Result<SavedAsset, Error>
         do {
             result = .success(try await writer.saveJPEG(.init(jpeg: pending.jpeg, operationID: pending.operationID,
-                captureDate: source.captureDate, location: source.location), onPlaceholder: { stream.continuation.yield($0) }))
+                captureDate: source.captureDate, location: source.location,
+                originalEdit: job.destination == .updateOriginal ? PhotoOriginalEdit(source: source, recipe: job.recipeSnapshot) : nil),
+                onPlaceholder: { stream.continuation.yield($0) }))
         } catch { result = .failure(error) }
         stream.continuation.finish()
         // No completion/confirmation can race a late placeholder journal write.
@@ -397,7 +399,8 @@ actor ExportCoordinator {
                 try await setState(id, index, .failed(.unresolvedSave(reason)), stage: .failed)
                 if releaseFiles { try await releaseIfUnreferenced(pending.jpeg.key) }
             case .submitted, .unknown:
-                let lookup = try? await writer.findExport(operationID: pending.operationID, knownAssetID: pending.placeholderID)
+                let lookup = try? await writer.findExport(operationID: pending.operationID, knownAssetID: pending.placeholderID,
+                    originalAssetID: job.destination == .updateOriginal ? job.items[index].source.id : nil)
                 if case .found(let asset) = lookup {
                     try await confirm(job, index, pending, asset, releaseFile: releaseFiles)
                 } else {
@@ -413,7 +416,8 @@ actor ExportCoordinator {
               pending.placeholderID == nil || pending.placeholderID == asset.assetID,
               let at = pending.submission.attemptedAt else { throw CatalogError.conflictingOperation(pending.operationID) }
         let version = SavedVersion(id: UUID(), sourceID: job.items[index].source.id, outputAssetID: asset.assetID,
-            recipeSnapshot: job.recipeSnapshot, operationID: pending.operationID, exportedAt: at, jpeg: pending.jpeg, availability: .available)
+            recipeSnapshot: job.recipeSnapshot, operationID: pending.operationID, exportedAt: at, jpeg: pending.jpeg,
+            availability: .available, destination: job.destination)
         try await catalog.confirmSaved(jobID: job.id, operationID: pending.operationID, version: version)
         if releaseFile { try await releaseIfUnreferenced(pending.jpeg.key) }
     }

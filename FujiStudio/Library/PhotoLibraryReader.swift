@@ -203,7 +203,7 @@ actor PhotoLibraryReader: PhotoLibraryReading {
 
     func resources(assetID: String) async throws -> [ResourceToken] {
         let asset = try asset(assetID)
-        return descriptors(asset).map(\.token)
+        return Self.descriptors(asset).map(\.token)
     }
 
     func changes() async -> AsyncStream<LibraryChange> {
@@ -260,7 +260,7 @@ actor PhotoLibraryReader: PhotoLibraryReading {
         let asset = try asset(resource.assetID)
         let all = PHAssetResource.assetResources(for: asset)
         // Build descriptors from this exact snapshot; PhotoKit array order is not an identity.
-        let current = descriptors(asset, resources: all)
+        let current = Self.descriptors(asset, resources: all)
         let matches = current.indices.filter { current[$0].token.discriminator == resource.discriminator }
         guard matches.count == 1, let index = matches.first,
               resource.sourceRevision == current[index].revision else {
@@ -289,7 +289,7 @@ actor PhotoLibraryReader: PhotoLibraryReading {
         return asset
     }
 
-    private func descriptors(_ asset: PHAsset, resources supplied: [PHAssetResource]? = nil) -> [PhotoResourceDescriptor] {
+    static func descriptors(_ asset: PHAsset, resources supplied: [PHAssetResource]? = nil) -> [PhotoResourceDescriptor] {
         let resources = supplied ?? PHAssetResource.assetResources(for: asset)
         let identities = resources.map { "\($0.type.rawValue)|\($0.contentType.identifier)|\($0.filename ?? "")" }.sorted().joined(separator: "\n")
         let revision = SHA256.hash(data: Data("\(asset.modificationDate?.timeIntervalSince1970 ?? 0)|\(identities)".utf8))
@@ -302,7 +302,7 @@ actor PhotoLibraryReader: PhotoLibraryReading {
     }
 
     private func makeSource(_ asset: PHAsset) throws -> PhotoSource {
-        let tokens = descriptors(asset).map(\.token)
+        let tokens = Self.descriptors(asset).map(\.token)
         let originals = try RawResourceSelector.select(tokens)
         return PhotoSource(id: asset.localIdentifier, originalResources: originals,
                            captureDate: asset.creationDate,
