@@ -132,7 +132,7 @@ struct AppWorkspaceView: View {
                             }
                             .tint(.red)
                             .accessibilityIdentifier("settings.updateOriginalInPhotos")
-                            Text("Export to the existing photo instead of creating a separate JPEG. Originals are preserved; use Revert to Original in Photos to undo. Only the latest edit appears in image versions. Applies to new export jobs.")
+                            Text("RAW-only photos become a new RAW+JPEG pair; the old asset is removed after verification. Existing pairs preserve their originals and support Revert to Original in Photos. Only the latest edit appears in image versions. Applies to new export jobs.")
                                 .font(.footnote).foregroundStyle(.secondary)
                                 .accessibilityIdentifier("settings.updateOriginalExplanation")
                         }
