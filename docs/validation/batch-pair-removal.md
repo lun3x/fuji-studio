@@ -58,4 +58,37 @@ final complete run includes that coverage.
 
 The task uses the isolated **Fuji Batched RAW Cleanup** iPhone 15 Pro simulator,
 `F5B3A3E1-038B-4BCC-AF36-5B356B25F17F`. Complete validation and the signed
-Release rebuild are in progress at this checkpoint.
+Release rebuild were in progress at the implementation checkpoint.
+
+## Final validation
+
+The complete run finished with **717 total, 713 passed, 1 failed, 3 skipped**
+(`20261031-100341-63145.xcresult`). All export, batch cleanup, lifecycle admission,
+recovery, version-picker and settings checks passed. The editor keyboard-focus
+failure from the integration baseline also passed after the helper correction.
+
+The one failure was the existing
+`WorkspaceAccessibilityTests.testLargestTextDoesNotOverlap` initial
+`workspace.select.isHittable` assertion (line 37). It passed unchanged in the
+isolated serial retry (`/tmp/fuji-batch-pair-accessibility-retry.log`). The
+complete parallel run remains recorded as failed, not relabeled as passing.
+
+Integration ruling: proceed with the user's requested PR merge with this
+documented workspace accessibility flake. The same test passed in the baseline
+and the unchanged serial retry; its static workspace fixture and hit-test are
+outside the batch cleanup changes. Cost if that assessment is wrong: an
+intermittent largest-text Select control issue remains. No app or test behavior
+was changed for that isolated failure.
+
+Both the integration-baseline and batched-cleanup task simulators were shut
+down/deleted after validation. Xcode removed their worker clones; cleanup was
+verified without changing other task simulators.
+
+## Phone build
+
+Code checkpoint `c9a32bce` rebuilt successfully in signed Release with development
+team `AZH3P824F3` and automatic `Apple Development` signing. The exact bundle at
+`.build/PhoneInstall/Build/Products/Release-iphoneos/FujiStudio.app` passed
+`codesign --verify --deep --strict` and installed successfully on Louisphone.
+The normal launch attempt was denied because the phone was locked (CoreDevice
+10002). Requested unlock; no real-library creation or deletion was run by tests.
