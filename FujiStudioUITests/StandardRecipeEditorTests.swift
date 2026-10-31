@@ -22,15 +22,17 @@ final class StandardRecipeEditorTests: AppFlowTestCase {
     XCTAssertFalse(app.buttons["recipe.editor.save"].isEnabled)
     reveal(highlight, in: app)
     XCTAssertTrue(highlight.label.contains("+1.5"))
+    XCTAssertEqual(highlight.value as? String, "Unavailable")
+    shot(app, "Retained unavailable tone is shown in red")
     highlight.tap()
-    XCTAssertFalse(app.buttons["+1.5"].isEnabled)
+    XCTAssertFalse(app.buttons["+1.5"].exists)
     XCTAssertTrue(app.buttons["+1"].isEnabled)
     app.buttons["+1"].tap()
     XCTAssertTrue(app.buttons["recipe.editor.save"].isEnabled)
+    XCTAssertNotEqual(highlight.value as? String, "Unavailable")
     let chrome = app.buttons["recipe.editor.setting.colorChrome"]
-    reveal(chrome, in: app)
-    XCTAssertFalse(chrome.isEnabled)
-    shot(app, "X-E3 standard recipe retains unavailable fields")
+    XCTAssertFalse(chrome.exists)
+    shot(app, "X-E3 editor hides unavailable fields")
     app.buttons["recipe.editor.save"].tap()
     XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitForNonExistence(timeout: 5))
     edit.tap()
@@ -40,7 +42,7 @@ final class StandardRecipeEditorTests: AppFlowTestCase {
     app.buttons["recipe.editor.cancel"].tap()
   }
 
-  func testMonochromeControlsDisableForColourFilmAndKeepTheirValues() {
+  func testMonochromeControlsHideForColourFilmAndKeepTheirValues() {
     let app = launch()
     wait { app.buttons["app.status"].label.contains("Camera ready") }
     tap(app.buttons["recipe.control"], in: app)
@@ -58,17 +60,14 @@ final class StandardRecipeEditorTests: AppFlowTestCase {
     reveal(app.buttons["recipe.editor.setting.film"], in: app)
     XCTAssertEqual(name.value as? String, originalName)
     let warm = app.buttons["recipe.editor.setting.monochromeWarmCool"]
-    reveal(warm, in: app)
-    XCTAssertFalse(warm.isEnabled)
+    XCTAssertFalse(warm.exists)
     selectFilm("ACROS", in: app)
     reveal(warm, in: app)
     XCTAssertTrue(warm.isEnabled)
     warm.tap()
     app.buttons["+5"].tap()
     selectFilm("PROVIA / Standard", in: app)
-    reveal(warm, in: app)
-    XCTAssertFalse(warm.isEnabled)
-    XCTAssertTrue(warm.label.contains("+5"))
+    XCTAssertTrue(warm.waitForNonExistence(timeout: 5))
     selectFilm("ACROS", in: app)
     reveal(warm, in: app)
     XCTAssertTrue(warm.isEnabled)

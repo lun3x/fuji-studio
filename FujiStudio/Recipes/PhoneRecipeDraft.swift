@@ -73,7 +73,10 @@ struct PhoneRecipeDraft: Sendable, Equatable {
     standardRecipe.value(for: setting)
   }
   func choices(for setting: RecipeSettingID) -> [SettingChoice] {
-    StandardRecipeCatalog.choices(for: setting)
+    guard isAvailable(setting) else { return [] }
+    return StandardRecipeCatalog.choices(for: setting).filter {
+      isChoiceAvailable($0.value, for: setting)
+    }
   }
   func isAvailable(_ setting: RecipeSettingID) -> Bool { standardRecipe.isAvailable(setting) }
   func isChoiceAvailable(_ value: RecipeSettingValue, for setting: RecipeSettingID) -> Bool {

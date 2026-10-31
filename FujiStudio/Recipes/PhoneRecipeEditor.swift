@@ -22,7 +22,7 @@ struct PhoneRecipeEditor: View {
         }
         if let invalid = draft.standardRecipe.invalidSettings.first {
           Text("Choose a supported value: \(invalid.title).")
-            .font(.callout).foregroundStyle(.secondary)
+            .font(.callout).foregroundStyle(.red)
             .frame(maxWidth: .infinity, alignment: .leading).padding()
             .accessibilityIdentifier("recipe.editor.validation")
         }
@@ -76,11 +76,11 @@ struct PhoneRecipeEditor: View {
             setting(.colorSpace)
             setting(.iso)
           }
-          if !draft.original.snapshot.unreadImportedSettings.isEmpty {
+          let unread = draft.original.snapshot.unreadImportedSettings.filter { draft.isAvailable($0) }
+          if !unread.isEmpty {
             Section {
-              let names = draft.original.snapshot.unreadImportedSettings.map(\.title).joined(
-                separator: ", ")
-              let unresolved = draft.original.snapshot.unreadImportedSettings.filter {
+              let names = unread.map(\.title).joined(separator: ", ")
+              let unresolved = unread.filter {
                 if case .unknown = draft.value(for: $0) { return true }
                 return false
               }
@@ -119,63 +119,67 @@ struct PhoneRecipeEditor: View {
     .interactiveDismissDisabled(saving || draft.hasChanges)
   }
 
-  private var temperature: some View {
-    HStack {
-      Text("Temperature (K)")
-      TextField("Kelvin", text: $draft.temperature)
-        .keyboardType(.numberPad).multilineTextAlignment(.trailing)
-        .accessibilityLabel("Temperature in kelvin")
-        .accessibilityIdentifier("recipe.editor.temperature")
-      NavigationLink {
-        RecipeTemperatureChoices(draft: $draft)
-      } label: {
-        Text("Values")
+  @ViewBuilder private var temperature: some View {
+    if draft.isAvailable(.kelvin) {
+      let invalid = !draft.isChoiceAvailable(draft.value(for: .kelvin), for: .kelvin)
+      HStack {
+        Text("Temperature (K)")
+        TextField("Kelvin", text: $draft.temperature)
+          .keyboardType(.numberPad).multilineTextAlignment(.trailing)
+          .foregroundStyle(invalid ? Color.red : Color.primary)
+          .accessibilityLabel("Temperature in kelvin")
+          .accessibilityHint(invalid ? "This value is unavailable. Choose a supported temperature." : "")
+          .accessibilityIdentifier("recipe.editor.temperature")
+        if invalid {
+          Image(systemName: "exclamationmark.circle")
+            .foregroundStyle(.red)
+            .accessibilityLabel("Unavailable temperature")
+            .accessibilityIdentifier("recipe.editor.temperature.unavailable")
+        }
+        NavigationLink {
+          RecipeTemperatureChoices(draft: $draft)
+        } label: {
+          Text("Values")
+        }
+        .accessibilityIdentifier("recipe.editor.setting.kelvin")
       }
-      .accessibilityIdentifier("recipe.editor.setting.kelvin")
     }
-    .disabled(!draft.isAvailable(.kelvin))
-    .foregroundStyle(
-      draft.isAvailable(.kelvin) && draft.isChoiceAvailable(draft.value(for: .kelvin), for: .kelvin)
-        ? Color.primary : Color.secondary)
   }
 
-  private func setting(_ field: RecipeSettingID) -> some View {
-    let selected = draft.value(for: field)
-    let choices = draft.choices(for: field)
-    let available = draft.isAvailable(field)
-    let title = field == .grain ? "Grain effect" : field.title
-    return Menu {
-      if !choices.contains(where: { $0.value == selected }) {
-        Button(field.label(for: selected), systemImage: "checkmark") {}.disabled(true)
-      }
-      ForEach(choices, id: \.value) { choice in
-        Button {
-          guard draft.isChoiceAvailable(choice.value, for: field) else { return }
-          draft.setValue(choice.value, for: field)
-        } label: {
-          if choice.value == selected {
-            Label(field.label(for: choice.value), systemImage: "checkmark")
-          } else {
-            Text(field.label(for: choice.value))
+  @ViewBuilder private func setting(_ field: RecipeSettingID) -> some View {
+    if draft.isAvailable(field) {
+      let selected = draft.value(for: field)
+      let invalid = !draft.isChoiceAvailable(selected, for: field)
+      let title = field == .grain ? "Grain effect" : field.title
+      Menu {
+        ForEach(draft.choices(for: field), id: \.value) { choice in
+          Button {
+            guard draft.isChoiceAvailable(choice.value, for: field) else { return }
+            draft.setValue(choice.value, for: field)
+          } label: {
+            if choice.value == selected {
+              Label(field.label(for: choice.value), systemImage: "checkmark")
+            } else {
+              Text(field.label(for: choice.value))
+            }
           }
         }
-        .disabled(!draft.isChoiceAvailable(choice.value, for: field))
+      } label: {
+        HStack {
+          Text(title).foregroundStyle(Color.primary)
+          Spacer()
+          Text(field.label(for: selected))
+          if invalid { Image(systemName: "exclamationmark.circle").accessibilityHidden(true) }
+          Image(systemName: "chevron.up.chevron.down").font(.caption)
+        }
+        .foregroundStyle(invalid ? Color.red : Color.accentColor)
       }
-    } label: {
-      HStack {
-        Text(title).foregroundStyle(available ? Color.primary : Color.secondary)
-        Spacer()
-        Text(field.label(for: selected))
-        Image(systemName: "chevron.up.chevron.down").font(.caption)
-      }
-      .foregroundStyle(
-        available && draft.isChoiceAvailable(selected, for: field)
-          ? Color.accentColor : Color.secondary)
+      .accessibilityLabel("\(title), \(field.label(for: selected))")
+      .accessibilityValue(invalid ? "Unavailable" : "")
+      .accessibilityHint(invalid ? "Choose an available value before saving." : "")
+      .accessibilityIdentifier(
+        "recipe.editor.setting.\(field == .grain ? "grainEffect" : field.rawValue)")
     }
-    .disabled(!available)
-    .accessibilityLabel("\(title), \(field.label(for: selected))")
-    .accessibilityIdentifier(
-      "recipe.editor.setting.\(field == .grain ? "grainEffect" : field.rawValue)")
   }
 
   private func save() {
@@ -216,10 +220,7 @@ private struct RecipeTemperatureChoices: View {
             if draft.value(for: .kelvin) == choice.value { Image(systemName: "checkmark") }
           }
         }
-        .foregroundStyle(
-          draft.isChoiceAvailable(choice.value, for: .kelvin) ? Color.primary : Color.secondary
-        )
-        .disabled(!draft.isChoiceAvailable(choice.value, for: .kelvin))
+        .foregroundStyle(Color.primary)
       }
     }
     .navigationTitle("Temperature")

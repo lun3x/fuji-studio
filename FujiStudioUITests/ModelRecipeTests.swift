@@ -58,22 +58,24 @@ final class ModelRecipeTests: AppFlowTestCase {
         let grain=app.buttons["recipe.editor.setting.grainEffect"]
         XCTAssertTrue(grain.waitForExistence(timeout:5))
         let size=app.buttons["recipe.editor.setting.grainSize"]
-        reveal(size,in:app);XCTAssertTrue(size.exists);XCTAssertFalse(size.isEnabled)
+        reveal(grain,in:app);XCTAssertFalse(size.exists)
         let chrome=app.buttons["recipe.editor.setting.colorChrome"]
-        reveal(chrome,in:app);XCTAssertTrue(chrome.exists);XCTAssertFalse(chrome.isEnabled)
+        XCTAssertFalse(chrome.exists)
         let clarity=app.buttons["recipe.editor.setting.clarity"]
-        reveal(clarity,in:app);XCTAssertTrue(clarity.exists);XCTAssertFalse(clarity.isEnabled)
+        reveal(app.buttons["recipe.editor.setting.sharpness"],in:app);XCTAssertFalse(clarity.exists)
         let kelvin=app.buttons["recipe.editor.setting.kelvin"]
         reveal(kelvin,in:app,towardsTop:true);kelvin.tap()
         let search=app.textFields["recipe.editor.temperature.search"]
-        XCTAssertTrue(search.waitForExistence(timeout:5));search.tap();search.typeText("7100")
-        app.buttons["7100"].tap()
+        XCTAssertTrue(search.waitForExistence(timeout:5));search.tap();search.typeText("5310")
+        XCTAssertFalse(app.buttons["5310"].exists)
+        replaceText(search,with:"5300")
+        app.buttons["5300"].tap()
         chooseAutoISO(in:app)
         shot(app,"X-E3 semantic editor and verified Kelvin")
         app.buttons["recipe.editor.save"].tap()
         XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitForNonExistence(timeout:5))
         edit.tap();reveal(kelvin,in:app)
-        XCTAssertEqual(app.textFields["recipe.editor.temperature"].value as? String,"7100")
+        XCTAssertEqual(app.textFields["recipe.editor.temperature"].value as? String,"5300")
         app.buttons["recipe.editor.cancel"].tap()
     }
 

@@ -42,16 +42,27 @@ struct PhoneRecipeDraftTests {
     #expect(PhoneRecipeDraft(recipe: .init(id: phone.id, snapshot: saved)).camera == .xe3)
   }
 
-  @Test func allChoicesStayVisibleAndUnavailableValuesAreDisabled() throws {
+  @Test func choicesContainOnlyAvailableValuesWithoutChangingSelections() throws {
     var draft = PhoneRecipeDraft(recipe: try ProductionProfileFixture().bank.copiedToPhone())
+    draft.setValue(.film(.realaAce), for: .film)
+    draft.setValue(.integer(15), for: .highlight)
     draft.camera = .xe3
-    #expect(draft.choices(for: .film).count == FilmSimulation.allCases.count)
+    #expect(!draft.choices(for: .film).contains { $0.value == .film(.realaAce) })
+    #expect(draft.choices(for: .film).contains { $0.value == .film(.provia) })
     #expect(!draft.isChoiceAvailable(.film(.realaAce), for: .film))
     #expect(draft.isChoiceAvailable(.film(.provia), for: .film))
-    #expect(draft.choices(for: .highlight).contains { $0.value == .integer(15) })
+    #expect(!draft.choices(for: .highlight).contains { $0.value == .integer(15) })
+    #expect(draft.choices(for: .highlight).contains { $0.value == .integer(10) })
     #expect(!draft.isChoiceAvailable(.integer(15), for: .highlight))
     #expect(!draft.isAvailable(.colorChrome))
-    #expect(!draft.choices(for: .colorChrome).isEmpty)
+    #expect(draft.choices(for: .colorChrome).isEmpty)
+    #expect(draft.value(for: .film) == .film(.realaAce))
+    #expect(draft.value(for: .highlight) == .integer(15))
+    #expect(!draft.canSave)
+    draft.camera = .xt5
+    #expect(draft.choices(for: .film).contains { $0.value == .film(.realaAce) })
+    #expect(draft.choices(for: .highlight).contains { $0.value == .integer(15) })
+    #expect(draft.canSave)
   }
 
   @Test func unavailableFieldsAndDormantGrainSizeSurviveSaveReopenAndSwitchBack() throws {
@@ -111,6 +122,9 @@ struct PhoneRecipeDraftTests {
     #expect(draft.canSave)
     draft.camera = .xe3
     #expect(!draft.canSave)
+    #expect(draft.value(for: .kelvin) == .integer(5310))
+    #expect(!draft.choices(for: .kelvin).contains { $0.value == .integer(5310) })
+    #expect(draft.choices(for: .kelvin).contains { $0.value == .integer(5300) })
     draft.temperature = "5300"
     #expect(draft.canSave)
     draft.temperature = "5301"
@@ -124,8 +138,10 @@ struct PhoneRecipeDraftTests {
     var draft = PhoneRecipeDraft(recipe: phone)
     draft.setValue(.integer(50), for: .monochromeWarmCool)
     #expect(!draft.isAvailable(.monochromeWarmCool))
+    #expect(draft.choices(for: .monochromeWarmCool).isEmpty)
     draft.setValue(.film(.acros), for: .film)
     #expect(draft.isAvailable(.monochromeWarmCool))
+    #expect(draft.choices(for: .monochromeWarmCool).contains { $0.value == .integer(50) })
     draft.setValue(.film(.provia), for: .film)
     #expect(!draft.isAvailable(.monochromeWarmCool))
     let saved = try draft.makeSnapshot()

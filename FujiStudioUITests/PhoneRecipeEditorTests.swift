@@ -34,8 +34,9 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
         reveal(effect, in: app); effect.tap()
         XCTAssertTrue(app.buttons["Weak"].isEnabled)
         app.buttons["Off"].tap()
-        XCTAssertFalse(size.isEnabled)
+        XCTAssertTrue(size.waitForNonExistence(timeout: 5))
         effect.tap(); app.buttons["Strong"].tap()
+        XCTAssertTrue(size.waitForExistence(timeout: 5))
         XCTAssertTrue(size.isEnabled)
         size.tap()
         XCTAssertTrue(app.buttons["Large"].isEnabled)
@@ -48,7 +49,7 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
         effect.tap(); app.buttons["Off"].tap(); app.buttons["recipe.editor.save"].tap()
         XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitForNonExistence(timeout: 5))
         edit.tap()
-        XCTAssertTrue(effect.label.contains("Off")); XCTAssertFalse(size.isEnabled)
+        XCTAssertTrue(effect.label.contains("Off")); XCTAssertFalse(size.exists)
         app.buttons["recipe.editor.cancel"].tap()
     }
 
@@ -118,6 +119,7 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
         reveal(balance, in: app); balance.tap(); app.buttons["Colour temperature"].tap()
         let temperature = app.textFields["recipe.editor.temperature"]
         reveal(temperature, in: app); replaceText(temperature, with: "10001")
+        XCTAssertTrue(app.images["recipe.editor.temperature.unavailable"].exists)
         shot(app, "Phone editor temperature draft before validation")
         XCTAssertFalse(app.buttons["recipe.editor.save"].isEnabled)
         XCTAssertEqual(temperature.value as? String, "10001")
@@ -139,7 +141,7 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
         let effect = app.buttons["recipe.editor.setting.grainEffect"]
         reveal(effect, in: app); effect.tap(); app.buttons["Off"].tap()
         let size = app.buttons["recipe.editor.setting.grainSize"]
-        reveal(size, in: app); XCTAssertFalse(size.isEnabled)
+        XCTAssertTrue(size.waitForNonExistence(timeout: 5))
         shot(app, "Phone editor at largest text")
         XCTAssertTrue(app.buttons["recipe.editor.save"].isHittable)
         XCTAssertTrue(app.buttons["recipe.editor.cancel"].isHittable)

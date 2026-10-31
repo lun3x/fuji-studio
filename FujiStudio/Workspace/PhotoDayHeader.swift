@@ -53,7 +53,8 @@ final class PhotoDayHeader: UICollectionReusableView {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        backgroundColor = .systemBackground
+        backgroundColor = .clear
+        isOpaque = false
         dateLabel.font = .preferredFont(forTextStyle: .subheadline)
         dateLabel.adjustsFontForContentSizeCategory = true
         dateLabel.numberOfLines = 0
