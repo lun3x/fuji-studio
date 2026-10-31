@@ -115,7 +115,7 @@ enum XT5RecipeSettingsCodec {
       context: original.cameraContext, importedAt: original.importedAt)
     return RecipeSnapshot(
       id: result.id, slot: original.slot, name: original.name, importedName: original.importedName,
-      importedSettings: result.importedSettings, settingsDigest: result.settingsDigest,
+      importedSettings: result.importedSettings, settingsDigest: result.sourceSettingsDigest,
       cameraContext: original.cameraContext, importedAt: original.importedAt,
       renderingIssues: result.renderingIssues, copiedFromRecipeID: original.copiedFromRecipeID)
   }

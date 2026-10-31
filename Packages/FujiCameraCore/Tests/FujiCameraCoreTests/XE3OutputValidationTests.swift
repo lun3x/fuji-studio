@@ -4,6 +4,20 @@ import Testing
 @testable import FujiCameraCore
 
 struct XE3OutputValidationTests {
+  @Test func requestedOffCannotPublishLensOptimizerOn() throws {
+    var settings = xe3Settings(); settings.lensOptimizerRequested = false
+    let base = conversion(settings)
+    let conversion = PreparedConversion(bytes: base.bytes, requested: settings, source: base.source,
+      supportVersion: base.supportVersion, expectedLensOptimizer: false,
+      baselineSHA256: base.baselineSHA256, candidateSHA256: base.candidateSHA256)
+    let image = CoreJPEGFixture(model: "X-E3", lensOptimizer: 1, fields: entries(xe3MakerFields()))
+      .inject(into: try ObjectObservationFixture.jpeg())
+    let result = try XE3Adapter().validateOutput(image, conversion: conversion)
+    guard case .rejected(let mismatch) = result.admission else {
+      Issue.record("A requested Off must never become On"); return
+    }
+    #expect(mismatch.field == "lensOptimizer")
+  }
   @Test func cappedDRIsAcceptedAndOriginalRequestIsRetained() throws {
     var fields = xe3MakerFields()
     fields[0x1403] = short(200)
@@ -99,16 +113,16 @@ struct XE3OutputValidationTests {
       return
     }
   }
-  @Test func lensOptimizerMismatchStillBlocksXE3Publication() throws {
+  @Test func lensOptimizerCanBeEffectivelyOffForAnXE3Photo() throws {
     let image = CoreJPEGFixture(
       model: "X-E3", lensOptimizer: 0, fields: entries(xe3MakerFields())
     ).inject(into: try ObjectObservationFixture.jpeg())
     let result = try XE3Adapter().validateOutput(image, conversion: conversion())
-    guard case .rejected(let mismatch) = result.admission else {
-      Issue.record("X-T5 adjustment policy must not relax X-E3 validation")
+    guard case .accepted(let report) = result.admission else {
+      Issue.record("A requested On may be adjusted Off for the photo")
       return
     }
-    #expect(mismatch.field == "lensOptimizer")
+    #expect(report.lensOptimizerRequested && !report.lensOptimizerEffective && report.lensOptimizerAdjusted)
   }
   @Test func monochromeSaturationIdentifiesFilterAndColorRemainsProtocolEvidence() throws {
     var fields = xe3MakerFields()

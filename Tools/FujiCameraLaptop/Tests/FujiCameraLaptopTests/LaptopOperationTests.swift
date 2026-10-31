@@ -66,7 +66,7 @@ struct LaptopOperationFixture: Sendable {
     cameraModel: "X-E3", containerGeometry: .init(width: 6160, height: 4032),
     recordedGeometry: .init(width: 6000, height: 4000), recordedAspect: .init(width: 3, height: 2),
     cropTop: 16, cropLeft: 16, orientation: 1, compression: .uncompressed, bitDepth: 14,
-    rafVersion: "0130")
+    rafVersion: "0130", captureDynamicRange: 400)
   init() throws {
     root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try MacJournalFilePolicy().createFreshDirectory(at: root)

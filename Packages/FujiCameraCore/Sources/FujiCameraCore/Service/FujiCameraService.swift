@@ -291,8 +291,9 @@ public actor FujiCameraService: CameraServing {
         }
         return RecipeSnapshot(
           id: r.id, slot: r.slot, name: r.name, importedName: r.importedName,
-          importedSettings: r.importedSettings, settingsDigest: r.settingsDigest,
-          cameraContext: current, importedAt: r.importedAt, renderingIssues: issues)
+          importedSettings: r.importedSettings, settingsDigest: r.sourceSettingsDigest,
+          cameraContext: current, importedAt: r.importedAt, renderingIssues: issues,
+          standardRecipe: r.standardRecipe)
       }
       try await finishReady()
       return ImportedRecipeCollection(
@@ -333,9 +334,9 @@ public actor FujiCameraService: CameraServing {
     raw: PreparedRAW, recipe: RecipeSnapshot, policy: OutputPolicy, epoch: UInt64
   ) async throws -> CameraJPEG {
     guard let adapter = activeAdapter, let support = verifiedSupport,
-      recipe.cameraContext.model == support.model,
-      recipe.cameraContext.firmware == support.firmware,
-      recipe.cameraContext.capability == support.capability
+      recipe.targetCamera.rawValue == support.model,
+      recipe.targetCamera.firmware == support.firmware,
+      recipe.targetCamera.capability == support.capability
     else { throw CameraServiceError.unsupportedContext }
     try adapter.validateSource(raw.metadata)
     _ = try adapter.decodeRecipe(recipe).requireSettings()

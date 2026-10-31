@@ -3,7 +3,7 @@ import Foundation
 
 /// Measured frame structure with replaceable starting settings. Always patches fresh input.
 public struct XT5WorkingProfile: Sendable {
-  public static let supportVersion = "xt5-4.31-0200-structured-frame-v5-source-dr"
+  public static let supportVersion = "xt5-4.31-0200-structured-frame-v6-standard-recipes"
   public static let writableOffsets = [
     533, 541, 545, 549, 553, 557, 561, 565, 569, 573, 577, 581, 585, 589, 593, 609, 617,
   ]
@@ -12,6 +12,7 @@ public struct XT5WorkingProfile: Sendable {
   public let settingsDigest: String
   public let settings: RecipeSettings
   public let effectiveDynamicRange: Int
+  public var effectiveLensOptimizer: Bool { bytes[593] == 1 }
   public let baselineSHA256: String, candidateSHA256: String
 
   public static func validateSource(_ metadata: RAWMetadata) throws {
@@ -28,30 +29,9 @@ public struct XT5WorkingProfile: Sendable {
     else { throw CameraServiceError.unsupportedSource }
   }
   public static func normalize(_ recipe: RecipeSnapshot) throws -> RecipeSettings {
-    guard recipe.cameraContext.model == "X-T5", recipe.cameraContext.firmware == "4.31",
-      recipe.cameraContext.capability == "X-T5_0200"
-    else { throw CameraServiceError.unsupportedContext }
-    let p = try properties(recipe)
-    func v(_ code: UInt16) -> UInt16 { p[code]! }
-    func s(_ code: UInt16) -> Int { Int(Int16(bitPattern: v(code))) }
-    let tuple = [v(0xD18E), v(0xD18F), v(0xD1A3), v(0xD1A4)]
-    let nr: [UInt16: Int] = [
-      0x8000: -4, 0x7000: -3, 0x4000: -2, 0x3000: -1, 0x2000: 0, 0x1000: 1, 0: 2, 0x6000: 3,
-      0x5000: 4,
-    ]
-    guard tuple[0] == 7, [2, 4].contains(tuple[1]), tuple[2] == 1, tuple[3] == 1,
-      [100, 200, 400].contains(v(0xD190)), v(0xD191) == 0,
-      FujiRenderingValues.films[v(0xD192)] != nil,
-      v(0xD193) == 0, v(0xD194) == 0, [1, 3, 6, 7].contains(v(0xD195)),
-      (1...3).contains(v(0xD196)), (1...3).contains(v(0xD197)), v(0xD198) == 1,
-      [UInt16(2), 32775].contains(v(0xD199)), (-9...9).contains(s(0xD19A)),
-      (-9...9).contains(s(0xD19B)),
-      (2500...10000).contains(v(0xD19C)), let noise = nr[v(0xD1A1)],
-      [UInt16(0xD19D), 0xD19E].allSatisfy({ (-20...40).contains(s($0)) && s($0) % 5 == 0 }),
-      [UInt16(0xD19F), 0xD1A0].allSatisfy({ (-40...40).contains(s($0)) && s($0) % 10 == 0 }),
-      (-50...50).contains(s(0xD1A2)), s(0xD1A2) % 10 == 0
-    else { throw CameraServiceError.unsupportedSettings }
-    return try XT5RecipeSettingsCodec.decode(recipe)
+    guard recipe.targetCamera == .xt5 else { throw CameraServiceError.unsupportedContext }
+    do { return try RecipeCodecRegistry().applicationSettings(recipe) }
+    catch { throw CameraServiceError.unsupportedSettings }
   }
   public static func make(baseline: Data, recipe: RecipeSnapshot, metadata: RAWMetadata) throws
     -> Self
@@ -73,7 +53,7 @@ public struct XT5WorkingProfile: Sendable {
         throw CameraServiceError.unsupportedProfile
       }
     }
-    let p = try properties(recipe)
+    let p = try nativeProfileValues(settings)
     var output = baseline
     let rules: [(Int, UInt16, Bool)] = [
       (541, 0xD192, false), (549, 0xD196, false), (557, 0xD199, false),
@@ -91,8 +71,8 @@ public struct XT5WorkingProfile: Sendable {
     output.replaceSubrange(533..<537, with: word(UInt32(effectiveDynamicRange)))
     output.replaceSubrange(545..<549, with: word(settings.grain.strength == .strong ? 3 : 1))
     output.replaceSubrange(553..<557, with: word(2))
-    // Explicit requested ON; effective value comes from returned JPEG.
-    output.replaceSubrange(593..<597, with: word(1))
+    let lensOptimizer = metadata.effectiveLensOptimizer(for: settings.lensOptimizerRequested ?? true)
+    output.replaceSubrange(593..<597, with: word(lensOptimizer ? 1 : 2))
     return Self(
       bytes: output, recipeID: recipe.id, settingsDigest: recipe.settingsDigest, settings: settings,
       effectiveDynamicRange: effectiveDynamicRange,
@@ -102,9 +82,10 @@ public struct XT5WorkingProfile: Sendable {
     EffectiveRecipeReport(
       supportVersion: Self.supportVersion, requested: settings,
       dormantGrainSizeNotSerialized: settings.grain.strength != .strong,
-      inactiveKelvinPreserved: settings.whiteBalance != .temperature, lensOptimizerRequested: true,
+      inactiveKelvinPreserved: settings.whiteBalance != .temperature,
+      lensOptimizerRequested: settings.lensOptimizerRequested ?? true,
       lensOptimizerEffective: lensOptimizer,
-      lensOptimizerAdjusted: !lensOptimizer,
+      lensOptimizerAdjusted: lensOptimizer != (settings.lensOptimizerRequested ?? true),
       evidence:
         "Exact profile readback; JPEG Fuji quality/context and LMO metadata. Opaque tuple accepted only within observed frame support.",
       dynamicRangeEffective: effectiveDynamicRange
@@ -129,10 +110,33 @@ public struct XT5WorkingProfile: Sendable {
       canonical.append(contentsOf: [UInt8(truncatingIfNeeded: code), UInt8(code >> 8), 2, 0])
       canonical.append(entries[code]!)
     }
-    guard hash(canonical) == recipe.settingsDigest else {
+    guard hash(canonical) == recipe.sourceSettingsDigest else {
       throw CameraServiceError.unsupportedSettings
     }
     return entries.mapValues { UInt16($0[0]) | UInt16($0[1]) << 8 }
+  }
+  private static func nativeProfileValues(_ settings: RecipeSettings) throws -> [UInt16: UInt16] {
+    func key<T: Equatable>(_ table: [UInt16: T], _ value: T) throws -> UInt16 {
+      guard let key = table.first(where: { $0.value == value })?.key else {
+        throw CameraServiceError.unsupportedSettings
+      }
+      return key
+    }
+    var result: [UInt16: UInt16] = [
+      0xD192: try key(FujiRenderingValues.films, settings.film),
+      0xD196: try key(FujiRenderingValues.effects, settings.colorChrome ?? .off),
+      0xD197: try key(FujiRenderingValues.effects, settings.colorChromeBlue ?? .off),
+      0xD199: try key(FujiRenderingValues.whiteBalances, settings.whiteBalance),
+      0xD1A1: try key(FujiRenderingValues.noise, settings.noiseReduction),
+      0xD19C: UInt16(settings.kelvin ?? 5000),
+    ]
+    for (code, value): (UInt16, Int) in [
+      (0xD19A, settings.whiteBalanceRed), (0xD19B, settings.whiteBalanceBlue),
+      (0xD19D, settings.highlightTenths), (0xD19E, settings.shadowTenths),
+      (0xD19F, settings.colorTenths), (0xD1A0, settings.sharpnessTenths),
+      (0xD1A2, settings.clarityTenths ?? 0),
+    ] { result[code] = UInt16(bitPattern: Int16(value)) }
+    return result
   }
   public init(
     bytes: Data, recipeID: UUID, settingsDigest: String, settings: RecipeSettings,

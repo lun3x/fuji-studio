@@ -3,13 +3,14 @@ import Foundation
 public struct RecipeCodecRegistry: Sendable {
   public init() {}
   public func assess(_ snapshot: RecipeSnapshot) -> RecipeAssessment {
-    if snapshot.cameraContext.model == "X-E3" { return XE3RecipeCodec.assess(snapshot) }
     do {
-      return RecipeAssessment(settings: try requireModelSettings(snapshot), issues: [])
+      return RecipeAssessment(settings: try applicationSettings(snapshot), issues: [])
     } catch CameraServiceError.unsupportedContext {
       return .init(settings: nil, issues: [.unsupportedCameraContext])
+    } catch StandardRecipeApplicationError.unsupportedSetting(let id, let value) {
+      return .init(settings: nil, issues: [.unsupportedSetting(id, value)])
     } catch {
-      return .init(settings: try? editableSettings(snapshot), issues: [.unsupportedMeasuredDomain])
+      return .init(settings: nil, issues: [.unsupportedMeasuredDomain])
     }
   }
   public func requireSettings(_ snapshot: RecipeSnapshot) throws -> RecipeSettings {
@@ -124,6 +125,9 @@ extension RecipeSettingValue {
         + (grain.size.map { " · \($0.rawValue.capitalized)" } ?? "")
     case .effect(let strength): strength.rawValue.capitalized
     case .integer(let value): String(value)
+    case .option(let option): option.label
+    case .unknown(let value):
+      value == "Not read from camera" ? "Choose a value" : "Unknown (\(value))"
     }
   }
 }

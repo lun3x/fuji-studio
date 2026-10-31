@@ -2,7 +2,7 @@ import Foundation
 
 public enum XE3Support {
   public static let identifier = "xe3-1.30-FF129505-v1"
-  public static let conversionVersion = "xe3-1.30-FF129505-v2-source-dr"
+  public static let conversionVersion = "xe3-1.30-FF129505-v3-standard-recipes"
 }
 public enum XE3Capabilities {
   // Every native preset was checked against the camera JPEG's Fuji ColorTemperature.
@@ -47,7 +47,7 @@ public enum XE3Capabilities {
   }()
   public static func validate(_ settings: RecipeSettings) throws {
     guard settings.colorChrome == nil, settings.colorChromeBlue == nil,
-      settings.clarityTenths == nil, settings.lensOptimizerRequested == nil,
+      settings.clarityTenths == nil,
       settings.grain.size == nil
     else { throw CameraServiceError.unsupportedSettings }
     for (id, value) in settings.values {

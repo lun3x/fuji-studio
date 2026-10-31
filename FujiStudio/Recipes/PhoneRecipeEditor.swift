@@ -20,55 +20,82 @@ struct PhoneRecipeEditor: View {
             .frame(maxWidth: .infinity, alignment: .leading).padding()
             .accessibilityIdentifier("recipe.editor.error")
         }
+        if let invalid = draft.standardRecipe.invalidSettings.first {
+          Text("Choose a supported value: \(invalid.title).")
+            .font(.callout).foregroundStyle(.red)
+            .frame(maxWidth: .infinity, alignment: .leading).padding()
+            .accessibilityIdentifier("recipe.editor.validation")
+        }
         Form {
+          Section("Camera") {
+            Picker("Camera", selection: $draft.camera) {
+              ForEach(RecipeCameraModel.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.menu)
+            .accessibilityIdentifier("recipe.editor.camera")
+          }
           Section("Name") {
             TextField("Name", text: $draft.name)
               .autocorrectionDisabled().textInputAutocapitalization(.words)
               .accessibilityIdentifier("recipe.editor.name")
           }
-          if !draft.supportsSettingsEditing {
+          Section("Look") {
+            setting(.film)
+            setting(.monochromeWarmCool)
+            setting(.monochromeMagentaGreen)
+            setting(.dynamicRange)
+            setting(.dynamicRangePriority)
+            setting(.grain)
+            setting(.grainSize)
+            setting(.colorChrome)
+            setting(.colorChromeBlue)
+            setting(.smoothSkin)
+          }
+          Section("White balance") {
+            setting(.whiteBalance)
+            temperature
+            setting(.whiteBalanceRed)
+            setting(.whiteBalanceBlue)
+          }
+          Section("Tone and detail") {
+            setting(.highlight)
+            setting(.shadow)
+            setting(.color)
+            setting(.sharpness)
+            setting(.noiseReduction)
+            setting(.clarity)
+            setting(.lensOptimizer)
+            setting(.longExposureNoiseReduction)
+          }
+          Section("Image and recording") {
+            setting(.imageSize)
+            setting(.aspectRatio)
+            setting(.imageQuality)
+            setting(.rawRecording)
+            setting(.outputFormat)
+            setting(.colorSpace)
+            setting(.iso)
+          }
+          let unread = draft.original.snapshot.unreadImportedSettings.filter { draft.isAvailable($0) }
+          if !unread.isEmpty {
             Section {
-              Text(PhoneRecipeEditingError.unsupportedContext.message).foregroundStyle(.secondary)
-            }
-          } else {
-            Section {
-              setting(.film)
-              setting(.dynamicRange)
-              grainSettings
-              setting(.colorChrome)
-              setting(.colorChromeBlue)
-            } header: {
-              Text("Look")
-            }
-            Section("White balance") {
-              setting(.whiteBalance)
-              if draft.value(for: .whiteBalance) == .whiteBalance(.temperature) {
-                if draft.capabilities?.settings[.kelvin]?.editableChoices.isEmpty == false {
-                  setting(.kelvin)
-                } else {
-                  HStack {
-                    Text("Temperature (K)")
-                    TextField("Kelvin", text: $draft.temperature)
-                      .keyboardType(.numberPad).multilineTextAlignment(.trailing)
-                      .accessibilityLabel("Temperature in kelvin")
-                      .accessibilityIdentifier("recipe.editor.temperature")
-                  }
-                }
+              let names = unread.map(\.title).joined(separator: ", ")
+              let unresolved = unread.filter {
+                if case .unknown = draft.value(for: $0) { return true }
+                return false
               }
-              setting(.whiteBalanceRed)
-              setting(.whiteBalanceBlue)
-            }
-            Section("Tone and detail") {
-              setting(.highlight)
-              setting(.shadow)
-              setting(.color)
-              setting(.sharpness)
-              setting(.noiseReduction)
-              setting(.clarity)
+              Text(
+                unresolved.isEmpty
+                  ? "Not read from this camera: \(names). Review these values before saving."
+                  : "Not read from this camera: \(names). Choose a value before saving."
+              )
+              .font(.footnote).foregroundStyle(.secondary)
+              .accessibilityIdentifier("recipe.editor.importDefaults")
             }
           }
         }
         .disabled(saving)
+        .scrollDismissesKeyboard(.interactively)
         .accessibilityIdentifier("recipe.editor.form")
       }
       .navigationTitle("Edit phone recipe")
@@ -82,7 +109,7 @@ struct PhoneRecipeEditor: View {
           Button(action: save) {
             if saving { ProgressView() } else { Text("Save") }
           }
-          .disabled(saving || draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+          .disabled(saving || !draft.canSave)
           .accessibilityLabel("Save")
           .accessibilityIdentifier("recipe.editor.save")
         }
@@ -91,74 +118,72 @@ struct PhoneRecipeEditor: View {
     }
     .interactiveDismissDisabled(saving || draft.hasChanges)
   }
-  @ViewBuilder private var grainSettings: some View {
-    if draft.capabilities?.settings[.grain]?.support == .supported {
-      Picker(
-        "Grain effect",
-        selection: Binding(
-          get: { draft.grain?.strength },
-          set: { if let effect = $0 { draft.setGrainEffect(effect) } })
-      ) {
-        if let effect = draft.grain?.strength, !draft.grainEffects.contains(effect) {
-          Text("\(effect.rawValue.capitalized) (unavailable for conversion)")
-            .tag(Optional(effect)).disabled(true)
-        } else if draft.grain == nil {
-          Text("Keep current unsupported value").tag(Optional<GrainStrength>.none)
+
+  @ViewBuilder private var temperature: some View {
+    if draft.isAvailable(.kelvin) {
+      let invalid = !draft.isChoiceAvailable(draft.value(for: .kelvin), for: .kelvin)
+      HStack {
+        Text("Temperature (K)")
+        TextField("Kelvin", text: $draft.temperature)
+          .keyboardType(.numberPad).multilineTextAlignment(.trailing)
+          .foregroundStyle(invalid ? Color.red : Color.primary)
+          .accessibilityLabel("Temperature in kelvin")
+          .accessibilityHint(invalid ? "This value is unavailable. Choose a supported temperature." : "")
+          .accessibilityIdentifier("recipe.editor.temperature")
+        if invalid {
+          Image(systemName: "exclamationmark.circle")
+            .foregroundStyle(.red)
+            .accessibilityLabel("Unavailable temperature")
+            .accessibilityIdentifier("recipe.editor.temperature.unavailable")
         }
-        ForEach(draft.grainEffects, id: \.self) {
-          Text($0.rawValue.capitalized).tag(Optional($0))
+        NavigationLink {
+          RecipeTemperatureChoices(draft: $draft)
+        } label: {
+          Text("Values")
         }
-      }
-      .pickerStyle(.menu)
-      .accessibilityIdentifier("recipe.editor.setting.grainEffect")
-      if draft.choices(for: .grain).contains(where: {
-        if case .grain(let g) = $0.value { return g.size != nil }
-        return false
-      }) {
-        Picker(
-          "Grain size",
-          selection: Binding(
-            get: { draft.grain?.size },
-            set: { if let size = $0 { draft.setGrainSize(size) } })
-        ) {
-          if let size = draft.grain?.size, !draft.grainSizes.contains(size) {
-            Text(size.rawValue.capitalized).tag(Optional(size)).disabled(true)
-          } else if draft.grain == nil {
-            Text("Unavailable").tag(Optional<GrainSize>.none)
-          }
-          ForEach(draft.grainSizes, id: \.self) {
-            Text($0.rawValue.capitalized).tag(Optional($0))
-          }
-        }
-        .pickerStyle(.menu)
-        .disabled(draft.grain == nil || draft.grain?.strength == .off)
-        .accessibilityIdentifier("recipe.editor.setting.grainSize")
+        .accessibilityIdentifier("recipe.editor.setting.kelvin")
       }
     }
   }
+
   @ViewBuilder private func setting(_ field: RecipeSettingID) -> some View {
-    if let capability = draft.capabilities?.settings[field], capability.support == .supported {
-      let choices = draft.choices(for: field)
-      Picker(
-        field.title,
-        selection: Binding(
-          get: { draft.value(for: field) },
-          set: { if let value = $0 { draft.setValue(value, for: field) } })
-      ) {
-        if let value = draft.value(for: field), !choices.contains(where: { $0.value == value }) {
-          Text("\(field.label(for: value)) (unavailable for conversion)")
-            .tag(Optional(value)).disabled(true)
-        } else if draft.value(for: field) == nil {
-          Text("Keep current unsupported value").tag(Optional<RecipeSettingValue>.none)
+    if draft.isAvailable(field) {
+      let selected = draft.value(for: field)
+      let invalid = !draft.isChoiceAvailable(selected, for: field)
+      let title = field == .grain ? "Grain effect" : field.title
+      Menu {
+        ForEach(draft.choices(for: field), id: \.value) { choice in
+          Button {
+            guard draft.isChoiceAvailable(choice.value, for: field) else { return }
+            draft.setValue(choice.value, for: field)
+          } label: {
+            if choice.value == selected {
+              Label(field.label(for: choice.value), systemImage: "checkmark")
+            } else {
+              Text(field.label(for: choice.value))
+            }
+          }
         }
-        ForEach(choices, id: \.value) { Text(field.label(for: $0.value)).tag(Optional($0.value)) }
+      } label: {
+        HStack {
+          Text(title).foregroundStyle(Color.primary)
+          Spacer()
+          Text(field.label(for: selected))
+          if invalid { Image(systemName: "exclamationmark.circle").accessibilityHidden(true) }
+          Image(systemName: "chevron.up.chevron.down").font(.caption)
+        }
+        .foregroundStyle(invalid ? Color.red : Color.accentColor)
       }
-      .pickerStyle(.menu)
-      .accessibilityIdentifier("recipe.editor.setting.\(field.rawValue)")
+      .accessibilityLabel("\(title), \(field.label(for: selected))")
+      .accessibilityValue(invalid ? "Unavailable" : "")
+      .accessibilityHint(invalid ? "Choose an available value before saving." : "")
+      .accessibilityIdentifier(
+        "recipe.editor.setting.\(field == .grain ? "grainEffect" : field.rawValue)")
     }
   }
+
   private func save() {
-    guard !saving else { return }
+    guard !saving, draft.canSave else { return }
     saving = true
     error = nil
     Task { @MainActor in
@@ -170,5 +195,34 @@ struct PhoneRecipeEditor: View {
       }
       saving = false
     }
+  }
+}
+
+private struct RecipeTemperatureChoices: View {
+  @Binding var draft: PhoneRecipeDraft
+  @State private var search = ""
+  @Environment(\.dismiss) private var dismiss
+  var body: some View {
+    List {
+      TextField("Search Kelvin", text: $search).keyboardType(.numberPad)
+        .accessibilityIdentifier("recipe.editor.temperature.search")
+      ForEach(
+        draft.choices(for: .kelvin).filter { search.isEmpty || $0.label.contains(search) },
+        id: \.value
+      ) { choice in
+        Button {
+          draft.setValue(choice.value, for: .kelvin)
+          dismiss()
+        } label: {
+          HStack {
+            Text(choice.label)
+            Spacer()
+            if draft.value(for: .kelvin) == choice.value { Image(systemName: "checkmark") }
+          }
+        }
+        .foregroundStyle(Color.primary)
+      }
+    }
+    .navigationTitle("Temperature")
   }
 }

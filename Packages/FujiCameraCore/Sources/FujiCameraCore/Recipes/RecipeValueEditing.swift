@@ -45,7 +45,7 @@ extension RecipeCodecRegistry {
     }
     return .init(
       id: result.id, slot: snapshot.slot, name: snapshot.name, importedName: snapshot.importedName,
-      importedSettings: result.importedSettings, settingsDigest: result.settingsDigest,
+      importedSettings: result.importedSettings, settingsDigest: result.sourceSettingsDigest,
       cameraContext: snapshot.cameraContext,
       importedAt: snapshot.importedAt, renderingIssues: assess(result).issues,
       copiedFromRecipeID: snapshot.copiedFromRecipeID)

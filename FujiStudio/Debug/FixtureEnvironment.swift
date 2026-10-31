@@ -308,8 +308,8 @@ actor FixtureCamera: CameraServing {
             context = .init(model:context.model,firmware:context.firmware,capability:context.capability,supportVersion:context.supportVersion,sessionIdentity:UUID(),generation:context.generation+2)
         }
         let recipes = snapshots.map { s in RecipeSnapshot(id: UUID(), slot: s.slot, name: s.name, importedName: s.importedName,
-            importedSettings: s.importedSettings, settingsDigest: s.settingsDigest,
-            cameraContext: RecipeCameraContext(model: context.model, firmware: context.firmware, capability: context.capability, sessionIdentity: context.sessionIdentity, sessionGeneration: context.generation), importedAt: Date(), renderingIssues: s.renderingIssues) }
+            importedSettings: s.importedSettings, settingsDigest: s.sourceSettingsDigest,
+            cameraContext: RecipeCameraContext(model: context.model, firmware: context.firmware, capability: context.capability, sessionIdentity: context.sessionIdentity, sessionGeneration: context.generation), importedAt: Date(), renderingIssues: s.renderingIssues, standardRecipe: s.standardRecipe) }
         let support=try support(for:context)
         return .init(recipes:recipes,declaredSlots:support.capabilities.bankSlots,context:context,support:support)
     }

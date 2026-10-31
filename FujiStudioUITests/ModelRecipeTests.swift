@@ -31,6 +31,7 @@ final class ModelRecipeTests: AppFlowTestCase {
         let edit=app.buttons.matching(NSPredicate(format:"identifier BEGINSWITH %@","recipe.edit.")).firstMatch
         XCTAssertTrue(edit.waitForExistence(timeout:5));edit.tap()
         XCTAssertTrue(app.buttons["recipe.editor.save"].waitForExistence(timeout:5))
+        chooseAutoISO(in:app)
         shot(app,"X-E3 editor largest text portrait")
         XCUIDevice.shared.orientation = .landscapeLeft
         defer {
@@ -56,15 +57,25 @@ final class ModelRecipeTests: AppFlowTestCase {
         XCTAssertTrue(edit.waitForExistence(timeout:5));edit.tap()
         let grain=app.buttons["recipe.editor.setting.grainEffect"]
         XCTAssertTrue(grain.waitForExistence(timeout:5))
-        XCTAssertFalse(app.buttons["recipe.editor.setting.grainSize"].exists)
-        XCTAssertFalse(app.buttons["recipe.editor.setting.colorChrome"].exists)
-        XCTAssertFalse(app.buttons["recipe.editor.setting.clarity"].exists)
+        let size=app.buttons["recipe.editor.setting.grainSize"]
+        reveal(grain,in:app);XCTAssertFalse(size.exists)
+        let chrome=app.buttons["recipe.editor.setting.colorChrome"]
+        XCTAssertFalse(chrome.exists)
+        let clarity=app.buttons["recipe.editor.setting.clarity"]
+        reveal(app.buttons["recipe.editor.setting.sharpness"],in:app);XCTAssertFalse(clarity.exists)
         let kelvin=app.buttons["recipe.editor.setting.kelvin"]
-        reveal(kelvin,in:app);kelvin.tap();app.buttons["7100"].tap()
+        reveal(kelvin,in:app,towardsTop:true);kelvin.tap()
+        let search=app.textFields["recipe.editor.temperature.search"]
+        XCTAssertTrue(search.waitForExistence(timeout:5));search.tap();search.typeText("5310")
+        XCTAssertFalse(app.buttons["5310"].exists)
+        replaceText(search,with:"5300")
+        app.buttons["5300"].tap()
+        chooseAutoISO(in:app)
         shot(app,"X-E3 semantic editor and verified Kelvin")
         app.buttons["recipe.editor.save"].tap()
         XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitForNonExistence(timeout:5))
-        edit.tap();reveal(kelvin,in:app);XCTAssertTrue(kelvin.label.contains("7100"))
+        edit.tap();reveal(kelvin,in:app)
+        XCTAssertEqual(app.textFields["recipe.editor.temperature"].value as? String,"5300")
         app.buttons["recipe.editor.cancel"].tap()
     }
 

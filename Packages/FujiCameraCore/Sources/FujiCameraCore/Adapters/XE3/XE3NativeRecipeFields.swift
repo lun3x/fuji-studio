@@ -50,7 +50,7 @@ enum XE3NativeRecipeFields {
     let ownFields = required.subtracting([5, 6, 13])
     guard ownFields.isSubset(of: Set(fields.keys)),
       ownFields.allSatisfy({ fields[$0]?.count == 1 }),
-      digest(fields) == snapshot.settingsDigest
+      digest(fields) == snapshot.sourceSettingsDigest
     else { throw CameraServiceError.unsupportedSettings }
     if knownWB {
       guard fields[5]?.count == 1, fields[6]?.count == 1, fields[13]?.count == 2 else {
@@ -160,7 +160,7 @@ public enum XE3RecipeCodec {
       context: snapshot.cameraContext, importedAt: snapshot.importedAt)
     return RecipeSnapshot(
       id: result.id, slot: snapshot.slot, name: snapshot.name, importedName: snapshot.importedName,
-      importedSettings: result.importedSettings, settingsDigest: result.settingsDigest,
+      importedSettings: result.importedSettings, settingsDigest: result.sourceSettingsDigest,
       cameraContext: snapshot.cameraContext, importedAt: snapshot.importedAt,
       renderingIssues: result.renderingIssues, copiedFromRecipeID: snapshot.copiedFromRecipeID)
   }
@@ -169,8 +169,8 @@ extension RecipeSnapshot {
   func recordingIssues(_ issues: [RecipeRenderingIssue]) -> RecipeSnapshot {
     .init(
       id: id, slot: slot, name: name, importedName: importedName,
-      importedSettings: importedSettings, settingsDigest: settingsDigest,
+      importedSettings: importedSettings, settingsDigest: sourceSettingsDigest,
       cameraContext: cameraContext, importedAt: importedAt, renderingIssues: issues,
-      copiedFromRecipeID: copiedFromRecipeID)
+      copiedFromRecipeID: copiedFromRecipeID, standardRecipe: standardRecipe)
   }
 }

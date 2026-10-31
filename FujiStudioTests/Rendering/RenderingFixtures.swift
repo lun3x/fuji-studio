@@ -122,7 +122,8 @@ struct GatedCameraScheduler: CameraWorkScheduling {
 
 extension RenderFixture {
     func recipe(named name: String, settingsDigest: String? = nil) -> RecipeSnapshot {
-        RecipeSnapshot(id: UUID(), slot: recipe.slot, name: name, importedName: Data(name.utf8), importedSettings: recipe.importedSettings,
-            settingsDigest: settingsDigest ?? recipe.settingsDigest, cameraContext: recipe.cameraContext, importedAt: Date(), renderingIssues: recipe.renderingIssues)
+        var standard = recipe.standardRecipe
+        if settingsDigest != nil { standard.setValue(.integer(10), for: .sharpness) }
+        return recipe.replacingStandardRecipe(standard, name: name)
     }
 }

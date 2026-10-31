@@ -442,9 +442,8 @@ actor ExportCoordinator {
     }
     @discardableResult private func validateCamera(_ recipe: RecipeSnapshot) async throws -> CameraExecutionContext {
         try recipe.requireRenderable(using: RecipeCodecRegistry())
-        let settings = try recipe.settings(using: RecipeCodecRegistry()), current = try await camera.executionContext()
-        guard recipe.cameraContext.model == current.model, recipe.cameraContext.firmware == current.firmware,
-              recipe.cameraContext.capability == current.capability, (try RecipeCodecRegistry().supportVersion(for: recipe.cameraContext)) == current.supportVersion else {
+        let current = try await camera.executionContext()
+        guard recipe.targetCamera.matches(current) else {
             throw CameraServiceError.unsupportedContext
         }
         return current

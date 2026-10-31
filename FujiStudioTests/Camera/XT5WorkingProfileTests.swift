@@ -78,7 +78,7 @@ struct XT5WorkingProfileTests {
     }
     @Test func opaqueTupleAndFiniteDomainsAreEnforcedWithoutDroppingDormantRequests() throws {
         let f=try ProductionProfileFixture()
-        for (code,value):(UInt16,UInt16) in [(0xD18E,8),(0xD18F,3),(0xD1A3,0),(0xD1A4,2),(0xD195,4),(0xD198,2),(0xD192,99),(0xD191,1),(0xD193,1),(0xD194,1)] {
+        for (code,value):(UInt16,UInt16) in [(0xD18E,8),(0xD18F,3),(0xD1A3,0),(0xD1A4,2),(0xD195,4),(0xD198,2),(0xD192,99),(0xD191,1)] {
             var p=f.properties;p[code]=value
             #expect(throws: CameraServiceError.unsupportedSettings) { try XT5WorkingProfile.normalize(f.bank(p)) }
         }

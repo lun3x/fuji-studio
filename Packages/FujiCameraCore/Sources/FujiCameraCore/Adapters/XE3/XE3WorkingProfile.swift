@@ -2,7 +2,7 @@ import Foundation
 
 public enum XE3WorkingProfile {
   public static let writableOffsets = [
-    533, 541, 545, 553, 557, 561, 565, 569, 573, 577, 581, 585, 589,
+    533, 541, 545, 553, 557, 561, 565, 569, 573, 577, 581, 585, 589, 593,
   ]
   public static func make(baseline: Data, settings: RecipeSettings, source: RAWMetadata) throws
     -> PreparedConversion
@@ -45,9 +45,12 @@ public enum XE3WorkingProfile {
       (585, settings.sharpnessTenths), (589, Int(nr)),
     ] { put(value, offset) }
     if settings.whiteBalance == .temperature, let kelvin = settings.kelvin { put(kelvin, 569) }
+    let requestedLMO = settings.lensOptimizerRequested ?? (word(593) == 1)
+    let effectiveLMO = source.effectiveLensOptimizer(for: requestedLMO)
+    put(effectiveLMO ? 1 : 2, 593)
     return .init(
       bytes: output, requested: settings, source: source, supportVersion: XE3Support.conversionVersion,
-      expectedLensOptimizer: word(593) == 1, baselineSHA256: ResourceChecksum.sha256(baseline),
+      expectedLensOptimizer: effectiveLMO, baselineSHA256: ResourceChecksum.sha256(baseline),
       candidateSHA256: ResourceChecksum.sha256(output))
   }
 }

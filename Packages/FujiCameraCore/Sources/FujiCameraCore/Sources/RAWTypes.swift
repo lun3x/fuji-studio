@@ -153,11 +153,14 @@ public struct RAWMetadata: Sendable, Equatable, Codable {
   public let bitDepth: Int?
   public let rafVersion: String?
   public let captureDynamicRange: Int?
+  public let captureLensOptimizer: Bool?
+  public let lensOptimizerAvailable: Bool?
   public init(
     cameraModel: String, containerGeometry: PixelSize, recordedGeometry: PixelSize,
     recordedAspect: PixelSize, cropTop: Int, cropLeft: Int, orientation: Int,
     compression: RAFCompression? = nil, bitDepth: Int? = nil, rafVersion: String? = nil,
-    captureDynamicRange: Int? = nil
+    captureDynamicRange: Int? = nil, captureLensOptimizer: Bool? = nil,
+    lensOptimizerAvailable: Bool? = nil
   ) {
     self.cameraModel = cameraModel
     self.containerGeometry = containerGeometry
@@ -169,13 +172,20 @@ public struct RAWMetadata: Sendable, Equatable, Codable {
     self.compression = compression
     self.bitDepth = bitDepth
     self.rafVersion = rafVersion
-    self.captureDynamicRange = captureDynamicRange.flatMap { [100, 200, 400].contains($0) ? $0 : nil }
+    self.captureDynamicRange = captureDynamicRange.flatMap {
+      [100, 200, 400].contains($0) ? $0 : nil
+    }
+    self.captureLensOptimizer = captureLensOptimizer
+    self.lensOptimizerAvailable = lensOptimizerAvailable
   }
 
   /// Every supported capture permits DR100 when its original DR cannot be established.
   public func effectiveDynamicRange(for requested: Int) -> Int {
     let capture = captureDynamicRange.flatMap { [100, 200, 400].contains($0) ? $0 : nil } ?? 100
     return min(requested, capture)
+  }
+  public func effectiveLensOptimizer(for requested: Bool) -> Bool {
+    requested && lensOptimizerAvailable != false
   }
 }
 

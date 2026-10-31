@@ -28,7 +28,7 @@ public struct XE3Adapter: FujiCameraAdapter {
       await io.readSettingsBackup(), context: context, importedAt: Date())
   }
   public func decodeRecipe(_ snapshot: RecipeSnapshot) throws -> RecipeAssessment {
-    XE3RecipeCodec.assess(snapshot)
+    RecipeCodecRegistry().assess(snapshot)
   }
   public func encodeEditedRecipe(_ settings: RecipeSettings, preserving snapshot: RecipeSnapshot)
     throws -> RecipeSnapshot
@@ -39,7 +39,7 @@ public struct XE3Adapter: FujiCameraAdapter {
     policy: OutputPolicy
   ) throws -> PreparedConversion {
     try XE3WorkingProfile.make(
-      baseline: baseline, settings: XE3RecipeCodec.assess(recipe).requireSettings(), source: source)
+      baseline: baseline, settings: RecipeCodecRegistry().requireSettings(recipe), source: source)
   }
   public func validateOutput(_ jpeg: Data, conversion: PreparedConversion) throws
     -> CameraOutputAssessment
@@ -57,6 +57,6 @@ public struct XE3Adapter: FujiCameraAdapter {
     ]
     if !monochrome.contains(conversion.requested.film) { required.insert(.color) }
     return try CameraOutputAssessment.assess(
-      metadata: metadata, conversion: conversion, required: required)
+      metadata: metadata, conversion: conversion, required: required, allowLensOptimizerAdjustment: true)
   }
 }

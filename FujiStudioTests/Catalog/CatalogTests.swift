@@ -4,12 +4,12 @@ import Testing
 @testable import FujiStudio
 
 struct CatalogTests {
-    @Test func rejectedUnconvertibleEditLeavesSavedPhoneRecipeIntact() async throws {
+    @Test func rejectedInvalidEditLeavesSavedPhoneRecipeIntact() async throws {
         let disk = try CatalogTestDisk()
         let catalog = try SwiftDataCatalog(storeURL: disk.url)
         let original = try await catalog.copyRecipeToPhone(ProductionProfileFixture().bank)
         var draft = PhoneRecipeDraft(recipe: original)
-        draft.setValue(.integer(0), for: .dynamicRange)
+        draft.setValue(.integer(300), for: .dynamicRange)
         await #expect(throws: PhoneRecipeEditingError.self) { try await catalog.updatePhoneRecipe(draft) }
         #expect(try await catalog.phoneRecipes() == [original])
         let reopened = try SwiftDataCatalog(storeURL: disk.url)
@@ -503,10 +503,10 @@ private struct CatalogFixture {
     var recipe: RecipeSnapshot { recipe(slot: 1, id: recipeID) }
     func recipe(slot: Int, id: UUID = UUID(), name: String = "Synthetic bank", context: RecipeCameraContext? = nil) -> RecipeSnapshot {
         RecipeSnapshot(id: id, slot: slot, name: name, importedName: Data([2, 65, 0, 0, 0]),
-            importedSettings: [.init(code: 0xFFFF, raw: Data([0xBE, 0xEF]))], settingsDigest: "synthetic-digest",
+            importedSettings: profile.bank.importedSettings, settingsDigest: profile.bank.sourceSettingsDigest,
             cameraContext: context ?? .init(model: camera.model, firmware: camera.firmware,
                 capability: camera.capability, sessionIdentity: camera.sessionIdentity, sessionGeneration: camera.generation),
-            importedAt: Date(timeIntervalSince1970: 1_000), renderingIssues: [.unmappedProperty(0xFFFF)])
+            importedAt: Date(timeIntervalSince1970: 1_000), renderingIssues: profile.bank.renderingIssues)
     }
     func recipes() -> [RecipeSnapshot] { (1...7).map { recipe(slot: $0) } }
     var source: PhotoSource { source(id: "A") }
@@ -529,11 +529,11 @@ private struct CatalogFixture {
     }
     func jpeg(fileURL: URL = URL(fileURLWithPath: "/synthetic/pinned.jpg")) -> CameraJPEG {
         let key = RenderKey(sourceID: "A", sourceRevision: "original-revision", sourceSHA256: "synthetic-raw",
-            settingsDigest: "synthetic-digest", cameraContext: camera, width: 7728, height: 5152, orientation: 8,
+            settingsDigest: recipe.settingsDigest, cameraContext: camera, width: 7728, height: 5152, orientation: 8,
             policy: .fullSizeFineRecordedGeometry, quality: .fullResolutionFine)
         return CameraJPEG(fileURL: fileURL, sourceID: "A",
             sourceRevision: "original-revision", sourceSHA256: "synthetic-raw", recipeSnapshotID: profile.bank.id,
-            settingsDigest: "synthetic-digest", cameraContext: camera, operationID: camera.sessionIdentity,
+            settingsDigest: recipe.settingsDigest, cameraContext: camera, operationID: camera.sessionIdentity,
             width: 7728, height: 5152, orientation: 8, quality: .fullResolutionFine,
             effectiveRecipe: .init(supportVersion: "synthetic", requested: try! profile.bank.settings(using: RecipeCodecRegistry()),
                 dormantGrainSizeNotSerialized: false, inactiveKelvinPreserved: false,

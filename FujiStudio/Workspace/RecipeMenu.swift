@@ -195,7 +195,7 @@ struct RecipeMenu: View {
                         .foregroundStyle(reason == nil ? .secondary : .tertiary).accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(recipe.snapshot.name)
-                        Text(recipe.snapshot.cameraContext.model).font(.caption).foregroundStyle(.secondary)
+                        Text(recipe.snapshot.targetCamera.rawValue).font(.caption).foregroundStyle(.secondary)
                         if let reason { Text(reason).font(.caption).foregroundStyle(.secondary) }
                     }
                     Spacer(minLength: 8)
