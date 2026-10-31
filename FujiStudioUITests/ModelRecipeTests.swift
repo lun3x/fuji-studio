@@ -70,6 +70,7 @@ final class ModelRecipeTests: AppFlowTestCase {
         XCTAssertFalse(app.buttons["5310"].exists)
         replaceText(search,with:"5300")
         app.buttons["5300"].tap()
+        wait { kelvin.isHittable }
         chooseAutoISO(in:app)
         shot(app,"X-E3 semantic editor and verified Kelvin")
         saveRecipe(in: app)

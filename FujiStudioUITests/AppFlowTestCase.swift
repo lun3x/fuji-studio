@@ -20,8 +20,10 @@ class AppFlowTestCase: XCTestCase {
         for reverse in [false, true] {
             for _ in 0..<16 {
                 if element.exists {
-                    if element.isHittable { return }
                     let frame = element.frame
+                    let viewport = container.frame.intersection(app.frame)
+                    if element.isHittable,
+                       viewport.insetBy(dx: 0, dy: 12).contains(CGPoint(x: frame.midX, y: frame.midY)) { return }
                     if !frame.isEmpty, frame.minY < container.frame.minY { container.swipeDown() }
                     else { container.swipeUp() }
                 } else if towardsTop != reverse { container.swipeDown() }
@@ -39,7 +41,24 @@ class AppFlowTestCase: XCTestCase {
 
     func chooseAutoISO(in app: XCUIApplication) {
         let iso = app.buttons["recipe.editor.setting.iso"]
-        reveal(iso, in: app);iso.tap();app.buttons["Auto 1"].tap()
+        reveal(iso, in: app);iso.tap();selectRecipeChoice("Auto 1", for: iso, in: app)
+    }
+
+    func selectRecipeChoice(_ value: String, for field: XCUIElement, in app: XCUIApplication) {
+        let choice = app.buttons[value]
+        XCTAssertTrue(choice.waitForExistence(timeout: 5))
+        wait { choice.isEnabled }
+        if choice.isHittable {
+            // Target the title column; selected titles follow a leading checkmark.
+            let selected = field.label.hasSuffix(value) || field.value as? String == value
+            choice.coordinate(withNormalizedOffset: CGVector(dx: selected ? 0.3 : 0.17, dy: 0.5))
+                .press(forDuration: 0.15)
+        } else {
+            choice.press(forDuration: 0.15)
+        }
+        wait {
+            (field.label.hasSuffix(value) || field.value as? String == value) && field.isHittable
+        }
     }
 
     func saveRecipe(in app: XCUIApplication) {

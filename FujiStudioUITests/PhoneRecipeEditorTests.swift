@@ -32,21 +32,23 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
         let size = app.buttons["recipe.editor.setting.grainSize"]
         XCTAssertTrue(effect.waitForExistence(timeout: 5))
         reveal(effect, in: app); effect.tap()
+        XCTAssertTrue(app.buttons["Weak"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Weak"].isEnabled)
-        app.buttons["Off"].tap()
+        selectRecipeChoice("Off", for: effect, in: app)
         XCTAssertTrue(size.waitForNonExistence(timeout: 5))
-        effect.tap(); app.buttons["Strong"].tap()
+        effect.tap(); selectRecipeChoice("Strong", for: effect, in: app)
         XCTAssertTrue(size.waitForExistence(timeout: 5))
         XCTAssertTrue(size.isEnabled)
         size.tap()
+        XCTAssertTrue(app.buttons["Large"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Large"].isEnabled)
-        app.buttons["Small"].tap()
+        selectRecipeChoice("Small", for: size, in: app)
         shot(app, "Convertible X-T5 grain choices")
         saveRecipe(in: app)
         XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitForNonExistence(timeout: 5))
         edit.tap()
         XCTAssertTrue(effect.label.contains("Strong")); XCTAssertTrue(size.label.contains("Small"))
-        effect.tap(); app.buttons["Off"].tap(); saveRecipe(in: app)
+        effect.tap(); selectRecipeChoice("Off", for: effect, in: app); saveRecipe(in: app)
         XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitForNonExistence(timeout: 5))
         edit.tap()
         XCTAssertTrue(effect.label.contains("Off")); XCTAssertFalse(size.exists)
@@ -66,9 +68,10 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
         app.textFields["recipe.editor.name"].tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
         reveal(app.buttons["recipe.editor.setting.film"], in: app)
-        app.buttons["recipe.editor.setting.film"].tap()
+        let film = app.buttons["recipe.editor.setting.film"]
+        film.tap()
         // Exercise film persistence with an option visible beside the current Classic Chrome choice.
-        app.buttons["ACROS"].tap()
+        selectRecipeChoice("ACROS", for: film, in: app)
         replaceText(app.textFields["recipe.editor.name"], with: "My ACROS")
         shot(app, "Phone editor name and film draft")
         saveRecipe(in: app)
@@ -77,7 +80,6 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
         XCTAssertFalse(app.buttons[id].isEnabled)
         edit.tap()
         XCTAssertEqual(app.textFields["recipe.editor.name"].value as? String, "My ACROS")
-        let film = app.buttons["recipe.editor.setting.film"]
         XCTAssertTrue(film.label.contains("ACROS") || (film.value as? String ?? "").contains("ACROS"))
         replaceText(app.textFields["recipe.editor.name"], with: "Discard me")
         app.buttons["recipe.editor.cancel"].tap()
@@ -100,8 +102,7 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
             XCTAssertLessThan(app.buttons[upper].frame.minY, app.buttons[lower].frame.minY)
         }
         shot(app, "Highlights descend from positive through zero to negative")
-        app.buttons["+3.5"].tap()
-        wait { highlights.label.contains("+3.5") }
+        selectRecipeChoice("+3.5", for: highlights, in: app)
         saveRecipe(in: app)
         XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitForNonExistence(timeout: 5))
         edit.tap(); reveal(highlights, in: app)
@@ -117,7 +118,8 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
         app.textFields["recipe.editor.name"].tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
         let balance = app.buttons["recipe.editor.setting.whiteBalance"]
-        reveal(balance, in: app); balance.tap(); app.buttons["Colour temperature"].tap()
+        reveal(balance, in: app); balance.tap()
+        selectRecipeChoice("Colour temperature", for: balance, in: app)
         let temperature = app.textFields["recipe.editor.temperature"]
         reveal(temperature, in: app); replaceText(temperature, with: "10001")
         XCTAssertTrue(app.images["recipe.editor.temperature.unavailable"].exists)
@@ -140,7 +142,7 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
         XCTAssertGreaterThan(app.textFields["recipe.editor.name"].frame.height, 44,
                              "The editor must inherit the largest accessibility text size")
         let effect = app.buttons["recipe.editor.setting.grainEffect"]
-        reveal(effect, in: app); effect.tap(); app.buttons["Off"].tap()
+        reveal(effect, in: app); effect.tap(); selectRecipeChoice("Off", for: effect, in: app)
         let size = app.buttons["recipe.editor.setting.grainSize"]
         XCTAssertTrue(size.waitForNonExistence(timeout: 5))
         shot(app, "Phone editor at largest text")
@@ -166,36 +168,18 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
         reveal(film, in: app)
         XCTAssertEqual(name.value as? String, originalName)
         film.tap()
-        let astia = app.buttons["ASTIA / Soft"]
-        let filmMenu = app.collectionViews.containing(.button, identifier: "Classic Chrome").firstMatch
-        for _ in 0..<3 {
-            if astia.isHittable { break }
-            filmMenu.swipeDown()
-        }
-        XCTAssertTrue(astia.isHittable)
-        astia.tap()
+        selectRecipeChoice("ASTIA / Soft", for: film, in: app)
         let dynamicRange = app.buttons["recipe.editor.setting.dynamicRange"]
         dynamicRange.tap()
-        XCTAssertTrue(app.buttons["200%"].exists)
+        XCTAssertTrue(app.buttons["200%"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Auto"].isEnabled)
-        app.buttons["200%"].tap()
+        selectRecipeChoice("200%", for: dynamicRange, in: app)
         let balance = app.buttons["recipe.editor.setting.whiteBalance"]
         reveal(balance, in: app); balance.tap()
+        XCTAssertTrue(app.buttons["Daylight"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Daylight"].isEnabled)
         XCTAssertTrue(app.buttons["Custom 3"].isEnabled)
-        let temperatureChoice = app.buttons["Colour temperature"]
-        let balanceMenu = app.collectionViews.containing(.button, identifier: "Colour temperature").firstMatch
-        for _ in 0..<5 {
-            if temperatureChoice.isHittable { break }
-            // iOS can report the menu's full content height beyond the screen.
-            // Keep the drag inside its visible upper portion, above the form.
-            let origin = balanceMenu.coordinate(withNormalizedOffset: .zero)
-            origin.withOffset(CGVector(dx: balanceMenu.frame.width / 2, dy: 180))
-                .press(forDuration: 0.05, thenDragTo: origin.withOffset(
-                    CGVector(dx: balanceMenu.frame.width / 2, dy: 50)))
-        }
-        XCTAssertTrue(temperatureChoice.isHittable)
-        temperatureChoice.tap()
+        selectRecipeChoice("Colour temperature", for: balance, in: app)
         saveRecipe(in: app)
         XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitForNonExistence(timeout: 5))
         XCTAssertTrue(phone.isEnabled)
