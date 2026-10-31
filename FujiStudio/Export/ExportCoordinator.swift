@@ -472,7 +472,8 @@ actor ExportCoordinator {
         }
         if finishReplacements, !replacements.isEmpty {
             try checkStop()
-            guard let saved = try? await writer.completeReplacements(replacements.map(\.asset), allowingPreviousEdits: allowingPreviousEdits) else { return }
+            guard let saved = try? await writer.completeReplacements(replacements.map(\.asset), allowingPreviousEdits: allowingPreviousEdits,
+                beforeRemoval: { try await self.checkStop() }) else { return }
             guard saved.count == replacements.count,
                   Set(saved.map(\.operationID)).count == saved.count,
                   replacements.allSatisfy({ candidate in saved.contains { $0.operationID == candidate.asset.operationID && $0.assetID == candidate.asset.assetID } }) else {

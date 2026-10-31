@@ -42,6 +42,12 @@ import Testing
             #expect(await library.deletionBatches == [["raw-B"], ["raw-A"]])
             #expect(await library.originals.isEmpty)
         } else {
+            await #expect(throws: ExportCoordinatorError.stopped) {
+                try await service.completeReplacements(assets, allowingPreviousEdits: false,
+                    beforeRemoval: { throw ExportCoordinatorError.stopped })
+            }
+            #expect(await library.originals == ["raw-A", "raw-B"])
+            #expect(await library.deletionBatches.isEmpty)
             #expect(try await service.completeReplacements(assets, allowingPreviousEdits: false) == assets)
             #expect(await library.deletionBatches == [["raw-A", "raw-B"]])
             #expect(await library.originals.isEmpty)

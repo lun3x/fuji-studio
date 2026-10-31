@@ -61,6 +61,7 @@ private struct AppEntryView: View {
                     }
                     if fixture && ProcessInfo.processInfo.arguments.contains("--fixture-scene-controls") {
                         HStack {
+                            Button("Inject inactive") { Task { await model.sceneChanged(.inactive) } }.accessibilityIdentifier("fixture.inactive")
                             Button("Inject background") { Task { await model.sceneChanged(.background) } }.accessibilityIdentifier("fixture.background")
                             Button("Inject foreground") { Task { await model.sceneChanged(.active) } }.accessibilityIdentifier("fixture.foreground")
                         }.font(.caption).buttonStyle(.bordered)
@@ -108,7 +109,7 @@ private struct AppEntryView: View {
                 #if DEBUG
                 if fixture {
                     let flags = ProcessInfo.processInfo.arguments
-                    let bundle = try await FixtureEnvironment.make(access: flags.contains("--fixture-denied") ? .denied : flags.contains("--fixture-limited") ? .limited : .full, uncertain: flags.contains("--fixture-unknown-save"),cameraModel:flags.contains("--fixture-xe3") ? "X-E3" : "X-T5",slotCount:flags.contains("--fixture-three-slots") ? 3 : 7,mixedModels:flags.contains("--fixture-mixed-models"),undecodableRAW:flags.contains("--fixture-raw-unavailable"),filterSources:flags.contains("--fixture-filter-sources"),pairCleanupPending:flags.contains("--fixture-pair-cleanup-pending"))
+                    let bundle = try await FixtureEnvironment.make(access: flags.contains("--fixture-denied") ? .denied : flags.contains("--fixture-limited") ? .limited : .full, uncertain: flags.contains("--fixture-unknown-save"),cameraModel:flags.contains("--fixture-xe3") ? "X-E3" : "X-T5",slotCount:flags.contains("--fixture-three-slots") ? 3 : 7,mixedModels:flags.contains("--fixture-mixed-models"),undecodableRAW:flags.contains("--fixture-raw-unavailable"),filterSources:flags.contains("--fixture-filter-sources"),pairCleanupPending:flags.contains("--fixture-pair-cleanup-pending"),rawOnlyBatch:flags.contains("--fixture-raw-only-batch"))
                     environment = bundle.environment
                     if flags.contains("--fixture-filter-unavailable") {
                         await bundle.reader.failMaterialize("source-1", error: .retrievalFailed("Fixture offline photo"))
@@ -128,6 +129,10 @@ private struct AppEntryView: View {
                     if flags.contains("--fixture-held-save") {
                         let barrier = FixtureBarrier(); fixtureSaveBarrier = barrier
                         await bundle.writer.holdSave(barrier)
+                    }
+                    if flags.contains("--fixture-held-cleanup") {
+                        let barrier = FixtureBarrier(); fixtureSaveBarrier = barrier
+                        await bundle.writer.holdCleanup(barrier)
                     }
                     if flags.contains("--fixture-held-recipes") {
                         let barrier = FixtureBarrier(); fixtureRecipeBarrier = barrier; fixtureRecipeCamera = bundle.camera

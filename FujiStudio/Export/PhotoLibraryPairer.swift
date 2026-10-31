@@ -102,7 +102,7 @@ struct PhotoLibraryPairer: Sendable {
                 width: request.jpeg.width, height: request.jpeg.height, orientation: request.jpeg.orientation)
             if let batchID = request.pairBatchID {
                 intent.batchID = batchID
-                intent.batchSequence = (try await journal.all().filter { $0.batchID == batchID }.compactMap(\.batchSequence).max() ?? -1) + 1
+                intent.batchSequence = try await nextSequence(batchID)
             }
             try await journal.store(intent)
             return (intent, raw)
@@ -171,7 +171,8 @@ struct PhotoLibraryPairer: Sendable {
         return asset
     }
 
-    func completeReplacements(_ assets: [SavedAsset], allowingPreviousEdits: Bool) async throws -> [SavedAsset] {
+    func completeReplacements(_ assets: [SavedAsset], allowingPreviousEdits: Bool,
+                              beforeRemoval: @escaping @Sendable () async throws -> Void = {}) async throws -> [SavedAsset] {
         guard Set(assets.map(\.operationID)).count == assets.count,
               Set(assets.map(\.assetID)).count == assets.count else { throw ResourceError.resourceChanged }
         var ready: [PhotoPairRemoval] = []
@@ -181,9 +182,24 @@ struct PhotoLibraryPairer: Sendable {
             }
             ready.append(try await prepareRemoval(intent, assetID: asset.assetID, explicitRemoval: allowingPreviousEdits))
         }
+        // Persist one event for each batch's atomic removal before submission, so recovery
+        // can replay its album shifts even if the completion receipt write is interrupted.
+        for batchID in Set(ready.filter { $0.intent.phase != .removed }.compactMap { $0.intent.batchID }) {
+            let sequence = try await nextSequence(batchID)
+            for index in ready.indices where ready[index].intent.batchID == batchID && ready[index].intent.phase != .removed {
+                var intent = ready[index].intent; intent.removalBatchSequence = sequence
+                try await journal.store(intent)
+                ready[index] = PhotoPairRemoval(intent: intent, verified: ready[index].verified)
+            }
+        }
         try await requireAccess(); try Task.checkCancellation()
         let removals = ready.filter { $0.intent.phase != .removed && $0.intent.removalOriginalState != nil }
-        if !removals.isEmpty { try await gateway.removeOriginals(removals) }
+        if !removals.isEmpty {
+            // The owned export worker revokes admission during the lengthy read-back above.
+            // Once admitted here, it drains the real PhotoKit completion independently.
+            try await beforeRemoval()
+            try await gateway.removeOriginals(removals)
+        }
         for removal in ready {
             var intent = removal.intent; intent.phase = .removed
             try await journal.store(intent)
@@ -214,24 +230,39 @@ struct PhotoLibraryPairer: Sendable {
         let finalObservation = try await observeOriginal(intent.source.id)
         guard finalObservation.state == originalState,
               originalState != nil || finalObservation.absenceConfirmed else { throw ResourceError.resourceChanged }
-        intent.verified = verified; intent.phase = .verified; intent.pairedAssetID = assetID
-        intent.removalOriginalState = originalState
+        intent.verified = verified; intent.phase = originalState == nil ? .removed : .verified; intent.pairedAssetID = assetID
+        if originalState != nil || intent.removalBatchSequence == nil { intent.removalOriginalState = originalState }
         try await journal.store(intent) // A removal notification must already have a durable alias.
         return PhotoPairRemoval(intent: intent, verified: verified)
     }
 
-    /// Later pair insertions move earlier assets within albums, before the batch removes
-    /// any originals. Replay only this job's recorded insertions; other changes still fail.
+    private func nextSequence(_ batchID: UUID) async throws -> Int {
+        (try await journal.all().filter { $0.batchID == batchID }
+            .flatMap { [$0.batchSequence, $0.removalBatchSequence].compactMap { $0 } }.max() ?? -1) + 1
+    }
+
+    /// Replay this job's own insertions and confirmed atomic removals. External album
+    /// changes still fail the snapshot guards, while split cleanup/retry remains usable.
     private func expectedStates(_ intent: PhotoPairIntent) async throws -> (original: PhotoPairAssetState, pair: PhotoPairAssetState) {
         var original = intent.originalState.afterPairInsertion(), pair = intent.originalState
         if let batchID = intent.batchID, let sequence = intent.batchSequence {
-            let later = try await journal.all().filter {
-                $0.batchID == batchID && ($0.batchSequence ?? -1) > sequence && $0.pairedAssetID != nil
-            }.sorted { ($0.batchSequence ?? -1) < ($1.batchSequence ?? -1) }
-            for next in later {
-                for (album, insertion) in next.originalState.albumPositions {
-                    if let p = original.albumPositions[album], insertion <= p { original.albumPositions[album] = p + 1 }
-                    if let p = pair.albumPositions[album], insertion <= p { pair.albumPositions[album] = p + 1 }
+            let intents = try await journal.all().filter { $0.batchID == batchID }
+            let insertions = intents.filter { ($0.batchSequence ?? -1) > sequence && $0.pairedAssetID != nil }
+            let removals = intents.filter { $0.phase == .removed && ($0.removalBatchSequence ?? -1) > sequence }
+            let events = Set(insertions.compactMap(\.batchSequence) + removals.compactMap(\.removalBatchSequence))
+            for event in events.sorted() {
+                for next in insertions where next.batchSequence == event {
+                    for (album, insertion) in next.originalState.albumPositions {
+                        if let p = original.albumPositions[album], insertion <= p { original.albumPositions[album] = p + 1 }
+                        if let p = pair.albumPositions[album], insertion <= p { pair.albumPositions[album] = p + 1 }
+                    }
+                }
+                let removed = removals.filter { $0.removalBatchSequence == event }
+                for (album, position) in original.albumPositions {
+                    original.albumPositions[album] = position - removed.filter { ($0.removalOriginalState?.albumPositions[album] ?? Int.max) < position }.count
+                }
+                for (album, position) in pair.albumPositions {
+                    pair.albumPositions[album] = position - removed.filter { ($0.removalOriginalState?.albumPositions[album] ?? Int.max) < position }.count
                 }
             }
         }

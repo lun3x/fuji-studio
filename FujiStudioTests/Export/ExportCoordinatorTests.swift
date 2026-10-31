@@ -154,7 +154,10 @@ actor ExportWriter: PhotoLibraryWriting {
         }
         return .notFound
     }
-    func completeReplacements(_ assets: [SavedAsset], allowingPreviousEdits: Bool) async throws -> [SavedAsset] { assets }
+    func completeReplacements(_ assets: [SavedAsset], allowingPreviousEdits: Bool,
+                              beforeRemoval: @escaping @Sendable () async throws -> Void) async throws -> [SavedAsset] {
+        try await beforeRemoval(); return assets
+    }
     private func outputID(_ request: PhotoSaveRequest) -> String {
         guard let edit = request.originalEdit else { return "synthetic-asset" }
         return edit.source.originalResources.jpeg == nil ? "synthetic-pair" : edit.source.id

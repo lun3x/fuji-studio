@@ -35,7 +35,7 @@ import Observation
         let platform: FixturePlatform
         let scheduler: CameraWorkScheduler
     }
-    static func make(access: LibraryAccess = .full, uncertain: Bool = false, cameraOverride: (any CameraServing)? = nil,cameraModel:String="X-T5",slotCount:Int=7,mixedModels:Bool=false,undecodableRAW:Bool=false,filterSources:Bool=false,pairCleanupPending:Bool=false) async throws -> Bundle {
+    static func make(access: LibraryAccess = .full, uncertain: Bool = false, cameraOverride: (any CameraServing)? = nil,cameraModel:String="X-T5",slotCount:Int=7,mixedModels:Bool=false,undecodableRAW:Bool=false,filterSources:Bool=false,pairCleanupPending:Bool=false,rawOnlyBatch:Bool=false) async throws -> Bundle {
         let images = try WorkspaceFixture()
         let allRecipes=cameraModel == "X-E3" ? try fixtureXE3Snapshots() : images.state.recipes
         let cachedRecipes=Array(allRecipes.prefix(slotCount))
@@ -43,7 +43,7 @@ import Observation
         let originals = Array(images.sources.prefix(3)).enumerated().map { offset, s in
             var raw = s.originalResources.raf; raw.sourceRevision = s.resourceRevision
             var jpeg = s.originalResources.jpeg; jpeg?.sourceRevision = s.resourceRevision
-            return PhotoSource(id: s.id, originalResources: OriginalResources(raf: raw, jpeg: offset == 1 ? nil : jpeg),
+            return PhotoSource(id: s.id, originalResources: OriginalResources(raf: raw, jpeg: rawOnlyBatch || offset == 1 ? nil : jpeg),
                 captureDate: Date(timeIntervalSince1970: Double(3 - offset)), location: nil, resourceRevision: s.resourceRevision)
         }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("FujiStudioFlow-\(UUID().uuidString)")
@@ -393,12 +393,14 @@ actor FixtureWriter: PhotoLibraryWriting {
     private let pairCleanupPending: Bool
     private var cleanupSources: [UUID: SourceID] = [:]
     private var lookupBarrier: FixtureBarrier?
+    private var cleanupBarrier: FixtureBarrier?
     func sourceReplacements() async throws -> [SourceID: SourceID] { replacements }
     init(reader: FixtureLibrary, uncertain: Bool, pairCleanupPending: Bool = false) {
         self.reader = reader; self.uncertain = uncertain; self.pairCleanupPending = pairCleanupPending
     }
     func holdSave(_ barrier: FixtureBarrier) { self.barrier = barrier }
     func holdLookup(_ barrier: FixtureBarrier) { lookupBarrier = barrier }
+    func holdCleanup(_ barrier: FixtureBarrier) { cleanupBarrier = barrier }
     func saveJPEG(_ request: PhotoSaveRequest, onPlaceholder: @escaping @Sendable (String) -> Void) async throws -> SavedAsset {
         requests.append(request)
         let id = outputID(request); onPlaceholder(id)
@@ -452,15 +454,18 @@ actor FixtureWriter: PhotoLibraryWriting {
     }
     func completeReplacement(operationID: UUID, assetID: String) async throws -> SavedAsset {
         let asset = SavedAsset(assetID: assetID, operationID: operationID, photosGeometry: nil)
-        _ = try await completeReplacements([asset], allowingPreviousEdits: true)
+        _ = try await completeReplacements([asset], allowingPreviousEdits: true, beforeRemoval: {})
         return asset
     }
-    func completeReplacements(_ assets: [SavedAsset], allowingPreviousEdits: Bool) async throws -> [SavedAsset] {
+    func completeReplacements(_ assets: [SavedAsset], allowingPreviousEdits: Bool,
+                              beforeRemoval: @escaping @Sendable () async throws -> Void) async throws -> [SavedAsset] {
         if pairCleanupPending && !allowingPreviousEdits { throw PhotoLibraryWriteError.uncertain(.missingConfirmation) }
         guard assets.allSatisfy({ cleanupSources[$0.operationID] != nil && found[$0.operationID] == $0 }) else {
             throw PhotoLibraryWriteError.uncertain(.missingConfirmation)
         }
         for asset in assets { _ = try await reader.source(id: asset.assetID) }
+        try await beforeRemoval()
+        if let cleanupBarrier { await cleanupBarrier.wait() }
         await reader.removeReplacedOriginals(Set(assets.compactMap { cleanupSources[$0.operationID] }))
         for asset in assets { cleanupSources[asset.operationID] = nil }
         cleanupCalls += assets.count; cleanupTransactions += 1

@@ -81,14 +81,14 @@ struct NativePhotoPairGateway: PhotoPairGateway {
                 do {
                     var originals: [PHAsset] = []
                     for removal in removals {
-                    let intent = removal.intent, verified = removal.verified
-                    guard try Self.snapshot(intent.source.id) == (intent.removalOriginalState ?? intent.originalState.afterPairInsertion()),
-                          try Self.snapshot(verified.source.id) == verified.state else { throw ResourceError.resourceChanged }
-                    let original = try NativePhotoEditGateway.asset(intent.source.id)
-                    let pair = try NativePhotoEditGateway.asset(verified.source.id)
-                    guard original.canPerform(.delete), try NativePhotoEditGateway.matchesOriginal(original, source: intent.source),
-                          try NativePhotoEditGateway.matchesOriginal(pair, source: verified.source) else { throw ResourceError.resourceChanged }
-                    originals.append(original)
+                        let intent = removal.intent, verified = removal.verified
+                        guard try Self.snapshot(intent.source.id) == (intent.removalOriginalState ?? intent.originalState.afterPairInsertion()),
+                              try Self.snapshot(verified.source.id) == verified.state else { throw ResourceError.resourceChanged }
+                        let original = try NativePhotoEditGateway.asset(intent.source.id)
+                        let pair = try NativePhotoEditGateway.asset(verified.source.id)
+                        guard original.canPerform(.delete), try NativePhotoEditGateway.matchesOriginal(original, source: intent.source),
+                              try NativePhotoEditGateway.matchesOriginal(pair, source: verified.source) else { throw ResourceError.resourceChanged }
+                        originals.append(original)
                     }
                     PHAssetChangeRequest.deleteAssets(originals as NSArray)
                 } catch { outcome.setError(error) }

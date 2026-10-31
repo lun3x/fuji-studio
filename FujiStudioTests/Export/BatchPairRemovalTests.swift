@@ -4,6 +4,20 @@ import Testing
 @testable import FujiStudio
 
 struct BatchPairRemovalTests {
+    @Test(arguments: [false, true])
+    func stoppingDuringFinalRevalidationCannotSubmitDeletion(_ cancel: Bool) async throws {
+        let f = try ExportBatchFixture(), writer = BatchRemovalWriter(), gate = RenderLatch()
+        let (engine, sources) = batch(f, writer: writer)
+        await writer.holdRevalidation(gate)
+        var events = await engine.events().makeAsyncIterator()
+        let id = try await engine.start(sources: sources, recipe: f.render.recipe, destination: .updateOriginal)
+        await gate.entered()
+        let stopping = Task { if cancel { await engine.cancel(jobID: id) } else { await engine.suspend() } }
+        while let event = await events.next() { if event.stopRequested { break } }
+        await gate.release(); await stopping.value
+        while let event = await events.next() { if event.terminal { #expect(event.summary.completed == 0 && event.summary.unresolved == 2); break } }
+        #expect(await writer.removalTransactions == 0)
+    }
     private func batch(_ f: ExportBatchFixture, writer: BatchRemovalWriter) -> (ExportCoordinator, [PhotoSource]) {
         let sources = f.sources.map { PhotoSource(id: $0.id, originalResources: .init(raf: $0.originalResources.raf, jpeg: nil),
             captureDate: $0.captureDate, location: $0.location, resourceRevision: $0.resourceRevision) }
@@ -69,8 +83,10 @@ actor BatchRemovalWriter: PhotoLibraryWriting {
     private var assets: [UUID: SavedAsset] = [:]
     private var saveGate: RenderLatch?
     private var cleanupGate: RenderLatch?
+    private var revalidationGate: RenderLatch?
     func holdSave(_ gate: RenderLatch) { saveGate = gate }
     func holdCleanup(_ gate: RenderLatch) { cleanupGate = gate }
+    func holdRevalidation(_ gate: RenderLatch) { revalidationGate = gate }
     func saveJPEG(_ request: PhotoSaveRequest, onPlaceholder: @escaping @Sendable (String) -> Void) async throws -> SavedAsset {
         requests.append(request); events.append("save")
         let asset = SavedAsset(assetID: "pair-\(request.operationID)", operationID: request.operationID, photosGeometry: nil)
@@ -83,7 +99,10 @@ actor BatchRemovalWriter: PhotoLibraryWriting {
         guard let asset = assets[operationID] else { return .notFound }
         return .needsReplacementCleanup(asset)
     }
-    func completeReplacements(_ assets: [SavedAsset], allowingPreviousEdits: Bool) async throws -> [SavedAsset] {
+    func completeReplacements(_ assets: [SavedAsset], allowingPreviousEdits: Bool,
+                              beforeRemoval: @escaping @Sendable () async throws -> Void) async throws -> [SavedAsset] {
+        if let revalidationGate { await revalidationGate.wait() }
+        try await beforeRemoval()
         events.append("remove:\(assets.count)"); removalTransactions += 1
         if let cleanupGate { await cleanupGate.wait() }
         return assets

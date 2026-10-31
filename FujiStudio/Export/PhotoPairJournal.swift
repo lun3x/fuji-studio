@@ -49,6 +49,7 @@ struct PhotoPairIntent: Codable, Sendable, Equatable {
     var removalOriginalState: PhotoPairAssetState?
     var batchID: UUID?
     var batchSequence: Int?
+    var removalBatchSequence: Int?
     var filename: String { "FujiStudio-\(operationID.uuidString).jpg" }
 }
 

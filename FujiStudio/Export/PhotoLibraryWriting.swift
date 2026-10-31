@@ -48,12 +48,14 @@ protocol PhotoLibraryWriting: Sendable {
     /// Absence is an observation, never authorization to resubmit an uncertain transaction.
     func findExport(operationID: UUID, knownAssetID: String?, originalAssetID: String?) async throws -> SaveLookup
     func completeReplacement(operationID: UUID, assetID: String) async throws -> SavedAsset
-    func completeReplacements(_ assets: [SavedAsset], allowingPreviousEdits: Bool) async throws -> [SavedAsset]
+    func completeReplacements(_ assets: [SavedAsset], allowingPreviousEdits: Bool,
+                              beforeRemoval: @escaping @Sendable () async throws -> Void) async throws -> [SavedAsset]
     func sourceReplacements() async throws -> [SourceID: SourceID]
 }
 
 extension PhotoLibraryWriting {
-    func completeReplacements(_ assets: [SavedAsset], allowingPreviousEdits: Bool) async throws -> [SavedAsset] {
+    func completeReplacements(_ assets: [SavedAsset], allowingPreviousEdits: Bool,
+                              beforeRemoval: @escaping @Sendable () async throws -> Void) async throws -> [SavedAsset] {
         throw PhotoLibraryWriteError.invalidOutput("This writer does not support batch RAW cleanup.")
     }
     func completeReplacement(operationID: UUID, assetID: String) async throws -> SavedAsset {

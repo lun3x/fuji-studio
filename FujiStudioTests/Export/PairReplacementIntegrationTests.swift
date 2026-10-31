@@ -120,7 +120,9 @@ private actor PairCleanupWriter: PhotoLibraryWriting {
         cleanupCalls += 1
         return SavedAsset(assetID: assetID, operationID: operationID, photosGeometry: nil)
     }
-    func completeReplacements(_ assets: [SavedAsset], allowingPreviousEdits: Bool) async throws -> [SavedAsset] {
+    func completeReplacements(_ assets: [SavedAsset], allowingPreviousEdits: Bool,
+                              beforeRemoval: @escaping @Sendable () async throws -> Void) async throws -> [SavedAsset] {
+        try await beforeRemoval()
         cleanupCalls += 1
         return assets
     }
