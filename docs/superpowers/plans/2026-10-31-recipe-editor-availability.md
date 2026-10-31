@@ -26,12 +26,12 @@
 
 ## Task 1: Filter presentation and retain repairable selections
 
-**Files:** `FujiStudio/Recipes/PhoneRecipeDraft.swift`, `PhoneRecipeEditor.swift`, corresponding draft tests and `StandardRecipeEditorTests`, `PhoneRecipeEditorTests`, `ModelRecipeTests`.
+**Files:** `FujiStudio/Recipes/PhoneRecipeDraft.swift`, `PhoneRecipeEditor.swift`, corresponding draft tests and `StandardRecipeEditorTests`, `PhoneRecipeEditorTests`, `ModelRecipeTests`, `AppFlowTestCase`.
 
 **Interfaces:** `choices(for:)` returns available choices only; existing `isAvailable(_:)` and `isChoiceAvailable(_:for:)` identify visible rows and invalid retained selections.
 
-- [ ] Establish the draft-test baseline. Write filtering/retained-selection/temperature dependency regressions and observe failures.
-- [ ] Filter draft choices; hide unavailable rows, mark active invalid selections red with accessible status, and filter Kelvin search.
-- [ ] Update UI assertions to require absent unavailable controls/choices, red invalid status, repair/Save behavior, and restored retained values. Run affected UI suites and inspect screenshots.
+- [x] Establish the draft-test baseline. Write filtering/retained-selection/temperature dependency regressions and observe failures.
+- [x] Filter draft choices; hide unavailable rows, mark active invalid selections red with accessible status, and filter Kelvin search.
+- [x] Update UI assertions to require absent unavailable controls/choices, red invalid status, repair/Save behavior, and restored retained values. Run affected UI suites and inspect screenshots.
 - [ ] Run `Scripts/test-ios.sh --fast`, then the complete `Scripts/test-ios.sh` suite; require green results. Get a fresh review of this follow-up delta and address actionable findings with regressions.
 - [ ] Record results, checkpoint/push, update PR #45 and delete the task simulator.

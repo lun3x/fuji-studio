@@ -33,7 +33,7 @@ final class StandardRecipeEditorTests: AppFlowTestCase {
     let chrome = app.buttons["recipe.editor.setting.colorChrome"]
     XCTAssertFalse(chrome.exists)
     shot(app, "X-E3 editor hides unavailable fields")
-    app.buttons["recipe.editor.save"].tap()
+    saveRecipe(in: app)
     XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitForNonExistence(timeout: 5))
     edit.tap()
     XCTAssertTrue(camera.label.contains("X-E3"))

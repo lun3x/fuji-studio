@@ -2,7 +2,7 @@
 
 The request is stored independently of native camera properties. Every recipe has a complete standard setting dictionary and an explicit target camera. Native bytes and import context remain evidence/provenance. Standard payloads are mandatory; this change does not introduce legacy-native fallback decoding or silently clear an incompatible catalog.
 
-Defaults include Lens modulation optimizer On, Fine+RAW image quality, and Lossless compressed RAW recording. Camera changes retain all values, including unavailable fields and selected invalid steps. The editor shows the complete domain with disabled rows/actions, and disables Save until all active available settings are valid. Inactive monochromatic colour, Kelvin, grain size, and DR/tone dependencies retain their values.
+Defaults include Lens modulation optimizer On, Fine+RAW image quality, and Lossless compressed RAW recording. Camera changes retain all values, including unavailable fields and selected invalid steps. Following the [editor revision](../superpowers/specs/2026-10-31-recipe-editor-availability-design.md), the editor hides unavailable rows and choices. An invalid selection in an available field stays visible in red with an error symbol and accessible status; Save stays disabled until repaired. Inactive monochromatic colour, Kelvin, grain size, and DR/tone dependencies retain their values while hidden.
 
 Camera-valid values outside implemented conversion support may be saved. Conversion refuses active unsupported processing values with the setting name and requested value. It does not silently drop Long exposure NR On, Adobe RGB, HEIF, active nonzero monochromatic colour, or other unimplemented requests. ISO and RAW recording are capture intent and cannot alter an existing RAF.
 
@@ -58,3 +58,17 @@ DR behavior remains the existing cap by capture DR, with missing/unrecognized ca
 6. Preserve the isolated Jujutsu workspace and its ignored test evidence for PR feedback. Prepare a draft PR without merging; the only resource removed is the task-owned simulator.
 
 No Minor review findings were deferred.
+
+## Focused editor revision, 2026-10-31
+
+The user revised the presentation to hide unavailable settings and choices, while retaining invalid selected values visibly in red. Only the draft's UI choice list and SwiftUI editor changed; the complete standard catalog, storage, validation and application rules remain intact. Import notices also omit fields unavailable in the current editor.
+
+- Baseline: all 11 draft tests passed. Updated draft regressions then failed five assertions for film, tone, Kelvin and inactive monochrome filtering. Updated UI expectations failed five assertions across the two standard-editor cases on the old presentation.
+- After implementation, `Scripts/test-ios.sh --fast` passed all 548 Swift Testing tests and 24 XCTest cases.
+- Explicit editor/model UI run: 13 of 14 passed, including red invalid selections, valid-only replacement menus, restored monochromatic values, hidden grain/camera fields, filtered Kelvin search, typed-invalid temperature, large text and landscape. One existing numeric menu test tapped Save while its selection was still animating; the recording shows the menu and highlighted choice still visible. The unchanged serial rerun passed. The test now waits for the selected value to appear before saving, preserving its ordering and persistence assertions.
+- Inspected exported screenshots: invalid +1.5 is red with an error symbol and disabled Save; after selecting +1 the value is blue, Save is enabled and unavailable rows are absent.
+- Fresh independent review of the follow-up delta found no actionable Critical, Important or Minor issues and no declined behaviors. The complete parallel suite is running.
+- First full run: 652 unique cases passed, one grain save/reopen case failed, and three existing gated cases were skipped. Its activity confirms a second Off→Save tap while the native menu still intercepted Save, matching the numeric failure. The test-only Save helper now waits for an enabled, hittable button; all ordering, visibility and persistence assertions remain. The focused parallel rerun passed all four grain/numeric/standard-editor cases. Final complete validation is running against that synchronization fix.
+- Release iPhone build and strict signature verification passed. Installation waits for the final suite result.
+
+Ruling: use the user's explicit, complete UI revision as the small-task specification and execute inline without another approval exchange. Reuse Jujutsu isolation and ignored task bookkeeping. Preserve the workspace and test evidence for feedback; remove the task simulator at completion. The numeric-test synchronization is based on the recorded native-menu timing; final parallel validation remains the gate.

@@ -2,6 +2,8 @@
 
 Status: implementation design, incorporating the user's full-inventory scope and subsequent default/per-photo corrections.
 
+The 2026-10-31 [editor availability revision](2026-10-31-recipe-editor-availability-design.md) supersedes this document's grey/disabled presentation: unavailable rows and choices are hidden, while retained invalid selections in available fields remain visible in red. The complete storage and application requirements remain in effect.
+
 ## Intent
 
 Store recipes as camera-independent, explicit semantic settings so the same recipe can be adapted for another supported camera without losing its values. Camera-specific wire encodings belong at import and application boundaries. The selected camera controls availability and validity, rather than the shape of the saved recipe.

@@ -42,6 +42,13 @@ class AppFlowTestCase: XCTestCase {
         reveal(iso, in: app);iso.tap();app.buttons["Auto 1"].tap()
     }
 
+    func saveRecipe(in app: XCUIApplication) {
+        let save = app.buttons["recipe.editor.save"]
+        // A native menu can still intercept taps while its selection animates.
+        wait { save.isEnabled && save.isHittable }
+        save.tap()
+    }
+
     func tap(_ element: XCUIElement, in app: XCUIApplication) {
         let rect = element.frame
         app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: rect.midX, dy: rect.midY)).tap()
