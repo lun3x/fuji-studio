@@ -33,5 +33,5 @@
 - [x] Establish the draft-test baseline. Write filtering/retained-selection/temperature dependency regressions and observe failures.
 - [x] Filter draft choices; hide unavailable rows, mark active invalid selections red with accessible status, and filter Kelvin search.
 - [x] Update UI assertions to require absent unavailable controls/choices, red invalid status, repair/Save behavior, and restored retained values. Run affected UI suites and inspect screenshots.
-- [ ] Run `Scripts/test-ios.sh --fast`, then the complete `Scripts/test-ios.sh` suite; require green results. Get a fresh review of this follow-up delta and address actionable findings with regressions.
-- [ ] Record results, checkpoint/push, update PR #45 and delete the task simulator.
+- [x] Run `Scripts/test-ios.sh --fast`, then the complete `Scripts/test-ios.sh` suite; require green results. Get a fresh review of this follow-up delta and address actionable findings with regressions.
+- [x] Record results, checkpoint/push, update PR #45 and delete the task simulator.
