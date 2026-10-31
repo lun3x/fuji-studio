@@ -28,9 +28,15 @@ struct ExportProgressView: View {
                     .accessibilityIdentifier("export.cancel")
             } else if event.summary.unresolved > 0 {
                 if event.summary.replacementCleanup > 0 {
-                    Text("The RAW+JPEG pair is verified. Finish replacement removes the old RAW-only asset and its previous Photos edits. The unchanged RAW and exported JPEG remain in the pair.")
-                    Button("Finish replacement", action: onFinishReplacement).disabled(!canFinishReplacement)
-                        .accessibilityIdentifier("export.finishReplacement")
+                    if event.summary.unprocessed > 0 && event.summary.unresolved == event.summary.replacementCleanup {
+                        Text("Verified RAW+JPEG pairs are retained. Resume finishes the remaining exports before removing the old RAW assets together.")
+                        Button("Resume", action: onResume).disabled(!canResume).accessibilityIdentifier("export.resume")
+                        Button("Cancel remaining", action: onCancel).accessibilityIdentifier("export.cancel")
+                    } else {
+                        Text("The RAW+JPEG pair is verified. Finish replacement removes the old RAW-only asset and its previous Photos edits. The unchanged RAW and exported JPEG remain in the pair.")
+                        Button("Finish replacement", action: onFinishReplacement).disabled(!canFinishReplacement)
+                            .accessibilityIdentifier("export.finishReplacement")
+                    }
                 } else {
                     Text("Photos has not confirmed this save. Reconciliation checks the same operation; it does not create a replacement export.")
                 }
@@ -60,7 +66,9 @@ struct ExportProgressView: View {
     }
     static func status(_ event: ExportEvent) -> String {
         if event.terminal, event.summary.replacementCleanup > 0,
-           event.summary.replacementCleanup == event.summary.unresolved { return "RAW+JPEG saved — removal pending" }
+           event.summary.replacementCleanup == event.summary.unresolved {
+            return event.summary.unprocessed > 0 ? "Export paused — resume when ready" : "RAW+JPEG saved — removal pending"
+        }
         if event.stage == .unresolved || (event.terminal && event.summary.unresolved > 0) { return "Save unconfirmed" }
         if event.stopRequested { return "Stopping after the current operation" }
         switch event.stage {

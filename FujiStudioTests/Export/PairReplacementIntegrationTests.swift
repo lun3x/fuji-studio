@@ -73,7 +73,7 @@ import Testing
         #expect(await camera.calls == 1)
         #expect(!(await cache.pinnedKeys()).isEmpty)
         try await engine.resume(jobID: id)
-        while let event = await events.next() { if event.jobID == id && event.terminal { break } }
+        while let event = await events.next() { if event.jobID == id && event.terminal && event.sequence > recovery.sequence { break } }
         #expect(await writer.cleanupCalls == 1)
         #expect(await writer.requests == 1)
         #expect(await camera.calls == 1)
@@ -119,5 +119,9 @@ private actor PairCleanupWriter: PhotoLibraryWriting {
     func completeReplacement(operationID: UUID, assetID: String) -> SavedAsset {
         cleanupCalls += 1
         return SavedAsset(assetID: assetID, operationID: operationID, photosGeometry: nil)
+    }
+    func completeReplacements(_ assets: [SavedAsset], allowingPreviousEdits: Bool) async throws -> [SavedAsset] {
+        cleanupCalls += 1
+        return assets
     }
 }

@@ -1125,7 +1125,7 @@ import Testing
         #expect(await f.writer.requests.count == 1)
     }
 
-    @Test func inactiveSystemPresentationRestoresIdleWithoutPausingTheExport() async throws {
+    @Test func inactiveSystemPresentationKeepsExportAwakeWithoutPausing() async throws {
         let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment), barrier = FixtureBarrier()
         await model.start(); await model.connect()
         await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
@@ -1139,7 +1139,7 @@ import Testing
         await f.writer.holdSave(barrier); await model.export(); await barrier.entered()
         #expect(f.platform.idleTimerDisabled)
         await model.sceneChanged(.inactive)
-        #expect(!f.platform.idleTimerDisabled)
+        #expect(f.platform.idleTimerDisabled)
         #expect(!model.isSuspended)
         #expect(model.exportEvent?.stopRequested == false)
         await barrier.release(); await eventually { model.exportEvent?.terminal == true }

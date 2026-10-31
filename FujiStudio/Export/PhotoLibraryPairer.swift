@@ -8,7 +8,12 @@ protocol PhotoPairGateway: Sendable {
     func createPair(intent: PhotoPairIntent, rawURL: URL, jpegURL: URL,
                     onPlaceholder: @escaping @Sendable (String) -> Void) async throws -> String
     func matchingAssets(filename: String) async throws -> [String]
-    func removeOriginal(intent: PhotoPairIntent, verified: PhotoPairVerified) async throws
+    func removeOriginals(_ removals: [PhotoPairRemoval]) async throws
+}
+
+struct PhotoPairRemoval: Sendable {
+    let intent: PhotoPairIntent
+    let verified: PhotoPairVerified
 }
 
 struct PhotoLibraryPairer: Sendable {
@@ -29,7 +34,8 @@ struct PhotoLibraryPairer: Sendable {
                       previous.jpegSHA256 == request.jpeg.outputSHA256 else { throw ResourceError.resourceChanged }
                 switch try await findExport(operationID: request.operationID, sourceID: edit.source.id, knownAssetID: previous.pairedAssetID) {
                 case .found(let asset): return asset
-                case .needsReplacementCleanup(let asset): return try await completeReplacement(operationID: request.operationID, assetID: asset.assetID)
+                case .needsReplacementCleanup(let asset):
+                    return request.deferPairRemoval ? asset : try await completeReplacement(operationID: request.operationID, assetID: asset.assetID)
                 default: throw PhotoLibraryWriteError.uncertain(.missingConfirmation)
                 }
             } catch { throw PhotoLibraryWriteError.uncertain(.missingConfirmation) }
@@ -53,6 +59,11 @@ struct PhotoLibraryPairer: Sendable {
         do {
             intent.phase = .created; intent.pairedAssetID = assetID
             try await journal.store(intent)
+            if request.deferPairRemoval {
+                guard case .needsReplacementCleanup(let asset) = try await findExport(operationID: intent.operationID,
+                    sourceID: intent.source.id, knownAssetID: assetID) else { throw ResourceError.resourceChanged }
+                return asset
+            }
             return try await finish(intent, assetID: assetID)
         } catch { throw PhotoLibraryWriteError.uncertain(.missingConfirmation) }
     }
@@ -86,9 +97,13 @@ struct PhotoLibraryPairer: Sendable {
                   sameOriginal(try await reader.source(id: edit.source.id), edit.source) else {
                 throw PhotoLibraryWriteError.invalidOutput("The original changed while preparing the pair.")
             }
-            let intent = PhotoPairIntent(operationID: request.operationID, source: edit.source, originalState: state,
+            var intent = PhotoPairIntent(operationID: request.operationID, source: edit.source, originalState: state,
                 rawSHA256: request.jpeg.sourceSHA256, jpegSHA256: request.jpeg.outputSHA256,
                 width: request.jpeg.width, height: request.jpeg.height, orientation: request.jpeg.orientation)
+            if let batchID = request.pairBatchID {
+                intent.batchID = batchID
+                intent.batchSequence = (try await journal.all().filter { $0.batchID == batchID }.compactMap(\.batchSequence).max() ?? -1) + 1
+            }
             try await journal.store(intent)
             return (intent, raw)
         } catch {
@@ -116,9 +131,10 @@ struct PhotoLibraryPairer: Sendable {
         let observation = try await observeOriginal(sourceID)
         let originalState = observation.state
         if intent.phase != .removed, let originalState {
+            let expected = try await expectedStates(intent)
             guard originalState.assetID == intent.source.id,
-                  originalState.hasSameMetadata(as: intent.originalState.afterPairInsertion()),
-                  verified.state.hasSameMetadata(as: intent.originalState),
+                  originalState.hasSameMetadata(as: expected.original),
+                  verified.state.hasSameMetadata(as: expected.pair),
                   sameOriginal(try await reader.source(id: sourceID), intent.source) else { throw ResourceError.resourceChanged }
         }
         let confirmedRemoval = intent.phase == .removed || (originalState == nil && observation.absenceConfirmed)
@@ -150,20 +166,45 @@ struct PhotoLibraryPairer: Sendable {
     }
 
     private func finish(_ original: PhotoPairIntent, assetID: String, explicitRemoval: Bool = false) async throws -> SavedAsset {
+        let asset = saved(original, assetID: assetID)
+        _ = try await completeReplacements([asset], allowingPreviousEdits: explicitRemoval)
+        return asset
+    }
+
+    func completeReplacements(_ assets: [SavedAsset], allowingPreviousEdits: Bool) async throws -> [SavedAsset] {
+        guard Set(assets.map(\.operationID)).count == assets.count,
+              Set(assets.map(\.assetID)).count == assets.count else { throw ResourceError.resourceChanged }
+        var ready: [PhotoPairRemoval] = []
+        for asset in assets {
+            guard let intent = try await journal.intent(asset.operationID), intent.pairedAssetID == asset.assetID else {
+                throw PhotoLibraryWriteError.uncertain(.missingConfirmation)
+            }
+            ready.append(try await prepareRemoval(intent, assetID: asset.assetID, explicitRemoval: allowingPreviousEdits))
+        }
+        try await requireAccess(); try Task.checkCancellation()
+        let removals = ready.filter { $0.intent.phase != .removed && $0.intent.removalOriginalState != nil }
+        if !removals.isEmpty { try await gateway.removeOriginals(removals) }
+        for removal in ready {
+            var intent = removal.intent; intent.phase = .removed
+            try await journal.store(intent)
+        }
+        return assets
+    }
+
+    private func prepareRemoval(_ original: PhotoPairIntent, assetID: String, explicitRemoval: Bool) async throws -> PhotoPairRemoval {
         var intent = original
         if intent.phase == .removed {
-            _ = try await verify(intent, assetID: assetID)
-            return saved(intent, assetID: assetID)
+            return PhotoPairRemoval(intent: intent, verified: try await verify(intent, assetID: assetID))
         }
         let observation = try await observeOriginal(intent.source.id)
         let originalState = observation.state
         if originalState == nil && !observation.absenceConfirmed { throw PhotoLibraryWriteError.uncertain(.authorization) }
         let verified = try await verify(intent, assetID: assetID)
         if let originalState {
-            let expected = intent.originalState.afterPairInsertion()
+            let expected = try await expectedStates(intent)
             guard originalState.assetID == intent.source.id,
-                  (explicitRemoval ? originalState.hasSameMetadata(as: expected) : originalState == expected),
-                  verified.state.hasSameMetadata(as: intent.originalState),
+                  (explicitRemoval ? originalState.hasSameMetadata(as: expected.original) : originalState == expected.original),
+                  verified.state.hasSameMetadata(as: expected.pair),
                   sameOriginal(try await reader.source(id: intent.source.id), intent.source) else { throw ResourceError.resourceChanged }
             let raw = try await reader.materialize(intent.source.originalResources.raf, progress: { _ in })
             defer { try? FileManager.default.removeItem(at: raw.fileURL) }
@@ -176,14 +217,25 @@ struct PhotoLibraryPairer: Sendable {
         intent.verified = verified; intent.phase = .verified; intent.pairedAssetID = assetID
         intent.removalOriginalState = originalState
         try await journal.store(intent) // A removal notification must already have a durable alias.
-        try await requireAccess()
-        try Task.checkCancellation()
-        if originalState != nil {
-            try await gateway.removeOriginal(intent: intent, verified: verified)
+        return PhotoPairRemoval(intent: intent, verified: verified)
+    }
+
+    /// Later pair insertions move earlier assets within albums, before the batch removes
+    /// any originals. Replay only this job's recorded insertions; other changes still fail.
+    private func expectedStates(_ intent: PhotoPairIntent) async throws -> (original: PhotoPairAssetState, pair: PhotoPairAssetState) {
+        var original = intent.originalState.afterPairInsertion(), pair = intent.originalState
+        if let batchID = intent.batchID, let sequence = intent.batchSequence {
+            let later = try await journal.all().filter {
+                $0.batchID == batchID && ($0.batchSequence ?? -1) > sequence && $0.pairedAssetID != nil
+            }.sorted { ($0.batchSequence ?? -1) < ($1.batchSequence ?? -1) }
+            for next in later {
+                for (album, insertion) in next.originalState.albumPositions {
+                    if let p = original.albumPositions[album], insertion <= p { original.albumPositions[album] = p + 1 }
+                    if let p = pair.albumPositions[album], insertion <= p { pair.albumPositions[album] = p + 1 }
+                }
+            }
         }
-        intent.phase = .removed
-        try await journal.store(intent)
-        return saved(intent, assetID: assetID)
+        return (original, pair)
     }
     private func verify(_ intent: PhotoPairIntent, assetID: String) async throws -> PhotoPairVerified {
         try Task.checkCancellation()

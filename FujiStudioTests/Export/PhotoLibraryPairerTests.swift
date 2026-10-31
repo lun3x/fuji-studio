@@ -4,6 +4,18 @@ import Testing
 @testable import FujiStudio
 
 @MainActor struct PhotoLibraryPairerTests {
+    @Test func aDeferredPairRetainsTheOriginalUntilBatchCleanup() async throws {
+        let f = try RenderFixture(); defer { f.remove() }
+        let jpeg = try editJPEGFixture(f), library = try PairTestLibrary(f, jpeg: jpeg)
+        var request = request(f, jpeg)
+        request.deferPairRemoval = true; request.pairBatchID = UUID()
+        let service = pairer(f, library)
+        let asset = try await service.saveJPEG(request, edit: .init(source: f.source, recipe: f.recipe)) { _ in }
+        #expect(await library.removals == 0)
+        #expect(await library.originalExists)
+        #expect(try await service.findExport(operationID: request.operationID, sourceID: f.source.id,
+            knownAssetID: asset.assetID) == .needsReplacementCleanup(asset))
+    }
     @Test func PhotosRenamingThePairedRAWDoesNotOverrideByteVerification() async throws {
         let f = try RenderFixture(); defer { f.remove() }
         let jpeg = try editJPEGFixture(f), library = try PairTestLibrary(f, jpeg: jpeg)
@@ -280,11 +292,13 @@ actor PairTestLibrary: PhotoLibraryReading, PhotoPairGateway {
         return id
     }
     func matchingAssets(filename: String) -> [String] { paired?.originalResources.jpeg?.originalFilename == filename ? ["paired-asset"] : [] }
-    func removeOriginal(intent: PhotoPairIntent, verified: PhotoPairVerified) throws {
+    func removeOriginals(_ removals: [PhotoPairRemoval]) throws {
+        guard removals.count == 1, let removal = removals.first else { throw ResourceError.resourceChanged }
+        let intent = removal.intent, verified = removal.verified
         if fault == "removeRejected" { throw PhotoLibraryWriteError.rejected(.authorization) }
         guard state(assetID: intent.source.id) == (intent.removalOriginalState ?? intent.originalState.afterPairInsertion()),
               state(assetID: verified.source.id) == verified.state else { throw ResourceError.resourceChanged }
-        removals += 1; events.append("remove"); originalExists = false
+        self.removals += 1; events.append("remove"); originalExists = false
     }
     func requestAccess() -> LibraryAccess { .full }
     func sources() -> AsyncThrowingStream<[PhotoSource], Error> { AsyncThrowingStream { $0.finish() } }

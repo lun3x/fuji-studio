@@ -119,6 +119,9 @@ struct PhotoLibraryWriter: PhotoLibraryWriting {
     func completeReplacement(operationID: UUID, assetID: String) async throws -> SavedAsset {
         try await pairer.completeReplacement(operationID: operationID, assetID: assetID)
     }
+    func completeReplacements(_ assets: [SavedAsset], allowingPreviousEdits: Bool) async throws -> [SavedAsset] {
+        try await pairer.completeReplacements(assets, allowingPreviousEdits: allowingPreviousEdits)
+    }
     func sourceReplacements() async throws -> [SourceID: SourceID] { try await pairer.sourceReplacements() }
 
     private func saved(_ resource: PhotoSavedResource, operationID: UUID) -> SavedAsset {

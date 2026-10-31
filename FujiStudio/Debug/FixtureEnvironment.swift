@@ -202,8 +202,12 @@ actor FixtureLibrary: PhotoLibraryReading, PhotoEditReading {
         observers.forEach { $0.yield(LibraryChange(changedIDs: [id], removedIDs: removeOriginal ? [source.id] : [], accessScopeChanged: false)) }
     }
     func removeReplacedOriginal(_ id: SourceID) {
-        index.removeAll { $0.id == id }; edits[id] = nil
-        observers.forEach { $0.yield(LibraryChange(changedIDs: [], removedIDs: [id], accessScopeChanged: false)) }
+        removeReplacedOriginals([id])
+    }
+    func removeReplacedOriginals(_ ids: Set<SourceID>) {
+        index.removeAll { ids.contains($0.id) }
+        for id in ids { edits[id] = nil }
+        observers.forEach { $0.yield(LibraryChange(changedIDs: [], removedIDs: ids, accessScopeChanged: false)) }
     }
     func changes() -> AsyncStream<LibraryChange> {
         changeSubscriptions += 1
@@ -379,6 +383,7 @@ actor FixtureCamera: CameraServing {
 
 actor FixtureWriter: PhotoLibraryWriting {
     private(set) var cleanupCalls = 0
+    private(set) var cleanupTransactions = 0
     private let reader: FixtureLibrary
     private var uncertain: Bool
     private var barrier: FixtureBarrier?
@@ -402,13 +407,14 @@ actor FixtureWriter: PhotoLibraryWriting {
         if let edit = request.originalEdit {
             if edit.source.originalResources.jpeg == nil {
                 replacements[edit.source.id] = id
-                try await reader.replaceWithPair(edit.source, id: id, jpeg: request.jpeg, removeOriginal: !pairCleanupPending)
-                if pairCleanupPending { cleanupSources[request.operationID] = edit.source.id }
+                let deferred = pairCleanupPending || request.deferPairRemoval
+                try await reader.replaceWithPair(edit.source, id: id, jpeg: request.jpeg, removeOriginal: !deferred)
+                if deferred { cleanupSources[request.operationID] = edit.source.id }
             } else { await reader.addOriginalEdit(.init(operationID: request.operationID, sourceID: edit.source.id, recipe: edit.recipe)) }
         } else { await reader.addOutput(id) }
         let asset = SavedAsset(assetID: id, operationID: request.operationID, photosGeometry: nil)
         found[request.operationID] = asset
-        if cleanupSources[request.operationID] != nil { throw PhotoLibraryWriteError.uncertain(.missingConfirmation) }
+        if pairCleanupPending && cleanupSources[request.operationID] != nil { throw PhotoLibraryWriteError.uncertain(.missingConfirmation) }
         return asset
     }
     func makeSubmittedExportDiscoverable(_ operationID: UUID) async throws -> SavedAsset {
@@ -417,7 +423,8 @@ actor FixtureWriter: PhotoLibraryWriting {
         if let edit = request.originalEdit {
             if edit.source.originalResources.jpeg == nil {
                 replacements[edit.source.id] = asset.assetID
-                try await reader.replaceWithPair(edit.source, id: asset.assetID, jpeg: request.jpeg)
+                try await reader.replaceWithPair(edit.source, id: asset.assetID, jpeg: request.jpeg, removeOriginal: !request.deferPairRemoval)
+                if request.deferPairRemoval { cleanupSources[operationID] = edit.source.id }
             } else { await reader.addOriginalEdit(.init(operationID: operationID, sourceID: edit.source.id, recipe: edit.recipe)) }
         } else { await reader.addOutput(asset.assetID) }
         found[operationID] = asset
@@ -444,13 +451,20 @@ actor FixtureWriter: PhotoLibraryWriting {
         return "fixture-export-\(request.operationID.uuidString)"
     }
     func completeReplacement(operationID: UUID, assetID: String) async throws -> SavedAsset {
-        guard let sourceID = cleanupSources[operationID], let asset = found[operationID], asset.assetID == assetID else {
+        let asset = SavedAsset(assetID: assetID, operationID: operationID, photosGeometry: nil)
+        _ = try await completeReplacements([asset], allowingPreviousEdits: true)
+        return asset
+    }
+    func completeReplacements(_ assets: [SavedAsset], allowingPreviousEdits: Bool) async throws -> [SavedAsset] {
+        if pairCleanupPending && !allowingPreviousEdits { throw PhotoLibraryWriteError.uncertain(.missingConfirmation) }
+        guard assets.allSatisfy({ cleanupSources[$0.operationID] != nil && found[$0.operationID] == $0 }) else {
             throw PhotoLibraryWriteError.uncertain(.missingConfirmation)
         }
-        _ = try await reader.source(id: assetID)
-        await reader.removeReplacedOriginal(sourceID)
-        cleanupSources[operationID] = nil; cleanupCalls += 1
-        return asset
+        for asset in assets { _ = try await reader.source(id: asset.assetID) }
+        await reader.removeReplacedOriginals(Set(assets.compactMap { cleanupSources[$0.operationID] }))
+        for asset in assets { cleanupSources[asset.operationID] = nil }
+        cleanupCalls += assets.count; cleanupTransactions += 1
+        return assets
     }
 }
 

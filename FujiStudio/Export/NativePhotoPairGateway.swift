@@ -73,18 +73,24 @@ struct NativePhotoPairGateway: PhotoPairGateway {
     func matchingAssets(filename: String) async throws -> [String] {
         try await NativePhotoWriteGateway().assets(filename: filename).map(\.assetID)
     }
-    func removeOriginal(intent: PhotoPairIntent, verified: PhotoPairVerified) async throws {
+    func removeOriginals(_ removals: [PhotoPairRemoval]) async throws {
+        guard !removals.isEmpty else { return }
         let outcome = PairTransactionOutcome()
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             PHPhotoLibrary.shared().performChanges {
                 do {
+                    var originals: [PHAsset] = []
+                    for removal in removals {
+                    let intent = removal.intent, verified = removal.verified
                     guard try Self.snapshot(intent.source.id) == (intent.removalOriginalState ?? intent.originalState.afterPairInsertion()),
                           try Self.snapshot(verified.source.id) == verified.state else { throw ResourceError.resourceChanged }
                     let original = try NativePhotoEditGateway.asset(intent.source.id)
                     let pair = try NativePhotoEditGateway.asset(verified.source.id)
                     guard original.canPerform(.delete), try NativePhotoEditGateway.matchesOriginal(original, source: intent.source),
                           try NativePhotoEditGateway.matchesOriginal(pair, source: verified.source) else { throw ResourceError.resourceChanged }
-                    PHAssetChangeRequest.deleteAssets([original] as NSArray)
+                    originals.append(original)
+                    }
+                    PHAssetChangeRequest.deleteAssets(originals as NSArray)
                 } catch { outcome.setError(error) }
             } completionHandler: { success, error in
                 if let caught = outcome.error { continuation.resume(throwing: caught) }

@@ -813,7 +813,8 @@ import Observation
     func resumeExport(jobID: UUID? = nil, retry: Bool = false) async {
         let target = jobID.flatMap { unfinishedEvents[$0] } ?? exportEvent
         guard !isSuspended, !isResettingCamera, cameraError == nil, cameraResetError == nil, !isSubmitting, !recovering, state.activeJobID == nil,
-              case .ready = state.cameraState, let event = target, event.terminal, event.summary.unresolved == 0 else { return }
+              case .ready = state.cameraState, let event = target, event.terminal,
+              event.summary.unresolved == event.summary.replacementCleanup else { return }
         isSubmitting = true
         defer { isSubmitting = false }
         do {
@@ -863,7 +864,7 @@ import Observation
 
     func sceneChanged(_ phase: ScenePhase) async {
         sceneRevision &+= 1
-        if phase == .inactive { foreground = false; cancelPhotoFilterChecks(); stopAutomaticConnection(); restoreIdle(); return }
+        if phase == .inactive { foreground = false; cancelPhotoFilterChecks(); stopAutomaticConnection(); updateIdle(); return }
         let revision = sceneRevision
         if phase == .background {
             recipeLifecycleRevision &+= 1
@@ -919,7 +920,7 @@ import Observation
     }
 
     private func updateIdle() {
-        if foreground && !isSuspended && state.activeJobID != nil {
+        if !isSuspended && state.activeJobID != nil {
             if previousIdle == nil { previousIdle = environment.platform.idleTimerDisabled }
             environment.platform.idleTimerDisabled = true
         } else { restoreIdle() }

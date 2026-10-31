@@ -149,8 +149,12 @@ actor ExportWriter: PhotoLibraryWriting {
         if found == operationID, let request = requests.first(where: { $0.operationID == operationID }) {
             return .found(.init(assetID: outputID(request), operationID: operationID, photosGeometry: nil))
         }
+        if !uncertain, let request = requests.first(where: { $0.operationID == operationID && $0.deferPairRemoval }) {
+            return .needsReplacementCleanup(.init(assetID: outputID(request), operationID: operationID, photosGeometry: nil))
+        }
         return .notFound
     }
+    func completeReplacements(_ assets: [SavedAsset], allowingPreviousEdits: Bool) async throws -> [SavedAsset] { assets }
     private func outputID(_ request: PhotoSaveRequest) -> String {
         guard let edit = request.originalEdit else { return "synthetic-asset" }
         return edit.source.originalResources.jpeg == nil ? "synthetic-pair" : edit.source.id

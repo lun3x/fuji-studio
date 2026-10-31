@@ -200,7 +200,7 @@ actor ExportCoordinator {
         try reserve()
         let epoch = admissionEpoch
         do {
-            try await reconcile(id, finishReplacements: true)
+            try await reconcile(id)
             var job = try await catalog.job(id: id)
             var released: [RenderKey] = []
             for index in job.items.indices {
@@ -271,10 +271,14 @@ actor ExportCoordinator {
                     if let pending { try await releaseIfUnreferenced(pending.jpeg.key) }
                 }
                 let latest = try await catalog.job(id: id)
-                if case .unresolved = latest.items[index].state, latest.items[index].state != job.items[index].state {
+                if case .unresolved(let pending) = latest.items[index].state, pending.replacementCleanupAssetID == nil,
+                   latest.items[index].state != job.items[index].state {
                     reason = .unresolvedSave; break
                 }
                 if reason != nil || stop != nil { break }
+            }
+            if reason == nil, stop == nil, !suspended {
+                try await reconcile(id, finishReplacements: true, allowingPreviousEdits: false)
             }
             var final = try await catalog.job(id: id)
             if stop == .cancel {
@@ -391,11 +395,13 @@ actor ExportCoordinator {
             for await assetID in stream.stream { try await self.recordPlaceholder(id, index, assetID) }
         }
         let source = job.items[index].source
+        let createsPair = job.destination == .updateOriginal && source.originalResources.jpeg == nil
         let result: Result<SavedAsset, Error>
         do {
             result = .success(try await writer.saveJPEG(.init(jpeg: pending.jpeg, operationID: pending.operationID,
                 captureDate: source.captureDate, location: source.location,
-                originalEdit: job.destination == .updateOriginal ? PhotoOriginalEdit(source: source, recipe: job.recipeSnapshot) : nil),
+                originalEdit: job.destination == .updateOriginal ? PhotoOriginalEdit(source: source, recipe: job.recipeSnapshot) : nil,
+                deferPairRemoval: createsPair, pairBatchID: createsPair ? job.id : nil),
                 onPlaceholder: { stream.continuation.yield($0) }))
         } catch { result = .failure(error) }
         stream.continuation.finish()
@@ -405,7 +411,13 @@ actor ExportCoordinator {
         pending = Self.pending(job.items[index].state) ?? pending
         switch result {
         case .success(let asset):
-            try await confirm(job, index, pending, asset)
+            if createsPair {
+                guard asset.operationID == pending.operationID, pending.placeholderID == asset.assetID else {
+                    throw CatalogError.conflictingOperation(pending.operationID)
+                }
+                pending.replacementCleanupAssetID = asset.assetID
+                try await setState(id, index, .pendingSave(pending), stage: .pendingSave)
+            } else { try await confirm(job, index, pending, asset) }
         case .failure(let error):
             if Self.definitiveRejection(error) {
                 pending.submission = .definitivelyRejected(at: pending.submission.attemptedAt!, reason: String(describing: error))
@@ -431,8 +443,10 @@ actor ExportCoordinator {
         try await setState(id, index, .pendingSave(pending), stage: .pendingSave)
     }
 
-    private func reconcile(_ id: UUID, releaseFiles: Bool = true, finishReplacements: Bool = false) async throws {
+    private func reconcile(_ id: UUID, releaseFiles: Bool = true, finishReplacements: Bool = false,
+                           allowingPreviousEdits: Bool = true) async throws {
         let original = try await catalog.job(id: id)
+        var replacements: [(index: Int, pending: PendingSave, asset: SavedAsset)] = []
         for index in original.items.indices {
             let job = try await catalog.job(id: id)
             guard var pending = Self.pending(job.items[index].state) else { continue }
@@ -449,16 +463,25 @@ actor ExportCoordinator {
                 } else {
                     if case .needsReplacementCleanup(let candidate) = lookup {
                         pending.replacementCleanupAssetID = candidate.assetID
+                        replacements.append((index, pending, candidate))
                     } else { pending.replacementCleanupAssetID = nil }
                     pending.submission = .unknown(at: pending.submission.attemptedAt!)
                     try await setState(id, index, .unresolved(pending), stage: .unresolved)
-                    if finishReplacements, let assetID = pending.replacementCleanupAssetID {
-                        try checkStop()
-                        if let asset = try? await writer.completeReplacement(operationID: pending.operationID, assetID: assetID) {
-                            try await confirm(job, index, pending, asset, releaseFile: releaseFiles)
-                        }
-                    }
                 }
+            }
+        }
+        if finishReplacements, !replacements.isEmpty {
+            try checkStop()
+            guard let saved = try? await writer.completeReplacements(replacements.map(\.asset), allowingPreviousEdits: allowingPreviousEdits) else { return }
+            guard saved.count == replacements.count,
+                  Set(saved.map(\.operationID)).count == saved.count,
+                  replacements.allSatisfy({ candidate in saved.contains { $0.operationID == candidate.asset.operationID && $0.assetID == candidate.asset.assetID } }) else {
+                throw CatalogError.invalidState("Conflicting batch replacement confirmation")
+            }
+            for candidate in replacements {
+                let job = try await catalog.job(id: id)
+                let pending = Self.pending(job.items[candidate.index].state) ?? candidate.pending
+                try await confirm(job, candidate.index, pending, candidate.asset, releaseFile: releaseFiles)
             }
         }
     }
