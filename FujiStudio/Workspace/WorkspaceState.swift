@@ -27,6 +27,8 @@ enum WorkspaceAction: Sendable {
     case select, done
     /// Range sweep membership only; never changes viewed source or preview intent.
     case checkedSourcesReplaced(Set<SourceID>)
+    /// Day checkbox membership only; can enter selection without changing the viewed photo.
+    case daySelectionToggled(Set<SourceID>)
     case photoFilterSelected(PhotoTrayFilter)
     case photoFilterAssessed(PhotoSource, camera: PhotoTrayFilterCamera, result: PhotoTrayAssessment)
     case versionSelected(VersionID)
@@ -237,6 +239,13 @@ struct WorkspaceState: Sendable {
 
         case .checkedSourcesReplaced(let ids):
             if isSelecting { checkedSourceIDs = ids.intersection(Set(sources.keys)) }
+
+        case .daySelectionToggled(let ids):
+            let visible = ids.filter(sourceIsVisible)
+            guard !visible.isEmpty else { return [] }
+            isSelecting = true
+            if visible.isSubset(of: checkedSourceIDs) { checkedSourceIDs.subtract(visible) }
+            else { checkedSourceIDs.formUnion(visible) }
 
         case .photoFilterSelected(let filter):
             guard filter == .allPhotos || photoFilterCamera != nil else { return [] }

@@ -98,15 +98,17 @@ final class WorkspaceHostingTests: XCTestCase {
         func views(_ view: UIView) -> [UIView] { [view] + view.subviews.flatMap(views) }
         let viewer = try XCTUnwrap(views(host.view).first { $0.accessibilityIdentifier == "viewer.image" } as? UIScrollView)
         let frame = viewer.convert(viewer.bounds, to: host.view), side = grid.metrics.tileWidth
+        let dayHeader = try XCTUnwrap(grid.collectionView.layoutAttributesForSupplementaryElement(ofKind: UICollectionView.elementKindSectionHeader,
+            at: IndexPath(item: 0, section: 0))).frame.height
         XCTAssertGreaterThanOrEqual(side, 44)
-        XCTAssertEqual(grid.collectionView.bounds.height, side + grid.collectionView.contentInset.bottom, accuracy: 0.5)
+        XCTAssertEqual(grid.collectionView.bounds.height, dayHeader + side + grid.collectionView.contentInset.bottom, accuracy: 0.5)
         for action: WorkspaceAction in [.select, .drawerMoved(.expanded), .drawerMoved(.collapsed), .done] {
             model.send(action); try await settle(host)
             XCTAssertTrue(descendants(host).contains { $0 === grid })
             XCTAssertTrue(views(host.view).contains { $0 === viewer })
             XCTAssertEqual(viewer.convert(viewer.bounds, to: host.view), frame)
             XCTAssertEqual(grid.metrics.tileWidth, side, accuracy: 0.01)
-            if model.state.drawerDetent == .collapsed { XCTAssertEqual(grid.collectionView.bounds.height, side + grid.collectionView.contentInset.bottom, accuracy: 0.5) }
+            if model.state.drawerDetent == .collapsed { XCTAssertEqual(grid.collectionView.bounds.height, dayHeader + side + grid.collectionView.contentInset.bottom, accuracy: 0.5) }
         }
         let writes = await f.writer.requests
         XCTAssertTrue(writes.isEmpty)

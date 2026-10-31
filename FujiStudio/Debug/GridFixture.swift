@@ -12,11 +12,14 @@ struct GridFixtureEntry: View {
     @State private var metrics = GridGeometry.metrics(width: 1)
     @State private var scrollRequest: GridScrollRequest?
     init() {
+        let dated = ProcessInfo.processInfo.arguments.contains("--fixture-dated-photos")
+        let firstDay = Calendar.current.date(from: DateComponents(year: 2026, month: 10, day: 23, hour: 12))!
         let sources = (0..<1000).map { index in
             let id = "source-\(index)"
             return PhotoSource(id: id, originalResources: .init(raf: .init(assetID: id, role: .primaryOriginal,
                 contentTypeIdentifier: "com.fujifilm.raw-image", format: .raf, originalFilename: "GENERATED.RAF", discriminator: "raw"), jpeg: nil),
-                captureDate: nil, location: nil, resourceRevision: "generated", compatibility: .unknown)
+                captureDate: dated ? Calendar.current.date(byAdding: .day, value: -(index / 6), to: firstDay) : nil,
+                location: nil, resourceRevision: "generated", compatibility: .unknown)
         }
         self.sources = sources; _state = State(initialValue: WorkspaceState(sources: sources, access: .full))
     }
@@ -37,6 +40,7 @@ struct GridFixtureEntry: View {
             PhotoGrid(sources: sources, checkedSourceIDs: state.checkedSourceIDs, isSelecting: state.isSelecting,
                 viewedSourceID: state.viewedSourceID, thumbnails: thumbnails, scrollRequest: scrollRequest,
                 onSourceTapped: { state.reduce(.sourceTapped($0)) }, onCheckedChanged: { state.reduce(.checkedSourcesReplaced($0)) },
+                onDayTapped: { state.reduce(.daySelectionToggled($0)) },
                 onViewportChanged: { viewport in
                     if metrics != viewport.metrics { Task { @MainActor in metrics = viewport.metrics } }
                 })

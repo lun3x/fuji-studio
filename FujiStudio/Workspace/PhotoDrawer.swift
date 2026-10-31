@@ -37,11 +37,6 @@ struct PhotoDrawer<Grid: View>: View {
                     switch direction { case .increment: move(to: .expanded); case .decrement: move(to: .collapsed); @unknown default: break }
                 }
             }
-            .glassEffect(reduceTransparency ? .identity : .clear,
-                in: .rect(topLeadingRadius: 20, topTrailingRadius: 20))
-            .background {
-                if reduceTransparency { Color(uiColor: .systemBackground) }
-            }
             .contentShape(Rectangle())
             .onGeometryChange(for: CGFloat.self, of: { $0.size.height }, action: onHeaderHeightChanged)
             .highPriorityGesture(DragGesture(minimumDistance: 8, coordinateSpace: .named("workspace"))
@@ -53,9 +48,16 @@ struct PhotoDrawer<Grid: View>: View {
                     finishDrag(predictedTranslation: value.predictedEndTranslation.height, velocity: value.velocity.height)
                 })
             grid(handleGridDrag).frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(uiColor: .systemBackground))
         }
         .frame(height: height)
+        .background {
+            // A single material keeps the handle, day headers and photo gaps continuous.
+            if reduceTransparency {
+                Color(uiColor: .systemBackground)
+            } else {
+                Rectangle().fill(.regularMaterial)
+            }
+        }
         .clipShape(.rect(topLeadingRadius: 20, topTrailingRadius: 20))
         .onChange(of: isDragging) { _, active in
             // Gesture cancellation has no onEnded. Its reset must not reset the visible height.
@@ -93,4 +95,5 @@ struct PhotoDrawer<Grid: View>: View {
         if next == .collapsed, notifyCollapse { onManualCollapse() }
     }
 }
+
 

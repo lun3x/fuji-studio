@@ -66,34 +66,21 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
         reveal(app.buttons["recipe.editor.setting.film"], in: app)
         app.buttons["recipe.editor.setting.film"].tap()
-        let provia = app.buttons["PROVIA / Standard"]
-        let filmMenu = app.collectionViews.containing(.button, identifier: "Classic Chrome").firstMatch
-        for _ in 0..<3 {
-            if provia.exists { break }
-            // iOS 27 exposes a collection frame taller than its clipped popover.
-            // Start inside a visible row so the drag reaches the menu, not the form.
-            guard let visibleRow = filmMenu.buttons.allElementsBoundByIndex.first(where: { $0.isHittable }) else {
-                XCTFail("The film menu must expose a visible row for scrolling"); return
-            }
-            let start = visibleRow.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-            start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: 240)))
-        }
-        XCTAssertTrue(provia.waitForExistence(timeout: 5))
-        provia.tap()
-        wait { app.buttons["recipe.editor.setting.film"].label.contains("PROVIA") }
-        replaceText(app.textFields["recipe.editor.name"], with: "My Provia")
+        // Exercise film persistence with an option visible beside the current Classic Chrome choice.
+        app.buttons["ACROS"].tap()
+        replaceText(app.textFields["recipe.editor.name"], with: "My ACROS")
         shot(app, "Phone editor name and film draft")
         app.buttons["recipe.editor.save"].tap()
         XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitForNonExistence(timeout: 5))
-        XCTAssertTrue(app.buttons[id].label.contains("My Provia"))
+        XCTAssertTrue(app.buttons[id].label.contains("My ACROS"))
         XCTAssertFalse(app.buttons[id].isEnabled)
         edit.tap()
-        XCTAssertEqual(app.textFields["recipe.editor.name"].value as? String, "My Provia")
+        XCTAssertEqual(app.textFields["recipe.editor.name"].value as? String, "My ACROS")
         let film = app.buttons["recipe.editor.setting.film"]
-        XCTAssertTrue(film.label.contains("PROVIA") || (film.value as? String ?? "").contains("PROVIA"))
+        XCTAssertTrue(film.label.contains("ACROS") || (film.value as? String ?? "").contains("ACROS"))
         replaceText(app.textFields["recipe.editor.name"], with: "Discard me")
         app.buttons["recipe.editor.cancel"].tap()
-        XCTAssertTrue(app.buttons[id].label.contains("My Provia"))
+        XCTAssertTrue(app.buttons[id].label.contains("My ACROS"))
         XCTAssertEqual(phoneQuery.count, 1)
     }
 
@@ -160,7 +147,7 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
         app.buttons["recipe.editor.cancel"].tap()
     }
 
-    func testXT5EditorOffersOnlyConvertibleFilmRangeAndBalance() {
+    func testXT5EditorOffersOnlyConvertibleFilmRangeAndBalance() throws {
         let app = launch()
         wait { app.buttons["app.status"].label.contains("Camera ready") }
         app.cells["grid.source-0"].tap()
@@ -169,6 +156,13 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
         let edit = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "recipe.edit.")).firstMatch
         XCTAssertTrue(edit.waitForExistence(timeout: 5)); edit.tap()
         let film = app.buttons["recipe.editor.setting.film"]
+        // Settle and dismiss the Name keyboard before a late presentation can cover a picker.
+        let name = app.textFields["recipe.editor.name"]
+        let originalName = try XCTUnwrap(name.value as? String)
+        name.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        reveal(film, in: app)
+        XCTAssertEqual(name.value as? String, originalName)
         film.tap()
         let astia = app.buttons["ASTIA / Soft"]
         let filmMenu = app.collectionViews.containing(.button, identifier: "Classic Chrome").firstMatch
