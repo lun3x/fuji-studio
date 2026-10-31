@@ -95,9 +95,11 @@ actor VersionImageResolver {
     private let pool: OriginalResourcePool
     private let rawRenderer: RawDisplayRenderer
     private let cache: FileRenderCache
+    private let edits: any PhotoEditReading
     init(library: any PhotoLibraryReading, catalog: any CatalogStoring, pool: OriginalResourcePool,
-         rawRenderer: RawDisplayRenderer, cache: FileRenderCache) {
+         rawRenderer: RawDisplayRenderer, cache: FileRenderCache, edits: any PhotoEditReading = NativePhotoEditGateway()) {
         self.library = library; self.catalog = catalog; self.pool = pool; self.rawRenderer = rawRenderer; self.cache = cache
+        self.edits = edits
     }
     func resolve(source: PhotoSource, version: VersionID, progress: @escaping @Sendable (Double) -> Void = { _ in }) async throws -> ViewerFile {
         switch version {
@@ -117,6 +119,21 @@ actor VersionImageResolver {
             return try await materialize(token, geometry: nil, progress: progress)
         case .saved(let id):
             guard let version = try await catalog.versions(sourceID: source.id).first(where: { $0.id == id && $0.sourceID == source.id }) else { throw ViewerError.invalidVersion }
+            if version.destination == .updateOriginal {
+                guard try await matchesCurrentEdit(version) else { throw ViewerError.invalidVersion }
+                let resources = try await library.resources(assetID: version.outputAssetID)
+                    .filter { $0.assetID == version.sourceID && $0.isCurrentEditedJPEG }
+                guard resources.count == 1, let token = resources.first else { throw ViewerError.invalidVersion }
+                let originalGeometry = ImageGeometry(encoded: PixelSize(width: version.width, height: version.height), orientation: version.orientation)
+                let file = try await materialize(token, geometry: ImageGeometry(encoded: originalGeometry.upright, orientation: 1), progress: progress)
+                // Do not label a later rendition with this version's recipe if Photos changed
+                // between the adjustment lookup and the end of the resource transfer.
+                guard try await matchesCurrentEdit(version),
+                      try await library.resources(assetID: version.outputAssetID).filter({ $0.isCurrentEditedJPEG }) == [token] else {
+                    throw ResourceError.resourceChanged
+                }
+                return file
+            }
             guard version.availability == .available else { throw ViewerError.unavailable(version.availability) }
             let originals = try await library.resources(assetID: version.outputAssetID).filter {
                 $0.assetID == version.outputAssetID && $0.format == .jpeg && $0.role != .adjusted
@@ -124,6 +141,27 @@ actor VersionImageResolver {
             guard originals.count == 1, let token = originals.first else { throw ResourceError.ambiguousOriginalJPEG }
             return try await materialize(token, geometry: ImageGeometry(encoded: PixelSize(width: version.width, height: version.height), orientation: version.orientation), progress: progress)
         }
+    }
+
+    func availability(of version: SavedVersion) async throws -> AssetAvailability {
+        if version.destination == .updateOriginal {
+            guard try await matchesCurrentEdit(version) else { return .missing }
+            let resources = try await library.resources(assetID: version.outputAssetID)
+                .filter { $0.assetID == version.sourceID && $0.isCurrentEditedJPEG }
+            guard resources.count == 1 else { return .missing }
+            return try await matchesCurrentEdit(version) ? .available : .missing
+        }
+        let originals = try await library.resources(assetID: version.outputAssetID).filter {
+            $0.assetID == version.outputAssetID && $0.format == .jpeg && $0.role != .adjusted
+        }
+        return originals.count == 1 ? .available : .inaccessible
+    }
+
+    private func matchesCurrentEdit(_ version: SavedVersion) async throws -> Bool {
+        guard version.sourceID == version.outputAssetID,
+              let adjustment = try await edits.currentAdjustment(assetID: version.outputAssetID) else { return false }
+        return adjustment.sourceID == version.sourceID && adjustment.operationID == version.operationID
+            && adjustment.recipe == version.recipeSnapshot
     }
     private func materialize(_ token: ResourceToken, geometry: ImageGeometry?, progress: @escaping @Sendable (Double) -> Void) async throws -> ViewerFile {
         let local = try await library.materialize(token, progress: progress)

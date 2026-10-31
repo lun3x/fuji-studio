@@ -6,6 +6,32 @@ import Testing
 
 @MainActor
 struct VersionImageResolverTests {
+    @Test(arguments: [AssetAvailability.available, .inaccessible])
+    func editedVersionReadsOnlyMatchingCurrentRenditionAndRejectsRacingReplacement(_ storedAvailability: AssetAvailability) async throws {
+        let f = try RenderFixture(); defer { f.remove() }
+        let jpeg = try editJPEGFixture(f, orientation: 6)
+        let upright = f.root.appendingPathComponent("normalized.JPG")
+        try PhotoEditJPEG.write(jpeg, to: upright)
+        let operation = UUID(), marker = PhotoEditAdjustment(operationID: operation, sourceID: f.source.id, recipe: f.recipe)
+        let token = ResourceToken(assetID: f.source.id, role: .adjusted, contentTypeIdentifier: "public.jpeg", format: .jpeg,
+            originalFilename: "edited.JPG", discriminator: "5|public.jpeg|edited.JPG")
+        let library = ViewerLibrary(original: upright, tokens: [f.token, token])
+        let version = SavedVersion(id: UUID(), sourceID: f.source.id, outputAssetID: f.source.id, recipeSnapshot: f.recipe,
+            operationID: operation, exportedAt: Date(), jpeg: jpeg, availability: storedAvailability, destination: .updateOriginal)
+        let edits = SequenceEditReader([marker, marker])
+        let resolver = VersionImageResolver(library: library, catalog: ViewerCatalog([version]), pool: RenderLibrary(f).pool(),
+            rawRenderer: try RawDisplayRenderer(directory: f.root.appendingPathComponent("raw-display")), cache: try f.cache(), edits: edits)
+        let file = try await resolver.resolve(source: f.source, version: .saved(version.id))
+        #expect(file.geometry == ImageGeometry(encoded: .init(width: 20, height: 40), orientation: 1))
+        #expect(await library.materialized == [token])
+        await edits.replace([nil])
+        #expect(try await resolver.availability(of: version) == .missing)
+        await #expect(throws: ViewerError.invalidVersion) { try await resolver.resolve(source: f.source, version: .saved(version.id)) }
+        await edits.replace([marker, nil])
+        await #expect(throws: ResourceError.resourceChanged) { try await resolver.resolve(source: f.source, version: .saved(version.id)) }
+        #expect(await library.transferred.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) })
+    }
+
     @Test func savedReadsOnlyAssociatedOriginalJPEGAndPropagatesCloudProgress() async throws {
         let f = try RenderFixture(); defer { f.remove() }
         let image = try jpegFixture(f)
@@ -105,6 +131,16 @@ struct VersionImageResolverTests {
     }
 }
 
+private actor SequenceEditReader: PhotoEditReading {
+    var markers: [PhotoEditAdjustment?]
+    init(_ markers: [PhotoEditAdjustment?]) { self.markers = markers }
+    func replace(_ markers: [PhotoEditAdjustment?]) { self.markers = markers }
+    func currentAdjustment(assetID: String) throws -> PhotoEditAdjustment? {
+        guard !markers.isEmpty else { return nil }
+        return markers.count == 1 ? markers[0] : markers.removeFirst()
+    }
+}
+
 private final class ViewerProgress: @unchecked Sendable {
     private let lock = NSLock()
     private var recorded: [Double] = []
@@ -133,6 +169,7 @@ private actor ViewerLibrary: PhotoLibraryReading {
     }
 }
 private actor ViewerCatalog: CatalogStoring {
+    func replaceSource(_ sourceID: SourceID, with replacement: PhotoSource) throws { throw ViewerError.invalidVersion }
     let saved: [SavedVersion]
     var sourceIDs: [String] = []
     init(_ saved: [SavedVersion]) { self.saved = saved }

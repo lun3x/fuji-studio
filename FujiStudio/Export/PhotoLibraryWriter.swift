@@ -33,11 +33,22 @@ protocol PhotoWriteGateway: Sendable {
 
 struct PhotoLibraryWriter: PhotoLibraryWriting {
     private let gateway: any PhotoWriteGateway
-    init(gateway: any PhotoWriteGateway = NativePhotoWriteGateway()) { self.gateway = gateway }
+    private let editor: PhotoLibraryEditor
+    private let pairer: PhotoLibraryPairer
+    init(gateway: any PhotoWriteGateway = NativePhotoWriteGateway(), editor: PhotoLibraryEditor = PhotoLibraryEditor(),
+         pairer: PhotoLibraryPairer = PhotoLibraryPairer()) {
+        self.gateway = gateway; self.editor = editor; self.pairer = pairer
+    }
 
     func saveJPEG(_ request: PhotoSaveRequest,
                   onPlaceholder: @escaping @Sendable (String) -> Void) async throws -> SavedAsset {
         try Task.checkCancellation()
+        if let edit = request.originalEdit {
+            if edit.source.originalResources.jpeg == nil {
+                return try await pairer.saveJPEG(request, edit: edit, onPlaceholder: onPlaceholder)
+            }
+            return try await editor.saveJPEG(request, edit: edit, onPlaceholder: onPlaceholder)
+        }
         let access = await gateway.access()
         guard access == .full || access == .limited else { throw PhotoLibraryWriteError.authorization(access) }
         let url = request.jpeg.fileURL
@@ -79,8 +90,14 @@ struct PhotoLibraryWriter: PhotoLibraryWriting {
         }
     }
 
-    func findExport(operationID: UUID, knownAssetID: String?) async throws -> SaveLookup {
+    func findExport(operationID: UUID, knownAssetID: String?, originalAssetID: String?) async throws -> SaveLookup {
         try Task.checkCancellation()
+        if let originalAssetID {
+            if try await pairer.hasIntent(operationID) {
+                return try await pairer.findExport(operationID: operationID, sourceID: originalAssetID, knownAssetID: knownAssetID)
+            }
+            return try await editor.findExport(operationID: operationID, sourceID: originalAssetID)
+        }
         let initialAccess = await gateway.access()
         guard initialAccess == .full || initialAccess == .limited else { return .inaccessible }
         let filename = "FujiStudio-\(operationID.uuidString).jpg"
@@ -98,6 +115,15 @@ struct PhotoLibraryWriter: PhotoLibraryWriting {
         // observation of absence. The durable export coordinator decides what happens next.
         return initialAccess == .full && finalAccess == .full ? .notFound : .inaccessible
     }
+
+    func completeReplacement(operationID: UUID, assetID: String) async throws -> SavedAsset {
+        try await pairer.completeReplacement(operationID: operationID, assetID: assetID)
+    }
+    func completeReplacements(_ assets: [SavedAsset], allowingPreviousEdits: Bool,
+                              beforeRemoval: @escaping @Sendable () async throws -> Void) async throws -> [SavedAsset] {
+        try await pairer.completeReplacements(assets, allowingPreviousEdits: allowingPreviousEdits, beforeRemoval: beforeRemoval)
+    }
+    func sourceReplacements() async throws -> [SourceID: SourceID] { try await pairer.sourceReplacements() }
 
     private func saved(_ resource: PhotoSavedResource, operationID: UUID) -> SavedAsset {
         SavedAsset(assetID: resource.assetID, operationID: operationID, photosGeometry: resource.photosGeometry)

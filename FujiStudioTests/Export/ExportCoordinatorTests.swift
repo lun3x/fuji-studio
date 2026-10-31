@@ -7,6 +7,36 @@ import Testing
 // cleanup: no public all-container close barrier makes in-test recursive unlink safe.
 struct ExportCoordinatorTests {
     @Test(arguments: [false, true])
+    func originalUpdateDestinationSurvivesUncertainSaveAndReopen(_ paired: Bool) async throws {
+        let f = try RenderFixture()
+        let url = f.root.appendingPathComponent("catalog.store"), cache = try f.cache(), reader = RenderLibrary(f)
+        let catalog = try SwiftDataCatalog(storeURL: url), writer = ExportWriter(uncertain: true)
+        let source = paired ? pairReplacementSource(f.source, id: f.source.id, revision: f.source.resourceRevision) : f.source
+        await reader.setSource(source)
+        let engine = ExportCoordinator(reader: reader, camera: RenderCamera(f), catalog: catalog, writer: writer,
+            pool: reader.pool(), cache: cache, scheduler: CameraWorkScheduler())
+        var events = await engine.events().makeAsyncIterator()
+        let id = try await engine.start(sources: [source], recipe: f.recipe, destination: .updateOriginal)
+        _ = await terminal(&events, id)
+        var job = try await catalog.job(id: id)
+        #expect(job.destination == .updateOriginal)
+        #expect(await writer.requests.first?.originalEdit?.source == source)
+        #expect(await writer.requests.first?.originalEdit?.recipe == f.recipe)
+        job.destination = .separatePhoto
+        await #expect(throws: CatalogError.self) { try await catalog.saveJob(job) }
+        let reopened = try SwiftDataCatalog(storeURL: url)
+        let recovery = ExportCoordinator(reader: reader, camera: RenderCamera(f), catalog: reopened, writer: writer,
+            pool: reader.pool(), cache: cache, scheduler: CameraWorkScheduler())
+        let operation = try #require(await writer.requests.first?.operationID)
+        await writer.resolve(operation)
+        try await recovery.recover()
+        let version = try #require(try await reopened.versions(sourceID: f.source.id).first)
+        #expect(version.destination == (paired ? .updateOriginal : .createPair))
+        #expect(version.outputAssetID == (paired ? source.id : "synthetic-pair"))
+        #expect(await writer.requests.count == 1)
+    }
+
+    @Test(arguments: [false, true])
     func stalePinnedExportRerendersOnlyWhenSaveWasNeverSubmitted(_ submitted: Bool) async throws {
         let f = try RenderFixture()
         let catalog = try SwiftDataCatalog(storeURL: f.root.appendingPathComponent("catalog.store"))
@@ -107,17 +137,30 @@ actor ExportWriter: PhotoLibraryWriting {
     let latch: RenderLatch?
     init(uncertain: Bool = false, latch: RenderLatch? = nil) { self.uncertain = uncertain; self.latch = latch }
     func saveJPEG(_ request: PhotoSaveRequest, onPlaceholder: @escaping @Sendable (String) -> Void) async throws -> SavedAsset {
-        requests.append(request); onPlaceholder("synthetic-asset")
+        requests.append(request); onPlaceholder(outputID(request))
         if let latch { await latch.wait() }
         if storageRejection { storageRejection = false; throw PhotoLibraryWriteError.rejected(.insufficientStorage) }
         if reject { reject = false; throw PhotoLibraryWriteError.rejected(.invalidResource) }
         if uncertain { throw PhotoLibraryWriteError.uncertain(.missingConfirmation) }
-        return SavedAsset(assetID: "synthetic-asset", operationID: request.operationID, photosGeometry: nil)
+        return SavedAsset(assetID: outputID(request), operationID: request.operationID, photosGeometry: nil)
     }
     func resolve(_ operation: UUID) { found = operation }
-    func findExport(operationID: UUID, knownAssetID: String?) -> SaveLookup {
-        if found == operationID { return .found(.init(assetID: "synthetic-asset", operationID: operationID, photosGeometry: nil)) }
+    func findExport(operationID: UUID, knownAssetID: String?, originalAssetID: String?) -> SaveLookup {
+        if found == operationID, let request = requests.first(where: { $0.operationID == operationID }) {
+            return .found(.init(assetID: outputID(request), operationID: operationID, photosGeometry: nil))
+        }
+        if !uncertain, let request = requests.first(where: { $0.operationID == operationID && $0.deferPairRemoval }) {
+            return .needsReplacementCleanup(.init(assetID: outputID(request), operationID: operationID, photosGeometry: nil))
+        }
         return .notFound
+    }
+    func completeReplacements(_ assets: [SavedAsset], allowingPreviousEdits: Bool,
+                              beforeRemoval: @escaping @Sendable () async throws -> Void) async throws -> [SavedAsset] {
+        try await beforeRemoval(); return assets
+    }
+    private func outputID(_ request: PhotoSaveRequest) -> String {
+        guard let edit = request.originalEdit else { return "synthetic-asset" }
+        return edit.source.originalResources.jpeg == nil ? "synthetic-pair" : edit.source.id
     }
 }
 
@@ -286,6 +329,7 @@ extension ExportCoordinatorTests {
 enum CrashBoundary: Sendable { case beforeIntent, afterIntent, afterPlaceholder, afterSuccess, afterConfirmation, enumerationFailure, readsUnavailable }
 
 private actor FaultCatalog: CatalogStoring {
+    func replaceSource(_ sourceID: SourceID, with replacement: PhotoSource) async throws { try await base.replaceSource(sourceID, with: replacement) }
     let base: SwiftDataCatalog, boundary: CrashBoundary
     var fired = false
     var enumerations = 0

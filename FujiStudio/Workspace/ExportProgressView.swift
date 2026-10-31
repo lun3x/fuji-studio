@@ -8,6 +8,8 @@ struct ExportProgressView: View {
     let onResume: () -> Void
     let onRetry: () -> Void
     let onReconcile: () -> Void
+    var canFinishReplacement: Bool = false
+    var onFinishReplacement: () -> Void = {}
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -25,7 +27,19 @@ struct ExportProgressView: View {
                 Button(event.stopRequested ? "Stopping safely…" : "Cancel remaining", action: onCancel).disabled(event.stopRequested)
                     .accessibilityIdentifier("export.cancel")
             } else if event.summary.unresolved > 0 {
-                Text("Photos has not confirmed this save. Reconciliation checks the same operation; it does not create a replacement export.")
+                if event.summary.replacementCleanup > 0 {
+                    if event.summary.unprocessed > 0 && event.summary.unresolved == event.summary.replacementCleanup {
+                        Text("Verified RAW+JPEG pairs are retained. Resume finishes the remaining exports before removing the old RAW assets together.")
+                        Button("Resume", action: onResume).disabled(!canResume).accessibilityIdentifier("export.resume")
+                        Button("Cancel remaining", action: onCancel).accessibilityIdentifier("export.cancel")
+                    } else {
+                        Text("The RAW+JPEG pair is verified. Finish replacement removes the old RAW-only asset and its previous Photos edits. The unchanged RAW and exported JPEG remain in the pair.")
+                        Button("Finish replacement", action: onFinishReplacement).disabled(!canFinishReplacement)
+                            .accessibilityIdentifier("export.finishReplacement")
+                    }
+                } else {
+                    Text("Photos has not confirmed this save. Reconciliation checks the same operation; it does not create a replacement export.")
+                }
                 Button("Check Photos again", action: onReconcile).accessibilityIdentifier("export.reconcile")
             } else {
                 if event.summary.unprocessed > 0 {
@@ -51,6 +65,10 @@ struct ExportProgressView: View {
         }
     }
     static func status(_ event: ExportEvent) -> String {
+        if event.terminal, event.summary.replacementCleanup > 0,
+           event.summary.replacementCleanup == event.summary.unresolved {
+            return event.summary.unprocessed > 0 ? "Export paused — resume when ready" : "RAW+JPEG saved — removal pending"
+        }
         if event.stage == .unresolved || (event.terminal && event.summary.unresolved > 0) { return "Save unconfirmed" }
         if event.stopRequested { return "Stopping after the current operation" }
         switch event.stage {
@@ -117,14 +135,29 @@ struct AppWorkspaceView: View {
                         ForEach(model.progressEvents, id: \.jobID) { event in
                             ExportProgressView(event: event, canResume: !model.isSuspended && !model.isSubmitting && !model.isResettingCamera && model.cameraError == nil && model.cameraResetError == nil && model.state.currentCameraExecutionContext != nil && model.state.isCameraReady,
                                 onCancel: { Task { await model.cancelExport(jobID: event.jobID) } }, onResume: { Task { await model.resumeExport(jobID: event.jobID) } },
-                                onRetry: { Task { await model.resumeExport(jobID: event.jobID, retry: true) } }, onReconcile: { Task { await model.reconcile() } })
+                                onRetry: { Task { await model.resumeExport(jobID: event.jobID, retry: true) } }, onReconcile: { Task { await model.reconcile() } },
+                                canFinishReplacement: model.canFinishReplacements,
+                                onFinishReplacement: { Task { await model.finishReplacement(jobID: event.jobID) } })
                                 .accessibilityElement(children: .contain).accessibilityIdentifier("export.job.\(event.jobID.uuidString)")
                             Divider()
                         }
                         Button("Reload Photos") { Task { await model.reloadLibrary() } }
                         if model.isLoadingLibrary { ProgressView("Reading Photos…") }
+                        Divider()
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Settings").font(.headline)
+                            Toggle(isOn: Binding(get: { model.settings.updateOriginalInPhotos },
+                                                 set: { model.settings.updateOriginalInPhotos = $0 })) {
+                                Text("Update original in Photos").foregroundStyle(.red)
+                            }
+                            .tint(.red)
+                            .accessibilityIdentifier("settings.updateOriginalInPhotos")
+                            Text("RAW-only photos become a new RAW+JPEG pair; the old asset is removed after verification. Existing pairs preserve their originals and support Revert to Original in Photos. Only the latest edit appears in image versions. Applies to new export jobs.")
+                                .font(.footnote).foregroundStyle(.secondary)
+                                .accessibilityIdentifier("settings.updateOriginalExplanation")
+                        }
                     }.padding()
-                }.navigationTitle("Fuji Studio status")
+                }.navigationTitle("Status & settings")
                     .toolbar { Button("Done") { statusPresented = false } }
             }
         }
@@ -153,7 +186,7 @@ struct AppWorkspaceView: View {
     }
     private var accessMessage: String {
         switch model.state.libraryAccess {
-        case .full: "Photos access is allowed. Original RAW and RAW + JPEG photos appear here; exports remain separate versions."
+        case .full: "Photos access is allowed. Original RAW and RAW + JPEG photos appear here."
         case .limited: "Only selected Photos are accessible. Use Manage Photos to include originals and saved outputs."
         case .denied: "Photos access is denied. Allow access in Settings to browse original photos."
         case .restricted: "Photos access is restricted on this device. Check your device's Settings."

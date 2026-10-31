@@ -35,7 +35,7 @@ import Observation
         let platform: FixturePlatform
         let scheduler: CameraWorkScheduler
     }
-    static func make(access: LibraryAccess = .full, uncertain: Bool = false, cameraOverride: (any CameraServing)? = nil,cameraModel:String="X-T5",slotCount:Int=7,mixedModels:Bool=false,undecodableRAW:Bool=false,filterSources:Bool=false) async throws -> Bundle {
+    static func make(access: LibraryAccess = .full, uncertain: Bool = false, cameraOverride: (any CameraServing)? = nil,cameraModel:String="X-T5",slotCount:Int=7,mixedModels:Bool=false,undecodableRAW:Bool=false,filterSources:Bool=false,pairCleanupPending:Bool=false,rawOnlyBatch:Bool=false) async throws -> Bundle {
         let images = try WorkspaceFixture()
         let allRecipes=cameraModel == "X-E3" ? try fixtureXE3Snapshots() : images.state.recipes
         let cachedRecipes=Array(allRecipes.prefix(slotCount))
@@ -43,7 +43,7 @@ import Observation
         let originals = Array(images.sources.prefix(3)).enumerated().map { offset, s in
             var raw = s.originalResources.raf; raw.sourceRevision = s.resourceRevision
             var jpeg = s.originalResources.jpeg; jpeg?.sourceRevision = s.resourceRevision
-            return PhotoSource(id: s.id, originalResources: OriginalResources(raf: raw, jpeg: offset == 1 ? nil : jpeg),
+            return PhotoSource(id: s.id, originalResources: OriginalResources(raf: raw, jpeg: rawOnlyBatch || offset == 1 ? nil : jpeg),
                 captureDate: Date(timeIntervalSince1970: Double(3 - offset)), location: nil, resourceRevision: s.resourceRevision)
         }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("FujiStudioFlow-\(UUID().uuidString)")
@@ -59,13 +59,13 @@ import Observation
         let reader = FixtureLibrary(sources: originals, image: images.file, root: root, access: access,undecodableRAW:undecodableRAW, metadata: metadata)
         let camera = FixtureCamera(recipes: cachedRecipes, image: images.file, root: root,declaredSlots:slots)
         let selectedCamera: any CameraServing = cameraOverride ?? camera
-        let writer = FixtureWriter(reader: reader, uncertain: uncertain)
+        let writer = FixtureWriter(reader: reader, uncertain: uncertain, pairCleanupPending: pairCleanupPending)
         let pool = OriginalResourcePool(reader: reader, prepare: { local in
             PreparedRAW(fileURL: local.fileURL, sha256: local.checksum, sourceID: local.token.assetID, sourceRevision: local.token.sourceRevision,
                 metadata: metadata(local.token))
         })
         let scheduler = CameraWorkScheduler()
-        let resolver = VersionImageResolver(library: reader, catalog: storage.0, pool: pool, rawRenderer: storage.2, cache: storage.1)
+        let resolver = VersionImageResolver(library: reader, catalog: storage.0, pool: pool, rawRenderer: storage.2, cache: storage.1, edits: reader)
         let preview = PreviewCoordinator(pool: pool, camera: selectedCamera, scheduler: scheduler, cache: storage.1, rawRenderer: storage.2,
             storedDisplay: { source, version, progress in try await resolver.resolve(source: source, version: version, progress: progress).lease })
         let exports = ExportCoordinator(reader: reader, camera: selectedCamera, catalog: storage.0, writer: writer, pool: pool, cache: storage.1, scheduler: scheduler)
@@ -103,17 +103,19 @@ actor FixtureBarrier {
     func release() { open = true; continuations.forEach { $0.resume() }; continuations = [] }
 }
 
-actor FixtureLibrary: PhotoLibraryReading {
+actor FixtureLibrary: PhotoLibraryReading, PhotoEditReading {
     private var index: [PhotoSource]
     private var access: LibraryAccess
     private let image: DisplayFileLease, root: URL
     private var outputs: [String: ResourceToken] = [:]
+    private var edits: [String: PhotoEditAdjustment] = [:]
     private var resourcesBarrier: FixtureBarrier?
     private var discoveryBarrier: FixtureBarrier?
     private var materializeBarriers: [String: FixtureBarrier] = [:]
     private var materializeFailures: [String: ResourceError] = [:]
     private var discoveryLimit: Int?
     private var revisionBytes: [String: Data] = [:]
+    private var pairedJPEGBytes: [SourceID: Data] = [:]
     private(set) var materializations = 0
     private var observers: [AsyncStream<LibraryChange>.Continuation] = []
     private(set) var rawReads = 0, changeSubscriptions = 0, discoveryRequests = 0
@@ -165,14 +167,55 @@ actor FixtureLibrary: PhotoLibraryReading {
     func resources(assetID: String) async throws -> [ResourceToken] {
         if let resourcesBarrier { await resourcesBarrier.wait() }
         if let output = outputs[assetID] { return [output] }
-        let source = try source(id: assetID); return [source.originalResources.raf] + (source.originalResources.jpeg.map { [$0] } ?? [])
+        let source = try source(id: assetID)
+        let edited = edits[assetID].map { [ResourceToken(assetID: assetID, role: .adjusted, contentTypeIdentifier: "public.jpeg",
+            format: .jpeg, originalFilename: "edited.JPG", discriminator: "5|public.jpeg|edited.JPG", sourceRevision: $0.operationID.uuidString)] } ?? []
+        return [source.originalResources.raf] + (source.originalResources.jpeg.map { [$0] } ?? []) + edited
+    }
+    func currentAdjustment(assetID: String) throws -> PhotoEditAdjustment? {
+        _ = try source(id: assetID); return edits[assetID]
+    }
+    func addOriginalEdit(_ adjustment: PhotoEditAdjustment) {
+        edits[adjustment.sourceID] = adjustment
+        observers.forEach { $0.yield(LibraryChange(changedIDs: [adjustment.sourceID], removedIDs: [], accessScopeChanged: false)) }
+    }
+    func revertEdit(_ id: String) {
+        edits[id] = nil
+        observers.forEach { $0.yield(LibraryChange(changedIDs: [id], removedIDs: [], accessScopeChanged: false)) }
+    }
+    func replaceWithPair(_ source: PhotoSource, id: String, jpeg: CameraJPEG, removeOriginal: Bool = true) throws {
+        guard let position = index.firstIndex(where: { $0.id == source.id }),
+              index[position].originalResources == source.originalResources,
+              source.originalResources.jpeg == nil else { throw ResourceError.resourceChanged }
+        let revision = "pair-\(id)"
+        let raw = ResourceToken(assetID: id, role: .alternateOriginal,
+            contentTypeIdentifier: source.originalResources.raf.contentTypeIdentifier, format: .raf,
+            originalFilename: source.originalResources.raf.originalFilename, discriminator: "pair-raw", sourceRevision: revision)
+        let compressed = ResourceToken(assetID: id, role: .primaryOriginal, contentTypeIdentifier: "public.jpeg",
+            format: .jpeg, originalFilename: "paired.JPG", discriminator: "pair-jpeg", sourceRevision: revision)
+        revisionBytes[revision] = try revisionBytes[source.resourceRevision] ?? Data(contentsOf: image.fileURL)
+        pairedJPEGBytes[id] = try Data(contentsOf: jpeg.fileURL)
+        let pair = PhotoSource(id: id, originalResources: .init(raf: raw, jpeg: compressed),
+            captureDate: source.captureDate, location: source.location, resourceRevision: revision, compatibility: source.compatibility)
+        if removeOriginal { index[position] = pair; edits[source.id] = nil }
+        else { index.append(pair) }
+        observers.forEach { $0.yield(LibraryChange(changedIDs: [id], removedIDs: removeOriginal ? [source.id] : [], accessScopeChanged: false)) }
+    }
+    func removeReplacedOriginal(_ id: SourceID) {
+        removeReplacedOriginals([id])
+    }
+    func removeReplacedOriginals(_ ids: Set<SourceID>) {
+        index.removeAll { ids.contains($0.id) }
+        for id in ids { edits[id] = nil }
+        observers.forEach { $0.yield(LibraryChange(changedIDs: [], removedIDs: ids, accessScopeChanged: false)) }
     }
     func changes() -> AsyncStream<LibraryChange> {
         changeSubscriptions += 1
         return AsyncStream { observers.append($0) }
     }
     func materialize(_ resource: ResourceToken, progress: @escaping @Sendable (Double) -> Void) async throws -> LocalResource {
-        let bytes = resource.format == .raf && undecodableRAW ? Data(repeating:42,count:256) : try revisionBytes[resource.sourceRevision] ?? Data(contentsOf: image.fileURL)
+        let pairedJPEG = resource.format == .jpeg ? pairedJPEGBytes[resource.assetID] : nil
+        let bytes = resource.format == .raf && undecodableRAW ? Data(repeating:42,count:256) : try pairedJPEG ?? revisionBytes[resource.sourceRevision] ?? Data(contentsOf: image.fileURL)
         if let barrier = materializeBarriers[resource.assetID] { await barrier.wait() }
         try Task.checkCancellation()
         if let error = materializeFailures[resource.assetID] { throw error }
@@ -339,30 +382,94 @@ actor FixtureCamera: CameraServing {
 }
 
 actor FixtureWriter: PhotoLibraryWriting {
+    private(set) var cleanupCalls = 0
+    private(set) var cleanupTransactions = 0
     private let reader: FixtureLibrary
     private var uncertain: Bool
     private var barrier: FixtureBarrier?
     private(set) var requests: [PhotoSaveRequest] = []
     private var found: [UUID: SavedAsset] = [:]
-    init(reader: FixtureLibrary, uncertain: Bool) { self.reader = reader; self.uncertain = uncertain }
+    private var replacements: [SourceID: SourceID] = [:]
+    private let pairCleanupPending: Bool
+    private var cleanupSources: [UUID: SourceID] = [:]
+    private var lookupBarrier: FixtureBarrier?
+    private var cleanupBarrier: FixtureBarrier?
+    func sourceReplacements() async throws -> [SourceID: SourceID] { replacements }
+    init(reader: FixtureLibrary, uncertain: Bool, pairCleanupPending: Bool = false) {
+        self.reader = reader; self.uncertain = uncertain; self.pairCleanupPending = pairCleanupPending
+    }
     func holdSave(_ barrier: FixtureBarrier) { self.barrier = barrier }
+    func holdLookup(_ barrier: FixtureBarrier) { lookupBarrier = barrier }
+    func holdCleanup(_ barrier: FixtureBarrier) { cleanupBarrier = barrier }
     func saveJPEG(_ request: PhotoSaveRequest, onPlaceholder: @escaping @Sendable (String) -> Void) async throws -> SavedAsset {
         requests.append(request)
-        let id = "fixture-export-\(request.operationID.uuidString)"; onPlaceholder(id)
+        let id = outputID(request); onPlaceholder(id)
         if let barrier { await barrier.wait() }
         if uncertain { throw PhotoLibraryWriteError.uncertain(.missingConfirmation) }
-        await reader.addOutput(id)
-        return SavedAsset(assetID: id, operationID: request.operationID, photosGeometry: nil)
-    }
-    func makeSubmittedExportDiscoverable(_ operationID: UUID) async throws -> SavedAsset {
-        guard requests.contains(where: { $0.operationID == operationID }) else { throw ResourceError.inaccessibleAsset("unsubmitted") }
-        let asset = SavedAsset(assetID: "fixture-export-\(operationID.uuidString)", operationID: operationID, photosGeometry: nil)
-        await reader.addOutput(asset.assetID); found[operationID] = asset
+        if let edit = request.originalEdit {
+            if edit.source.originalResources.jpeg == nil {
+                replacements[edit.source.id] = id
+                let deferred = pairCleanupPending || request.deferPairRemoval
+                try await reader.replaceWithPair(edit.source, id: id, jpeg: request.jpeg, removeOriginal: !deferred)
+                if deferred { cleanupSources[request.operationID] = edit.source.id }
+            } else { await reader.addOriginalEdit(.init(operationID: request.operationID, sourceID: edit.source.id, recipe: edit.recipe)) }
+        } else { await reader.addOutput(id) }
+        let asset = SavedAsset(assetID: id, operationID: request.operationID, photosGeometry: nil)
+        found[request.operationID] = asset
+        if pairCleanupPending && cleanupSources[request.operationID] != nil { throw PhotoLibraryWriteError.uncertain(.missingConfirmation) }
         return asset
     }
-    func findExport(operationID: UUID, knownAssetID: String?) -> SaveLookup {
+    func makeSubmittedExportDiscoverable(_ operationID: UUID) async throws -> SavedAsset {
+        guard let request = requests.first(where: { $0.operationID == operationID }) else { throw ResourceError.inaccessibleAsset("unsubmitted") }
+        let asset = SavedAsset(assetID: outputID(request), operationID: operationID, photosGeometry: nil)
+        if let edit = request.originalEdit {
+            if edit.source.originalResources.jpeg == nil {
+                replacements[edit.source.id] = asset.assetID
+                try await reader.replaceWithPair(edit.source, id: asset.assetID, jpeg: request.jpeg, removeOriginal: !request.deferPairRemoval)
+                if request.deferPairRemoval { cleanupSources[operationID] = edit.source.id }
+            } else { await reader.addOriginalEdit(.init(operationID: operationID, sourceID: edit.source.id, recipe: edit.recipe)) }
+        } else { await reader.addOutput(asset.assetID) }
+        found[operationID] = asset
+        return asset
+    }
+    func findExport(operationID: UUID, knownAssetID: String?, originalAssetID: String?) async throws -> SaveLookup {
+        if let lookupBarrier { await lookupBarrier.wait() }
+        if let originalAssetID {
+            if let replacement = replacements[originalAssetID], let asset = found[operationID], asset.assetID == replacement {
+                _ = try await reader.source(id: replacement)
+                if cleanupSources[operationID] != nil { return .needsReplacementCleanup(asset) }
+                return .found(asset)
+            }
+            guard try await reader.currentAdjustment(assetID: originalAssetID)?.operationID == operationID else { return .notFound }
+            return .found(SavedAsset(assetID: originalAssetID, operationID: operationID, photosGeometry: nil))
+        }
         guard let asset = found[operationID], knownAssetID == nil || knownAssetID == asset.assetID else { return .notFound }
         return .found(asset)
+    }
+    private func outputID(_ request: PhotoSaveRequest) -> String {
+        if let edit = request.originalEdit {
+            return edit.source.originalResources.jpeg == nil ? "fixture-pair-\(request.operationID.uuidString)" : edit.source.id
+        }
+        return "fixture-export-\(request.operationID.uuidString)"
+    }
+    func completeReplacement(operationID: UUID, assetID: String) async throws -> SavedAsset {
+        let asset = SavedAsset(assetID: assetID, operationID: operationID, photosGeometry: nil)
+        _ = try await completeReplacements([asset], allowingPreviousEdits: true, beforeRemoval: {})
+        return asset
+    }
+    func completeReplacements(_ assets: [SavedAsset], allowingPreviousEdits: Bool,
+                              beforeRemoval: @escaping @Sendable () async throws -> Void) async throws -> [SavedAsset] {
+        if pairCleanupPending && !allowingPreviousEdits { throw PhotoLibraryWriteError.uncertain(.missingConfirmation) }
+        guard assets.allSatisfy({ cleanupSources[$0.operationID] != nil && found[$0.operationID] == $0 }) else {
+            throw PhotoLibraryWriteError.uncertain(.missingConfirmation)
+        }
+        for asset in assets { _ = try await reader.source(id: asset.assetID) }
+        try await beforeRemoval()
+        if let cleanupBarrier { await cleanupBarrier.wait() }
+        await reader.removeReplacedOriginals(Set(assets.compactMap { cleanupSources[$0.operationID] }))
+        for asset in assets { cleanupSources[asset.operationID] = nil }
+        cleanupCalls += assets.count; cleanupTransactions += 1
+        return assets
     }
 }
 

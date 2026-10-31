@@ -1,6 +1,13 @@
 import FujiCameraCore
 import Foundation
 
+enum ExportDestination: String, Sendable, Codable, Equatable {
+    case separatePhoto, updateOriginal, createPair
+    func forSource(_ source: PhotoSource) -> Self {
+        self == .updateOriginal && source.originalResources.jpeg == nil ? .createPair : self
+    }
+}
+
 enum AssetAvailability: String, Sendable, Codable, Equatable {
     case available, inaccessible, missing, deleted
 }
@@ -8,13 +15,14 @@ enum AssetAvailability: String, Sendable, Codable, Equatable {
 /// A Photos operation identifies one deliberate exported item, independently of camera attempts.
 struct SavedVersion: Sendable, Codable, Equatable, Identifiable {
     let id: UUID
-    let sourceID: SourceID
+    var sourceID: SourceID
     let outputAssetID: String
     let recipeSnapshot: RecipeSnapshot
     let operationID: UUID
     let exportedAt: Date
     let jpeg: CameraJPEG
     var availability: AssetAvailability
+    var destination: ExportDestination = .separatePhoto
 
     var width: Int { jpeg.width }
     var height: Int { jpeg.height }
@@ -43,6 +51,8 @@ struct PendingSave: Sendable, Codable, Equatable {
     let jpeg: CameraJPEG
     var placeholderID: String?
     var submission: SaveSubmission
+    /// A verified pair exists; only explicit removal of the old RAW asset remains.
+    var replacementCleanupAssetID: String?
 
     init(operationID: UUID, jpeg: CameraJPEG, placeholderID: String? = nil,
          submission: SaveSubmission = .notSubmitted) {
@@ -86,4 +96,5 @@ struct ExportJob: Sendable, Codable, Equatable, Identifiable {
     let recipeSnapshot: RecipeSnapshot
     var items: [ExportItem]
     var state: ExportJobState
+    var destination: ExportDestination = .separatePhoto
 }

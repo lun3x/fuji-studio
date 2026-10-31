@@ -181,7 +181,9 @@ final class PhoneRecipeEditorTests: AppFlowTestCase {
         reveal(balance, in: app); balance.tap()
         XCTAssertFalse(app.buttons["Daylight"].exists)
         XCTAssertFalse(app.buttons["Custom 3"].exists)
-        app.buttons["Colour temperature"].tap()
+        // The iOS 27 picker reports a clipped collection's child as non-hittable
+        // despite its visible frame; use the same measured tap as other popup controls.
+        tap(app.buttons["Colour temperature"], in: app)
         app.buttons["recipe.editor.save"].tap()
         XCTAssertTrue(app.navigationBars["Edit phone recipe"].waitForNonExistence(timeout: 5))
         XCTAssertTrue(phone.isEnabled)

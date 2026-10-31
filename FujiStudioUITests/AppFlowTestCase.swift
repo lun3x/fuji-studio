@@ -13,7 +13,7 @@ class AppFlowTestCase: XCTestCase {
         let form = app.descendants(matching: .any)["recipe.editor.form"].firstMatch
         let keyboard = app.keyboards.firstMatch
         if form.exists, keyboard.exists, keyboard.buttons["Return"].exists {
-            app.typeText("\n")
+            keyboard.buttons["Return"].tap()
             XCTAssertTrue(keyboard.waitForNonExistence(timeout: 5))
         }
         let container = form.exists ? form : app

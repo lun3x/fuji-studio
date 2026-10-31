@@ -79,7 +79,7 @@ struct RecipeOptionValuesTests {
     let f = try ProductionProfileFixture()
     let codecs = RecipeCodecRegistry()
     for (id, value): (RecipeSettingID, RecipeSettingValue) in [
-      (.dynamicRange, .integer(200)), (.whiteBalance, .whiteBalance(.daylight)),
+      (.dynamicRange, .integer(0)), (.whiteBalance, .whiteBalance(.daylight)),
     ] {
       let capability = try #require(RecipeCodecRegistry.xt5Capabilities.settings[id])
       #expect(capability.accepts(value, rendering: false))

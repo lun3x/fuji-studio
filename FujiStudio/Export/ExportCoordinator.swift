@@ -9,6 +9,7 @@ enum ExportPauseReason: Sendable, Equatable {
 }
 struct ExportSummary: Sendable, Equatable {
     let completed: Int, failed: Int, skipped: Int, unprocessed: Int, unresolved: Int
+    var replacementCleanup: Int = 0
     var processed: Int { completed + failed + skipped }
     var total: Int { processed + unprocessed + unresolved }
     var fractionCompleted: Double { total > 0 ? Double(processed) / Double(total) : 0 }
@@ -69,18 +70,19 @@ actor ExportCoordinator {
         return pair.stream
     }
     private func removeObserver(_ id: UUID) { observers[id] = nil }
+    func sourceReplacements() async throws -> [SourceID: SourceID] { try await writer.sourceReplacements() }
 
-    func start(sources: [PhotoSource], recipe: RecipeSnapshot) async throws -> UUID {
+    func start(sources: [PhotoSource], recipe: RecipeSnapshot, destination: ExportDestination = .separatePhoto) async throws -> UUID {
         guard !suspended else { throw ExportCoordinatorError.stopped }
         try reserve()
         let epoch = admissionEpoch
         do {
-            guard !sources.isEmpty, Set(sources.map(\.id)).count == sources.count else { throw ExportCoordinatorError.invalidSubmission }
+            guard destination != .createPair, !sources.isEmpty, Set(sources.map(\.id)).count == sources.count else { throw ExportCoordinatorError.invalidSubmission }
             try recipe.requireRenderable(using: RecipeCodecRegistry())
             try await validateCamera(recipe)
             for source in sources { try await validateSource(source); try checkStop(); guard epoch == admissionEpoch else { throw ExportCoordinatorError.stopped } }
             let job = ExportJob(id: UUID(), submittedAt: Date(), recipeSnapshot: recipe,
-                items: sources.map { ExportItem(source: $0, operationID: UUID()) }, state: .queued)
+                items: sources.map { ExportItem(source: $0, operationID: UUID()) }, state: .queued, destination: destination)
             try await catalog.saveJob(job)
             launch(job, epoch: epoch)
             return job.id
@@ -137,6 +139,47 @@ actor ExportCoordinator {
 
     func resume(jobID: UUID) async throws { try await reopen(jobID, retryFailures: false) }
     func retry(jobID: UUID) async throws { try await reopen(jobID, retryFailures: true) }
+
+    /// Owns only verification/removal of existing pairs, without admitting camera work.
+    func finishReplacements(jobID: UUID) async throws {
+        guard !suspended else { throw ExportCoordinatorError.stopped }
+        try reserve()
+        let epoch = admissionEpoch
+        do {
+            let job = try await catalog.job(id: jobID)
+            guard !suspended, stop == nil, epoch == admissionEpoch else { throw ExportCoordinatorError.stopped }
+            activeID = job.id; lastKnownJob = job
+            worker = Task { await self.runReplacementCleanup(job.id) }
+        } catch { occupied = false; throw error }
+    }
+
+    private func runReplacementCleanup(_ id: UUID) async {
+        var reason: ExportPauseReason?
+        do {
+            try checkStop()
+            var job = try await catalog.job(id: id)
+            job.state = .pendingSave
+            try await catalog.saveJob(job); emit(job)
+            try await reconcile(id, finishReplacements: true)
+        } catch {
+            reason = error as? ExportCoordinatorError == .stopped ? .lifecycle : .persistence(String(describing: error))
+        }
+        // Cancellation can stop reconciliation before cleanup is submitted. Classify the
+        // remaining items even on that path, while retaining every uncertain Photos intent.
+        do {
+            if stop == .cancel { try await cancelRemaining(id) }
+            var job = try await catalog.job(id: id)
+            if stop != nil || suspended { reason = .lifecycle }
+            else if Self.hasUnresolved(job), reason == nil { reason = .unresolvedSave }
+            job.state = Self.hasUnresolved(job) ? .unresolved : Self.allSaved(job) ? .saved : stop == .cancel ? .cancelled : .paused
+            try await catalog.saveJob(job)
+        } catch {
+            reason = .persistence(String(describing: error))
+        }
+        let final = (try? await catalog.job(id: id)) ?? lastKnownJob
+        occupied = false; activeID = nil; worker = nil; stop = nil; lastKnownJob = nil
+        if let final { emit(final, reason: reason, terminal: true) }
+    }
 
     private func reserve() throws {
         guard !occupied else { throw ExportCoordinatorError.alreadyActive }
@@ -228,10 +271,14 @@ actor ExportCoordinator {
                     if let pending { try await releaseIfUnreferenced(pending.jpeg.key) }
                 }
                 let latest = try await catalog.job(id: id)
-                if case .unresolved = latest.items[index].state, latest.items[index].state != job.items[index].state {
+                if case .unresolved(let pending) = latest.items[index].state, pending.replacementCleanupAssetID == nil,
+                   latest.items[index].state != job.items[index].state {
                     reason = .unresolvedSave; break
                 }
                 if reason != nil || stop != nil { break }
+            }
+            if reason == nil, stop == nil, !suspended {
+                try await reconcile(id, finishReplacements: true, allowingPreviousEdits: false)
             }
             var final = try await catalog.job(id: id)
             if stop == .cancel {
@@ -348,10 +395,14 @@ actor ExportCoordinator {
             for await assetID in stream.stream { try await self.recordPlaceholder(id, index, assetID) }
         }
         let source = job.items[index].source
+        let createsPair = job.destination == .updateOriginal && source.originalResources.jpeg == nil
         let result: Result<SavedAsset, Error>
         do {
             result = .success(try await writer.saveJPEG(.init(jpeg: pending.jpeg, operationID: pending.operationID,
-                captureDate: source.captureDate, location: source.location), onPlaceholder: { stream.continuation.yield($0) }))
+                captureDate: source.captureDate, location: source.location,
+                originalEdit: job.destination == .updateOriginal ? PhotoOriginalEdit(source: source, recipe: job.recipeSnapshot) : nil,
+                deferPairRemoval: createsPair, pairBatchID: createsPair ? job.id : nil),
+                onPlaceholder: { stream.continuation.yield($0) }))
         } catch { result = .failure(error) }
         stream.continuation.finish()
         // No completion/confirmation can race a late placeholder journal write.
@@ -360,7 +411,13 @@ actor ExportCoordinator {
         pending = Self.pending(job.items[index].state) ?? pending
         switch result {
         case .success(let asset):
-            try await confirm(job, index, pending, asset)
+            if createsPair {
+                guard asset.operationID == pending.operationID, pending.placeholderID == asset.assetID else {
+                    throw CatalogError.conflictingOperation(pending.operationID)
+                }
+                pending.replacementCleanupAssetID = asset.assetID
+                try await setState(id, index, .pendingSave(pending), stage: .pendingSave)
+            } else { try await confirm(job, index, pending, asset) }
         case .failure(let error):
             if Self.definitiveRejection(error) {
                 pending.submission = .definitivelyRejected(at: pending.submission.attemptedAt!, reason: String(describing: error))
@@ -386,8 +443,10 @@ actor ExportCoordinator {
         try await setState(id, index, .pendingSave(pending), stage: .pendingSave)
     }
 
-    private func reconcile(_ id: UUID, releaseFiles: Bool = true) async throws {
+    private func reconcile(_ id: UUID, releaseFiles: Bool = true, finishReplacements: Bool = false,
+                           allowingPreviousEdits: Bool = true) async throws {
         let original = try await catalog.job(id: id)
+        var replacements: [(index: Int, pending: PendingSave, asset: SavedAsset)] = []
         for index in original.items.indices {
             let job = try await catalog.job(id: id)
             guard var pending = Self.pending(job.items[index].state) else { continue }
@@ -397,13 +456,33 @@ actor ExportCoordinator {
                 try await setState(id, index, .failed(.unresolvedSave(reason)), stage: .failed)
                 if releaseFiles { try await releaseIfUnreferenced(pending.jpeg.key) }
             case .submitted, .unknown:
-                let lookup = try? await writer.findExport(operationID: pending.operationID, knownAssetID: pending.placeholderID)
+                let lookup = try? await writer.findExport(operationID: pending.operationID, knownAssetID: pending.placeholderID,
+                    originalAssetID: job.destination == .updateOriginal ? job.items[index].source.id : nil)
                 if case .found(let asset) = lookup {
                     try await confirm(job, index, pending, asset, releaseFile: releaseFiles)
                 } else {
+                    if case .needsReplacementCleanup(let candidate) = lookup {
+                        pending.replacementCleanupAssetID = candidate.assetID
+                        replacements.append((index, pending, candidate))
+                    } else { pending.replacementCleanupAssetID = nil }
                     pending.submission = .unknown(at: pending.submission.attemptedAt!)
                     try await setState(id, index, .unresolved(pending), stage: .unresolved)
                 }
+            }
+        }
+        if finishReplacements, !replacements.isEmpty {
+            try checkStop()
+            guard let saved = try? await writer.completeReplacements(replacements.map(\.asset), allowingPreviousEdits: allowingPreviousEdits,
+                beforeRemoval: { try await self.checkStop() }) else { return }
+            guard saved.count == replacements.count,
+                  Set(saved.map(\.operationID)).count == saved.count,
+                  replacements.allSatisfy({ candidate in saved.contains { $0.operationID == candidate.asset.operationID && $0.assetID == candidate.asset.assetID } }) else {
+                throw CatalogError.invalidState("Conflicting batch replacement confirmation")
+            }
+            for candidate in replacements {
+                let job = try await catalog.job(id: id)
+                let pending = Self.pending(job.items[candidate.index].state) ?? candidate.pending
+                try await confirm(job, candidate.index, pending, candidate.asset, releaseFile: releaseFiles)
             }
         }
     }
@@ -413,7 +492,8 @@ actor ExportCoordinator {
               pending.placeholderID == nil || pending.placeholderID == asset.assetID,
               let at = pending.submission.attemptedAt else { throw CatalogError.conflictingOperation(pending.operationID) }
         let version = SavedVersion(id: UUID(), sourceID: job.items[index].source.id, outputAssetID: asset.assetID,
-            recipeSnapshot: job.recipeSnapshot, operationID: pending.operationID, exportedAt: at, jpeg: pending.jpeg, availability: .available)
+            recipeSnapshot: job.recipeSnapshot, operationID: pending.operationID, exportedAt: at, jpeg: pending.jpeg,
+            availability: .available, destination: job.destination.forSource(job.items[index].source))
         try await catalog.confirmSaved(jobID: job.id, operationID: pending.operationID, version: version)
         if releaseFile { try await releaseIfUnreferenced(pending.jpeg.key) }
     }
@@ -499,8 +579,9 @@ actor ExportCoordinator {
         observers.values.forEach { $0.yield(event) }
     }
     private func progress(_ job: ExportJob, current: SourceID? = nil, reason: ExportPauseReason? = nil, terminal: Bool) -> ExportEvent {
-        var completed = 0, failed = 0, skipped = 0, unprocessed = 0, unresolved = 0
+        var completed = 0, failed = 0, skipped = 0, unprocessed = 0, unresolved = 0, replacementCleanup = 0
         for item in job.items {
+            if Self.pending(item.state)?.replacementCleanupAssetID != nil { replacementCleanup += 1 }
             switch item.state {
             case .saved: completed += 1
             case .failed: failed += 1
@@ -515,7 +596,7 @@ actor ExportCoordinator {
             if case .failed(let failure) = item.state { return failure }; return nil
         }.reduce(into: [ExportFailure]()) { if !$0.contains($1) { $0.append($1) } }
         return ExportEvent(jobID: job.id, recipeLabel: job.recipeSnapshot.name, stage: job.state, currentItem: current,
-            summary: .init(completed: completed, failed: failed, skipped: skipped, unprocessed: unprocessed, unresolved: unresolved),
+            summary: .init(completed: completed, failed: failed, skipped: skipped, unprocessed: unprocessed, unresolved: unresolved, replacementCleanup: replacementCleanup),
             pauseReason: reason, failures: failures, terminal: terminal || recovering, stopRequested: stop != nil, sequence: sequence)
     }
 }

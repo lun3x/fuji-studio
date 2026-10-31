@@ -4,6 +4,52 @@ import Testing
 @testable import FujiStudio
 
 @MainActor struct AppModelTests {
+    @Test func currentEditOpensAfterPhotosAccessIsRestoredDespiteStaleCatalogFlag() async throws {
+        let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment)
+        await model.start(automaticallyConnect: false); await model.connect()
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
+        model.send(.sourceTapped("source-0"))
+        let source = try await f.reader.source(id: "source-0"), recipe = try #require(model.state.recipes.first { $0.slot == 3 })
+        _ = try await f.environment.exports.start(sources: [source], recipe: recipe, destination: .updateOriginal)
+        await eventually { model.savedVersions.count == 1 }
+        let version = try #require(model.savedVersions.first)
+        // libraryChanged persists this flag when an item leaves limited access. The current
+        // marker/resources are accessible again after the user restores that selection.
+        try await f.environment.catalog.setAvailability(assetID: source.id, availability: .inaccessible)
+        await model.reloadLibrary()
+        #expect(model.savedVersions.first?.availability == .available)
+        model.send(.versionSelected(.saved(version.id)))
+        await eventually { model.displayFile != nil && model.imageStatus == nil }
+        #expect(model.imageIdentity?.version == .saved(version.id))
+    }
+
+    @Test func repeatedOriginalUpdatesAndRevertHideOldVersionsAndKeepOriginals() async throws {
+        let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment)
+        await model.start(automaticallyConnect: false); await model.connect()
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
+        model.send(.sourceTapped("source-0"))
+        let source = try await f.reader.source(id: "source-0")
+        let firstRecipe = try #require(model.state.recipes.first { $0.slot == 3 })
+        _ = try await f.environment.exports.start(sources: [source], recipe: firstRecipe, destination: .updateOriginal)
+        await eventually { model.savedVersions.count == 1 }
+        let first = try #require(model.savedVersions.first)
+        model.send(.versionSelected(.saved(first.id)))
+        await eventually { model.displayFile != nil && model.imageStatus == nil }
+        let secondRecipe = try #require(model.state.recipes.first { $0.slot == 2 })
+        _ = try await f.environment.exports.start(sources: [source], recipe: secondRecipe, destination: .updateOriginal)
+        await eventually { model.savedVersions.count == 1 && model.savedVersions.first?.id != first.id }
+        #expect(model.savedVersions.first?.recipeSnapshot == secondRecipe)
+        #expect(model.state.displayedVersion != .saved(first.id))
+        let latest = try #require(model.savedVersions.first)
+        model.send(.versionSelected(.saved(latest.id)))
+        await eventually { model.displayFile != nil && model.imageStatus == nil }
+        await f.reader.revertEdit("source-0")
+        await eventually { model.savedVersions.isEmpty && model.state.displayedVersion == .cameraJPEG }
+        #expect(try await f.reader.source(id: "source-0").originalResources == source.originalResources)
+        #expect(try await f.reader.source(id: "source-0").resourceRevision == source.resourceRevision)
+        #expect(try await f.environment.catalog.versions(sourceID: "source-0").count == 2)
+    }
+
     @Test func resetDoesNotRevokeAnActivePreview() async throws {
         let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment), barrier = FixtureBarrier()
         defer { Task { await barrier.release() } }
@@ -1079,7 +1125,7 @@ import Testing
         #expect(await f.writer.requests.count == 1)
     }
 
-    @Test func inactiveSystemPresentationRestoresIdleWithoutPausingTheExport() async throws {
+    @Test func inactiveSystemPresentationKeepsExportAwakeWithoutPausing() async throws {
         let f = try await FixtureEnvironment.make(), model = AppModel(environment: f.environment), barrier = FixtureBarrier()
         await model.start(); await model.connect()
         await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
@@ -1093,7 +1139,7 @@ import Testing
         await f.writer.holdSave(barrier); await model.export(); await barrier.entered()
         #expect(f.platform.idleTimerDisabled)
         await model.sceneChanged(.inactive)
-        #expect(!f.platform.idleTimerDisabled)
+        #expect(f.platform.idleTimerDisabled)
         #expect(!model.isSuspended)
         #expect(model.exportEvent?.stopRequested == false)
         await barrier.release(); await eventually { model.exportEvent?.terminal == true }
@@ -1241,6 +1287,7 @@ import Testing
 
 /// Delegates to the same actual disk catalog; only the captured version-list return is delayed.
 private actor HeldVersionCatalog: CatalogStoring {
+    func replaceSource(_ sourceID: SourceID, with replacement: PhotoSource) async throws { try await base.replaceSource(sourceID, with: replacement) }
     let base: any CatalogStoring
     private var recipeSavesToFail = 0
     func failNextRecipeSave() { recipeSavesToFail += 1 }

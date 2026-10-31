@@ -5,6 +5,33 @@ import UIKit
 
 @MainActor
 final class PhotoGridControllerTests: XCTestCase {
+    func testEditedAssetRefreshesVisibleThumbnailWithUnchangedSourceIdentity() throws {
+        let loader = RefreshThumbnailLoader(), provider = ThumbnailProvider(loader: loader)
+        let controller = PhotoGridController(thumbnails: provider)
+        let sources = [source("a"), source("b")]
+        controller.update(sources: sources, checked: ["a"], selecting: true, viewed: "a", scrollRequest: nil)
+        let window = host(controller)
+        defer { controller.stop(); window.isHidden = true }
+        let cell = try XCTUnwrap(controller.collectionView.cellForItem(at: IndexPath(item: 0, section: 0)))
+        let display = try XCTUnwrap(cell.contentView.subviews.compactMap { $0 as? UIImageView }.first { $0.contentMode == .scaleAspectFill })
+        let oldRequest = try XCTUnwrap(loader.requests.lastIndex { $0.sourceID == "a" })
+        let red = UIGraphicsImageRenderer(size: .init(width: 4, height: 4)).image { context in
+            UIColor.red.setFill(); context.fill(.init(x: 0, y: 0, width: 4, height: 4))
+        }
+        let blue = UIGraphicsImageRenderer(size: .init(width: 4, height: 4)).image { context in
+            UIColor.blue.setFill(); context.fill(.init(x: 0, y: 0, width: 4, height: 4))
+        }
+        loader.deliver(oldRequest, red)
+        XCTAssertTrue(display.image === red)
+        let count = loader.requests.count
+        provider.invalidate(sourceIDs: ["a"])
+        XCTAssertEqual(loader.requests.count, count + 1)
+        guard loader.requests.count == count + 1 else { return }
+        loader.deliver(count, blue); loader.deliver(oldRequest, red)
+        XCTAssertTrue(display.image === blue)
+        XCTAssertEqual(cell.accessibilityValue, "Checked")
+    }
+
     private func source(_ id: String, date: Date? = nil) -> PhotoSource {
         PhotoSource(id: id, originalResources: .init(raf: .init(assetID: id, role: .primaryOriginal, contentTypeIdentifier: "com.fujifilm.raw-image", format: .raf, originalFilename: "GENERATED.RAF", discriminator: "raw"), jpeg: nil), captureDate: date, location: nil, resourceRevision: "fixture")
     }
@@ -368,4 +395,5 @@ private final class GridThumbnailSpy: GridThumbnailProviding {
     }
     func cancel(_ token: UUID) { cancelled.insert(token) }
     func cache(sourceIDs: [SourceID], pixelSize: CGSize) { cached = sourceIDs }
+    func invalidate(sourceIDs: Set<SourceID>) {}
 }

@@ -28,12 +28,14 @@ import Observation
     var isLoadingPreview: Bool { state.isAwaitingRecipePreview }
     private(set) var isSuspended = false
     let environment: AppEnvironment
+    let settings: AppSettings
     @ObservationIgnored private var started = false
     @ObservationIgnored private var streams: [Task<Void, Never>] = []
     @ObservationIgnored private var displayTask: Task<Void, Never>?
     @ObservationIgnored private var sceneTask: Task<Void, Never>?
     @ObservationIgnored private var submissionTask: Task<UUID, Error>?
     @ObservationIgnored private var libraryGeneration: UInt64 = 0
+    @ObservationIgnored private var sourceReplacements: [SourceID: SourceID] = [:]
     @ObservationIgnored private var displayIntent: UInt64 = 0
     @ObservationIgnored private var cameraEventGeneration: UInt64 = 0
     @ObservationIgnored private var importedSessions: Set<UUID> = []
@@ -81,9 +83,10 @@ import Observation
     var validationScene: (revision: UInt64, foreground: Bool) { (sceneRevision, foreground) }
     #endif
 
-    init(environment: AppEnvironment,
+    init(environment: AppEnvironment, settings: AppSettings? = nil,
          connectionRetryWait: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }) {
         self.environment = environment; self.connectionRetryWait = connectionRetryWait
+        self.settings = settings ?? AppSettings()
     }
     var imageStatusIsFailure: Bool { displayFailure != nil }
     var canResetCameraConnection: Bool {
@@ -363,11 +366,13 @@ import Observation
             await environment.exports.pauseActiveWork()
             return
         }
+        await adoptVerifiedReplacements()
+        guard generation == libraryGeneration else { return }
         var discovered: [SourceID: PhotoSource] = [:]
         do {
             for try await batch in await environment.reader.sources() {
                 guard generation == libraryGeneration else { return }
-                for source in batch { discovered[source.id] = knownCompatibility(source) }
+                for source in batch where sourceReplacements[source.id] == nil { discovered[source.id] = knownCompatibility(source) }
                 // Batches are additions. Keep the existing permitted index until the full pass ends.
                 var merged = Dictionary(uniqueKeysWithValues: sources.map { ($0.id, $0) })
                 merged.merge(discovered, uniquingKeysWith: { _, new in new })
@@ -396,12 +401,16 @@ import Observation
     }
 
     private func libraryChanged(_ event: LibraryChange) async {
+        await adoptVerifiedReplacements()
+        var thumbnailIDs = event.changedIDs.union(event.removedIDs)
+        if event.accessScopeChanged { thumbnailIDs.formUnion(sources.map(\.id)) }
+        environment.thumbnails.invalidate(sourceIDs: thumbnailIDs)
         if !hasCurrentSourceDisplay, event.accessScopeChanged || !event.removedIDs.isEmpty {
             displayFile = nil; availableDisplay = nil
         }
         sources.removeAll { event.removedIDs.contains($0.id) }
         reduce(.libraryUpdated(sources: sources, access: state.libraryAccess))
-        if !event.removedIDs.isEmpty { await environment.exports.pauseActiveWork() }
+        if !event.removedIDs.subtracting(sourceReplacements.keys).isEmpty { await environment.exports.pauseActiveWork() }
         for id in event.removedIDs {
             try? await environment.catalog.setAvailability(assetID: id, availability: .inaccessible)
             await environment.cache.invalidate(sourceID: id)
@@ -409,6 +418,31 @@ import Observation
         reduce(.libraryUpdated(sources: sources, access: state.libraryAccess))
         await reloadLibrary()
         recoveryNeeded = true; await recoverWhenIdle()
+    }
+
+    private func adoptVerifiedReplacements() async {
+        let scope = libraryGeneration
+        do {
+            let replacements = try await environment.exports.sourceReplacements()
+            var accessible: [SourceID: SourceID] = [:]
+            for (previous, id) in replacements.sorted(by: { $0.key < $1.key }) {
+                var replacement: PhotoSource
+                do { replacement = try await environment.reader.source(id: id) }
+                catch ResourceError.inaccessibleAsset { continue }
+                catch ResourceError.authorization { continue }
+                guard scope == libraryGeneration else { return }
+                accessible[previous] = id
+                if sourceReplacements[previous] == id { continue }
+                if let original = sources.first(where: { $0.id == previous }) { replacement.compatibility = original.compatibility }
+                try await environment.catalog.replaceSource(previous, with: replacement)
+                guard scope == libraryGeneration else { return }
+                sourceReplacements[previous] = id
+                sources.removeAll { $0.id == previous || $0.id == id }
+                sources.append(replacement); sources = Self.sorted(sources)
+                reduce(.sourceReplaced(previous, with: replacement))
+            }
+            if scope == libraryGeneration { sourceReplacements = accessible }
+        } catch { message = Self.explain(error) }
     }
 
     private func cameraChanged(_ event: CameraState) {
@@ -722,6 +756,7 @@ import Observation
               !isSubmitting, !recovering, !isSuspended, let recipe = state.selectedRecipe else { return }
         isSubmitting = true
         let sources = state.effectiveSources, engine = environment.exports
+        let destination: ExportDestination = settings.updateOriginalInPhotos ? .updateOriginal : .separatePhoto
         // Revoke obsolete preparation before export reserves the shared scheduler/pool. An
         // already admitted native render remains independently owned by PreviewCoordinator.
         displayTask?.cancel(); displayIntent &+= 1; displayRequest = nil
@@ -730,7 +765,7 @@ import Observation
         if !hasCurrentSourceDisplay { displayFile = nil; availableDisplay = nil }
         imageStatus = displayFile == nil ? "Image loading stopped. Select the recipe again to retry." : displayFailure
         await environment.preview.invalidate()
-        let task = Task { try await engine.start(sources: sources, recipe: recipe) }
+        let task = Task { try await engine.start(sources: sources, recipe: recipe, destination: destination) }
         submissionTask = task
         do {
             let id = try await task.value
@@ -756,7 +791,7 @@ import Observation
                 }
             }
         }
-        if event.terminal { await refreshVersions(); await recoverWhenIdle() }
+        if event.terminal { await adoptVerifiedReplacements(); await refreshVersions(); await recoverWhenIdle() }
     }
     private func applyProgress(_ event: ExportEvent) {
         exportEvent = event
@@ -778,7 +813,8 @@ import Observation
     func resumeExport(jobID: UUID? = nil, retry: Bool = false) async {
         let target = jobID.flatMap { unfinishedEvents[$0] } ?? exportEvent
         guard !isSuspended, !isResettingCamera, cameraError == nil, cameraResetError == nil, !isSubmitting, !recovering, state.activeJobID == nil,
-              case .ready = state.cameraState, let event = target, event.terminal, event.summary.unresolved == 0 else { return }
+              case .ready = state.cameraState, let event = target, event.terminal,
+              event.summary.unresolved == event.summary.replacementCleanup else { return }
         isSubmitting = true
         defer { isSubmitting = false }
         do {
@@ -788,6 +824,21 @@ import Observation
         } catch { message = Self.explain(error); restoreIdle() }
     }
     func reconcile() async { recoveryNeeded = true; await recoverWhenIdle() }
+    var canFinishReplacements: Bool {
+        foreground && !isSuspended && !isResettingCamera && !isSubmitting && !recovering && state.activeJobID == nil
+    }
+    func finishReplacement(jobID: UUID) async {
+        let target = unfinishedEvents[jobID] ?? (exportEvent?.jobID == jobID ? exportEvent : nil)
+        guard canFinishReplacements, let target, target.terminal, target.summary.replacementCleanup > 0 else { return }
+        isSubmitting = true
+        defer { isSubmitting = false }
+        do {
+            try await environment.exports.finishReplacements(jobID: jobID)
+            if exportEvent?.jobID != jobID || exportEvent?.terminal != true || exportEvent?.sequence == target.sequence {
+                reduce(.activeJobChanged(jobID)); updateIdle()
+            }
+        } catch { message = Self.explain(error); restoreIdle() }
+    }
     private func recoverWhenIdle() async {
         if !recoveryNeeded { recoveryNeeded = exportEvent == nil }
         guard recoveryNeeded, !recovering, !isSubmitting, state.activeJobID == nil else { return }
@@ -813,7 +864,7 @@ import Observation
 
     func sceneChanged(_ phase: ScenePhase) async {
         sceneRevision &+= 1
-        if phase == .inactive { foreground = false; cancelPhotoFilterChecks(); stopAutomaticConnection(); restoreIdle(); return }
+        if phase == .inactive { foreground = false; cancelPhotoFilterChecks(); stopAutomaticConnection(); updateIdle(); return }
         let revision = sceneRevision
         if phase == .background {
             recipeLifecycleRevision &+= 1
@@ -869,7 +920,7 @@ import Observation
     }
 
     private func updateIdle() {
-        if foreground && !isSuspended && state.activeJobID != nil {
+        if !isSuspended && state.activeJobID != nil {
             if previousIdle == nil { previousIdle = environment.platform.idleTimerDisabled }
             environment.platform.idleTimerDisabled = true
         } else { restoreIdle() }
@@ -917,26 +968,40 @@ import Observation
         do {
             let records = try await environment.catalog.versions(sourceID: id)
             guard isCurrent() else { return }
+            var editedAvailability: [UUID: AssetAvailability] = [:]
             for record in records {
                 let availability: AssetAvailability
                 do {
-                    let resources = try await environment.reader.resources(assetID: record.outputAssetID)
-                    let originals = resources.filter { $0.assetID == record.outputAssetID && $0.format == .jpeg && $0.role != .adjusted }
-                    availability = originals.count == 1 ? .available : .inaccessible
+                    availability = try await environment.resolver.availability(of: record)
                 } catch ResourceError.inaccessibleAsset { availability = .inaccessible }
                 catch ResourceError.authorization { availability = .inaccessible }
+                catch where record.destination == .updateOriginal { availability = .inaccessible }
                 catch { continue } // A transient lookup failure is not proof of deletion.
                 guard isCurrent() else { return }
+                if record.destination == .updateOriginal {
+                    // Several operations share an asset. Its latest marker determines each
+                    // record's availability; the asset-wide catalog setter cannot express it.
+                    editedAvailability[record.id] = availability
+                    continue
+                }
                 if availability != record.availability {
                     try await environment.catalog.setAvailability(assetID: record.outputAssetID, availability: availability)
                     guard isCurrent() else { return }
                 }
             }
-            let versions = try await environment.catalog.versions(sourceID: id)
+            let versions = try await environment.catalog.versions(sourceID: id).map { record in
+                var current = record
+                if record.destination == .updateOriginal { current.availability = editedAvailability[record.id] ?? .inaccessible }
+                return current
+            }
             guard isCurrent() else { return }
-            savedVersions = versions
+            savedVersions = versions.filter { $0.destination == .separatePhoto || $0.availability == .available }
             if case .saved(let selected) = state.displayedVersion,
                let version = versions.first(where: { $0.id == selected }), version.availability != .available {
+                if version.destination == .updateOriginal {
+                    send(.versionSelected(sources.first(where: { $0.id == id })?.originalResources.jpeg == nil ? .raw : .cameraJPEG))
+                    return
+                }
                 displayIntent &+= 1
                 displayTask?.cancel(); displayRequest = nil; availableDisplay = nil
                 displayFile = nil

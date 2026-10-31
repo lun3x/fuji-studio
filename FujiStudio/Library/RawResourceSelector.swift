@@ -9,6 +9,10 @@ enum RawResourceSelector {
         guard raws.count == 1 else { throw ResourceError.ambiguousOriginalRAF }
         let jpegs = originals.filter { $0.format == .jpeg }
         guard jpegs.count <= 1 else { throw ResourceError.ambiguousOriginalJPEG }
-        return OriginalResources(raf: raws[0], jpeg: jpegs.first)
+        // PhotoKit may learn dataSize only after a download. Keep that diagnostic hint
+        // on resource listings, but never freeze it into the source's original identity.
+        var raf = raws[0], jpeg = jpegs.first
+        raf.byteCount = nil; jpeg?.byteCount = nil
+        return OriginalResources(raf: raf, jpeg: jpeg)
     }
 }

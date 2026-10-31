@@ -85,7 +85,7 @@ final class WorkspaceFixture {
     let sources: [PhotoSource]
     let file: DisplayFileLease
     let geometry: ImageGeometry
-    let thumbnails = WorkspaceFixtureThumbnails()
+    let thumbnails = ThumbnailProvider(loader: WorkspaceFixtureThumbnails())
     let state: WorkspaceState
     init() throws {
         let portrait = ProcessInfo.processInfo.arguments.contains("--fixture-portrait")
@@ -155,11 +155,13 @@ final class WorkspaceFixture {
 }
 
 @MainActor
-final class WorkspaceFixtureThumbnails: GridThumbnailProviding {
+final class WorkspaceFixtureThumbnails: ThumbnailImageLoading {
+    private var revisions: [SourceID: Int] = [:]
     func request(sourceID: SourceID, pixelSize: CGSize, completion: @escaping @MainActor (UIImage?) -> Void) -> UUID {
         let index = Int(sourceID.replacingOccurrences(of: "source-", with: "")) ?? 0
+        let revision = revisions[sourceID, default: 0]
         completion(UIGraphicsImageRenderer(size: CGSize(width: 128, height: 128)).image { renderer in
-            UIColor(hue: CGFloat(index % 20) / 20, saturation: 0.32, brightness: 0.5, alpha: 1).setFill()
+            UIColor(hue: CGFloat((index + revision * 7) % 20) / 20, saturation: 0.32, brightness: 0.5, alpha: 1).setFill()
             renderer.fill(CGRect(x: 0, y: 0, width: 128, height: 128))
             "\(index)".draw(at: CGPoint(x: 10, y: 25), withAttributes: [.font: UIFont.monospacedSystemFont(ofSize: 28, weight: .semibold), .foregroundColor: UIColor.white])
         })
@@ -167,6 +169,9 @@ final class WorkspaceFixtureThumbnails: GridThumbnailProviding {
     }
     func cancel(_ token: UUID) {}
     func cache(sourceIDs: [SourceID], pixelSize: CGSize) {}
+    func invalidate(sourceIDs: Set<SourceID>) {
+        for id in sourceIDs { revisions[id, default: 0] += 1 }
+    }
 }
 #endif
 

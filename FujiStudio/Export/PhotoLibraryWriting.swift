@@ -8,6 +8,9 @@ struct PhotoSaveRequest: Sendable {
     let operationID: UUID
     let captureDate: Date?
     let location: PhotoLocation?
+    var originalEdit: PhotoOriginalEdit? = nil
+    var deferPairRemoval = false
+    var pairBatchID: UUID?
 
     var filename: String { "FujiStudio-\(operationID.uuidString).jpg" }
 }
@@ -21,7 +24,7 @@ struct SavedAsset: Sendable, Equatable {
 }
 
 enum SaveLookup: Sendable, Equatable {
-    case found(SavedAsset), notFound, inaccessible
+    case found(SavedAsset), needsReplacementCleanup(SavedAsset), notFound, inaccessible
 }
 
 enum PhotoSaveFailure: Sendable, Equatable {
@@ -43,5 +46,20 @@ protocol PhotoLibraryWriting: Sendable {
     func saveJPEG(_ request: PhotoSaveRequest,
                   onPlaceholder: @escaping @Sendable (String) -> Void) async throws -> SavedAsset
     /// Absence is an observation, never authorization to resubmit an uncertain transaction.
-    func findExport(operationID: UUID, knownAssetID: String?) async throws -> SaveLookup
+    func findExport(operationID: UUID, knownAssetID: String?, originalAssetID: String?) async throws -> SaveLookup
+    func completeReplacement(operationID: UUID, assetID: String) async throws -> SavedAsset
+    func completeReplacements(_ assets: [SavedAsset], allowingPreviousEdits: Bool,
+                              beforeRemoval: @escaping @Sendable () async throws -> Void) async throws -> [SavedAsset]
+    func sourceReplacements() async throws -> [SourceID: SourceID]
+}
+
+extension PhotoLibraryWriting {
+    func completeReplacements(_ assets: [SavedAsset], allowingPreviousEdits: Bool,
+                              beforeRemoval: @escaping @Sendable () async throws -> Void) async throws -> [SavedAsset] {
+        throw PhotoLibraryWriteError.invalidOutput("This writer does not support batch RAW cleanup.")
+    }
+    func completeReplacement(operationID: UUID, assetID: String) async throws -> SavedAsset {
+        throw PhotoLibraryWriteError.invalidOutput("This writer does not create RAW+JPEG pairs.")
+    }
+    func sourceReplacements() async throws -> [SourceID: SourceID] { [:] }
 }
