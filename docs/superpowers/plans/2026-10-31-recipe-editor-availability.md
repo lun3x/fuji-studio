@@ -26,7 +26,7 @@
 
 ## Task 1: Filter presentation and retain repairable selections
 
-**Files:** `FujiStudio/Recipes/PhoneRecipeDraft.swift`, `PhoneRecipeEditor.swift`, corresponding draft tests and `StandardRecipeEditorTests`, `PhoneRecipeEditorTests`, `ModelRecipeTests`, `AppFlowTestCase`.
+**Files:** `FujiStudio/Recipes/PhoneRecipeDraft.swift`, `PhoneRecipeEditor.swift`, corresponding draft tests and `StandardRecipeEditorTests`, `PhoneRecipeEditorTests`, `ModelRecipeTests`, `AppFlowTestCase`, plus the launch-readiness guard in `WorkspaceOrientationTests` exposed by final validation.
 
 **Interfaces:** `choices(for:)` returns available choices only; existing `isAvailable(_:)` and `isChoiceAvailable(_:for:)` identify visible rows and invalid retained selections.
 

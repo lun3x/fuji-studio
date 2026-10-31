@@ -8,6 +8,7 @@ final class WorkspaceOrientationTests: XCTestCase {
         app.launchArguments = ["--workspace-fixture"] + flags
         app.launch()
         XCTAssertTrue(app.buttons["drawer.toggle"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.collectionViews["photoGrid"].waitForExistence(timeout: 10))
         return app
     }
 
