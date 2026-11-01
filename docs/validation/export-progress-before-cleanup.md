@@ -45,3 +45,25 @@ pre-cleanup snapshots; no cause for the earlier blocked cleanup is inferred and
 no safety check is relaxed. Native diagnostic inspection changes no Photos.
 
 Complete UI-inclusive validation and the signed Release build are in progress.
+
+## Final checks
+
+- Complete suite: **720 total, 717 passed, 0 failed, 3 skipped**
+  (`20261101-105057-9338.xcresult`).
+- Inspected the rendered held-cleanup status screenshot: full export progress,
+  3 awaiting cleanup, 0 unconfirmed and a separate final-cleanup status.
+- The physical destination Release command timed out because Louisphone became
+  unavailable. The same Release configuration built successfully for generic
+  iOS with team `AZH3P824F3` and automatic `Apple Development` signing.
+- The exact `.build/PhoneInstall/Build/Products/Release-iphoneos/FujiStudio.app`
+  passed `codesign --verify --deep --strict`; its provisioning profile includes
+  Louisphone. Installation was attempted and rejected by CoreDevice 4016 because
+  the phone is unavailable. Installation and normal launch remain pending.
+- The first native metadata inspection encountered the manually deleted
+  original. Its absence is expected from the user's clarification. The corrected
+  read-only probe could not launch while the phone was locked/unavailable and
+  was stopped. Its temporary test source was removed; no Photos changes ran.
+- Task simulator shutdown/deletion and worker-clone cleanup were verified.
+
+Code checkpoint: `771033e2` on `codex/export-progress`. The ready signed bundle
+is retained in this task workspace for installation after reconnection.
