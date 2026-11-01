@@ -67,3 +67,16 @@ Complete UI-inclusive validation and the signed Release build are in progress.
 
 Code checkpoint: `771033e2` on `codex/export-progress`. The ready signed bundle
 is retained in this task workspace for installation after reconnection.
+
+## Completion after unlock
+
+The corrected metadata probe passed on Louisphone
+(`.build/BatchMetadataProbe-3.xcresult`). Full Photos access was observed. All 16
+pairs from the reported batch are present, with the expected RAW/JPEG resource
+roles and matching preserved metadata. All 16 old originals are absent, matching
+the user's manual deletion. This inspection made no Photos changes and did not
+repeat the earlier byte-hash verification.
+
+The exact signed Release bundle was reverified, installed successfully and
+launched normally without fixture or test arguments. Its temporary diagnostic
+test source was removed. Phone installation is complete.
