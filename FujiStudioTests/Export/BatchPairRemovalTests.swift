@@ -4,6 +4,31 @@ import Testing
 @testable import FujiStudio
 
 struct BatchPairRemovalTests {
+    @Test func progressAdvancesForEachVerifiedExportBeforeCleanupFinishes() async throws {
+        let f = try ExportBatchFixture(), writer = BatchRemovalWriter(), gate = RenderLatch()
+        let (engine, sources) = batch(f, writer: writer)
+        await writer.holdCleanup(gate)
+        var events = await engine.events().makeAsyncIterator()
+        let id = try await engine.start(sources: sources, recipe: f.render.recipe, destination: .updateOriginal)
+        var sawHalf = false, sawFull = false
+        while let event = await events.next() {
+            guard event.jobID == id else { continue }
+            if event.summary.replacementCleanup == 1 {
+                #expect(event.summary.total == 2 && event.summary.fractionCompleted == 0.5)
+                #expect(event.summary.completed == 0)
+                sawHalf = true
+            }
+            if event.summary.replacementCleanup == 2 {
+                #expect(event.summary.total == 2 && event.summary.fractionCompleted == 1)
+                #expect(!event.terminal && event.summary.completed == 0)
+                sawFull = true; break
+            }
+        }
+        await gate.entered()
+        #expect(sawHalf && sawFull)
+        await gate.release()
+        while let event = await events.next() { if event.terminal { #expect(event.summary.completed == 2); break } }
+    }
     @Test(arguments: [false, true])
     func stoppingDuringFinalRevalidationCannotSubmitDeletion(_ cancel: Bool) async throws {
         let f = try ExportBatchFixture(), writer = BatchRemovalWriter(), gate = RenderLatch()

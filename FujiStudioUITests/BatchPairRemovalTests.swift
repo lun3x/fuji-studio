@@ -16,8 +16,13 @@ import XCTest
         wait { app.buttons["workspace.export"].isEnabled }
         app.buttons["workspace.export"].tap()
         app.buttons["app.status"].tap()
-        wait { app.staticTexts["export.counts"].label.contains("0 remaining") && app.staticTexts["export.counts"].label.contains("3 unconfirmed") }
+        wait { app.staticTexts["export.counts"].label.contains("0 remaining") && app.staticTexts["export.counts"].label.contains("3 awaiting cleanup") }
+        XCTAssertTrue(app.staticTexts["export.counts"].label.contains("0 unconfirmed"))
+        XCTAssertTrue((app.progressIndicators["export.progress"].value as? String ?? "").contains("3 of 3 processed"))
+        shot(app, "Verified exports show full progress before original cleanup")
         app.buttons["Done"].tap()
+        XCTAssertTrue((app.buttons["app.status"].value as? String ?? "").contains("3 of 3 processed"))
+        XCTAssertTrue(app.buttons["app.status"].label.contains("3 exported"))
         app.buttons["fixture.inactive"].tap()
         XCTAssertEqual(app.buttons["fixture.finishSave"].value as? String, "Awake")
         app.buttons["fixture.finishSave"].tap()

@@ -10,8 +10,11 @@ enum ExportPauseReason: Sendable, Equatable {
 struct ExportSummary: Sendable, Equatable {
     let completed: Int, failed: Int, skipped: Int, unprocessed: Int, unresolved: Int
     var replacementCleanup: Int = 0
-    var processed: Int { completed + failed + skipped }
-    var total: Int { processed + unprocessed + unresolved }
+    var exported: Int { completed + replacementCleanup }
+    var unconfirmed: Int { unresolved - replacementCleanup }
+    var processed: Int { exported + failed + skipped }
+    // Verified pairs are still unresolved until cleanup; count each job item once.
+    var total: Int { completed + failed + skipped + unprocessed + unresolved }
     var fractionCompleted: Double { total > 0 ? Double(processed) / Double(total) : 0 }
 }
 struct ExportEvent: Sendable, Equatable {
