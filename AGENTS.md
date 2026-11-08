@@ -3,7 +3,7 @@
 - Always use Jujutsu (`jj`) for version control.
 - Push project commits to the remote after each checkpoint, using the active development bookmark while implementation is in progress.
 - Always use the project's `.venv` for Python rather than global Python.
-- Create a new simulator for each task so that concurrently running agents do not interfere with one another. Shut down and delete that simulator when the task is finished.
+- For tasks that use a simulator, create a new one so that concurrently running agents do not interfere with one another. Shut down and delete that simulator when the task is finished.
 - Do not maintain backwards compatibility unless explicitly requested.
 
 ## Test iteration
@@ -13,11 +13,15 @@
   selectors, e.g. `Scripts/test-ios.sh FujiStudioTests/WorkspaceStateTests
   FujiStudioTests/AppModelTests`.
 - Run affected UI suites explicitly when changing UI behavior. Run the complete
-  `Scripts/test-ios.sh` suite for final validation; `--fast` does not verify UI
-  behavior. Use `FUJI_STUDIO_DESTINATION` to select the task's isolated simulator.
+  `Scripts/test-ios.sh` suite for final validation of app changes because
+  `--fast` does not verify UI behavior. Use `FUJI_STUDIO_DESTINATION` to select
+  the task's isolated simulator.
 
 ## Installing on the physical iPhone
 
+- For build-and-install-only requests, build the signed Release, verify its
+  signature, then install and launch it on the phone. Skip simulator creation
+  and simulator tests unless the user also requests testing.
 - Reuse the existing local signing credentials and development team `AZH3P824F3`.
   `Config/Base.xcconfig` uses automatic signing and optionally includes the
   ignored `Config/Signing.local.xcconfig`. That local file may be absent in a new
