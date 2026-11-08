@@ -15,7 +15,7 @@ struct ExportProgressView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text(event.recipeLabel).font(.headline).accessibilityIdentifier("export.recipe")
             Text(Self.status(event)).accessibilityIdentifier("export.status")
-            Text("\(event.summary.completed) saved · \(event.summary.failed) failed · \(event.summary.skipped) cancelled · \(event.summary.unprocessed) remaining · \(event.summary.unresolved) unconfirmed")
+            Text(countDescription)
                 .accessibilityIdentifier("export.counts")
             ForEach(Array(event.failures.enumerated()), id: \.offset) { _, failure in
                 Text(Self.failureMessage(failure)).accessibilityIdentifier("export.failure")
@@ -23,7 +23,10 @@ struct ExportProgressView: View {
             if case .camera(let failure) = event.pauseReason { Text(Self.failureMessage(failure)) }
             if case .persistence = event.pauseReason { Text("The local catalog could not be updated. Recovery records and existing exports are retained.") }
             if !event.terminal {
-                ProgressView()
+                ProgressView(value: event.summary.fractionCompleted)
+                    .accessibilityLabel("Export progress")
+                    .accessibilityValue("\(event.summary.processed) of \(event.summary.total) processed")
+                    .accessibilityIdentifier("export.progress")
                 Button(event.stopRequested ? "Stopping safely…" : "Cancel remaining", action: onCancel).disabled(event.stopRequested)
                     .accessibilityIdentifier("export.cancel")
             } else if event.summary.unresolved > 0 {
@@ -52,6 +55,11 @@ struct ExportProgressView: View {
             Text("Keep Fuji Studio open while exporting over USB. Returning to the app checks interrupted work before you resume.").font(.footnote)
         }
     }
+    private var countDescription: String {
+        let summary = event.summary
+        let cleanup = summary.replacementCleanup > 0 ? " · \(summary.replacementCleanup) awaiting cleanup" : ""
+        return "\(summary.completed) saved\(cleanup) · \(summary.failed) failed · \(summary.skipped) cancelled · \(summary.unprocessed) remaining · \(summary.unconfirmed) unconfirmed"
+    }
     static func failureMessage(_ failure: ExportFailure) -> String {
         switch failure {
         case .authorization: "Photos access is required. Check Settings before retrying."
@@ -65,6 +73,10 @@ struct ExportProgressView: View {
         }
     }
     static func status(_ event: ExportEvent) -> String {
+        if !event.terminal, !event.stopRequested, event.summary.unprocessed == 0,
+           event.summary.replacementCleanup > 0, event.summary.replacementCleanup == event.summary.unresolved {
+            return "Finishing original cleanup in Photos"
+        }
         if event.terminal, event.summary.replacementCleanup > 0,
            event.summary.replacementCleanup == event.summary.unresolved {
             return event.summary.unprocessed > 0 ? "Export paused — resume when ready" : "RAW+JPEG saved — removal pending"
@@ -172,7 +184,10 @@ struct AppWorkspaceView: View {
         if model.isResettingCamera { return "Resetting camera connection…" }
         if model.cameraError != nil || model.cameraResetError != nil { return "Camera error" }
         if model.isLoadingLibrary { return "Reading Photos…" }
-        if let event = model.exportEvent { return "\(event.recipeLabel) · \(event.summary.completed) saved · \(ExportProgressView.status(event))" }
+        if let event = model.exportEvent {
+            let count = event.summary.replacementCleanup > 0 ? "\(event.summary.exported) exported" : "\(event.summary.completed) saved"
+            return "\(event.recipeLabel) · \(count) · \(ExportProgressView.status(event))"
+        }
         if model.message != nil || model.connectionError != nil { return "Action needed" }
         if model.state.libraryAccess == .denied || model.state.libraryAccess == .restricted { return "Photos access needed" }
         if model.isRefreshing { return "Importing camera recipes…" }

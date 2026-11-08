@@ -19,7 +19,7 @@ import XCTest
         XCTAssertTrue(app.buttons["export.finishReplacement"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["export.finishReplacement"].isEnabled)
         app.buttons["export.reconcile"].tap()
-        wait { app.staticTexts["export.counts"].label.contains("1 unconfirmed") }
+        wait { app.staticTexts["export.counts"].label.contains("1 awaiting cleanup") }
         app.buttons["export.finishReplacement"].tap()
         wait { app.staticTexts["export.counts"].label.contains("1 saved") && app.staticTexts["export.counts"].label.contains("0 unconfirmed") }
         XCTAssertFalse(app.buttons["export.finishReplacement"].exists)
