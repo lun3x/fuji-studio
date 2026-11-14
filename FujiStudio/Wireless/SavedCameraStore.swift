@@ -5,7 +5,7 @@ protocol SavedCameraStore: Sendable {
   func cameras() async throws -> [SavedCamera]
   func selected() async throws -> WirelessCameraID?
   func save(_ camera: SavedCamera) async throws
-  func select(_ id: WirelessCameraID) async throws
+  func select(_ id: WirelessCameraID?) async throws
   func forget(_ id: WirelessCameraID) async throws
 }
 

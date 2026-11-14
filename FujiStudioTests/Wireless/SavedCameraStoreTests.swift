@@ -40,6 +40,10 @@ final class SavedCameraStoreTests: XCTestCase {
     XCTAssertFalse(
       String(reflecting: defaults.persistentDomain(forName: namespace)).contains("wifi-password"))
 
+    try await relaunched.select(nil)
+    let clearedSelection = try await store.selected()
+    XCTAssertNil(clearedSelection)
+    try await relaunched.select(paired.id)
     try await relaunched.forget(paired.id)
     let remaining = try await relaunched.cameras()
     let selectionAfterForget = try await relaunched.selected()

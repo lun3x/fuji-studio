@@ -96,10 +96,16 @@ final class KeychainCameraStore: CameraPairingStore, CameraNetworkCredentialProv
     }
   }
 
-  func select(_ id: WirelessCameraID) async throws {
-    guard try record(for: id) != nil else { throw WirelessFailure.peerMismatch }
+  func select(_ id: WirelessCameraID?) async throws {
+    if let id {
+      guard try record(for: id) != nil else { throw WirelessFailure.peerMismatch }
+    }
     try Task.checkCancellation()
-    defaults.set(id.rawValue.uuidString, forKey: selectionKey)
+    if let id {
+      defaults.set(id.rawValue.uuidString, forKey: selectionKey)
+    } else {
+      defaults.removeObject(forKey: selectionKey)
+    }
   }
 
   func forget(_ id: WirelessCameraID) async throws {

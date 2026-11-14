@@ -76,9 +76,27 @@ final class WirelessConnectionCoordinatorTests: XCTestCase {
     XCTAssertEqual(retried, .reconnect(fixture.first.id, prompt: true))
     fixture.gateway.completeLink()
     _ = try await state(&updates) { $0.bluetooth == .ready }
+  }
+
+  func testSuccessfulAutomaticRetryResetsBackoffWithoutBackgrounding() async throws {
+    let fixture = Fixture()
+    var calls = fixture.gateway.operations.makeAsyncIterator()
+    var sleeps = fixture.clock.scheduled.makeAsyncIterator()
+    let states = await fixture.coordinator.states()
+    var updates = states.makeAsyncIterator()
+    await fixture.coordinator.setActivity(.active)
+    _ = await calls.next(isolation: #isolation)
+    fixture.gateway.completeLink(throwing: .connectionLost)
+    let firstDelay = await sleeps.next()
+    XCTAssertEqual(firstDelay, .seconds(3))
+    await fixture.clock.advance(by: .seconds(3))
+    _ = await calls.next(isolation: #isolation)
+    fixture.gateway.completeLink()
+    _ = try await state(&updates) { $0.bluetooth == .ready }
+
     fixture.gateway.dropLink(fixture.first.id)
-    let delayAfterSuccess = await sleeps.next()
-    XCTAssertEqual(delayAfterSuccess, .seconds(3))
+    let nextDelay = await sleeps.next()
+    XCTAssertEqual(nextDelay, .seconds(3))
   }
 
   func testExplicitWiFiRequestSurvivesInactiveUntilBluetoothIsReady() async throws {
@@ -332,6 +350,168 @@ final class WirelessConnectionCoordinatorTests: XCTestCase {
   }
 
 
+  func testCancelWhileDiscoveryWaitsForDisconnectPreventsScan() async throws {
+    try await verifyPendingDiscoveryIsDiscarded(background: false)
+  }
+
+  func testBackgroundAndReturnWhileDiscoveryWaitsForDisconnectPreventsScan() async throws {
+    try await verifyPendingDiscoveryIsDiscarded(background: true)
+  }
+
+  private func verifyPendingDiscoveryIsDiscarded(background: Bool) async throws {
+    let fixture = Fixture()
+    var calls = fixture.gateway.operations.makeAsyncIterator()
+    let states = await fixture.coordinator.states()
+    var updates = states.makeAsyncIterator()
+    await fixture.coordinator.setActivity(.active)
+    _ = await calls.next(isolation: #isolation)
+    fixture.gateway.completeLink()
+    let linked = try await state(&updates) { $0.bluetooth == .ready }
+    fixture.gateway.pauseDisconnect = true
+    let discovery = Task { await fixture.coordinator.startDiscovery() }
+    let disconnect = await calls.next(isolation: #isolation)
+    XCTAssertEqual(disconnect, .disconnect)
+    let draining = try await snapshot(fixture.coordinator)
+    XCTAssertGreaterThan(draining.connectionGeneration, linked.connectionGeneration)
+
+    let (progress, checkpoint) = AsyncStream<Void>.makeStream()
+    let invalidation = Task {
+      _ = try? await state(&updates) { $0.connectionGeneration > draining.connectionGeneration }
+      checkpoint.yield(())
+    }
+    defer { invalidation.cancel() }
+    let interrupted = Task {
+      if background {
+        await fixture.coordinator.setActivity(.background)
+      } else {
+        await fixture.coordinator.cancelConnection()
+      }
+      checkpoint.yield(())
+    }
+    var milestones = progress.makeAsyncIterator()
+    _ = await milestones.next()
+    if background { await fixture.coordinator.setActivity(.active) }
+    fixture.gateway.finishDisconnect()
+    await interrupted.value
+    await discovery.value
+    let current = try await snapshot(fixture.coordinator)
+    XCTAssertNotEqual(current.bluetooth, .discovering)
+    XCTAssertFalse(fixture.gateway.calls.contains(.discover))
+  }
+
+  func testCancelRestoresPreviouslySelectedCameraAfterPairSelectionAlreadyCommitted() async throws {
+    try await verifyCommittedPairSelectionIsReverted(hadSelection: true)
+  }
+
+  func testBackgroundRestoresNoSelectionAfterPairSelectionAlreadyCommitted() async throws {
+    try await verifyCommittedPairSelectionIsReverted(hadSelection: false)
+  }
+
+  func testFailedPairSelectionRestoreRemainsActionableAndDoesNotReconnectCandidate() async throws {
+    try await verifyCommittedPairSelectionIsReverted(hadSelection: true, failRestore: true)
+  }
+
+  private func verifyCommittedPairSelectionIsReverted(
+    hadSelection: Bool, failRestore: Bool = false
+  ) async throws {
+    let fixture = Fixture(selected: hadSelection)
+    var calls = fixture.gateway.operations.makeAsyncIterator()
+    let states = await fixture.coordinator.states()
+    var updates = states.makeAsyncIterator()
+    var selections = fixture.store.selectionRequests.makeAsyncIterator()
+    await fixture.coordinator.setActivity(.active)
+    if hadSelection {
+      _ = await calls.next(isolation: #isolation)
+      fixture.gateway.completeLink()
+      _ = try await state(&updates) { $0.bluetooth == .ready }
+    }
+    await fixture.coordinator.startDiscovery()
+    if hadSelection { _ = await calls.next(isolation: #isolation) }
+    _ = await calls.next(isolation: #isolation)
+    let candidate = DiscoveredCamera(
+      peripheralID: fixture.second.peripheralID, advertisedModelHint: .xe3, displayName: "X-E3")
+    fixture.gateway.discovered([candidate])
+    _ = try await state(&updates) { $0.discoveredCameras == [candidate] }
+    await fixture.store.suspendSelection(afterCommit: true)
+    await fixture.coordinator.pair(candidate)
+    _ = await calls.next(isolation: #isolation)
+    fixture.gateway.completeLink()
+    let committed = await selections.next()
+    XCTAssertEqual(committed, fixture.second.id)
+    let durable = await fixture.store.selected()
+    XCTAssertEqual(durable, fixture.second.id)
+
+    let interrupted = Task {
+      if hadSelection {
+        await fixture.coordinator.cancelConnection()
+      } else {
+        await fixture.coordinator.setActivity(.background)
+      }
+    }
+    let disconnect = await calls.next(isolation: #isolation)
+    XCTAssertEqual(disconnect, .disconnect)
+    if failRestore { await fixture.store.failNextSelection(.unavailableStorage) }
+    await fixture.store.resumeSelection()
+    await interrupted.value
+    await fixture.coordinator.setActivity(.active)
+    let expected = hadSelection ? fixture.first.id : nil
+    let selected = await fixture.store.selected()
+    XCTAssertEqual(selected, failRestore ? fixture.second.id : expected)
+    let current = try await snapshot(fixture.coordinator)
+    XCTAssertEqual(current.selectedCameraID, expected)
+    if failRestore {
+      XCTAssertEqual(current.failure, .unavailableStorage)
+      XCTAssertFalse(fixture.gateway.calls.contains(.reconnect(fixture.second.id, prompt: false)))
+      try await fixture.coordinator.select(fixture.first.id)
+      let repaired = await fixture.store.selected()
+      XCTAssertEqual(repaired, fixture.first.id)
+    }
+    if hadSelection {
+      let attempt = await nextReconnect(&calls)
+      XCTAssertEqual(attempt, .reconnect(fixture.first.id, prompt: false))
+      fixture.gateway.completeLink()
+    } else {
+      XCTAssertEqual(current.bluetooth, .idle)
+    }
+  }
+
+  func testFailedSelectionAfterPairRefreshesSavedCredentialsAndKeepsSelection() async throws {
+    let fixture = Fixture()
+    var calls = fixture.gateway.operations.makeAsyncIterator()
+    let states = await fixture.coordinator.states()
+    var updates = states.makeAsyncIterator()
+    await fixture.coordinator.setActivity(.active)
+    _ = await calls.next(isolation: #isolation)
+    fixture.gateway.completeLink()
+    _ = try await state(&updates) { $0.bluetooth == .ready }
+    await fixture.coordinator.startDiscovery()
+    _ = await calls.next(isolation: #isolation)
+    _ = await calls.next(isolation: #isolation)
+    let candidate = DiscoveredCamera(
+      peripheralID: fixture.second.peripheralID, advertisedModelHint: .xe3, displayName: "X-E3")
+    let reference = CameraCredentialReference(cameraID: fixture.second.id, version: UUID())
+    fixture.gateway.pairedCamera = SavedCamera(
+      id: fixture.second.id, peripheralID: fixture.second.peripheralID, model: .xe3,
+      displayName: "X-E3", peerKeyReference: reference)
+    fixture.gateway.discovered([candidate])
+    _ = try await state(&updates) { $0.discoveredCameras == [candidate] }
+    await fixture.store.failNextSelection(.unavailableStorage)
+    await fixture.coordinator.pair(candidate)
+    _ = await calls.next(isolation: #isolation)
+    fixture.gateway.completeLink()
+    let disconnected = await calls.next(isolation: #isolation)
+    XCTAssertEqual(disconnected, .disconnect)
+    let failed = try await state(&updates) { $0.failure == .unavailableStorage }
+    XCTAssertEqual(failed.selectedCameraID, fixture.first.id)
+    XCTAssertEqual(failed.savedCameras.first { $0.id == fixture.second.id }?.peerKeyReference, reference)
+    XCTAssertEqual(failed.bluetooth, .unavailable)
+    try await fixture.coordinator.select(fixture.second.id)
+    let next = await nextReconnect(&calls)
+    XCTAssertEqual(next, .reconnect(fixture.second.id, prompt: false))
+    XCTAssertEqual(fixture.gateway.reconnectCamera?.peerKeyReference, reference)
+    fixture.gateway.completeLink()
+  }
+
   func testPairingCandidateIsExplicitSelectionAndKeepsItsAuthenticatedLink() async throws {
     let fixture = Fixture(selected: false)
     var calls = fixture.gateway.operations.makeAsyncIterator()
@@ -433,7 +613,10 @@ final class WirelessConnectionCoordinatorTests: XCTestCase {
 private actor MemorySavedCameraStore: SavedCameraStore {
   private var saved: [SavedCamera]
   private var selection: WirelessCameraID?
-  private var pausesSelection = false
+  private enum SelectionPause { case beforeCommit, afterCommit }
+
+  private var selectionPause: SelectionPause?
+  private var selectionFailure: WirelessFailure?
   private var selectionWaiter: CheckedContinuation<Void, Never>?
   private let selectionRequest: AsyncStream<WirelessCameraID>.Continuation
   let selectionRequests: AsyncStream<WirelessCameraID>
@@ -454,25 +637,35 @@ private actor MemorySavedCameraStore: SavedCameraStore {
     saved.append(camera)
   }
 
-  func suspendSelection() { pausesSelection = true }
+  func suspendSelection(afterCommit: Bool = false) {
+    selectionPause = afterCommit ? .afterCommit : .beforeCommit
+  }
+
+  func failNextSelection(_ failure: WirelessFailure) { selectionFailure = failure }
 
   func resumeSelection() {
-    pausesSelection = false
     selectionWaiter?.resume()
     selectionWaiter = nil
   }
 
-  func select(_ id: WirelessCameraID) async throws {
-    if pausesSelection {
-      await withCheckedContinuation { waiter in
-        selectionWaiter = waiter
-        selectionRequest.yield(id)
-      }
+  func select(_ id: WirelessCameraID?) async throws {
+    if let selectionFailure {
+      self.selectionFailure = nil
+      throw selectionFailure
     }
-
+    if let id, selectionPause == .beforeCommit { await pauseSelection(id) }
     try Task.checkCancellation()
-    guard saved.contains(where: { $0.id == id }) else { throw WirelessFailure.peerMismatch }
+    if let id, !saved.contains(where: { $0.id == id }) { throw WirelessFailure.peerMismatch }
     selection = id
+    if let id, selectionPause == .afterCommit { await pauseSelection(id) }
+  }
+
+  private func pauseSelection(_ id: WirelessCameraID) async {
+    selectionPause = nil
+    await withCheckedContinuation { waiter in
+      selectionWaiter = waiter
+      selectionRequest.yield(id)
+    }
   }
 
   func forget(_ id: WirelessCameraID) {
@@ -493,6 +686,9 @@ private final class ControlledBluetoothGateway: BluetoothGateway {
   let operations: AsyncStream<Call>
   private(set) var calls: [Call] = []
   private(set) var wifiActivations = 0
+  private(set) var reconnectCamera: SavedCamera?
+  var pauseDisconnect = false
+  var pairedCamera: SavedCamera?
   private let store: MemorySavedCameraStore
   private let operation: AsyncStream<Call>.Continuation
   private var event: AsyncStream<BluetoothGatewayEvent>.Continuation?
@@ -517,13 +713,14 @@ private final class ControlledBluetoothGateway: BluetoothGateway {
 
   func pair(_ candidate: DiscoveredCamera) async throws -> SavedCamera {
     let cameras = await store.cameras()
-    let saved = try XCTUnwrap(cameras.first { $0.peripheralID == candidate.peripheralID })
+    let saved = try XCTUnwrap(pairedCamera ?? cameras.first { $0.peripheralID == candidate.peripheralID })
     try await connect(saved, as: .pair(candidate.peripheralID))
     await store.save(saved)
     return saved
   }
 
   func reconnect(_ saved: SavedCamera, allowPermissionPrompt: Bool) async throws {
+    reconnectCamera = saved
     try await connect(saved, as: .reconnect(saved.id, prompt: allowPermissionPrompt))
   }
 
@@ -546,10 +743,16 @@ private final class ControlledBluetoothGateway: BluetoothGateway {
   func disconnect() async {
     discovery?.finish()
     record(.disconnect)
-    if link != nil {
+    if link != nil || pauseDisconnect {
       await withCheckedContinuation { disconnectWaiter = $0 }
     }
     camera = nil
+  }
+
+  func finishDisconnect() {
+    pauseDisconnect = false
+    disconnectWaiter?.resume()
+    disconnectWaiter = nil
   }
 
   func completeLink(throwing error: WirelessFailure? = nil) {
@@ -559,8 +762,7 @@ private final class ControlledBluetoothGateway: BluetoothGateway {
     }
     self.link = nil
     if let error { link.resume(throwing: error) } else { link.resume() }
-    disconnectWaiter?.resume()
-    disconnectWaiter = nil
+    finishDisconnect()
   }
 
   func dropLink(_ id: WirelessCameraID) {

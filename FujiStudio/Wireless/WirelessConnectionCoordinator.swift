@@ -29,9 +29,11 @@ actor WirelessConnectionCoordinator {
   private var savedLoaded = false
   private var loading: Task<Void, Never>?
   private var mutatingStore = false
+  private var selectionNeedsRepair = false
 
   private var work: (id: UUID, kind: Work, task: Task<Void, Never>)?
   private var cleanup: Task<Void, Never>?
+  private var pendingDiscovery: UUID?
   private var eventListener: (id: UUID, task: Task<Void, Never>)?
   private var terminalDuringLink: WirelessFailure?
   private var gatewayUsed = false
@@ -88,12 +90,13 @@ actor WirelessConnectionCoordinator {
 
   func select(_ id: WirelessCameraID) async throws {
     try await withSavedCameraMutation {
-      guard id != snapshot.selectedCameraID else { return }
+      guard id != snapshot.selectedCameraID || selectionNeedsRepair else { return }
       guard snapshot.savedCameras.contains(where: { $0.id == id }) else {
         throw WirelessFailure.peerMismatch
       }
       await resetConnection()
       try await store.select(id)
+      selectionNeedsRepair = false
       blockedFailure = nil
       snapshot.selectedCameraID = id
       clearFailures()
@@ -104,7 +107,7 @@ actor WirelessConnectionCoordinator {
     try await withSavedCameraMutation {
       let isSelected = snapshot.selectedCameraID == id
       // A pending pair can target a remembered camera even if it was unselected.
-      if isSelected || isPairing {
+      if isSelected || isPairing || pendingDiscovery != nil {
         await resetConnection()
       }
       try await store.forget(id)
@@ -118,13 +121,19 @@ actor WirelessConnectionCoordinator {
   }
 
   func startDiscovery() async {
-    await loadSavedCameras()
     guard snapshot.activity != .background, !mutatingStore, cleanup == nil,
-      activeTransfer == nil, wifiRequest == nil
+      activeTransfer == nil, wifiRequest == nil, pendingDiscovery == nil
     else { return }
     if case .discovery = work?.kind { return }
-    await resetConnection()
-    guard snapshot.activity != .background, !mutatingStore, cleanup == nil,
+    let id = UUID()
+    pendingDiscovery = id
+    defer {
+      if pendingDiscovery == id { pendingDiscovery = nil }
+    }
+    await loadSavedCameras()
+    guard pendingDiscovery == id, !Task.isCancelled else { return }
+    await resetConnection(preservingDiscovery: id)
+    guard pendingDiscovery == id, !Task.isCancelled, !mutatingStore, cleanup == nil,
       activeTransfer == nil, wifiRequest == nil, work == nil
     else { return }
     clearFailures()
@@ -151,8 +160,8 @@ actor WirelessConnectionCoordinator {
 
   func retryBluetooth() async {
     await loadSavedCameras()
-    guard snapshot.activity != .background, !mutatingStore, cleanup == nil,
-      work == nil, activeTransfer == nil, snapshot.bluetooth != .ready
+    guard snapshot.activity != .background, !mutatingStore, cleanup == nil, pendingDiscovery == nil,
+      work == nil, activeTransfer == nil, snapshot.bluetooth != .ready, !selectionNeedsRepair
     else { return }
     cancelRetry()
     blockedFailure = nil
@@ -166,8 +175,9 @@ actor WirelessConnectionCoordinator {
     await loadSavedCameras()
     try Task.checkCancellation()
     guard snapshot.activity != .background else { throw CancellationError() }
+    guard !selectionNeedsRepair else { throw WirelessFailure.unavailableStorage }
     guard let camera = selectedCamera else { throw WirelessFailure.peerMismatch }
-    guard !mutatingStore, cleanup == nil, wifiRequest == nil, activeTransfer == nil,
+    guard !mutatingStore, cleanup == nil, wifiRequest == nil, activeTransfer == nil, pendingDiscovery == nil,
       !isPairing, snapshot.bluetooth != .discovering
     else { throw WirelessFailure.cameraBusy }
 
@@ -221,7 +231,7 @@ actor WirelessConnectionCoordinator {
   func cancelConnection() async {
     if wifiRequest != nil {
       endWiFiRequest()
-    } else if isPairing || snapshot.bluetooth == .discovering || isExplicitReconnect {
+    } else if pendingDiscovery != nil || isPairing || snapshot.bluetooth == .discovering || isExplicitReconnect {
       await resetConnection()
       await loadSavedCameras()
       startAutomaticReconnect()
@@ -260,7 +270,8 @@ actor WirelessConnectionCoordinator {
     defer { loading = nil }
     do {
       let cameras = try await store.cameras()
-      let selected = try await store.selected()
+      let persistedSelection = try await store.selected()
+      let selected = selectionNeedsRepair ? snapshot.selectedCameraID : persistedSelection
       snapshot.savedCameras = cameras
       snapshot.selectedCameraID = cameras.first { $0.id == selected }?.id
       savedLoaded = true
@@ -287,8 +298,9 @@ actor WirelessConnectionCoordinator {
   }
 
   private func startAutomaticReconnect() {
-    guard snapshot.activity == .active, !mutatingStore, cleanup == nil, activeTransfer == nil,
-      work == nil, savedLoaded, retry == nil, blockedFailure == nil, snapshot.bluetooth != .ready
+    guard snapshot.activity == .active, !mutatingStore, cleanup == nil, activeTransfer == nil, pendingDiscovery == nil,
+      work == nil, savedLoaded, retry == nil, blockedFailure == nil, snapshot.bluetooth != .ready,
+      !selectionNeedsRepair
     else { return }
     startReconnect(prompt: false)
   }
@@ -371,25 +383,51 @@ actor WirelessConnectionCoordinator {
 
   private func finishPairing(_ camera: SavedCamera, id: UUID) async {
     guard work?.id == id else { return }
+    // The gateway has already persisted these credentials, regardless of selection.
+    if let index = snapshot.savedCameras.firstIndex(where: { $0.id == camera.id }) {
+      snapshot.savedCameras[index] = camera
+    } else {
+      snapshot.savedCameras.append(camera)
+    }
+    let previousSelection = snapshot.selectedCameraID
     do {
       if let failure = terminalDuringLink { throw failure }
       try Task.checkCancellation()
       try await store.select(camera.id)
-      guard work?.id == id else { return }
-      snapshot.selectedCameraID = camera.id
-      if let index = snapshot.savedCameras.firstIndex(where: { $0.id == camera.id }) {
-        snapshot.savedCameras[index] = camera
-      } else {
-        snapshot.savedCameras.append(camera)
+      guard work?.id == id else {
+        await restoreSelection(previousSelection, afterPairing: camera.id)
+        return
       }
+      selectionNeedsRepair = false
+      snapshot.selectedCameraID = camera.id
       finishReconnect(id: id)
     } catch {
-      guard work?.id == id else { return }
+      guard work?.id == id else {
+        await restoreSelection(previousSelection, afterPairing: camera.id)
+        return
+      }
       // Pair has already authenticated. Close that link if persistence failed.
       let failure = (error as? WirelessFailure) ?? .unavailableStorage
       work = nil
-      await resetConnection()
       recordBluetoothFailure(failure)
+      await resetConnection()
+    }
+  }
+
+  private func restoreSelection(_ previous: WirelessCameraID?, afterPairing candidate: WirelessCameraID) async {
+    guard previous != candidate else { return }
+    // The link's task is cancelled. Cleanup waits for it, including this uncancelled restore.
+    let store = self.store
+    let restore = Task {
+      if try await store.selected() == candidate {
+        try await store.select(previous)
+      }
+    }
+    do {
+      try await restore.value
+    } catch {
+      selectionNeedsRepair = true
+      recordBluetoothFailure(.unavailableStorage)
     }
   }
 
@@ -478,7 +516,8 @@ actor WirelessConnectionCoordinator {
     }
   }
 
-  private func resetConnection() async {
+  private func resetConnection(preservingDiscovery id: UUID? = nil) async {
+    if pendingDiscovery != id { pendingDiscovery = nil }
     snapshot.connectionGeneration &+= 1
     endWiFiRequest()
     snapshot.wifiFailure = nil
@@ -500,11 +539,11 @@ actor WirelessConnectionCoordinator {
       let task = Task {
         await bluetooth.disconnect()
         await pending?.task.value
+        cleanup = nil
       }
       gatewayUsed = false
       cleanup = task
       await task.value
-      cleanup = nil
     }
   }
 
