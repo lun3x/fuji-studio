@@ -15,6 +15,7 @@ struct FujiStudioApp: App {
             case .grid: GridFixtureEntry()
             case .viewer: ViewerFixtureEntry()
             case .probe: ProbeEntryView()
+            case .wirelessProbe: WirelessProtocolProbe(bluetoothOnly: ProcessInfo.processInfo.arguments.contains("--wireless-probe-bluetooth-only"))
             case .invalid: Text("Fixture and probe launch modes cannot be combined.")
             case .live: AppEntryView()
             }

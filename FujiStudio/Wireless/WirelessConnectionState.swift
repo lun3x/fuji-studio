@@ -25,8 +25,16 @@ enum WirelessBluetoothReadiness: Equatable, Sendable {
 
 enum WirelessWiFiPhase: Equatable, Sendable {
   case idle
+  case acquiringOwnership
   case waitingForBluetooth
   case bluetoothReady
+  case activatingCamera
+  case joiningNetwork
+  case openingSession
+  case checkingFirmware
+  case loadingInventory
+  case ready
+  case disconnecting
 }
 
 struct WirelessConnectionIntent: Equatable, Sendable {
@@ -43,6 +51,7 @@ struct WirelessConnectionState: Equatable, Sendable {
   var wifi: WirelessWiFiPhase = .idle
   var failure: WirelessFailure?
   var wifiFailure: WirelessFailure?
+  var wifiFailurePhase: WirelessWiFiPhase?
   var pairingFailure: BluetoothPairingFailure?
   var connectionGeneration: UInt64 = 0
 }

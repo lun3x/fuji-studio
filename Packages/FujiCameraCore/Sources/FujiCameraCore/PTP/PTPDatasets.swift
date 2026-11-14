@@ -88,6 +88,19 @@ public struct PTPPropertyDescriptor: Sendable, Equatable {
 
 public enum PTPDatasets {
   public static func deviceInfo(_ data: Data) throws -> FujiDeviceInfo {
+    try parseDeviceInfo(data).0
+  }
+
+  // A redacted digest preserves an observed identifier without exporting the raw serial.
+  static func wirelessDeviceInfo(_ data: Data) throws -> (FujiDeviceInfo, WirelessProtocolPeerKey?) {
+    let (device, serial) = try parseDeviceInfo(data)
+    let value = serial.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !value.isEmpty else { return (device, nil) }
+    let digest = SHA256.hash(data: Data("FujiStudio:PTP-DeviceInfo:\(device.model):\(value)".utf8))
+    return (device, WirelessProtocolPeerKey(bytes: Data(digest)))
+  }
+
+  private static func parseDeviceInfo(_ data: Data) throws -> (FujiDeviceInfo, String) {
     var reader = try Reader(data)
     let standard = try reader.u16()
     let vendor = try reader.u32()
@@ -102,13 +115,13 @@ public enum PTPDatasets {
     let manufacturer = try reader.string()
     let model = try reader.string()
     let firmware = try reader.string()
-    _ = try reader.string()  // Do not retain serial, including in debug descriptions.
+    let serial = try reader.string()
     try reader.finish()
-    return FujiDeviceInfo(
+    return (FujiDeviceInfo(
       standardVersion: standard, vendorExtensionID: vendor, vendorExtensionVersion: version,
       functionalMode: mode, operations: operations, events: events, properties: properties,
       captureFormats: capture, imageFormats: images, manufacturer: manufacturer, model: model,
-      firmware: firmware)
+      firmware: firmware), serial)
   }
 
   public static func propertyDescriptor(_ data: Data, expectedCode: UInt16) throws
@@ -150,7 +163,7 @@ public enum PTPDatasets {
     return value
   }
 
-  private struct Reader {
+  struct Reader {
     let data: Data
     var offset = 0
     init(_ data: Data) throws {

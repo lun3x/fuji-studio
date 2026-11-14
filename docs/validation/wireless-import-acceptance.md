@@ -49,3 +49,37 @@ Add one entry per tested firmware and transfer mode with the following fields. U
 | Photos | One new asset per capture, resource verification, interrupted submission recovery, originals still present on the camera |
 
 Synthetic packet fixtures verify software behavior. Record them with synthetic provenance. A successful signed-iPhone run on each target is required for physical acceptance.
+
+### Camera-hosted probe on 2026-11-14
+
+The deterministic replays use synthetic packets. XApp setup follows the pinned
+libfuji vendor properties and the ordered gallery reads in the GFX100 II
+capture. The phone adapter uses the referenced legacy gallery commands and
+omits live view. The target firmware's response to these sequences remains
+pending. The separate debug route `--wireless-protocol-probe` initializes only
+Bluetooth and Wi-Fi services. The operator explicitly selects the camera and
+chooses files to stage privately. The probe writes an observation log and
+per-resource SHA-256 receipts under
+`Library/Application Support/WirelessProtocolProbe/<run-id>`.
+
+| Gate | Observed result |
+| --- | --- |
+| Signed iPhone with native camera Wi-Fi | The configured personal development team cannot provision the Hotspot Configuration or Access Wi-Fi Information capabilities. Xcode denied the app development profile with and without automatic provisioning. Native Wi-Fi and PTP measurements remain pending on both target bodies. |
+| Signed iPhone Bluetooth-only diagnostic | A temporary project without Wi-Fi entitlements built, passed strict signature verification and installed on an iPhone 15 Pro running iOS 27.0.1. The device refused the explicit diagnostic launch with a profile trust or signature error. The app identifier, team, signer certificate and target device matched the embedded profile. Pairing, protected storage and reconnect remain pending. |
+| Wi-Fi network binding | The app resolves the authenticated BLE credential at the native join boundary. It checks the currently associated secured SSID through `NEHotspotNetwork.fetchCurrent` before opening PTP and again before browsing. This requires both the Wi-Fi Information entitlement and API eligibility for the current network. Unreadable or different associations fail the handoff. A previously configured network must already be associated before reuse. |
+| Peer binding | The PTP adapter checks the model and the exact firmware from DeviceInfo before transfer setup. An observed DeviceInfo serial can be retained as a redacted digest for protected comparison. Its stability and relationship to BLE or AutoSave remain unverified. A matching secured SSID and matching model and firmware cannot distinguish peers with those same values. |
+| Original size | The XApp adapter reads D226 and allows original transfer only when it observes the reference value 2. The app never writes D226 or changes the camera's resize setting. Libfuji and the GFX100 II capture use different write widths and do not establish persistence scope on the target. Legacy phone D227 is the file-size reporting control applied around a transfer and reset during cleanup. The camera menu setting and original byte equality remain target measurements. |
+| RAW exposure | Replay observes XApp RAF files and a phone gallery with no declared or observed RAF support. The X-E3 1.32 card test and the separate signed AutoSave multicast gate remain pending. |
+
+A signed wireless build needs a development team and device profile granting
+`com.apple.developer.networking.HotspotConfiguration` and
+`com.apple.developer.networking.wifi-info`. To run after provisioning, build the
+Debug configuration with normal automatic development signing, verify the app
+with `codesign --verify --deep --strict`, install that bundle, then launch
+`com.lun3x.FujiStudio` with `--wireless-protocol-probe`. Approve Bluetooth,
+camera, Wi-Fi and Local Network prompts when asked. Run first pairing and
+reconnect for each body after unplugging its USB cable. Check the camera's
+**Resize Image for Smartphone** setting before an original-size test. Select
+the JPEG and RAF of a known paired capture and a standalone RAF in the X-T5
+probe inventory. Compare the staged receipts with SHA-256 of files copied
+independently from the card.

@@ -6,9 +6,19 @@ import Observation
 
 /// All deterministic UI routes are decided before ANY live service or probe is constructed.
 @MainActor enum FixtureEnvironment {
-    enum Route: Equatable { case unitHost, flow, workspace, grid, viewer, probe, live, liveAcceptance(UUID), invalid }
+    enum Route: Equatable { case unitHost, flow, workspace, grid, viewer, probe, wirelessProbe, live, liveAcceptance(UUID), invalid }
     static func route(arguments: [String], unitHost: Bool) -> Route {
         if unitHost { return .unitHost }
+        if arguments.contains("--wireless-protocol-probe") {
+            guard arguments.filter({ $0 == "--wireless-protocol-probe" }).count == 1,
+                  !arguments.contains(where: { argument in
+                      argument != "--wireless-protocol-probe"
+                          && (argument.hasSuffix("-probe") || argument.contains("fixture")
+                              || argument == "--live-acceptance-run")
+                  }) else { return .invalid }
+            return .wirelessProbe
+        }
+        if arguments.contains("--wireless-probe-bluetooth-only") { return .invalid }
         if arguments.contains("--live-acceptance-run") {
             guard arguments.filter({ $0 == "--live-acceptance-run" }).count == 1,
                   let index = arguments.firstIndex(of: "--live-acceptance-run"), index + 1 < arguments.count,
