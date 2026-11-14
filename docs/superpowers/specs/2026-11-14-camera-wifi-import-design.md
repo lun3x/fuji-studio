@@ -1,9 +1,10 @@
 # Camera WiFi import for X-T5 and X-E3
 
 Date: 2026-11-14. Status: proposed specification, awaiting user review.
-Independent builder check completed: no important planning questions remained.
+Initial builder check completed: no important planning questions remained.
+Firmware scope subsequently narrowed by the user to latest releases only.
 Agreed approach: native Swift protocol adapters with capability detection,
-covering both cameras and firmware generations wherever reasonably possible.
+covering both cameras on their latest official stable firmware.
 Research: [wireless protocol evidence](../../validation/wireless-protocol-research.md).
 This is a substantial feature spanning connection, camera browsing, import and
 recovery. It requires physical camera and iPhone validation as well as tests.
@@ -20,16 +21,18 @@ connection ready while the app is open. Tapping the existing status control
 opens connection settings. Connect over WiFi starts the camera network and
 uses the native iPhone confirmation to join it, followed by camera browsing.
 
-The user explicitly requested both X-T5 and X-E3, including older firmware as
-far as feasible. This authorizes firmware compatibility work despite the
-project's default of not maintaining backwards compatibility. It does not imply
-that a camera can expose capabilities its firmware lacks.
+Support both X-T5 and X-E3 on their latest official stable firmware only.
+Older firmware compatibility is outside scope, consistent with the project's
+default. Latest firmware does not imply that both camera models expose the
+same capabilities.
 
 ## Scope and success
 
 - Pair and remember both supported camera models; connect to one selected
   wireless camera at a time.
-- Support legacy token pairing and secure Bluetooth bonding where advertised.
+- Implement the pairing protocol required by each model's current firmware:
+  secure bonding for X-T5 and the X-E3's current protocol, expected to remain
+  legacy token pairing and subject to hardware verification.
 - Reconnect automatically while foregrounded, with no repeated pairing or
   WiFi join prompts during normal photo browsing.
 - Start WiFi explicitly from status, then browse and select camera captures.
@@ -61,14 +64,15 @@ merely because Bluetooth or WiFi is connected.
 1. **Native Swift adapters, selected by capabilities — chosen.** Use
    CoreBluetooth and Apple's network APIs, adapting the published protocols
    into the existing Swift architecture. This permits explicit lifecycle and
-   import ownership, deterministic tests and targeted firmware differences.
+   import ownership, deterministic tests and model-specific protocol handling.
    The app must maintain the protocol implementation and its evidence record.
 2. **Embed libfuji and provide an iOS platform layer.** This follows upstream
    more directly but brings C/runtime integration and provisional behaviors
    that still require adaptation and hardware checks. It is a reference source
    for the chosen approach, not a new runtime dependency.
-3. **Manual WiFi or recent-X-T5-only support.** Less connection work, but misses
-   the requested Bluetooth handoff or two-camera scope. Rejected.
+3. **Manual WiFi or X-T5-only support.** Less connection work, but misses the
+   requested Bluetooth handoff or two-camera scope. Rejected. Latest-firmware
+   support for both models is the chosen scope.
 
 The user agreed to the recommendation after reviewing the research. Exact UI
 details and defaults below are proposed design decisions, not additional user
@@ -81,25 +85,43 @@ official documentation, external hardware reports, source implementation and
 unverified assumptions. Use it for protocol details rather than copying a
 single model's full command sequence into every adapter.
 
+Current targets, checked against Fujifilm's official release pages on
+2026-11-14:
+
 | Target | Intended connection | RAW evidence / restriction |
 | --- | --- | --- |
-| X-T5 before 3.01 | Advertised legacy pairing and available phone-transfer mode | Wireless RAW is unverified; do not reject connection solely for age, and do not invent RAW access. |
-| X-T5 3.01–4.21 | Legacy BLE plus negotiated phone-transfer protocol | Fujifilm documents RAW transfer starting at 3.01; original paired import still needs local proof. |
-| X-T5 4.30 onward | Secure BLE bonding plus negotiated phone-transfer protocol | Security transition documented at 4.30; public updated-X-T5 reconnect report exists. |
-| X-E3 across available firmware | Legacy BLE/phone WiFi; guided PC AutoSave for RAW where verified | No inspected source proves original RAF retrieval through the normal phone-transfer path. AutoSave is the candidate fallback. |
+| [X-T5 4.32](https://www.fujifilm-x.com/en-us/support/download/firmware/cameras/x-t5/) | Secure BLE bonding plus current XApp transfer protocol | Official wireless RAW support; original paired import still needs local proof on this release. |
+| [X-E3 1.32](https://www.fujifilm-x.com/en-us/support/download/firmware/cameras/x-e3/) | Current X-E3 BLE/phone WiFi; guided PC AutoSave for RAW where verified | No inspected source proves original RAF retrieval through the normal phone-transfer path. AutoSave remains the candidate fallback. |
 
-These ranges describe known transitions, not an exact-version allowlist or a
-promise about untested future firmware. Discover GATT services, negotiate known
-protocol versions and inspect supported operations/file exposure. Prefer a
-recognized protocol over rejecting an unknown firmware string. Unknown protocol
-structures fail with a useful unsupported-connection message; do not cycle
-through speculative writes. A camera refusing RAW must remain usable for its
-supported connection functions, with the limitation visible before import.
+Recheck these official pages before implementation and release validation.
+Target one latest stable firmware per model in each app release. If Fujifilm
+publishes a newer version, update the target and validate it; retaining the
+superseded version is not required. The app uses a bundled support table, so
+camera use does not require an Internet firmware lookup. Newer firmware is not
+automatically certified or admitted merely because its version is higher.
 
-Maintain a support matrix by model, firmware, BLE family, transfer mode and
-tested feature. Distinguish locally verified, externally reported, unverified
-and observed unsupported. Record exact firmware in diagnostics. Universal
-firmware support is a target; only measured combinations are certified.
+Identify the model and firmware through the recognized connection protocol
+before enabling browsing/import. Older firmware gets a clear update-required
+message with the supported version and official instructions; newer or unreadable
+firmware gets an unsupported/unverified-version message with app-update or Retry
+guidance as appropriate. Initial pairing/identity reads may precede this gate,
+but file transfer may not. The app does not update camera firmware itself.
+
+Within each supported version, discover GATT services, negotiate known protocol
+versions and inspect operations/file exposure. Capability checks remain necessary
+for camera mode, storage and RAW access; they do not waive the firmware gate.
+Do not retain an older X-T5 pairing path for backwards compatibility. X-E3 may
+still require a legacy protocol on its latest firmware; that is current-model
+support, not older-firmware support. Unknown protocol structures fail clearly
+without speculative writes. A supported camera refusing RAW shows the limitation
+before import and can offer its verified fallback.
+
+Maintain an evidence matrix for the two current targets by BLE family, transfer
+mode and tested feature, separating locally verified, externally reported and
+unverified behavior. Historical research remains useful reference material,
+but its original broad-firmware recommendation is superseded by this spec.
+Record exact firmware in diagnostics. This wireless feature's policy does not
+change existing USB rendering support as part of this implementation.
 
 ## Status and connection screens
 
@@ -369,7 +391,7 @@ Names below are illustrative; exact types and file placement are builder calls.
 | Component | Responsibility |
 | --- | --- |
 | Wireless connection coordinator | Selected camera, foreground lifecycle, bounded reconnect, explicit join intent, generation/cancellation and value-only observable state. |
-| BLE adapters and native BLE driver | Protocol discovery, legacy/secure pairing, saved reconnect, credentials and WiFi activation; CoreBluetooth objects remain at the platform boundary. |
+| BLE adapters and native BLE driver | Current X-T5/X-E3 protocol discovery and pairing, saved reconnect, credentials and WiFi activation; CoreBluetooth objects remain at the platform boundary. |
 | WiFi join gateway | Native configuration/confirmation and app-owned network teardown, injectable for tests. |
 | Wireless PTP transport and mode adapters | Bounded framed TCP I/O, serialized transactions, legacy/XApp/AutoSave setup, capabilities, enumeration and streaming download. |
 | Camera browser model | Incremental metadata/thumbnails, capture grouping, pair confidence, selection and import status. |
@@ -393,13 +415,13 @@ exact source revision and local protocol corrections.
 ## Validation and delivery gates
 
 1. **Protocol feasibility:** record BLE discovery, authentication, WiFi launch,
-   native join, PTP setup and both-original download separately on available
-   X-T5 and X-E3 firmware. Test X-E3 AutoSave on Mac as a diagnostic if useful,
-   but only an iPhone success establishes the app fallback. If it cannot expose
+   native join, PTP setup and both-original download separately on the latest
+   supported X-T5 and X-E3 firmware. Test X-E3 AutoSave on Mac as a diagnostic
+   if useful, but only an iPhone success establishes the app fallback. If it cannot expose
    both originals, stop claiming that path and report the evidence.
 2. **Deterministic tests:** packet framing/fragmentation, bounds, transactions,
-   both BLE families, capability selection without strict firmware pinning,
-   late callbacks, denial, join cancellation and temporary inactivity. Include
+   the current pairing protocols for both models, firmware admission and
+   capability checks, late callbacks, denial, join cancellation and temporary inactivity. Include
    reconnect, card changes, cross-card pairing, duplicate filenames and
    unsupported RAW exposure.
 3. **Import correctness:** pair/RAW fixtures; interrupted first/second download;
@@ -417,10 +439,13 @@ exact source revision and local protocol corrections.
    X-T5 cards, cancellation/background/relaunch and exact-byte Photos readback.
    Include a supported compressed RAF and an uncompressed RAF where the camera
    provides them. No camera/card file changes or unintended Photos duplicates.
-6. **Firmware coverage:** exercise real available versions and replay captured
-   older/newer protocol fixtures. Never downgrade a camera solely to fill the
-   matrix without a separate user decision. Report untested versions honestly;
-   replay/simulator evidence is not physical certification.
+6. **Firmware coverage:** exercise the latest official stable release on each
+   model and replay fixtures for those target protocols. Test rejection of older,
+   newer/unvalidated and unreadable versions. No historical-firmware compatibility
+   matrix or downgrade testing is required. Camera firmware updates are a separate
+   user action. If the available hardware is on an older release, report the
+   physical acceptance gate as pending; do not substitute its results for the
+   target version. Replay/simulator evidence is not physical certification.
 
 Use isolated Jujutsu workspaces under `/tmp/`, push each checkpoint to the active
 development bookmark, use the project's `.venv` for Python and task-owned
@@ -430,6 +455,8 @@ require an app build or establish any hardware support.
 
 ## Proposed defaults to review
 
+- Latest stable firmware only: currently X-T5 4.32 and X-E3 1.32, with the
+  targets rechecked before implementation and each release.
 - Both cameras can be saved, with one explicitly selected reconnect target.
 - Initial pairing is explicit; reconnect happens while foregrounded; WiFi and
   imports always start from a user action.

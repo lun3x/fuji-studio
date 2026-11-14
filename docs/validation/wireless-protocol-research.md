@@ -5,6 +5,12 @@ Status: research only; no Fuji Studio wireless implementation or physical wirele
 camera test has been performed. External observations below belong to their
 authors, not to this project.
 
+Scope update, 2026-11-14: the user subsequently chose **latest firmware only**
+for both cameras. The [current design](../superpowers/specs/2026-11-14-camera-wifi-import-design.md)
+supersedes the broad-firmware request and recommendations below. Current targets
+are X-T5 4.32 and X-E3 1.32. The historical protocol findings remain reference
+material, not requirements to support older releases.
+
 ## Requested behavior
 
 Support X-T5 and X-E3 across firmware versions wherever reasonably possible.
