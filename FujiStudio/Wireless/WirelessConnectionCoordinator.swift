@@ -17,6 +17,12 @@ actor WirelessConnectionCoordinator {
     var waiter: CheckedContinuation<WirelessConnectionIntent, Error>?
   }
 
+  private struct WiFiAttempt {
+    let id: UUID
+    let task: Task<Void, Never>
+    var bluetoothFailure: (reason: WirelessFailure, phase: WirelessWiFiPhase)?
+  }
+
   private let bluetooth: any BluetoothGateway
   private let store: any SavedCameraStore
   private let authorization: @Sendable () -> WirelessBluetoothAuthorization
@@ -49,7 +55,7 @@ actor WirelessConnectionCoordinator {
 
   private var wifiRequest: WiFiRequest?
   private var activeTransfer: WirelessConnectionIntent?
-  private var wifiAttempt: (id: UUID, task: Task<Void, Never>)?
+  private var wifiAttempt: WiFiAttempt?
   private var wifiTeardown: Task<Void, Never>?
   private var wifiLease: CameraUseLease?
   private var joinedNetwork: JoinedCameraNetwork?
@@ -493,7 +499,10 @@ actor WirelessConnectionCoordinator {
   }
 
   private func recordBluetoothFailure(_ failure: WirelessFailure) {
-    if wifiRequest != nil, !cameraWiFiActivationStarted { endWiFiRequest(failure: failure) }
+    if wifiRequest != nil, !cameraWiFiActivationStarted {
+      wifiAttempt?.bluetoothFailure = (reason: failure, phase: snapshot.wifi)
+      endWiFiRequest(failure: failure)
+    }
     switch failure {
     case .connectionLost, .timeout, .cameraBusy:
       snapshot.bluetooth = .waitingForCamera
@@ -540,8 +549,10 @@ actor WirelessConnectionCoordinator {
     guard let current = wifiRequest else { return }
     wifiRequest = nil
     snapshot.connectionGeneration &+= 1
+    let phase = snapshot.wifi
     snapshot.wifi = .idle
     snapshot.wifiFailure = failure
+    snapshot.wifiFailurePhase = failure == nil ? nil : phase
     if let failure {
       current.waiter?.resume(throwing: failure)
     } else {
@@ -612,7 +623,7 @@ extension WirelessConnectionCoordinator {
     snapshot.wifi = .acquiringOwnership
     let id = UUID()
     let attempt = Task { await runWiFi(id, wifi: wifi, ownership: ownership, makeSession: sessionFactory) }
-    wifiAttempt = (id, attempt)
+    wifiAttempt = WiFiAttempt(id: id, task: attempt)
     await withTaskCancellationHandler {
       await attempt.value
     } onCancel: {
@@ -699,10 +710,12 @@ extension WirelessConnectionCoordinator {
       }
       throw WirelessFailure.unavailableStorage
     } catch {
-      guard wifiTeardown == nil else { return }
-      let phase = snapshot.wifi
+      guard wifiTeardown == nil, let attempt = wifiAttempt, attempt.id == id else { return }
+      let interruptedByBluetooth = Task.isCancelled ? nil : attempt.bluetoothFailure
       let cancellation = Task.isCancelled || error is CancellationError
-      let failure = cancellation ? nil : (error as? WirelessFailure) ?? .connectionLost
+      let phase = interruptedByBluetooth?.phase ?? snapshot.wifi
+      let failure = interruptedByBluetooth?.reason
+        ?? (cancellation ? nil : (error as? WirelessFailure) ?? .connectionLost)
       endWiFiRequest(failure: failure)
       snapshot.wifiFailure = failure
       snapshot.wifiFailurePhase = failure == nil ? nil : phase

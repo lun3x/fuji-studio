@@ -13,6 +13,15 @@ public protocol WirelessTransferSession: Sendable {
   func close() async throws
 }
 
+#if DEBUG
+/// Candidate bytes for independent comparison with originals copied from the card.
+public protocol WirelessDiagnosticCandidateSession: Sendable {
+  func downloadDiagnosticCandidate(
+    _ object: WirelessObjectDescriptor, to sink: @escaping @Sendable (Data) async throws -> Void
+  ) async throws
+}
+#endif
+
 /// Owns transaction IDs, storage selection and object affinity for a single camera-hosted socket.
 actor CameraHostedTransferSession: WirelessTransferSession {
   private struct CardScan {
@@ -41,9 +50,9 @@ actor CameraHostedTransferSession: WirelessTransferSession {
   private var rawExposure: WirelessRAWExposure = .unknown
   private var declaresJPEGOnly = false
   private var inventoryFailure: (any Error)?
-  private var originalControlAccepted = false
+  private var xAppOriginalControlObserved = false
   var phoneObjectCount: UInt32?
-  var phoneOriginalMode = false
+  var phoneAccurateLengthsEnabled = false
 
   init(
     transport: WirelessPTPTransport, expectedIdentity: WirelessIdentity, mode: WirelessMode,
@@ -96,7 +105,7 @@ actor CameraHostedTransferSession: WirelessTransferSession {
     try requireAdmission()
     return WirelessCapabilities(
       mode: mode, rawExposure: rawExposure, storageIDs: storageIDs ?? [],
-      originalSizeVerified: originalControlAccepted,
+      originalSizeVerified: xAppOriginalControlObserved,
       evidenceID: mode == .xApp ? "libfuji-xapp-reference" : "libfuji-phone-reference")
   }
 
@@ -147,7 +156,7 @@ actor CameraHostedTransferSession: WirelessTransferSession {
       let handles: [UInt32]?
       if mode == .xApp {
         handles = try await configureXAppCard(storage)
-        if let handles, !handles.isEmpty { originalControlAccepted = try await observesXAppOriginalSize() }
+        if let handles, !handles.isEmpty { xAppOriginalControlObserved = try await observesXAppOriginalSize() }
       } else if let phoneObjectCount {
         // The legacy phone gallery exposes consecutive handles starting at 1.
         handles = (0..<phoneObjectCount).map { $0 + 1 }
@@ -166,11 +175,18 @@ actor CameraHostedTransferSession: WirelessTransferSession {
     var additions: [WirelessObjectDescriptor] = []
     let previousExposure = rawExposure
     let end = min(scan.index + 16, scan.handles.count)
-    for handle in scan.handles[scan.index..<end] {
-      let object = try await objectInfo(handle: handle, storage: scan.id)
-      objects[scan.id, default: [:]][handle] = object
+    if scan.index < end {
+      additions = try await withAccuratePhoneLengths {
+        var metadata: [WirelessObjectDescriptor] = []
+        for handle in scan.handles[scan.index..<end] {
+          metadata.append(try await objectInfo(handle: handle, storage: scan.id))
+        }
+        return metadata
+      }
+    }
+    for object in additions {
+      objects[scan.id, default: [:]][object.handle] = object
       if object.format == .raf { rawExposure = .available }
-      additions.append(object)
     }
     scan.index = end
     let complete = end == scan.handles.count
@@ -189,40 +205,57 @@ actor CameraHostedTransferSession: WirelessTransferSession {
     try begin()
     defer { busy = false }
     try await selectStorage(for: object.storageID)
-    // Libfuji observes that newer camera bodies require ObjectInfo immediately before GetThumb.
-    _ = try await objectInfo(handle: object.handle, storage: object.storageID)
-    return try await execute(0x100a, [object.handle]).data
+    return try await withAccuratePhoneLengths {
+      // Libfuji observes that newer camera bodies require ObjectInfo immediately before GetThumb.
+      try await verifyObject(object)
+      return try await execute(0x100a, [object.handle]).data
+    }
   }
 
   func download(
     _ object: WirelessObjectDescriptor, to sink: @escaping @Sendable (Data) async throws -> Void
   ) async throws {
     try checkMember(object)
+    // Phone D227 verifies size reporting. The returned representation still needs target evidence.
+    guard mode == .xApp else { throw WirelessFailure.originalSizeUnavailable }
+    try begin()
+    defer { busy = false }
+    try await selectStorage(for: object.storageID)
+    xAppOriginalControlObserved = try await observesXAppOriginalSize()
+    guard xAppOriginalControlObserved else { throw WirelessFailure.originalSizeUnavailable }
+    try await streamMatchingObject(object, to: sink)
+  }
+
+  #if DEBUG
+  func downloadDiagnosticCandidate(
+    _ object: WirelessObjectDescriptor, to sink: @escaping @Sendable (Data) async throws -> Void
+  ) async throws {
+    try checkMember(object)
+    guard mode == .phone else { throw WirelessFailure.unsupportedProtocol }
+    try begin()
+    defer { busy = false }
+    try await withAccuratePhoneLengths { try await streamMatchingObject(object, to: sink) }
+  }
+  #endif
+
+  private func streamMatchingObject(
+    _ object: WirelessObjectDescriptor, to sink: @escaping @Sendable (Data) async throws -> Void
+  ) async throws {
     guard object.format == .raf || object.format == .jpeg,
       let length = UInt32(exactly: object.byteLength), length > 0,
       transport.partialObjectLimit > 0
     else { throw WirelessFailure.unsupportedProtocol }
-    try begin()
-    defer { busy = false }
-    try await selectStorage(for: object.storageID)
-    try await enableOriginalSize()
-    do {
-      try await verifyOriginal(object)
-      var offset: UInt32 = 0
-      while offset < length {
-        let count = min(transport.partialObjectLimit, length - offset)
-        let command = try commandFor(0x101b, [object.handle, offset, count])
-        let reply = try await transport.receive(command, expectedBytes: UInt64(count), sink: sink)
-        guard reply.parameters.isEmpty || reply.parameters == [count] else {
-          throw WirelessFailure.malformedData
-        }
-        offset += count
+    try await verifyObject(object)
+    var offset: UInt32 = 0
+    while offset < length {
+      let count = min(transport.partialObjectLimit, length - offset)
+      let command = try commandFor(0x101b, [object.handle, offset, count])
+      let reply = try await transport.receive(command, expectedBytes: UInt64(count), sink: sink)
+      guard reply.parameters.isEmpty || reply.parameters == [count] else {
+        throw WirelessFailure.malformedData
       }
-    } catch {
-      if mode == .phone { try? await resetPhoneOriginalSize() }
-      throw error
+      offset += count
     }
-    if mode == .phone { try await resetPhoneOriginalSize() }
   }
 
   func close() async throws {
@@ -230,7 +263,7 @@ actor CameraHostedTransferSession: WirelessTransferSession {
     let shouldCloseSession = didOpenSession && !busy && !Task.isCancelled
     let close = Task {
       if shouldCloseSession {
-        if mode == .phone, phoneOriginalMode { try? await resetPhoneOriginalSize(whileClosing: true) }
+        if mode == .phone, phoneAccurateLengthsEnabled { try? await resetPhoneLengthReporting(whileClosing: true) }
         // Even a PTP refusal must be followed by confirmed native socket teardown.
         _ = try? await execute(0x1003, whileClosing: true)
       }
@@ -306,7 +339,7 @@ actor CameraHostedTransferSession: WirelessTransferSession {
     }
   }
 
-  private func verifyOriginal(_ object: WirelessObjectDescriptor) async throws {
+  private func verifyObject(_ object: WirelessObjectDescriptor) async throws {
     let fresh = try await objectInfo(handle: object.handle, storage: object.storageID)
     guard object.matchesOriginal(fresh) else { throw WirelessFailure.objectChanged }
   }
@@ -358,18 +391,6 @@ actor CameraHostedTransferSession: WirelessTransferSession {
     guard try await configureXAppCard(storage) != nil else { throw WirelessFailure.unavailableStorage }
   }
 
-  private func enableOriginalSize() async throws {
-    if mode == .xApp {
-      originalControlAccepted = try await observesXAppOriginalSize()
-      guard originalControlAccepted else { throw WirelessFailure.originalSizeUnavailable }
-    } else {
-      _ = try await readEvents()
-      try await setProperty(0xd227, 1, width: 2)
-      phoneOriginalMode = true
-      originalControlAccepted = true
-    }
-  }
-
   private actor InventoryCursor {
     private var position = 0
 
@@ -380,3 +401,7 @@ actor CameraHostedTransferSession: WirelessTransferSession {
     }
   }
 }
+
+#if DEBUG
+extension CameraHostedTransferSession: WirelessDiagnosticCandidateSession {}
+#endif

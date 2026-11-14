@@ -74,6 +74,50 @@ final class WiFiHandoffTests: XCTestCase {
     }
   }
 
+  func testAuthenticationFailureDuringHandoffPreservesBluetoothWaitPhase() async {
+    let fixture = Fixture()
+    let reconnect = HandoffBarrier()
+    fixture.bluetooth.reconnectBarrier = reconnect
+    fixture.bluetooth.reconnectFailure = .authentication
+    await fixture.coordinator.setActivity(.active)
+    let states = await fixture.coordinator.states()
+    var iterator = states.makeAsyncIterator()
+    let connect = Task { await fixture.coordinator.connectWiFi() }
+    while let state = await iterator.next(), state.wifi != .waitingForBluetooth {}
+    await reconnect.release()
+    await connect.value
+    let state = await snapshot(fixture.coordinator)
+    XCTAssertEqual(state.wifiFailure, .authentication)
+    XCTAssertEqual(state.wifiFailurePhase, .waitingForBluetooth)
+    XCTAssertFalse(fixture.log.events.contains("credentials"))
+    XCTAssertFalse(fixture.log.events.contains("native join"))
+    XCTAssertEqual(fixture.log.events.last, "release ownership")
+  }
+
+  func testLateIdentityAfterBluetoothDropPreservesActivationFailure() async {
+    let fixture = Fixture()
+    let identity = HandoffBarrier()
+    fixture.bluetooth.identityBarrier = identity
+    await fixture.start()
+    let states = await fixture.coordinator.states()
+    var iterator = states.makeAsyncIterator()
+    let connect = Task { await fixture.coordinator.connectWiFi() }
+    await identity.entered()
+    fixture.bluetooth.drop()
+    while let state = await iterator.next(), state.bluetooth == .ready {}
+    let interrupted = await snapshot(fixture.coordinator)
+    XCTAssertEqual(interrupted.wifiFailure, .connectionLost)
+    XCTAssertEqual(interrupted.wifiFailurePhase, .activatingCamera)
+    await identity.release()
+    await connect.value
+    let state = await snapshot(fixture.coordinator)
+    XCTAssertEqual(state.wifiFailure, .connectionLost)
+    XCTAssertEqual(state.wifiFailurePhase, .activatingCamera)
+    XCTAssertFalse(fixture.log.events.contains("credentials"))
+    XCTAssertFalse(fixture.log.events.contains("native join"))
+    XCTAssertTrue(fixture.log.events.contains("release ownership"))
+  }
+
   func testBluetoothLossAfterCameraReadinessDoesNotInvalidatePTP() async throws {
     let fixture = Fixture()
     fixture.gateway.holdJoin = true
@@ -219,6 +263,9 @@ private final class HandoffBluetooth: BluetoothGateway {
   let log: HandoffLog
   let failure: WirelessFailure?
   let notifications = AsyncStream<BluetoothGatewayEvent>.makeStream()
+  var reconnectBarrier: HandoffBarrier?
+  var reconnectFailure: WirelessFailure?
+  var identityBarrier: HandoffBarrier?
 
   init(id: WirelessCameraID, log: HandoffLog, failure: WirelessFailure?) {
     self.id = id
@@ -232,9 +279,14 @@ private final class HandoffBluetooth: BluetoothGateway {
   func pair(_ camera: DiscoveredCamera) async throws -> SavedCamera {
     throw WirelessFailure.unsupportedProtocol
   }
-  func reconnect(_ camera: SavedCamera, allowPermissionPrompt: Bool) async throws { log.record("authenticated") }
+  func reconnect(_ camera: SavedCamera, allowPermissionPrompt: Bool) async throws {
+    if let reconnectBarrier { await reconnectBarrier.wait() }
+    if let reconnectFailure { throw reconnectFailure }
+    log.record("authenticated")
+  }
   func identity(for id: WirelessCameraID) async throws -> WirelessIdentity {
     log.record("BLE identity")
+    if let identityBarrier { await identityBarrier.wait() }
     return .init(cameraID: id, model: .xt5, firmware: "4.32")
   }
   func activateWiFi(for id: WirelessCameraID) async throws -> CameraNetwork {
@@ -246,6 +298,30 @@ private final class HandoffBluetooth: BluetoothGateway {
   func events() async -> AsyncStream<BluetoothGatewayEvent> { notifications.stream }
   func disconnect() async {}
   func drop() { notifications.continuation.yield(.disconnected(id, .connectionLost)) }
+}
+
+private actor HandoffBarrier {
+  private var released = false
+  private var didEnter = false
+  private var waiter: CheckedContinuation<Void, Never>?
+  private var observer: CheckedContinuation<Void, Never>?
+
+  func wait() async {
+    didEnter = true
+    observer?.resume()
+    observer = nil
+    if !released { await withCheckedContinuation { waiter = $0 } }
+  }
+
+  func entered() async {
+    if !didEnter { await withCheckedContinuation { observer = $0 } }
+  }
+
+  func release() {
+    released = true
+    waiter?.resume()
+    waiter = nil
+  }
 }
 
 private struct HandoffStore: SavedCameraStore {

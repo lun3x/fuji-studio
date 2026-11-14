@@ -64,9 +64,32 @@ extension CameraHostedTransferSession {
     return events
   }
 
-  func resetPhoneOriginalSize(whileClosing: Bool = false) async throws {
+  /// D227 changes the reported length, independently of the camera's resize preference.
+  func withAccuratePhoneLengths<Value: Sendable>(
+    _ operation: () async throws -> Value
+  ) async throws -> Value {
+    guard mode == .phone else { return try await operation() }
+    try await readEvents()
+    try await setProperty(0xd227, 1, width: 2)
+    phoneAccurateLengthsEnabled = true
+    let value: Value
+    do {
+      value = try await operation()
+    } catch {
+      // An interrupted wire transaction can already have retired the transport.
+      let cleanup = Task { try await resetPhoneLengthReporting() }
+      _ = try? await cleanup.value
+      throw error
+    }
+    // Restore even when cancellation arrives just after the final successful transaction.
+    let cleanup = Task { try await resetPhoneLengthReporting() }
+    try await cleanup.value
+    return value
+  }
+
+  func resetPhoneLengthReporting(whileClosing: Bool = false) async throws {
     try await readEvents(whileClosing: whileClosing)
     try await setProperty(0xd227, 0, width: 2, whileClosing: whileClosing)
-    phoneOriginalMode = false
+    phoneAccurateLengthsEnabled = false
   }
 }

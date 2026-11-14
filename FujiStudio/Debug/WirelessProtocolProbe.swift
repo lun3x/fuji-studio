@@ -62,6 +62,9 @@ struct WirelessProtocolProbe: View {
               if capability.mode == .xApp, !capability.originalSizeVerified {
                 Text("XApp originals require a readable original-size setting. The probe leaves that setting as found.")
               }
+              if capability.mode == .phone {
+                Text("Phone files are diagnostic candidates. Compare their hashes with independent card copies.")
+              }
             }
             ForEach(probe.files.indices, id: \.self) { index in
               let file = probe.files[index]
@@ -75,7 +78,10 @@ struct WirelessProtocolProbe: View {
                 Text(file.filename)
               }
             }
-            Button("Download selected originals privately") { Task { await probe.downloadSelection() } }
+            Button(probe.capability?.mode == .phone
+              ? "Stage selected diagnostic candidates" : "Stage selected originals privately") {
+              Task { await probe.downloadSelection() }
+            }
               .disabled(probe.selected.isEmpty || probe.working)
           }
         }
@@ -211,16 +217,34 @@ private final class WirelessProbeModel {
     defer { working = false }
     do {
       let session = try await coordinator.transferSession()
+      let capabilities = try await session.capabilities()
+      let diagnostic: (any WirelessDiagnosticCandidateSession)?
+      let representation: ProbeStagedFile.Representation
+      if capabilities.mode == .phone {
+        guard let candidateSession = session as? any WirelessDiagnosticCandidateSession else {
+          throw WirelessFailure.unsupportedProtocol
+        }
+        diagnostic = candidateSession
+        representation = .phoneDiagnosticCandidate
+      } else {
+        diagnostic = nil
+        representation = .xAppOriginalSizeControlObserved
+      }
       let folder = try runFolder()
       var count = 0
       for object in selection {
         let file = try ProbeStagedFile(folder: folder, object: object)
         do {
-          try await session.download(object) { try await file.append($0) }
-          let receipt = try await file.finish()
+          if let diagnostic {
+            try await diagnostic.downloadDiagnosticCandidate(object) { try await file.append($0) }
+          } else {
+            try await session.download(object) { try await file.append($0) }
+          }
+          let receipt = try await file.finish(representation: representation)
           count += 1
-          status = "Staged \(count) of \(selection.count) originals. SHA-256 \(receipt.sha256)."
-          record("Staged \(receipt.byteLength) bytes, SHA-256 \(receipt.sha256).")
+          let kind = diagnostic == nil ? "originals in XApp original-size mode" : "phone diagnostic candidates"
+          status = "Staged \(count) of \(selection.count) \(kind). SHA-256 \(receipt.sha256)."
+          record("Staged \(representation.rawValue), \(receipt.byteLength) bytes, SHA-256 \(receipt.sha256).")
         } catch {
           await file.discard()
           throw error
@@ -292,6 +316,11 @@ private actor ProbeCameraOwnership: WirelessCameraOwnershipGateway {
 }
 
 private actor ProbeStagedFile {
+  enum Representation: String, Encodable, Sendable {
+    case phoneDiagnosticCandidate
+    case xAppOriginalSizeControlObserved
+  }
+
   struct Receipt: Encodable, Sendable {
     let storageID: UInt32
     let name: String
@@ -299,6 +328,7 @@ private actor ProbeStagedFile {
     let storedFile: String
     let byteLength: UInt64
     let sha256: String
+    let representation: Representation
   }
 
   private let file: URL
@@ -331,14 +361,15 @@ private actor ProbeStagedFile {
     hash.update(data: bytes)
   }
 
-  func finish() throws -> Receipt {
+  func finish(representation: Representation) throws -> Receipt {
     guard count == object.byteLength else { throw WirelessFailure.malformedData }
     try handle.synchronize()
     try handle.close()
     let digest = hash.finalize().map { String(format: "%02x", $0) }.joined()
     let receipt = Receipt(
       storageID: object.storageID, name: object.filename, directory: object.directory,
-      storedFile: file.lastPathComponent, byteLength: count, sha256: digest)
+      storedFile: file.lastPathComponent, byteLength: count, sha256: digest,
+      representation: representation)
     let metadata = file.deletingPathExtension().appendingPathExtension("json")
     try JSONEncoder().encode(receipt).write(to: metadata, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     return receipt

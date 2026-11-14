@@ -63,31 +63,101 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
   }
 
   func testPhoneGalleryAvoidsCaptureAndReportsDeclaredRAWUnavailability() async throws {
-    let jpeg = object("DSCF0001.JPG", format: 0x3801, bytes: 3)
-    let commands = start(.xe3, "1.32", formats: [0x3801]) + phoneSetup(count: 1)
-      + [.read(0x1008, [1], jpeg), .property(0xd212, events()),
-         .write(0xd227, [1, 0]), .read(0x1008, [1], jpeg),
-         .read(0x101b, [1, 0, 3], Data([1, 2, 3])),
-         .property(0xd212, events()), .write(0xd227, [0, 0]), .read(0x1003)]
-    let channel = Replay(commands)
+    let (session, channel) = try await phoneSession(
+      placeholder: 100_000, accurate: 3, commands: [.read(0x1003)])
+    let jpegFile = try await firstFile(session)
+    XCTAssertEqual(jpegFile.byteLength, 3)
+    let sizeControls = await channel.sizeControls
+    XCTAssertEqual(sizeControls, [1, 0])
+    let capabilities = try await session.capabilities()
+    XCTAssertEqual(capabilities.rawExposure, .unavailable)
+    XCTAssertFalse(capabilities.originalSizeVerified)
+    XCTAssertEqual(jpegFile.format, .jpeg)
+    try await session.close()
+    let remaining = await channel.remaining
+    XCTAssertEqual(remaining, 0)
+  }
+
+  func testPhoneCorrectLengthDoesNotPermitProductionDownload() async throws {
+    let (session, channel) = try await phoneSession(
+      placeholder: 3, accurate: 3, commands: [.read(0x1003)],
+      optionalReads: [
+        .read(0x1008, [1], object("DSCF0001.JPG", format: 0x3801, bytes: 3)),
+        .read(0x101b, [1, 0, 3], Data([1, 2, 3])),
+      ])
+    let jpeg = try await firstFile(session)
+    await expect(.originalSizeUnavailable) {
+      try await session.download(jpeg) { _ in XCTFail("Unverified phone representation reached the sink") }
+    }
+    let capabilities = try await session.capabilities()
+    XCTAssertFalse(capabilities.originalSizeVerified)
+    let operations = await channel.operations
+    XCTAssertFalse(operations.contains(0x101b))
+    try await session.close()
+    let remaining = await channel.remaining
+    XCTAssertEqual(remaining, 0)
+  }
+
+  #if DEBUG
+  func testPhoneDiagnosticCandidateUsesFreshAccurateLengthAndRestoresReporting() async throws {
+    let (session, channel) = try await phoneSession(
+      placeholder: 100_000, accurate: 3,
+      commands: [.read(0x1008, [1]), .read(0x101b, [1, 0, 3], Data([1, 2, 3])), .read(0x1003)])
+    let jpeg = try await firstFile(session)
+    let diagnostic = try XCTUnwrap(session as? any WirelessDiagnosticCandidateSession)
+    let output = Bytes()
+    try await diagnostic.downloadDiagnosticCandidate(jpeg) { await output.append($0) }
+    let bytes = await output.value
+    XCTAssertEqual(bytes, Data([1, 2, 3]))
+    let sizeControls = await channel.sizeControls
+    XCTAssertEqual(sizeControls, [1, 0, 1, 0])
+    let capability = try await session.capabilities()
+    XCTAssertFalse(capability.originalSizeVerified)
+    try await session.close()
+    let remaining = await channel.remaining
+    XCTAssertEqual(remaining, 0)
+  }
+
+  func testPhoneDiagnosticRejectsObjectChangeAndRestoresReporting() async throws {
+    let (session, channel) = try await phoneSession(
+      placeholder: 100_000, accurate: 3, commands: [.read(0x1008, [1]), .read(0x1003)],
+      fresh: 4)
+    let jpeg = try await firstFile(session)
+    let diagnostic = try XCTUnwrap(session as? any WirelessDiagnosticCandidateSession)
+    await expect(.objectChanged) {
+      try await diagnostic.downloadDiagnosticCandidate(jpeg) { _ in XCTFail("Changed bytes reached the sink") }
+    }
+    let controls = await channel.sizeControls
+    XCTAssertEqual(controls, [1, 0, 1, 0])
+    let operations = await channel.operations
+    XCTAssertFalse(operations.contains(0x101b))
+    try await session.close()
+  }
+  #endif
+
+  private func phoneSession(
+    placeholder: UInt32, accurate: UInt32, commands: [Exchange],
+    fresh: UInt32? = nil, optionalReads: [Exchange] = []
+  ) async throws -> (any WirelessTransferSession, Replay) {
+    let initial = start(.xe3, "1.32", formats: [0x3801]) + phoneSetup(count: 1)
+    let channel = Replay(
+      initial + [.read(0x1008, [1])] + commands,
+      optionalReads: optionalReads, phoneObjectInformation: .init(
+        placeholder: object("DSCF0001.JPG", format: 0x3801, bytes: placeholder),
+        accurate: object("DSCF0001.JPG", format: 0x3801, bytes: accurate),
+        fresh: fresh.map { object("DSCF0001.JPG", format: 0x3801, bytes: $0) }))
     let session = PhoneTransferAdapter.makeSession(
       transport: .init(channel: channel), expectedIdentity: identity(.xe3),
       clientGUID: Data(repeating: 1, count: 16))
     _ = try await session.open()
+    return (session, channel)
+  }
+
+  private func firstFile(_ session: any WirelessTransferSession) async throws -> WirelessObjectDescriptor {
     let stream = try await session.enumerate()
-    var files: [WirelessObjectDescriptor] = []
-    for try await batch in stream { files += batch.objects }
-    let jpegFile = try XCTUnwrap(files.first)
-    let capabilities = try await session.capabilities()
-    XCTAssertEqual(capabilities.rawExposure, .unavailable)
-    XCTAssertEqual(jpegFile.format, .jpeg)
-    let output = Bytes()
-    try await session.download(jpegFile) { await output.append($0) }
-    let downloaded = await output.value
-    XCTAssertEqual(downloaded, Data([1, 2, 3]))
-    try await session.close()
-    let remaining = await channel.remaining
-    XCTAssertEqual(remaining, 0)
+    var iterator = stream.makeAsyncIterator()
+    let batch = try await iterator.next()
+    return try XCTUnwrap(batch?.objects.first)
   }
 
   func testFirmwareMismatchPermitsIdentityReadsAndBlocksEveryObjectOperation() async throws {
@@ -161,6 +231,24 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
     for try await batch in stream { completions.merge(batch.storageChanges) { _, new in new } }
     XCTAssertEqual(completions, [1: .unavailable, 2: .complete])
     try await session.close()
+  }
+
+  func testChangedDescriptorPreventsThumbnailRead() async throws {
+    let first = object("DSCF0044.RAF", format: 0xb103, bytes: 5)
+    let replacement = object("DSCF0045.RAF", format: 0xb103, bytes: 5)
+    let channel = Replay(start(.xt5, "4.32") + xappSetup + card([44])
+      + [.property(0xd226, word(2, 2)), .read(0x1008, [44], first),
+         .read(0x1008, [44], replacement), .read(0x1003)],
+      optionalReads: [.read(0x100a, [44], Data([0xff, 0xd8]))])
+    let session = XAppTransferAdapter.makeSession(
+      transport: .init(channel: channel), expectedIdentity: identity(.xt5),
+      clientGUID: Data(repeating: 1, count: 16))
+    _ = try await session.open()
+    let file = try await firstFile(session)
+    await expect(.objectChanged) { _ = try await session.thumbnail(file) }
+    try await session.close()
+    let operations = await channel.operations
+    XCTAssertFalse(operations.contains(0x100a))
   }
 
   func testXAppResizedOrUnreadableControlDoesNotPermitOriginalDownload() async throws {
@@ -270,14 +358,33 @@ private struct Exchange: Sendable {
 }
 
 private actor Replay: WirelessByteChannel {
+  struct PhoneObjectInformation: Sendable {
+    let placeholder: Data
+    let accurate: Data
+    let fresh: Data?
+  }
+
   private var exchanges: [Exchange]
+  private let optionalReads: [Exchange]
+  private let phoneObjectInformation: PhoneObjectInformation?
   private var buffer = Data()
   private var initialized = false
   private var transaction: UInt32 = 1
   private var waitingForData = false
+  private var waitingForSizeControl = false
+  private var objectReads = 0
+  private(set) var sizeControls: [UInt8] = []
+  private(set) var operations: [UInt16] = []
   var remaining: Int { exchanges.count }
 
-  init(_ exchanges: [Exchange]) { self.exchanges = exchanges }
+  init(
+    _ exchanges: [Exchange], optionalReads: [Exchange] = [],
+    phoneObjectInformation: PhoneObjectInformation? = nil
+  ) {
+    self.exchanges = exchanges
+    self.optionalReads = optionalReads
+    self.phoneObjectInformation = phoneObjectInformation
+  }
 
   func write(_ data: Data) async throws {
     guard initialized else {
@@ -291,10 +398,44 @@ private actor Replay: WirelessByteChannel {
       throw WirelessFailure.unsupportedProtocol
     }
     let parameters = step.parameters.reduce(into: Data()) { $0 += word($1) }
+    let expectedCommand = frame(1, step.opcode, transaction, parameters)
+    if data != expectedCommand, let alternative = optionalReads.first(where: { exchange in
+      let parameters = exchange.parameters.reduce(into: Data()) { $0 += word($1) }
+      return data == frame(1, exchange.opcode, transaction, parameters)
+    }) {
+      operations.append(alternative.opcode)
+      respond(alternative)
+      return
+    }
+    // Model the documented D227 behavior rather than prescribing reads from one mode.
+    if phoneObjectInformation != nil {
+      if waitingForSizeControl {
+        waitingForSizeControl = false
+        guard let value = [UInt8(0), 1].first(where: {
+          data == frame(2, 0x1016, transaction, Data([$0, 0]))
+        }) else { throw WirelessFailure.malformedData }
+        sizeControls.append(value)
+        respond(.read(0x1016))
+        return
+      }
+      if data == frame(1, 0x1016, transaction, word(0xd227)) {
+        operations.append(0x1016)
+        waitingForSizeControl = true
+        return
+      }
+      if data != expectedCommand, data == frame(1, 0x1015, transaction, word(0xd212)) {
+        operations.append(0x1015)
+        respond(.property(0xd212, Data([0, 0])))
+        return
+      }
+    }
     if waitingForData, let outbound = step.outbound {
       XCTAssertEqual(data, frame(2, step.opcode, transaction, outbound))
     } else {
-      XCTAssertEqual(data, frame(1, step.opcode, transaction, parameters))
+      let opcode = data.count >= 8 ? UInt16(data[6]) | UInt16(data[7]) << 8 : 0
+      operations.append(opcode)
+      XCTAssertEqual(data, expectedCommand)
+      guard data == expectedCommand else { throw WirelessFailure.unsupportedProtocol }
       if step.outbound != nil {
         waitingForData = true
         return
@@ -302,6 +443,18 @@ private actor Replay: WirelessByteChannel {
     }
     waitingForData = false
     exchanges.removeFirst()
+    if step.opcode == 0x1008, let phoneObjectInformation {
+      let accurate = objectReads == 0
+        ? phoneObjectInformation.accurate : phoneObjectInformation.fresh ?? phoneObjectInformation.accurate
+      let info = sizeControls.last == 1 ? accurate : phoneObjectInformation.placeholder
+      objectReads += 1
+      respond(.read(0x1008, step.parameters, info))
+      return
+    }
+    respond(step)
+  }
+
+  private func respond(_ step: Exchange) {
     if !step.payload.isEmpty { buffer += frame(2, step.opcode, transaction, step.payload) }
     let count = step.opcode == 0x101b ? word(UInt32(step.payload.count)) : Data()
     buffer += frame(3, step.response, transaction, count)
