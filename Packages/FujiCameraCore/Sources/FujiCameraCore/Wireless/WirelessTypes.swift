@@ -116,6 +116,7 @@ public enum WirelessTimeoutStage: Equatable, Sendable {
 public enum WirelessFailure: Error, Equatable, Sendable {
   case permissionDenied(WirelessPermissionKind)
   case authentication
+  case cameraBusy
   case unsupportedFirmware
   case unsupportedProtocol
   case timeout(WirelessTimeoutStage)
