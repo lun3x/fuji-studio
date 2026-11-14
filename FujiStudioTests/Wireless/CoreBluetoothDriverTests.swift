@@ -17,6 +17,7 @@ final class CoreBluetoothDriverTests: XCTestCase {
     let peripheralID = UUID()
     let firstSession = UUID()
     let nextSession = UUID()
+    XCTAssertTrue(connections.installManager(manager))
     let first = connections.begin(session: firstSession, peripheralID: peripheralID, manager: manager) {
       peripheral
     }
@@ -38,36 +39,57 @@ final class CoreBluetoothDriverTests: XCTestCase {
     XCTAssertEqual(connections.consumeTerminal(manager: manager, peripheral: peripheral), nextSession)
   }
 
-  func testPowerInterruptionClearsDiscoveryWhileRetainingRetiringCallbackOwner() {
+  func testRadioShutdownRetiresIssuedManagerWithoutTerminalAndReplacementCanObservePowerOn() {
     var connections = CoreBluetoothConnections<Manager, Peripheral>()
     let manager = Manager()
+    let replacement = Manager()
     let stale = Peripheral()
-    let fresh = Peripheral()
     let id = UUID()
     let active = UUID()
     let next = UUID()
+    XCTAssertTrue(connections.installManager(manager))
     connections.remember(stale, for: id)
     XCTAssertTrue(connections.begin(session: active, peripheralID: id, manager: manager) { nil } === stale)
     connections.remember(stale, for: id)
-    connections.discardDiscoveries()
-    XCTAssertEqual(connections.requestCancellation(for: active, canRequest: false), .awaitingTerminal)
-    XCTAssertEqual(connections.consumeTerminal(manager: manager, peripheral: stale), active)
-    XCTAssertTrue(connections.begin(session: next, peripheralID: id, manager: manager) { fresh } === fresh)
+    XCTAssertEqual(connections.retireManagerWithAttempt(manager), active)
+    XCTAssertFalse(connections.isCurrent(manager))
+    XCTAssertNil(connections.consumeTerminal(manager: manager, peripheral: stale))
+
+    XCTAssertTrue(connections.installManager(replacement))
+    // Identical off reports arrive for the replacement before Bluetooth comes back.
+    XCTAssertNil(connections.retireManagerWithAttempt(replacement))
+    XCTAssertNil(connections.retireManagerWithAttempt(replacement))
+    XCTAssertTrue(connections.isCurrent(replacement))
+    XCTAssertFalse(connections.installManager(Manager()))
+
+    // Reuse even the same object to prove the retired manager is fenced independently.
+    var retrieves = 0
+    XCTAssertTrue(
+      connections.begin(session: next, peripheralID: id, manager: replacement) {
+        retrieves += 1
+        return stale
+      } === stale)
+    XCTAssertEqual(retrieves, 1)
+    XCTAssertNil(connections.consumeTerminal(manager: manager, peripheral: stale))
+    XCTAssertEqual(connections.consumeTerminal(manager: replacement, peripheral: stale), next)
   }
 
-  func testInvalidatedPeripheralCallbackCannotRetireFreshNativeAttempt() {
+  func testRetiredManagerCannotTerminateFreshAttemptWithADifferentPeripheral() {
     var connections = CoreBluetoothConnections<Manager, Peripheral>()
     let manager = Manager()
+    let replacement = Manager()
     let stale = Peripheral()
     let fresh = Peripheral()
     let id = UUID()
     let first = UUID()
     let next = UUID()
+    XCTAssertTrue(connections.installManager(manager))
     _ = connections.begin(session: first, peripheralID: id, manager: manager) { stale }
-    XCTAssertEqual(connections.invalidate(manager: manager), first)
-    _ = connections.begin(session: next, peripheralID: id, manager: manager) { fresh }
+    XCTAssertEqual(connections.retireManagerWithAttempt(manager), first)
+    XCTAssertTrue(connections.installManager(replacement))
+    _ = connections.begin(session: next, peripheralID: id, manager: replacement) { fresh }
     XCTAssertNil(connections.consumeTerminal(manager: manager, peripheral: stale))
-    XCTAssertEqual(connections.consumeTerminal(manager: manager, peripheral: fresh), next)
+    XCTAssertEqual(connections.consumeTerminal(manager: replacement, peripheral: fresh), next)
   }
 
   func testOptionalModelReadDistinguishesAuthAndTransportFromAbsentModel() {

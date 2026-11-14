@@ -53,6 +53,61 @@ final class BluetoothGatewayTests: XCTestCase {
     await gateway.disconnect()
   }
 
+  func testRadioShutdownWithoutNativeTerminalReleasesReconnectAndExplicitDisconnect() async throws {
+    let camera = SavedCamera(
+      id: WirelessCameraID(), peripheralID: UUID(), model: .xe3, displayName: "X-E3")
+    let store = SuspendedCameraLookup(camera: camera)
+    store.suspend = false
+    let driver = RadioShutdownReplayDriver()
+    let gateway = NativeBluetoothGateway(store: store, driver: driver)
+    let (starts, startSignal) = AsyncStream<UUID>.makeStream()
+    let (cancellations, cancellationSignal) = AsyncStream<Void>.makeStream()
+    defer {
+      startSignal.finish()
+      cancellationSignal.finish()
+    }
+    driver.onConnect = { startSignal.yield($0) }
+    driver.onCancel = { cancellationSignal.yield(()) }
+    var attempts = starts.makeAsyncIterator()
+    var closing = cancellations.makeAsyncIterator()
+    let attempt = Task { @MainActor in try await gateway.reconnect(camera) }
+    let oldSession = await attempts.next()
+    XCTAssertNotNil(oldSession)
+    let explicitDisconnect = Task { @MainActor in await gateway.disconnect() }
+    _ = await closing.next()
+    let completed = expectation(description: "Retirement released both gateway waiters")
+    var drained = false
+    let observer = Task { @MainActor in
+      let result = await attempt.result
+      await explicitDisconnect.value
+      drained = true
+      completed.fulfill()
+      return result
+    }
+    let oldManager = driver.manager
+    driver.powerOff()
+    driver.powerOff()
+    await fulfillment(of: [completed], timeout: 0.5)
+    XCTAssertEqual(driver.retirements, 1)
+    guard drained, driver.retirements == 1 else { return }
+    if case .failure(let error) = await observer.value {
+      XCTAssertTrue(error is CancellationError)
+    } else {
+      XCTFail("An explicitly cancelled link completed successfully")
+    }
+
+    driver.powerOn()
+    let retry = Task { @MainActor in try await gateway.reconnect(camera) }
+    let newSession = await attempts.next()
+    XCTAssertNotEqual(oldSession, newSession)
+    driver.deliverTerminal(from: oldManager)
+    driver.authenticate()
+    try await retry.value
+    let identity = try await gateway.identity(for: camera.id)
+    XCTAssertEqual(identity.cameraID, camera.id)
+    driver.powerOff()
+  }
+
   func testCancelledReconnectWaitsForNativeCleanupAndRejectsLateAuthentication() async throws {
     let namespace = "FujiStudio.Tests.BluetoothCancellation.\(UUID())"
     let defaults = try XCTUnwrap(UserDefaults(suiteName: namespace))
@@ -285,6 +340,88 @@ final class BluetoothGatewayTests: XCTestCase {
       XCTAssertTrue(driver.writes.isEmpty)
       driver.onConnect = nil
     }
+  }
+}
+
+@MainActor
+private final class RadioShutdownReplayDriver: BluetoothPeripheralDriver {
+  final class Manager {}
+  final class Peripheral {}
+
+  var eventHandler: ((BluetoothDriverEvent) -> Void)?
+  var onConnect: ((UUID) -> Void)?
+  var onCancel: (() -> Void)?
+  private(set) var retirements = 0
+  private(set) var manager = Manager()
+  private let peripheral = Peripheral()
+  private var connections = CoreBluetoothConnections<Manager, Peripheral>()
+  private var availability = BluetoothAvailability.poweredOn
+  private let token = BLEGATTCharacteristic(
+    service: "91f1de68-dff6-466e-8b65-ff13b0f16fb8",
+    characteristic: "aba356eb-9633-4e60-b73f-f52516dbd671")
+  private let name = BLEGATTCharacteristic(
+    service: "91f1de68-dff6-466e-8b65-ff13b0f16fb8",
+    characteristic: "85b9163e-62d1-49ff-a6f5-054b4630d4a1")
+  private let readiness = BLEGATTCharacteristic(
+    service: "4c0020fe-f3b6-40de-acc9-77d129067b14",
+    characteristic: "a68e3f66-0fcc-4395-8d4c-aa980b5877fa")
+
+  init() { _ = connections.installManager(manager) }
+
+  func start(allowPermissionPrompt: Bool) throws { eventHandler?(.availability(availability)) }
+  func scan() {}
+  func stopScan() {}
+  func discardDiscoveries() { connections.discardDiscoveries() }
+
+  func connect(peripheralID: UUID, session: UUID) {
+    if connections.begin(session: session, peripheralID: peripheralID, manager: manager, retrieve: { peripheral }) != nil {
+      onConnect?(session)
+    }
+  }
+
+  func perform(_ action: BLEProtocolAction, session: UUID) {
+    switch action {
+    case .write(let key, _, _): eventHandler?(.protocolEvent(session, .wrote(key)))
+    case .subscribe(let key): eventHandler?(.protocolEvent(session, .subscribed(key)))
+    default: XCTFail("Unexpected action")
+    }
+  }
+
+  func disconnect(session: UUID) {
+    switch connections.requestCancellation(for: session, canRequest: availability == .poweredOn) {
+    case .request: onCancel?()
+    case .neverIssued: eventHandler?(.disconnected(session, .connectionLost))
+    case .awaitingTerminal: break
+    }
+  }
+
+  func powerOff() {
+    availability = .poweredOff
+    let old = manager
+    let ended = connections.retireManagerWithAttempt(old)
+    if ended != nil {
+      retirements += 1
+      manager = Manager()
+      _ = connections.installManager(manager)
+    }
+    eventHandler?(.availability(.poweredOff))
+    if let ended { eventHandler?(.disconnected(ended, .connectionLost)) }
+  }
+
+  func powerOn() {
+    availability = .poweredOn
+    eventHandler?(.availability(.poweredOn))
+  }
+
+  func deliverTerminal(from manager: Manager) {
+    if let ended = connections.consumeTerminal(manager: manager, peripheral: peripheral) {
+      eventHandler?(.disconnected(ended, .connectionLost))
+    }
+  }
+
+  func authenticate() {
+    guard let session = connections.active?.session else { return }
+    eventHandler?(.protocolEvent(session, .services([token, name, readiness])))
   }
 }
 

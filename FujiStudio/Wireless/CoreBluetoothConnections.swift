@@ -1,6 +1,6 @@
 import Foundation
 
-/// Owns an issued native attempt until its object-identified terminal callback.
+/// Owns an issued native attempt until its terminal callback or manager retirement.
 /// The driver only assigns an application session ID after matching the native objects.
 struct CoreBluetoothConnections<Manager: AnyObject, Peripheral: AnyObject> {
   struct Attempt {
@@ -16,8 +16,18 @@ struct CoreBluetoothConnections<Manager: AnyObject, Peripheral: AnyObject> {
     case awaitingTerminal
   }
 
+  private(set) var manager: Manager?
   private(set) var active: Attempt?
   private var discoveries: [UUID: Peripheral] = [:]
+
+  @discardableResult
+  mutating func installManager(_ manager: Manager) -> Bool {
+    guard self.manager == nil else { return false }
+    self.manager = manager
+    return true
+  }
+
+  func isCurrent(_ manager: Manager) -> Bool { self.manager === manager }
 
   func canRemember(_ id: UUID) -> Bool {
     discoveries.count < 64 || discoveries[id] != nil
@@ -33,7 +43,9 @@ struct CoreBluetoothConnections<Manager: AnyObject, Peripheral: AnyObject> {
   mutating func begin(
     session: UUID, peripheralID: UUID, manager: Manager, retrieve: () -> Peripheral?
   ) -> Peripheral? {
-    guard active == nil, let peripheral = discoveries[peripheralID] ?? retrieve() else { return nil }
+    guard isCurrent(manager), active == nil,
+      let peripheral = discoveries[peripheralID] ?? retrieve()
+    else { return nil }
     discardDiscoveries()
     active = Attempt(session: session, manager: manager, peripheral: peripheral)
     return peripheral
@@ -47,14 +59,16 @@ struct CoreBluetoothConnections<Manager: AnyObject, Peripheral: AnyObject> {
   }
 
   mutating func consumeTerminal(manager: Manager, peripheral: Peripheral) -> UUID? {
-    guard let active, active.manager === manager, active.peripheral === peripheral else { return nil }
+    guard isCurrent(manager), let active, active.peripheral === peripheral else { return nil }
     self.active = nil
     return active.session
   }
 
-  mutating func invalidate(manager: Manager) -> UUID? {
+  mutating func retireManagerWithAttempt(_ manager: Manager) -> UUID? {
+    guard isCurrent(manager) else { return nil }
     discardDiscoveries()
-    guard let active, active.manager === manager else { return nil }
+    guard let active else { return nil }
+    self.manager = nil
     self.active = nil
     return active.session
   }

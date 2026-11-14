@@ -17,8 +17,8 @@ final class CoreBluetoothDriver: NSObject, BluetoothPeripheralDriver,
   }
 
   var eventHandler: ((BluetoothDriverEvent) -> Void)?
-  private var central: CBCentralManager?
   private var connections = CoreBluetoothConnections<CBCentralManager, CBPeripheral>()
+  private var central: CBCentralManager? { connections.manager }
   private var active: Link?
 
   private static let secureAdvertisement = CBUUID(string: "a9d2b304-e8d6-4902-8336-352b772d7597")
@@ -40,10 +40,12 @@ final class CoreBluetoothDriver: NSObject, BluetoothPeripheralDriver,
     case .notDetermined where allowPermissionPrompt: break
     default: throw WirelessFailure.permissionDenied(.bluetooth)
     }
-    if central == nil {
-      central = CBCentralManager(
-        delegate: self, queue: .main, options: [CBCentralManagerOptionShowPowerAlertKey: false])
-    }
+    if central == nil { installCentral() }
+  }
+
+  private func installCentral() {
+    connections.installManager(CBCentralManager(
+      delegate: self, queue: .main, options: [CBCentralManagerOptionShowPowerAlertKey: false]))
   }
 
   func scan() {
@@ -120,7 +122,8 @@ final class CoreBluetoothDriver: NSObject, BluetoothPeripheralDriver,
     discardDiscoveries()
     switch connections.requestCancellation(for: session, canRequest: central?.state == .poweredOn) {
     case .neverIssued:
-      eventHandler?(.disconnected(session, .connectionLost))
+      // A retired attempt is completed by the state callback after availability.
+      if active?.id != session { eventHandler?(.disconnected(session, .connectionLost)) }
     case .request:
       if let attempt = connections.active {
         attempt.manager.cancelPeripheralConnection(attempt.peripheral)
@@ -131,7 +134,7 @@ final class CoreBluetoothDriver: NSObject, BluetoothPeripheralDriver,
   }
 
   func centralManagerDidUpdateState(_ central: CBCentralManager) {
-    guard self.central === central else { return }
+    guard connections.isCurrent(central) else { return }
     let availability: BluetoothAvailability = switch central.state {
     case .poweredOn: .poweredOn
     case .unauthorized: .unauthorized
@@ -140,14 +143,18 @@ final class CoreBluetoothDriver: NSObject, BluetoothPeripheralDriver,
     case .unknown: .unknown
     @unknown default: .unsupported
     }
-    // Powered-off peripherals may still be reused. Keep their callback owner
-    // until CoreBluetooth delivers didDisconnect or didFailToConnect.
-    if central.state != .poweredOn { discardDiscoveries() }
+    // An unavailable radio can end an attempt without a terminal delegate call.
+    // Retire its manager before reusing a peripheral or advertising completion.
+    let ended = central.state == .poweredOn ? nil : connections.retireManagerWithAttempt(central)
+    if ended != nil {
+      central.delegate = nil
+      active?.peripheral.delegate = nil
+      // A replacement remains an observer while off. It has no attempt to retire.
+      installCentral()
+    }
     eventHandler?(.availability(availability))
-    if central.state.rawValue < CBManagerState.poweredOff.rawValue,
-      let invalidated = connections.invalidate(manager: central)
-    {
-      finishLink(session: invalidated, failure: availability.failure ?? .connectionLost)
+    if let ended {
+      finishLink(session: ended, failure: availability.failure ?? .connectionLost)
     }
   }
 
@@ -155,7 +162,7 @@ final class CoreBluetoothDriver: NSObject, BluetoothPeripheralDriver,
     _ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
     advertisementData: [String: Any], rssi RSSI: NSNumber
   ) {
-    guard self.central === central, central.state == .poweredOn, central.isScanning,
+    guard connections.isCurrent(central), central.state == .poweredOn, central.isScanning,
       connections.canRemember(peripheral.identifier),
       let data = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data,
       data.prefix(2).elementsEqual([0xd8, 0x04]),
@@ -183,7 +190,7 @@ final class CoreBluetoothDriver: NSObject, BluetoothPeripheralDriver,
   }
 
   func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
-    guard self.central === central, link(for: peripheral) != nil else { return }
+    guard connections.isCurrent(central), link(for: peripheral) != nil else { return }
     peripheral.discoverServices(Self.pairingServices)
   }
 
