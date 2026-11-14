@@ -55,5 +55,5 @@ typealias AutoSaveExchange = @Sendable (
 ) async throws -> AutoSaveHandshake
 
 typealias AutoSaveSessionFactory = @Sendable (
-  String, WirelessIdentity
+  String, WirelessIdentity, ContinuousClock.Instant
 ) async throws -> any WirelessTransferSession

@@ -12,6 +12,80 @@ final class AutoSaveGatewayTests: XCTestCase {
   private let otherKey = WirelessProtocolPeerKey(bytes: Data(repeating: 2, count: 32))
   private let selectedKey = WirelessProtocolPeerKey(bytes: Data(repeating: 1, count: 32))
 
+  func testNativeDiscoverySkipsRefusedWildcardCandidateAndAcceptsNextCamera() throws {
+    var discoveries = ["192.168.1.28", "192.168.1.32"].map(discovery).makeIterator()
+    var notified: [String] = []
+    let result = try NativeAutoSaveNetwork.findInvitation(phase: .registration, importer: "FujiStudio-test") {
+      try XCTUnwrap(discoveries.next())
+    } invite: { source in
+      notified.append(source)
+      if source == "192.168.1.28" {
+        throw NativeAutoSaveNetwork.socketFailure(ECONNREFUSED, discoveredPeer: true)
+      }
+      return try self.fixtureInvitation()
+    }
+    XCTAssertEqual(notified, ["192.168.1.28", "192.168.1.32"])
+    XCTAssertEqual(result.address, "192.168.1.32")
+    XCTAssertEqual(result.cameraName, "Fixture")
+  }
+
+  func testNativeDiscoveryReportsLastPeerFailureAtDeadlineAndPreservesTerminalFailures() throws {
+    let datagram = discovery("192.168.1.28")
+    for terminal in [
+      WirelessFailure.timeout(.autoSaveRegistration), .permissionDenied(.localNetwork), .routeUnavailable,
+    ] {
+      var first = true
+      XCTAssertThrowsError(
+        try NativeAutoSaveNetwork.findInvitation(phase: .registration, importer: "FujiStudio-test") {
+          guard first else { throw terminal }
+          first = false
+          return datagram
+        } invite: { _ in
+          throw NativeAutoSaveNetwork.socketFailure(ECONNRESET, discoveredPeer: true)
+        }
+      ) {
+        if terminal == .timeout(.autoSaveRegistration) {
+          XCTAssertEqual(($0 as? NativeAutoSaveNetwork.SearchExhausted)?.lastFailure, .connectionLost)
+        } else {
+          XCTAssertEqual($0 as? WirelessFailure, terminal)
+        }
+      }
+    }
+  }
+
+  func testGatewayPreservesCandidateCauseWhenItsDeadlineWinsTheRace() async throws {
+    let store = try await cameraStore()
+    let clock = ManualWirelessClock()
+    let phases = PhaseLog()
+    let gateway = makeGateway(store: store, exchange: { phase, _, _, _ in
+      await phases.append(phase)
+      do {
+        try await Task.sleep(for: .seconds(60))
+      } catch is CancellationError {
+        throw NativeAutoSaveNetwork.SearchExhausted(lastFailure: .autoSavePeerUnreachable)
+      }
+      throw WirelessFailure.connectionLost
+    }, sleep: { try await clock.sleep(for: $0) })
+    let setup = Task { try await gateway.register(camera: camera) }
+    var waits = clock.scheduled.makeAsyncIterator()
+    _ = await waits.next()
+    var calls = phases.started.makeAsyncIterator()
+    _ = await calls.next()
+    await clock.advance(by: .seconds(120))
+    await expect(.autoSavePeerUnreachable) { _ = try await setup.value }
+  }
+
+  private func discovery(_ source: String) -> NativeAutoSaveNetwork.Datagram {
+    let message = "DISCOVER * HTTP/1.1\r\nMX:3\r\nHOST:192.168.1.255:|\r\nDSCADDR:\(source)\r\nSERVICE:PCAUTOSAVE/1.0\r\n"
+    return .init(data: Data(message.utf8), source: source)
+  }
+
+  private func fixtureInvitation() throws -> AutoSaveCodec.Invitation {
+    let text = "REGISTER * HTTP/1.1\r\nHOST:192.168.1.2:51542\r\nDSCNAME:Fixture\r\nDSCMODEL:X-E3\r\n"
+    return try XCTUnwrap(AutoSaveCodec.invitation(
+      Data(text.utf8), phase: .registration, localAddress: "192.168.1.2"))
+  }
+
   func testAutoSaveAcceptsOnlyRegisteredCameraAndCancellationStopsWait() async throws {
     let store = try await cameraStore()
     let receipt = registration()
@@ -23,20 +97,20 @@ final class AutoSaveGatewayTests: XCTestCase {
     for (session, expected) in [
       (wrong, WirelessFailure.peerMismatch), (newer, .unsupportedFirmware), (absent, .peerMismatch),
     ] {
-      let gateway = makeGateway(store: store, makeSession: { _, _ in session })
+      let gateway = makeGateway(store: store, makeSession: { _, _, _ in session })
       await expect(expected) { _ = try await gateway.waitForSession(registration: receipt) }
       let closes = await session.closes
       XCTAssertEqual(closes, 1)
     }
 
-    let gateway = makeGateway(store: store, makeSession: { _, _ in good })
+    let gateway = makeGateway(store: store, makeSession: { _, _, _ in good })
     let accepted = try await gateway.waitForSession(registration: receipt)
     let peer = try await accepted.open()
     XCTAssertEqual(peer.protocolPeerKey, selectedKey)
     try await accepted.close()
 
     let suspended = SuspendedSession()
-    let lateGateway = makeGateway(store: store, makeSession: { _, _ in await suspended.open() })
+    let lateGateway = makeGateway(store: store, makeSession: { _, _, _ in await suspended.open() })
     let wait = Task { try await lateGateway.waitForSession(registration: receipt) }
     let started = suspended.started
     var iterator = started.makeAsyncIterator()
@@ -67,12 +141,12 @@ final class AutoSaveGatewayTests: XCTestCase {
       await phases.append(phase)
       return .init(address: "192.168.1.32", cameraName: "same name")
     }
-    let rejected = makeGateway(store: store, exchange: exchange, makeSession: { _, _ in bad })
+    let rejected = makeGateway(store: store, exchange: exchange, makeSession: { _, _, _ in bad })
     await expect(.peerMismatch) { _ = try await rejected.register(camera: camera) }
     let missing = try await store.autoSaveRegistration(for: camera.id)
     XCTAssertNil(missing)
 
-    let gateway = makeGateway(store: store, exchange: exchange, makeSession: { _, _ in good })
+    let gateway = makeGateway(store: store, exchange: exchange, makeSession: { _, _, _ in good })
     let camera = self.camera
     let receipt = try await gateway.register(camera: camera) {
       let intermediate = try await store.autoSaveRegistration(for: camera.id)
@@ -178,7 +252,7 @@ final class AutoSaveGatewayTests: XCTestCase {
       XCTAssertEqual(name, "same name")
       return .init(address: "192.168.1.32", cameraName: "same name")
     },
-    makeSession: @escaping AutoSaveSessionFactory = { _, _ in throw WirelessFailure.connectionLost },
+    makeSession: @escaping AutoSaveSessionFactory = { _, _, _ in throw WirelessFailure.connectionLost },
     sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
   ) -> NativeAutoSaveGateway {
     let selectedKey = self.selectedKey

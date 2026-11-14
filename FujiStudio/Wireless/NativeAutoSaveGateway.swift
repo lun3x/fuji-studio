@@ -8,6 +8,11 @@ actor NativeAutoSaveGateway: AutoSaveGateway {
     case session(any WirelessTransferSession)
   }
 
+  private enum Completion: Sendable {
+    case operation(Outcome)
+    case deadline
+  }
+
   private let store: any AutoSaveRegistrationStore
   private let entitlementAvailable: Bool
   private let verifiedIdentity: @Sendable (SavedCamera) async throws -> WirelessProtocolPeerKey?
@@ -23,9 +28,9 @@ actor NativeAutoSaveGateway: AutoSaveGateway {
     self.init(
       store: store, entitlementAvailable: false, verifiedIdentity: { _ in nil },
       exchange: NativeAutoSaveNetwork.exchange,
-      makeSession: { address, identity in
+      makeSession: { address, identity, deadline in
         guard let peer = IPv4Address(address) else { throw WirelessFailure.malformedData }
-        let channel = try await NetworkByteChannel.connect(to: .autoSave(selectedPeer: peer))
+        let channel = try await NetworkByteChannel.connectAutoSave(to: peer, deadline: deadline)
         return AutoSaveTransferAdapter.makeSession(
           transport: .init(channel: channel), expectedIdentity: identity, clientGUID: clientGUID)
       })
@@ -114,7 +119,7 @@ actor NativeAutoSaveGateway: AutoSaveGateway {
     guard handshake.cameraName == registration.cameraName else { throw WirelessFailure.peerMismatch }
     let expected = WirelessIdentity(
       cameraID: registration.cameraID, model: .xe3, firmware: nil, protocolPeerKey: registration.peerKey)
-    let session = try await makeSession(handshake.address, expected)
+    let session = try await makeSession(handshake.address, expected, deadline)
     pendingSession = session
     try Task.checkCancellation()
     let observed = try await session.open()
@@ -140,15 +145,35 @@ actor NativeAutoSaveGateway: AutoSaveGateway {
     guard attempt == nil, pendingSession == nil else { throw WirelessFailure.cameraBusy }
     let deadline = ContinuousClock.now + limit
     let task = Task {
-      let outcome = try await withThrowingTaskGroup(of: Outcome.self) { group in
-        group.addTask { try await operation(deadline) }
+      let outcome = try await withThrowingTaskGroup(of: Completion.self) { group in
+        group.addTask { .operation(try await operation(deadline)) }
         group.addTask { [sleep] in
           try await sleep(limit)
-          throw WirelessFailure.timeout(stage)
+          return .deadline
         }
         defer { group.cancelAll() }
         guard let result = try await group.next() else { throw CancellationError() }
-        return result
+        switch result {
+        case .operation(let outcome):
+          return outcome
+        case .deadline:
+          group.cancelAll()
+          // The socket worker may reach the same deadline a scheduling turn later.
+          do {
+            _ = try await group.next()
+          } catch let exhausted as NativeAutoSaveNetwork.SearchExhausted {
+            throw exhausted
+          } catch let failure as WirelessFailure {
+            switch failure {
+            case .permissionDenied(.localNetwork), .routeUnavailable, .cameraBusy:
+              throw failure
+            default: break
+            }
+          } catch {
+            // The overall deadline owns other results after cancelling the operation.
+          }
+          throw WirelessFailure.timeout(stage)
+        }
       }
       try Task.checkCancellation()
       guard ContinuousClock.now < deadline else { throw WirelessFailure.timeout(stage) }
@@ -177,6 +202,7 @@ actor NativeAutoSaveGateway: AutoSaveGateway {
     } catch {
       if let pendingSession { try await closePendingSession(pendingSession) }
       if Task.isCancelled || task.isCancelled { throw CancellationError() }
+      if let exhausted = error as? NativeAutoSaveNetwork.SearchExhausted { throw exhausted.lastFailure }
       if let failure = error as? WirelessFailure {
         switch failure {
         case .timeout(.autoSaveRegistration), .timeout(.autoSaveSession):

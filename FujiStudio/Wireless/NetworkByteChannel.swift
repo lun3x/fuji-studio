@@ -87,10 +87,50 @@ actor NetworkByteChannel: WirelessByteChannel {
   }
 
   static func connect(to endpoint: Endpoint) async throws -> NetworkByteChannel {
-    let connection = NWConnection(to: endpoint.nativeEndpoint, using: connectionParameters())
-    let channel = NetworkByteChannel(driver: NativeNetworkConnection(connection))
+    let channel = NetworkByteChannel(driver: nativeDriver(for: endpoint))
     try await channel.start()
     return channel
+  }
+
+  private static func nativeDriver(for endpoint: Endpoint) -> any Driver {
+    let connection = NWConnection(to: endpoint.nativeEndpoint, using: connectionParameters())
+    return NativeNetworkConnection(connection, reportRefusal: endpoint.mode == .autoSave)
+  }
+
+  static func connectAutoSave(
+    to address: IPv4Address, deadline: ContinuousClock.Instant,
+    makeDriver: @Sendable (Endpoint) -> any Driver = { nativeDriver(for: $0) }
+  ) async throws -> NetworkByteChannel {
+    let endpoint = Endpoint.autoSave(selectedPeer: address)
+    let clock = ContinuousClock()
+    // The reference clients allow time for the listener to start after IMPORT.
+    let limit = min(deadline, clock.now + .seconds(5))
+    var lastFailure = WirelessFailure.timeout(.tcpSetup)
+    while true {
+      try Task.checkCancellation()
+      let remaining = clock.now.duration(to: limit)
+      guard remaining > .zero else { throw lastFailure }
+      let channel = NetworkByteChannel(
+        driver: makeDriver(endpoint), setupTimeout: min(.seconds(1), remaining))
+      do {
+        try await channel.start()
+      } catch let failure as WirelessFailure {
+        // start() confirms native cancellation before throwing.
+        switch failure {
+        case .autoSavePeerUnreachable, .timeout(.tcpSetup):
+          lastFailure = failure
+          try await clock.sleep(until: min(limit, clock.now + .milliseconds(100)))
+          continue
+        default: throw failure
+        }
+      }
+      if Task.isCancelled || clock.now >= limit {
+        await channel.close()
+        try Task.checkCancellation()
+        throw WirelessFailure.timeout(.tcpSetup)
+      }
+      return channel
+    }
   }
 
   static func connectionParameters() -> NWParameters {
@@ -262,7 +302,7 @@ actor NetworkByteChannel: WirelessByteChannel {
   }
 
   static func waitingFailure(
-    _ error: NWError, reason: NWPath.UnsatisfiedReason?
+    _ error: NWError, reason: NWPath.UnsatisfiedReason?, reportRefusal: Bool = false
   ) -> WirelessFailure? {
     if let reason {
       switch reason {
@@ -272,6 +312,8 @@ actor NetworkByteChannel: WirelessByteChannel {
       }
     }
     switch error {
+    case .posix(.ECONNREFUSED) where reportRefusal:
+      return .autoSavePeerUnreachable
     case .posix(.ENETDOWN), .posix(.ENETUNREACH), .posix(.ENODEV):
       return .routeUnavailable
     default:
@@ -282,20 +324,26 @@ actor NetworkByteChannel: WirelessByteChannel {
 
 private final class NativeNetworkConnection: NetworkByteChannel.Driver {
   private let connection: NWConnection
+  private let reportRefusal: Bool
   private let queue = DispatchQueue(label: "com.lun3x.FujiStudio.camera-command")
 
-  init(_ connection: NWConnection) { self.connection = connection }
+  init(_ connection: NWConnection, reportRefusal: Bool) {
+    self.connection = connection
+    self.reportRefusal = reportRefusal
+  }
 
   func start(_ handler: @escaping @Sendable (NetworkByteChannel.Event) -> Void) {
-    connection.stateUpdateHandler = { [weak connection] state in
+    connection.stateUpdateHandler = { [weak connection, reportRefusal] state in
       switch state {
       case .ready:
         handler(.ready)
       case .waiting(let error):
-        if let failure = Self.routeFailure(error, on: connection) { handler(.failed(failure)) }
+        if let failure = Self.routeFailure(error, on: connection, reportRefusal: reportRefusal) {
+          handler(.failed(failure))
+        }
       case .failed(let error):
         let failure =
-          Self.routeFailure(error, on: connection)
+          Self.routeFailure(error, on: connection, reportRefusal: reportRefusal)
           ?? Self.ioFailure(error, stage: .tcpSetup)
         handler(.failed(failure))
       case .cancelled:
@@ -344,12 +392,12 @@ private final class NativeNetworkConnection: NetworkByteChannel.Driver {
 
   func cancel() { connection.cancel() }
 
-  private static func routeFailure(_ error: NWError, on connection: NWConnection?)
-    -> WirelessFailure?
-  {
+  private static func routeFailure(
+    _ error: NWError, on connection: NWConnection?, reportRefusal: Bool = false
+  ) -> WirelessFailure? {
     let path = connection?.currentPath
     let reason = path?.status == .unsatisfied ? path?.unsatisfiedReason : nil
-    return NetworkByteChannel.waitingFailure(error, reason: reason)
+    return NetworkByteChannel.waitingFailure(error, reason: reason, reportRefusal: reportRefusal)
   }
 
   private static func ioFailure(_ error: NWError, stage: WirelessTimeoutStage) -> WirelessFailure {

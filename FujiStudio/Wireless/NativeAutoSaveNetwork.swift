@@ -7,6 +7,17 @@ import os
 /// Apple recommends BSD sockets for UDP broadcast. Every socket is IPv4 and
 /// bound to the current Wi-Fi interface. The worker owns and closes all fds.
 enum NativeAutoSaveNetwork {
+  struct Datagram {
+    let data: Data
+    let source: String
+  }
+
+  /// The search reached its deadline after a candidate failed. Preserve that
+  /// cause even if the gateway's overall deadline raced the socket worker.
+  struct SearchExhausted: Error {
+    let lastFailure: WirelessFailure
+  }
+
   private static let queue = DispatchQueue(label: "com.lun3x.FujiStudio.autosave")
   private static let pathQueue = DispatchQueue(label: "com.lun3x.FujiStudio.autosave.path")
 
@@ -57,10 +68,45 @@ enum NativeAutoSaveNetwork {
     switch code {
     case EACCES, EPERM: return .permissionDenied(.localNetwork)
     case EADDRINUSE: return .cameraBusy
-    case ENETDOWN, ENODEV, EADDRNOTAVAIL: return .routeUnavailable
+    case ENETDOWN, ENODEV, EADDRNOTAVAIL, EMFILE, ENFILE, ENOBUFS, ENOMEM: return .routeUnavailable
     case ENETUNREACH, EHOSTUNREACH, EHOSTDOWN, ECONNREFUSED, ETIMEDOUT:
       return discoveredPeer ? .autoSavePeerUnreachable : .routeUnavailable
     default: return .connectionLost
+    }
+  }
+
+  static func findInvitation(
+    phase: AutoSaveCodec.Phase, importer: String,
+    receive: () throws -> Datagram,
+    invite: (String) throws -> AutoSaveCodec.Invitation?
+  ) throws -> AutoSaveHandshake {
+    var lastFailure: WirelessFailure?
+    while true {
+      let datagram: Datagram
+      do {
+        datagram = try receive()
+      } catch let failure as WirelessFailure {
+        if case .timeout = failure, let lastFailure {
+          throw SearchExhausted(lastFailure: lastFailure)
+        }
+        throw failure
+      }
+      guard let target = try? AutoSaveCodec.discovery(
+        datagram.data, phase: phase, source: datagram.source),
+        target == (phase == .registration ? "*" : importer)
+      else { continue }
+      do {
+        if let invitation = try invite(datagram.source) {
+          return AutoSaveHandshake(address: datagram.source, cameraName: invitation.cameraName)
+        }
+      } catch let failure as WirelessFailure {
+        switch failure {
+        case .autoSavePeerUnreachable, .authentication, .connectionLost, .malformedData:
+          lastFailure = failure
+        default:
+          throw failure
+        }
+      }
     }
   }
 
@@ -78,27 +124,40 @@ enum NativeAutoSaveNetwork {
       defer { Darwin.close(udp) }
       try bind(udp, to: socketAddress(port: phase.port))
 
-      while true {
-        let (datagram, address) = try receiveDatagram(udp)
-        guard subnet.contains(address.sin_addr),
-          let source = addressString(address.sin_addr),
-          let target = try? AutoSaveCodec.discovery(datagram, phase: phase, source: source),
-          target == (phase == .registration ? "*" : importer)
-        else { continue }
-
-        let listener = try openSocket(SOCK_STREAM)
-        defer { Darwin.close(listener) }
-        do {
-          try option(listener, level: SOL_SOCKET, name: SO_REUSEADDR, value: Int32(1))
-          try bind(listener, to: socketAddress(port: phase.port))
-          guard listen(listener, 4) == 0 else { throw socketFailure(errno, discoveredPeer: false) }
-          try notify(address: source, importer: importer)
-          if let invitation = try acceptInvitation(
-            listener, from: address.sin_addr, subnet: subnet, expectedName: expectedName
-          ) {
-            return AutoSaveHandshake(address: source, cameraName: invitation.cameraName)
+      return try findInvitation(phase: phase, importer: importer) {
+        while true {
+          let (data, address) = try receiveDatagram(udp)
+          if subnet.contains(address.sin_addr), let source = addressString(address.sin_addr) {
+            return Datagram(data: data, source: source)
           }
         }
+      } invite: { source in
+        let listener = try invitationListener()
+        defer { Darwin.close(listener) }
+        var peer = in_addr()
+        guard source.withCString({ inet_pton(AF_INET, $0, &peer) }) == 1 else {
+          throw WirelessFailure.malformedData
+        }
+        try notify(address: source, importer: importer)
+        return try acceptInvitation(listener, from: peer, subnet: subnet, expectedName: expectedName)
+      }
+    }
+
+    private func invitationListener() throws -> Int32 {
+      do {
+        let fd = try openSocket(SOCK_STREAM)
+        do {
+          try option(fd, level: SOL_SOCKET, name: SO_REUSEADDR, value: Int32(1))
+          try bind(fd, to: socketAddress(port: phase.port))
+          guard listen(fd, 4) == 0 else { throw socketFailure(errno, discoveredPeer: false) }
+        } catch {
+          Darwin.close(fd)
+          throw error
+        }
+        return fd
+      } catch WirelessFailure.connectionLost {
+        // A local listener failure cannot be resolved by another camera.
+        throw WirelessFailure.routeUnavailable
       }
     }
 
@@ -150,14 +209,8 @@ enum NativeAutoSaveNetwork {
           let receiver = addressString(local.sin_addr)
         else { throw WirelessFailure.routeUnavailable }
         let messageLimit = min(limit, clock.now + .seconds(5))
-        let invitation: AutoSaveCodec.Invitation
-        do {
-          invitation = try readMessage(fd, until: messageLimit) {
-            try AutoSaveCodec.invitation($0, phase: phase, localAddress: receiver)
-          }
-        } catch WirelessFailure.malformedData {
-          // Discard a malformed callback. A new discovery must start a new exchange.
-          return nil
+        let invitation = try readMessage(fd, until: messageLimit) {
+          try AutoSaveCodec.invitation($0, phase: phase, localAddress: receiver)
         }
         guard phase != .registration || invitation.cameraModel == WirelessCameraModel.xe3.rawValue,
           expectedName == nil || invitation.cameraName == expectedName
@@ -231,12 +284,12 @@ enum NativeAutoSaveNetwork {
     ) throws {
       var descriptor = pollfd(fd: fd, events: events, revents: 0)
       while true {
-        if cancelled.withLock({ $0 }) { throw CancellationError() }
         let remaining = clock.now.duration(to: limit)
         guard remaining > .zero else {
           if discoveredPeer { throw WirelessFailure.autoSavePeerUnreachable }
           throw WirelessFailure.timeout(phase == .registration ? .autoSaveRegistration : .autoSaveSession)
         }
+        if cancelled.withLock({ $0 }) { throw CancellationError() }
         let parts = remaining.components
         let milliseconds = parts.seconds > 0 ? 100 : min(100, parts.attoseconds / 1_000_000_000_000_000 + 1)
         let count = poll(&descriptor, 1, Int32(milliseconds))
@@ -246,7 +299,7 @@ enum NativeAutoSaveNetwork {
           throw socketFailure(code, discoveredPeer: discoveredPeer)
         }
         if count > 0 {
-          if cancelled.withLock({ $0 }) { throw CancellationError() }
+          if clock.now >= limit || cancelled.withLock({ $0 }) { continue }
           return
         }
       }

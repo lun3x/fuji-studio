@@ -7,6 +7,72 @@ import XCTest
 @testable import FujiStudio
 
 final class NetworkByteChannelTests: XCTestCase, @unchecked Sendable {
+  func testAutoSaveRetriesRefusedPortOnlyAfterClosingEachDial() async throws {
+    let selected = try XCTUnwrap(IPv4Address("192.168.1.53"))
+    let refused = TestConnection(automaticallyAcknowledgesClose: false)
+    let available = TestConnection()
+    let attempts = Mutex([String]())
+    let setup = Task {
+      try await NetworkByteChannel.connectAutoSave(to: selected, deadline: .now + .seconds(3)) { endpoint in
+        XCTAssertEqual(endpoint.port.rawValue, 55740)
+        return attempts.withLock {
+          $0.append(endpoint.address.debugDescription)
+          return $0.count == 1 ? refused : available
+        }
+      }
+    }
+    defer { setup.cancel() }
+    try await eventually { refused.started }
+    refused.emit(.failed(.autoSavePeerUnreachable))
+    try await eventually { refused.cancelCount == 1 }
+    XCTAssertFalse(available.started)
+    refused.emit(.ready)
+    refused.emit(.cancelled)
+    try await eventually { available.started }
+    available.emit(.ready)
+    let channel = try await setup.value
+    XCTAssertEqual(attempts.withLock { $0 }, [selected.debugDescription, selected.debugDescription])
+    XCTAssertEqual(refused.cancelCount, 1)
+    await channel.close()
+  }
+
+  func testAutoSaveCancellationClosesCurrentDialWithoutStartingAnother() async throws {
+    let selected = try XCTUnwrap(IPv4Address("192.168.1.53"))
+    let driver = TestConnection(automaticallyAcknowledgesClose: false)
+    let attempts = Mutex(0)
+    let setup = Task {
+      try await NetworkByteChannel.connectAutoSave(to: selected, deadline: .now + .seconds(3)) { _ in
+        attempts.withLock { $0 += 1 }
+        return driver
+      }
+    }
+    try await eventually { driver.started }
+    setup.cancel()
+    try await eventually { driver.cancelCount == 1 }
+    driver.emit(.ready)
+    driver.emit(.cancelled)
+    do {
+      _ = try await setup.value
+      XCTFail("Cancelled command dial became ready")
+    } catch {
+      XCTAssertTrue(error is CancellationError)
+    }
+    XCTAssertEqual(attempts.withLock { $0 }, 1)
+  }
+
+  func testAutoSaveExpiredDeadlineDoesNotStartADial() async throws {
+    let selected = try XCTUnwrap(IPv4Address("192.168.1.53"))
+    do {
+      _ = try await NetworkByteChannel.connectAutoSave(to: selected, deadline: .now) { _ in
+        XCTFail("An expired invitation opened a command socket")
+        return TestConnection()
+      }
+      XCTFail("An expired invitation became ready")
+    } catch {
+      XCTAssertEqual(error as? WirelessFailure, .timeout(.tcpSetup))
+    }
+  }
+
   func testEndpointComesFromRecognizedModeAndRequiresWiFi() throws {
     for mode in [WirelessMode.xApp, .phone] {
       let endpoint = try NetworkByteChannel.Endpoint.cameraHosted(mode: mode)
@@ -37,6 +103,13 @@ final class NetworkByteChannelTests: XCTestCase, @unchecked Sendable {
       NetworkByteChannel.waitingFailure(.posix(.ENETUNREACH), reason: .notAvailable),
       .routeUnavailable)
     XCTAssertNil(NetworkByteChannel.waitingFailure(.posix(.ETIMEDOUT), reason: nil))
+    XCTAssertNil(NetworkByteChannel.waitingFailure(.posix(.ECONNREFUSED), reason: nil))
+    XCTAssertEqual(
+      NetworkByteChannel.waitingFailure(.posix(.ECONNREFUSED), reason: nil, reportRefusal: true),
+      .autoSavePeerUnreachable)
+    XCTAssertEqual(
+      NetworkByteChannel.waitingFailure(.posix(.ECONNREFUSED), reason: .localNetworkDenied, reportRefusal: true),
+      .permissionDenied(.localNetwork))
   }
 
   func testConnectDeadlineClosesAndDiscardsLateReady() async throws {
