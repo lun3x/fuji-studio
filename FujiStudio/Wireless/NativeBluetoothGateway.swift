@@ -9,6 +9,7 @@ protocol BluetoothPeripheralDriver: AnyObject {
   func start(allowPermissionPrompt: Bool) throws
   func scan()
   func stopScan()
+  func discardDiscoveries()
   func connect(peripheralID: UUID, session: UUID)
   func perform(_ action: BLEProtocolAction, session: UUID)
   /// Ends with a disconnected event, including when connection was still pending.
@@ -70,6 +71,7 @@ final class NativeBluetoothGateway: BluetoothGateway {
   private var advertisements: [UUID: Advertisement] = [:]
   private var discovery: (id: UUID, continuation: Discovery.Continuation)?
   private var eventContinuations: [UUID: AsyncStream<BluetoothGatewayEvent>.Continuation] = [:]
+  private var linkRequestID: UUID?
   private var session: Session?
   private var pending: Pending?
   private var timeout: Task<Void, Never>?
@@ -83,7 +85,7 @@ final class NativeBluetoothGateway: BluetoothGateway {
   }
 
   func discover() async throws -> AsyncThrowingStream<[DiscoveredCamera], Error> {
-    guard session == nil else { throw WirelessFailure.connectionLost }
+    guard session == nil, linkRequestID == nil else { throw WirelessFailure.connectionLost }
     try Task.checkCancellation()
     try driver.start(allowPermissionPrompt: true)
     if let failure = availability.failure { throw failure }
@@ -106,25 +108,34 @@ final class NativeBluetoothGateway: BluetoothGateway {
   func pair(_ camera: DiscoveredCamera) async throws -> SavedCamera {
     guard let advertisement = advertisements[camera.peripheralID], advertisement.camera == camera
     else { throw WirelessFailure.peerMismatch }
-    let remembered = try await store.cameras().filter { $0.peripheralID == camera.peripheralID }
+    let requestID = try reserveLinkRequest()
+    defer { releaseLinkRequest(requestID) }
+    let cameras = try await store.cameras()
+    try checkLinkRequest(requestID)
+    let remembered = cameras.filter { $0.peripheralID == camera.peripheralID }
     return try await link(
       Session(
         peripheralID: camera.peripheralID, displayName: camera.displayName,
         modelHint: camera.advertisedModelHint, rememberedCameras: remembered),
-      pairing: true, token: advertisement.token)
+      requestID: requestID, pairing: true, token: advertisement.token)
   }
 
   func reconnect(_ camera: SavedCamera) async throws {
-    guard let saved = try await store.cameras().first(where: { $0.id == camera.id }),
+    let requestID = try reserveLinkRequest()
+    defer { releaseLinkRequest(requestID) }
+    let cameras = try await store.cameras()
+    try checkLinkRequest(requestID)
+    guard let saved = cameras.first(where: { $0.id == camera.id }),
       saved.peripheralID == camera.peripheralID, saved.model == camera.model,
       saved.peerKeyReference == camera.peerKeyReference
     else { throw WirelessFailure.peerMismatch }
+    let token = try store.peerKey(for: saved)
     if let session, session.camera == saved, session.authenticated, session.closing == nil { return }
     _ = try await link(
       Session(
         peripheralID: saved.peripheralID, displayName: saved.displayName, modelHint: saved.model,
         rememberedCameras: [], camera: saved),
-      pairing: false, token: store.peerKey(for: saved))
+      requestID: requestID, pairing: false, token: token)
   }
 
   func identity(for id: WirelessCameraID) async throws -> WirelessIdentity {
@@ -141,7 +152,14 @@ final class NativeBluetoothGateway: BluetoothGateway {
     }
     guard session.camera?.id == id else { throw WirelessFailure.peerMismatch }
     guard pending == nil else { throw WirelessFailure.connectionLost }
-    let result = try await operation(timeout: WirelessLimits.wifiReadiness, stage: .wifiReadiness) {
+    let result = try await operation(
+      timeout: WirelessLimits.wifiReadiness, stage: .wifiReadiness,
+      validate: {
+        guard self.session?.id == session.id, self.session?.closing == nil, pending == nil else {
+          throw WirelessFailure.connectionLost
+        }
+      }
+    ) {
       continuation in
       pending = .wifi(continuation)
       advance(.activateWiFi, sessionID: session.id)
@@ -163,8 +181,10 @@ final class NativeBluetoothGateway: BluetoothGateway {
   }
 
   func disconnect() async {
+    linkRequestID = nil
     finishDiscovery()
     advertisements.removeAll()
+    driver.discardDiscoveries()
     guard session != nil else { return }
     await withCheckedContinuation { continuation in
       disconnectWaiters.append(continuation)
@@ -172,18 +192,36 @@ final class NativeBluetoothGateway: BluetoothGateway {
     }
   }
 
+  private func reserveLinkRequest() throws -> UUID {
+    try Task.checkCancellation()
+    guard linkRequestID == nil else { throw WirelessFailure.connectionLost }
+    let id = UUID()
+    linkRequestID = id
+    return id
+  }
+
+  private func releaseLinkRequest(_ id: UUID) {
+    if linkRequestID == id { linkRequestID = nil }
+  }
+
+  private func checkLinkRequest(_ id: UUID) throws {
+    try Task.checkCancellation()
+    guard linkRequestID == id else { throw CancellationError() }
+  }
+
   private func link(
-    _ created: Session, pairing: Bool, token: WirelessProtocolPeerKey?
+    _ created: Session, requestID: UUID, pairing: Bool, token: WirelessProtocolPeerKey?
   ) async throws -> SavedCamera {
     guard session == nil else { throw WirelessFailure.connectionLost }
-    try Task.checkCancellation()
+    try checkLinkRequest(requestID)
     try driver.start(allowPermissionPrompt: pairing)
     if let failure = availability.failure { throw failure }
     finishDiscovery()
     advertisements.removeAll()
     let result = try await operation(
       timeout: pairing ? WirelessLimits.firstPairing : WirelessLimits.savedReconnect,
-      stage: pairing ? .firstPairing : .savedReconnect
+      stage: pairing ? .firstPairing : .savedReconnect,
+      validate: { try checkLinkRequest(requestID) }
     ) { continuation in
       session = created
       pending = .link(continuation, pairing: pairing, token: token)
@@ -196,12 +234,17 @@ final class NativeBluetoothGateway: BluetoothGateway {
   }
 
   private func operation(
-    timeout delay: Duration, stage: WirelessTimeoutStage, begin: (Continuation) -> Void
+    timeout delay: Duration, stage: WirelessTimeoutStage, validate: () throws -> Void,
+    begin: (Continuation) -> Void
   ) async throws -> Result {
     let id = UUID()
     return try await withTaskCancellationHandler {
       try Task.checkCancellation()
       return try await withCheckedThrowingContinuation { continuation in
+        do { try validate() } catch {
+          continuation.resume(throwing: error)
+          return
+        }
         operationID = id
         timeout = Task { [weak self] in
           do { try await Task.sleep(for: delay) } catch { return }
@@ -221,7 +264,8 @@ final class NativeBluetoothGateway: BluetoothGateway {
   private func receive(_ event: BluetoothDriverEvent) {
     switch event {
     case .availability(let value):
-      let initialPowerOn = availability != .poweredOn && value == .poweredOn
+      let previous = availability
+      let initialPowerOn = previous != .poweredOn && value == .poweredOn
       if availability != value {
         availability = value
         publish(.availability(value))
@@ -231,7 +275,11 @@ final class NativeBluetoothGateway: BluetoothGateway {
         if let session, session.closing == nil, !session.authenticated {
           driver.connect(peripheralID: session.peripheralID, session: session.id)
         }
-      } else if let failure = value.failure {
+      } else if let failure = value.failure
+        ?? (value == .unknown && previous == .poweredOn ? .connectionLost : nil)
+      {
+        linkRequestID = nil
+        advertisements.removeAll()
         finishDiscovery(throwing: failure)
         closeSession(failure, reportIfLinked: true)
       }

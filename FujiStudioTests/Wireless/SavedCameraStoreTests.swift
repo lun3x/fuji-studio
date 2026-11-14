@@ -45,7 +45,9 @@ final class SavedCameraStoreTests: XCTestCase {
     let selectionAfterForget = try await relaunched.selected()
     XCTAssertEqual(remaining, [xt5])
     XCTAssertNil(selectionAfterForget)
-    XCTAssertNil(try relaunched.peerKey(for: paired))
+    XCTAssertThrowsError(try relaunched.peerKey(for: paired)) {
+      XCTAssertEqual($0 as? WirelessFailure, .peerMismatch)
+    }
     do {
       _ = try await relaunched.password(for: xe3Credential)
       XCTFail("Forgotten camera's password was readable")
@@ -55,6 +57,23 @@ final class SavedCameraStoreTests: XCTestCase {
     let remainingPassword = try await relaunched.password(for: xt5Credential)
     XCTAssertEqual(remainingPassword, "test-xt5-wifi-password")
     XCTAssertEqual(defaults.string(forKey: "existing-receipt-fixture"), existingReceipt)
+  }
+
+  func testSavedSecureRecordWithoutTokenDiffersFromMissingRecord() async throws {
+    let namespace = "FujiStudio.Tests.SecureCameraRecord.\(UUID())"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: namespace))
+    defer { defaults.removePersistentDomain(forName: namespace) }
+    let store = KeychainCameraStore(
+      defaults: defaults, service: namespace, keychain: ReplayCameraKeychain(service: namespace))
+    let saved = try store.savePaired(
+      SavedCamera(
+        id: WirelessCameraID(), peripheralID: UUID(), model: .xt5, displayName: "X-T5"),
+      peerKey: nil)
+    XCTAssertNil(try store.peerKey(for: saved))
+    try await store.forget(saved.id)
+    XCTAssertThrowsError(try store.peerKey(for: saved)) {
+      XCTAssertEqual($0 as? WirelessFailure, .peerMismatch)
+    }
   }
 }
 

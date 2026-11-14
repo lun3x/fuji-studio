@@ -119,7 +119,7 @@ final class KeychainCameraStore: CameraPairingStore, CameraNetworkCredentialProv
   }
 
   func peerKey(for camera: SavedCamera) throws -> WirelessProtocolPeerKey? {
-    guard let record = try record(for: camera.id) else { return nil }
+    guard let record = try record(for: camera.id) else { throw WirelessFailure.peerMismatch }
     guard record.camera.peripheralID == camera.peripheralID, record.camera.model == camera.model,
       record.camera.peerKeyReference == camera.peerKeyReference
     else { throw WirelessFailure.peerMismatch }

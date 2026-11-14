@@ -14,12 +14,11 @@ final class CoreBluetoothDriver: NSObject, BluetoothPeripheralDriver,
     var characteristics: [BLEGATTCharacteristic: CBCharacteristic] = [:]
     var pendingRead: BLEGATTCharacteristic?
     var pendingWrite: (characteristic: BLEGATTCharacteristic, purpose: BLEWritePurpose)?
-    var closing = false
   }
 
   var eventHandler: ((BluetoothDriverEvent) -> Void)?
   private var central: CBCentralManager?
-  private var discoveries: [UUID: CBPeripheral] = [:]
+  private var connections = CoreBluetoothConnections<CBCentralManager, CBPeripheral>()
   private var active: Link?
 
   private static let secureAdvertisement = CBUUID(string: "a9d2b304-e8d6-4902-8336-352b772d7597")
@@ -48,7 +47,7 @@ final class CoreBluetoothDriver: NSObject, BluetoothPeripheralDriver,
   }
 
   func scan() {
-    discoveries.removeAll()
+    discardDiscoveries()
     central?.scanForPeripherals(
       withServices: [Self.secureAdvertisement, Self.legacyAdvertisement, Self.xAppAdvertisement],
       options: [CBCentralManagerScanOptionAllowDuplicatesKey: true])
@@ -56,23 +55,25 @@ final class CoreBluetoothDriver: NSObject, BluetoothPeripheralDriver,
 
   func stopScan() { central?.stopScan() }
 
+  func discardDiscoveries() { connections.discardDiscoveries() }
+
   func connect(peripheralID: UUID, session: UUID) {
-    guard let central, central.state == .poweredOn, active == nil,
-      let peripheral = discoveries[peripheralID]
-        ?? central.retrievePeripherals(withIdentifiers: [peripheralID]).first
+    guard let central, central.state == .poweredOn,
+      let peripheral = connections.begin(
+        session: session, peripheralID: peripheralID, manager: central,
+        retrieve: { central.retrievePeripherals(withIdentifiers: [peripheralID]).first })
     else {
       eventHandler?(.disconnected(session, .connectionLost))
       return
     }
 
-    discoveries.removeAll()
     active = Link(id: session, peripheral: peripheral)
     peripheral.delegate = self
     central.connect(peripheral, options: nil)
   }
 
   func perform(_ action: BLEProtocolAction, session: UUID) {
-    guard let link = active, link.id == session, !link.closing else { return }
+    guard let link = active, link.id == session, connections.active?.closing == false else { return }
     let key: BLEGATTCharacteristic
     switch action {
     case .read(let value), .write(let value, _, _), .subscribe(let value): key = value
@@ -116,21 +117,21 @@ final class CoreBluetoothDriver: NSObject, BluetoothPeripheralDriver,
   }
 
   func disconnect(session: UUID) {
-    discoveries.removeAll()
-    guard let link = active, link.id == session else {
+    discardDiscoveries()
+    switch connections.requestCancellation(for: session, canRequest: central?.state == .poweredOn) {
+    case .neverIssued:
       eventHandler?(.disconnected(session, .connectionLost))
-      return
-    }
-    guard !link.closing else { return }
-    active?.closing = true
-    if link.peripheral.state == .disconnected || central?.state != .poweredOn {
-      finishLink(link, failure: .connectionLost)
-    } else {
-      central?.cancelPeripheralConnection(link.peripheral)
+    case .request:
+      if let attempt = connections.active {
+        attempt.manager.cancelPeripheralConnection(attempt.peripheral)
+      }
+    case .awaitingTerminal:
+      break
     }
   }
 
   func centralManagerDidUpdateState(_ central: CBCentralManager) {
+    guard self.central === central else { return }
     let availability: BluetoothAvailability = switch central.state {
     case .poweredOn: .poweredOn
     case .unauthorized: .unauthorized
@@ -139,9 +140,14 @@ final class CoreBluetoothDriver: NSObject, BluetoothPeripheralDriver,
     case .unknown: .unknown
     @unknown default: .unsupported
     }
+    // Powered-off peripherals may still be reused. Keep their callback owner
+    // until CoreBluetooth delivers didDisconnect or didFailToConnect.
+    if central.state != .poweredOn { discardDiscoveries() }
     eventHandler?(.availability(availability))
-    if let failure = availability.failure, let active {
-      finishLink(active, failure: failure)
+    if central.state.rawValue < CBManagerState.poweredOff.rawValue,
+      let invalidated = connections.invalidate(manager: central)
+    {
+      finishLink(session: invalidated, failure: availability.failure ?? .connectionLost)
     }
   }
 
@@ -149,7 +155,8 @@ final class CoreBluetoothDriver: NSObject, BluetoothPeripheralDriver,
     _ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
     advertisementData: [String: Any], rssi RSSI: NSNumber
   ) {
-    guard central.isScanning, discoveries.count < 64 || discoveries[peripheral.identifier] != nil,
+    guard self.central === central, central.state == .poweredOn, central.isScanning,
+      connections.canRemember(peripheral.identifier),
       let data = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data,
       data.prefix(2).elementsEqual([0xd8, 0x04]),
       advertisementData[CBAdvertisementDataIsConnectable] as? Bool != false
@@ -170,26 +177,26 @@ final class CoreBluetoothDriver: NSObject, BluetoothPeripheralDriver,
     } else {
       return
     }
-    discoveries[peripheral.identifier] = peripheral
+    connections.remember(peripheral, for: peripheral.identifier)
     eventHandler?(.discovered(DiscoveredCamera(
       peripheralID: peripheral.identifier, advertisedModelHint: hint, displayName: name), token: token))
   }
 
   func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
-    guard link(for: peripheral) != nil else { return }
+    guard self.central === central, link(for: peripheral) != nil else { return }
     peripheral.discoverServices(Self.pairingServices)
   }
 
   func centralManager(
     _ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?
   ) {
-    disconnected(peripheral, error: error)
+    disconnected(central, peripheral: peripheral, error: error)
   }
 
   func centralManager(
     _ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?
   ) {
-    disconnected(peripheral, error: error)
+    disconnected(central, peripheral: peripheral, error: error)
   }
 
   func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
@@ -244,12 +251,13 @@ final class CoreBluetoothDriver: NSObject, BluetoothPeripheralDriver,
     let isRead = link.pendingRead == key
     if isRead { active?.pendingRead = nil }
     if isRead, key == Self.modelNumber {
-      if let data = characteristic.value, error == nil, data.count <= 64 {
-        let text = String(data: data.prefix { $0 != 0 }, encoding: .utf8)?
-          .trimmingCharacters(in: .whitespacesAndNewlines)
-        eventHandler?(.peerModel(link.id, text.flatMap { $0.isEmpty ? nil : $0 }))
+      switch Self.modelRead(characteristic.value, error: error) {
+      case .success(let model):
+        if let model { eventHandler?(.peerModel(link.id, model)) }
+        publishServices(for: link.id)
+      case .failure(let failure):
+        abort(link, failure: failure)
       }
-      publishServices(for: link.id)
       return
     }
     if let error {
@@ -305,12 +313,13 @@ final class CoreBluetoothDriver: NSObject, BluetoothPeripheralDriver,
   }
 
   private func publishServices(for session: UUID) {
-    guard let link = active, link.id == session, !link.closing else { return }
+    guard let link = active, link.id == session, connections.active?.closing == false else { return }
     eventHandler?(.protocolEvent(session, .services(Set(link.characteristics.keys))))
   }
 
   private func link(for peripheral: CBPeripheral) -> Link? {
-    guard let link = active, link.peripheral === peripheral, !link.closing else { return nil }
+    guard let link = active, link.peripheral === peripheral, connections.active?.closing == false
+    else { return nil }
     return link
   }
 
@@ -322,15 +331,35 @@ final class CoreBluetoothDriver: NSObject, BluetoothPeripheralDriver,
     eventHandler?(.linkFailed(link.id, failure))
   }
 
-  private func disconnected(_ peripheral: CBPeripheral, error: Error?) {
-    guard let active, active.peripheral === peripheral else { return }
-    finishLink(active, failure: error.map(Self.failure) ?? .connectionLost)
+  private func disconnected(_ central: CBCentralManager, peripheral: CBPeripheral, error: Error?) {
+    guard let session = connections.consumeTerminal(manager: central, peripheral: peripheral)
+    else { return }
+    finishLink(session: session, failure: error.map(Self.failure) ?? .connectionLost)
   }
 
-  private func finishLink(_ link: Link, failure: WirelessFailure) {
-    active = nil
-    link.peripheral.delegate = nil
-    eventHandler?(.disconnected(link.id, failure))
+  private func finishLink(session: UUID, failure: WirelessFailure) {
+    guard let active, active.id == session else { return }
+    active.peripheral.delegate = nil
+    self.active = nil
+    eventHandler?(.disconnected(session, failure))
+  }
+
+  static func modelRead(_ data: Data?, error: Error?) -> Result<String?, WirelessFailure> {
+    if let error {
+      if let att = error as? CBATTError {
+        switch att.code {
+        case .attributeNotFound, .readNotPermitted, .requestNotSupported, .invalidHandle:
+          return .success(nil)
+        default:
+          break
+        }
+      }
+      return .failure(failure(from: error))
+    }
+    guard let data, data.count <= 64 else { return .success(nil) }
+    let text = String(data: data.prefix { $0 != 0 }, encoding: .utf8)?
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    return .success(text.flatMap { $0.isEmpty ? nil : $0 })
   }
 
   private static func key(for characteristic: CBCharacteristic) -> BLEGATTCharacteristic? {

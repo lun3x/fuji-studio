@@ -77,9 +77,7 @@ final class BluetoothGatewayTests: XCTestCase {
     }
     var attempts = connects.makeAsyncIterator()
     var cancellations = disconnects.makeAsyncIterator()
-    var completionBeforeCleanup = false
     let cancelled = Task { @MainActor in
-      defer { completionBeforeCleanup = driver.connection != nil }
       try await gateway.reconnect(camera)
     }
     let firstAttempt = await attempts.next()
@@ -87,10 +85,21 @@ final class BluetoothGatewayTests: XCTestCase {
     cancelled.cancel()
     let cancelling = await cancellations.next()
     XCTAssertEqual(cancelling, first)
+    let cleanupCompleted = expectation(description: "Explicit disconnect joined native cleanup")
+    cleanupCompleted.isInverted = true
+    let cleanup = Task { @MainActor in
+      await gateway.disconnect()
+      if driver.connection != nil { cleanupCompleted.fulfill() }
+    }
+    let reconnectCompleted = expectation(description: "Reconnect finishes during native cleanup")
+    reconnectCompleted.isInverted = true
+    let completion = Task { @MainActor in
+      _ = await cancelled.result
+      if driver.connection != nil { reconnectCompleted.fulfill() }
+    }
     driver.reportServices(for: first)
     XCTAssertTrue(driver.writes.isEmpty)
-    // Let a prematurely resumed reconnect run before the terminal native event.
-    await Task.yield()
+    await fulfillment(of: [cleanupCompleted, reconnectCompleted], timeout: 0.15)
     driver.dropConnection()
     do {
       try await cancelled.value
@@ -98,7 +107,8 @@ final class BluetoothGatewayTests: XCTestCase {
     } catch {
       XCTAssertTrue(error is CancellationError)
     }
-    XCTAssertFalse(completionBeforeCleanup)
+    await cleanup.value
+    await completion.value
 
     let retry = Task { @MainActor in try await gateway.reconnect(camera) }
     let secondAttempt = await attempts.next()
@@ -178,6 +188,145 @@ final class BluetoothGatewayTests: XCTestCase {
     XCTAssertNil(selected)
     await gateway.disconnect()
   }
+
+  func testDisconnectInvalidatesPairAndReconnectWhileSavedLookupIsSuspended() async throws {
+    for pairing in [true, false] {
+      let camera = SavedCamera(
+        id: WirelessCameraID(), peripheralID: UUID(), model: .xe3, displayName: "Travel camera")
+      let store = SuspendedCameraLookup(camera: camera)
+      let driver = ReplayBluetoothDriver()
+      let gateway = NativeBluetoothGateway(store: store, driver: driver)
+      let candidate = DiscoveredCamera(
+        peripheralID: camera.peripheralID, advertisedModelHint: camera.model,
+        displayName: camera.displayName)
+      let discovery = pairing ? try await gateway.discover() : nil
+      if pairing {
+        driver.eventHandler?(.discovered(candidate, token: store.token))
+      }
+      let attempt = Task { @MainActor in
+        if pairing {
+          _ = try await gateway.pair(candidate)
+        } else {
+          try await gateway.reconnect(camera)
+        }
+      }
+      var lookup = store.lookups.makeAsyncIterator()
+      _ = await lookup.next()
+      await gateway.disconnect()
+      store.resumeLookup()
+      do {
+        try await attempt.value
+        XCTFail("An invalidated request proceeded after disconnect")
+      } catch {
+        XCTAssertTrue(error is CancellationError)
+      }
+      withExtendedLifetime(discovery) {}
+      XCTAssertTrue(driver.reconnectedPeripheralIDs.isEmpty)
+      XCTAssertTrue(driver.writes.isEmpty)
+      XCTAssertFalse(store.savedPair)
+    }
+  }
+
+  func testPowerLossInvalidatesAdvertisementBeforePairing() async throws {
+    let camera = SavedCamera(
+      id: WirelessCameraID(), peripheralID: UUID(), model: .xe3, displayName: "Travel camera")
+    let store = SuspendedCameraLookup(camera: camera)
+    let driver = ReplayBluetoothDriver()
+    let gateway = NativeBluetoothGateway(store: store, driver: driver)
+    let stream = try await gateway.discover()
+    let candidate = DiscoveredCamera(
+      peripheralID: camera.peripheralID, advertisedModelHint: camera.model,
+      displayName: camera.displayName)
+    driver.eventHandler?(.discovered(candidate, token: store.token))
+    driver.setAvailability(.poweredOff)
+    driver.setAvailability(.poweredOn)
+    store.suspend = false
+    do {
+      _ = try await gateway.pair(candidate)
+      XCTFail("Pairing reused an advertisement from before a radio interruption")
+    } catch {
+      XCTAssertEqual(error as? WirelessFailure, .peerMismatch)
+    }
+    withExtendedLifetime(stream) {}
+    XCTAssertTrue(driver.writes.isEmpty)
+  }
+
+  func testFullDisconnectDiscardsNativeDiscoveryWithoutAnActiveLink() async throws {
+    let store = SuspendedCameraLookup(camera: SavedCamera(
+      id: WirelessCameraID(), peripheralID: UUID(), model: .xt5, displayName: "Travel camera"))
+    let driver = ReplayBluetoothDriver()
+    let gateway = NativeBluetoothGateway(store: store, driver: driver)
+    let stream = try await gateway.discover()
+    XCTAssertEqual(driver.discoveryDiscardCount, 0)
+    await gateway.disconnect()
+    withExtendedLifetime(stream) {}
+    XCTAssertEqual(driver.discoveryDiscardCount, 1)
+  }
+
+  func testReconnectHintCannotOverrideAnOptionalModelReadFailure() async throws {
+    let saved = SavedCamera(
+      id: WirelessCameraID(), peripheralID: UUID(), model: .xe3, displayName: "X-E3")
+    let store = SuspendedCameraLookup(camera: saved)
+    store.suspend = false
+    for error in [WirelessFailure.authentication, .connectionLost] {
+      let driver = ReplayBluetoothDriver()
+      driver.pauseConnections = true
+      let gateway = NativeBluetoothGateway(store: store, driver: driver)
+      driver.onConnect = { session in
+        driver.eventHandler?(.linkFailed(session, error))
+        driver.reportServices(for: session)
+      }
+      do {
+        try await gateway.reconnect(saved)
+        XCTFail("Reconnect fell back to the saved model after a terminal model read failure")
+      } catch let received {
+        XCTAssertEqual(received as? WirelessFailure, error)
+      }
+      XCTAssertTrue(driver.writes.isEmpty)
+      driver.onConnect = nil
+    }
+  }
+}
+
+@MainActor
+private final class SuspendedCameraLookup: CameraPairingStore {
+  let token = WirelessProtocolPeerKey(bytes: Data("TOKN".utf8))
+  let camera: SavedCamera
+  let (lookups, signal) = AsyncStream<Void>.makeStream()
+  var suspend = true
+  private var lookup: CheckedContinuation<Void, Never>?
+  private(set) var savedPair = false
+
+  init(camera: SavedCamera) { self.camera = camera }
+
+  func cameras() async throws -> [SavedCamera] {
+    if suspend {
+      await withCheckedContinuation { continuation in
+        lookup = continuation
+        signal.yield(())
+      }
+    }
+    return [camera]
+  }
+
+  func resumeLookup() {
+    let pending = lookup
+    lookup = nil
+    pending?.resume()
+  }
+
+  func savePaired(_ camera: SavedCamera, peerKey: WirelessProtocolPeerKey?) throws -> SavedCamera {
+    savedPair = true
+    return camera
+  }
+  func peerKey(for camera: SavedCamera) throws -> WirelessProtocolPeerKey? { token }
+  func savePassword(_ password: String, for id: WirelessCameraID) throws -> CameraCredentialReference {
+    throw WirelessFailure.peerMismatch
+  }
+  func selected() async throws -> WirelessCameraID? { camera.id }
+  func save(_ camera: SavedCamera) async throws {}
+  func select(_ id: WirelessCameraID) async throws {}
+  func forget(_ id: WirelessCameraID) async throws {}
 }
 
 @MainActor
@@ -187,6 +336,7 @@ private final class ReplayBluetoothDriver: BluetoothPeripheralDriver {
   var reconnectedPeripheralIDs: [UUID] = []
   var writes: [(Data, BLEWritePurpose)] = []
   var actions: [BLEProtocolAction] = []
+  private(set) var discoveryDiscardCount = 0
   var connection: UUID?
   var onConnect: ((UUID) -> Void)?
   var onDisconnect: ((UUID) -> Void)?
@@ -219,6 +369,7 @@ private final class ReplayBluetoothDriver: BluetoothPeripheralDriver {
 
   func scan() {}
   func stopScan() {}
+  func discardDiscoveries() { discoveryDiscardCount += 1 }
 
   func connect(peripheralID: UUID, session: UUID) {
     reconnectedPeripheralIDs.append(peripheralID)
