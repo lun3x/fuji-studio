@@ -392,9 +392,21 @@ actor WirelessConnectionCoordinator {
       snapshot.savedCameras.append(camera)
     }
     let previousSelection: WirelessCameraID?
+    let savedCameras: [SavedCamera]
     do {
       if let failure = terminalDuringLink { throw failure }
-      previousSelection = if savedLoaded { snapshot.selectedCameraID } else { try await store.selected() }
+      if savedLoaded {
+        previousSelection = snapshot.selectedCameraID
+        savedCameras = snapshot.savedCameras
+      } else {
+        let persistedCameras = try await store.cameras()
+        guard work?.id == id else { return }
+        previousSelection = try await store.selected()
+        // Preserve the exact record returned by the pairing operation.
+        savedCameras = persistedCameras.contains { $0.id == camera.id }
+          ? persistedCameras.map { $0.id == camera.id ? camera : $0 }
+          : persistedCameras + [camera]
+      }
       guard work?.id == id else { return }
       try Task.checkCancellation()
     } catch {
@@ -415,7 +427,9 @@ actor WirelessConnectionCoordinator {
       await store.restoreSelection(previousSelection, replacing: camera.id)
       return
     }
+    snapshot.savedCameras = savedCameras
     snapshot.selectedCameraID = camera.id
+    savedLoaded = true
     finishReconnect(id: id)
   }
 

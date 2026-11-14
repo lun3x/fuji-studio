@@ -494,6 +494,53 @@ final class WirelessConnectionCoordinatorTests: XCTestCase {
     XCTAssertFalse(fixture.gateway.calls.contains(.reconnect(fixture.candidate.id, prompt: false)))
   }
 
+  func testSuccessfulPairReconnectsAfterRevokingInFlightSavedStateLoad() async throws {
+    let fixture = try PairingPersistenceFixture()
+    defer { fixture.removeDefaults() }
+    try await fixture.saveCameras(selectPrior: false)
+    let reads = fixture.store.selectionReads
+    var reading = reads.makeAsyncIterator()
+    var calls = fixture.gateway.operations.makeAsyncIterator()
+    var sleeps = fixture.clock.scheduled.makeAsyncIterator()
+    let states = await fixture.coordinator.states()
+    var updates = states.makeAsyncIterator()
+    await fixture.store.failNextCameraReads(2)
+    await fixture.coordinator.setActivity(.active)
+    await fixture.coordinator.startDiscovery()
+    _ = await calls.next(isolation: #isolation)
+    fixture.gateway.discovered([fixture.advertisement])
+    _ = try await state(&updates) { $0.discoveredCameras == [fixture.advertisement] }
+    await fixture.coordinator.setActivity(.inactive)
+    await fixture.store.suspendNextSelectionRead()
+    let reactivation = Task { await fixture.coordinator.setActivity(.active) }
+    _ = await reading.next()
+
+    await fixture.coordinator.pair(fixture.advertisement)
+    _ = await calls.next(isolation: #isolation)
+    fixture.gateway.completeLink()
+    let paired = try await state(&updates) { $0.bluetooth == .ready }
+    XCTAssertEqual(paired.selectedCameraID, fixture.candidate.id)
+    XCTAssertEqual(Set(paired.savedCameras.map(\.id)), [fixture.prior.id, fixture.candidate.id])
+    await fixture.store.resumeSelectionRead()
+    await reactivation.value
+
+    fixture.gateway.dropLink(fixture.candidate.id)
+    let delay = await sleeps.next()
+    XCTAssertEqual(delay, .seconds(3))
+    let reconnect = expectation(description: "Retry reconnects the newly selected camera")
+    let observation = Task {
+      let next = await nextReconnect(&calls)
+      if let next {
+        XCTAssertEqual(next, .reconnect(fixture.candidate.id, prompt: false))
+        fixture.gateway.completeLink()
+        reconnect.fulfill()
+      }
+    }
+    defer { observation.cancel() }
+    await fixture.clock.advance(by: .seconds(3))
+    await fulfillment(of: [reconnect], timeout: 1)
+  }
+
   func testPairDoesNotSelectCandidateWhenPriorSelectionCannotBeValidated() async throws {
     let fixture = try PairingPersistenceFixture()
     defer { fixture.removeDefaults() }
@@ -720,6 +767,7 @@ final class WirelessConnectionCoordinatorTests: XCTestCase {
 
 @MainActor
 private final class PairingPersistenceFixture {
+  let clock = ManualWirelessClock()
   let namespace: String
   let defaults: UserDefaults
   let keychain: ReplayCameraKeychain
@@ -742,7 +790,8 @@ private final class PairingPersistenceFixture {
     store = SuspendedSelectionStore(
       KeychainCameraStore(defaults: defaults, service: namespace, keychain: keychain))
     gateway = ControlledBluetoothGateway(store: store)
-    coordinator = WirelessConnectionCoordinator(bluetooth: gateway, store: store, authorization: { .allowed })
+    coordinator = WirelessConnectionCoordinator(
+      bluetooth: gateway, store: store, authorization: { .allowed }, sleep: clock.sleep)
   }
 
   func makeNativeStore() -> KeychainCameraStore {
