@@ -123,5 +123,6 @@ public enum WirelessFailure: Error, Equatable, Sendable {
   case peerMismatch
   case malformedData
   case unavailableStorage
+  case routeUnavailable
   case connectionLost
 }
