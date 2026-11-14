@@ -1,6 +1,6 @@
 # Camera WiFi import for X-T5 and X-E3
 
-Date: 2026-11-14. Status: proposed specification, awaiting user review.
+Date: 2026-11-14. Status: approved by the user; implementation planning authorized.
 Initial builder check completed: no important planning questions remained.
 Firmware scope subsequently narrowed by the user to latest releases only.
 Agreed approach: native Swift protocol adapters with capability detection,
