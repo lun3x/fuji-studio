@@ -6,6 +6,8 @@ protocol SavedCameraStore: Sendable {
   func selected() async throws -> WirelessCameraID?
   func save(_ camera: SavedCamera) async throws
   func select(_ id: WirelessCameraID?) async throws
+  /// Undo only the candidate written by a superseded pairing attempt.
+  func restoreSelection(_ previous: WirelessCameraID?, replacing candidate: WirelessCameraID) async
   func forget(_ id: WirelessCameraID) async throws
 }
 

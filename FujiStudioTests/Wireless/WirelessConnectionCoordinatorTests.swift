@@ -407,13 +407,129 @@ final class WirelessConnectionCoordinatorTests: XCTestCase {
     try await verifyCommittedPairSelectionIsReverted(hadSelection: false)
   }
 
-  func testFailedPairSelectionRestoreRemainsActionableAndDoesNotReconnectCandidate() async throws {
-    try await verifyCommittedPairSelectionIsReverted(hadSelection: true, failRestore: true)
+  func testBackgroundRestoresSelectionWhileKeychainIsLockedAndAcrossRelaunch() async throws {
+    let fixture = try PairingPersistenceFixture()
+    defer { fixture.removeDefaults() }
+    try await fixture.saveCameras(selectPrior: true)
+    var calls = fixture.gateway.operations.makeAsyncIterator()
+    let states = await fixture.coordinator.states()
+    var updates = states.makeAsyncIterator()
+    await fixture.coordinator.setActivity(.active)
+    _ = await calls.next(isolation: #isolation)
+    fixture.gateway.completeLink()
+    _ = try await state(&updates) { $0.bluetooth == .ready }
+    let committed = fixture.store.selectionCommits
+    var commits = committed.makeAsyncIterator()
+    await fixture.store.suspendNextSelectionCompletion()
+    try await beginPair(fixture, calls: &calls, updates: &updates, disconnectFirst: true)
+    let candidate = await commits.next()
+    XCTAssertEqual(candidate, fixture.candidate.id)
+
+    fixture.keychain.isLocked = true
+    let background = Task { await fixture.coordinator.setActivity(.background) }
+    let disconnection = await calls.next(isolation: #isolation)
+    XCTAssertEqual(disconnection, .disconnect)
+    let queriesBeforeRestore = fixture.keychain.copyCount
+    await fixture.store.resumeSelectionCompletion()
+    await background.value
+    XCTAssertEqual(fixture.keychain.copyCount, queriesBeforeRestore)
+
+    fixture.keychain.isLocked = false
+    let nativeStore = fixture.makeNativeStore()
+    let gateway = ControlledBluetoothGateway(store: nativeStore)
+    let relaunched = WirelessConnectionCoordinator(
+      bluetooth: gateway, store: nativeStore, authorization: { .allowed })
+    await relaunched.setActivity(.active)
+    let available = try await snapshot(relaunched)
+    XCTAssertEqual(available.selectedCameraID, fixture.prior.id)
+    var relaunchedCalls = gateway.operations.makeAsyncIterator()
+    let reconnect = await relaunchedCalls.next(isolation: #isolation)
+    XCTAssertEqual(reconnect, .reconnect(fixture.prior.id, prompt: false))
+    gateway.completeLink()
   }
 
-  private func verifyCommittedPairSelectionIsReverted(
-    hadSelection: Bool, failRestore: Bool = false
+  func testInFlightSavedStateCannotAdoptSelectionOfCancelledPair() async throws {
+    let fixture = try PairingPersistenceFixture()
+    defer { fixture.removeDefaults() }
+    try await fixture.saveCameras(selectPrior: false)
+    let commits = fixture.store.selectionCommits
+    var committed = commits.makeAsyncIterator()
+    let reads = fixture.store.selectionReads
+    var reading = reads.makeAsyncIterator()
+    var calls = fixture.gateway.operations.makeAsyncIterator()
+    let states = await fixture.coordinator.states()
+    var updates = states.makeAsyncIterator()
+    await fixture.store.failNextCameraReads(2)
+    await fixture.coordinator.setActivity(.active)
+    await fixture.coordinator.startDiscovery()
+    _ = await calls.next(isolation: #isolation)
+    fixture.gateway.discovered([fixture.advertisement])
+    _ = try await state(&updates) { $0.discoveredCameras == [fixture.advertisement] }
+
+    await fixture.coordinator.setActivity(.inactive)
+    await fixture.store.suspendNextSelectionRead()
+    let reactivation = Task { await fixture.coordinator.setActivity(.active) }
+    _ = await reading.next()
+    await fixture.store.suspendNextSelectionCompletion()
+    await fixture.coordinator.pair(fixture.advertisement)
+    _ = await calls.next(isolation: #isolation)
+    fixture.gateway.completeLink()
+    let candidate = await committed.next()
+    XCTAssertEqual(candidate, fixture.candidate.id)
+
+    let cancel = Task { await fixture.coordinator.cancelConnection() }
+    let disconnection = await calls.next(isolation: #isolation)
+    XCTAssertEqual(disconnection, .disconnect)
+    // This read samples the provisional ID while its rollback is still waiting.
+    await fixture.store.resumeSelectionRead()
+    await reactivation.value
+    let duringCleanup = try await snapshot(fixture.coordinator)
+    XCTAssertNil(duringCleanup.selectedCameraID)
+    await fixture.store.resumeSelectionCompletion()
+    await cancel.value
+    let durable = try await fixture.makeNativeStore().selected()
+    XCTAssertNil(durable)
+    let current = try await snapshot(fixture.coordinator)
+    XCTAssertNil(current.selectedCameraID)
+    XCTAssertFalse(fixture.gateway.calls.contains(.reconnect(fixture.candidate.id, prompt: false)))
+  }
+
+  func testPairDoesNotSelectCandidateWhenPriorSelectionCannotBeValidated() async throws {
+    let fixture = try PairingPersistenceFixture()
+    defer { fixture.removeDefaults() }
+    try await fixture.saveCameras(selectPrior: true)
+    await fixture.store.failNextCameraReads(2)
+    await fixture.coordinator.setActivity(.active)
+    await fixture.store.failNextSelectionRead()
+    let states = await fixture.coordinator.states()
+    var updates = states.makeAsyncIterator()
+    var calls = fixture.gateway.operations.makeAsyncIterator()
+    try await beginPair(fixture, calls: &calls, updates: &updates, disconnectFirst: false)
+    let disconnection = await calls.next(isolation: #isolation)
+    XCTAssertEqual(disconnection, .disconnect)
+    let failed = try await state(&updates) { $0.bluetooth == .unavailable }
+    XCTAssertEqual(failed.failure, .unavailableStorage)
+    let durable = try await fixture.makeNativeStore().selected()
+    XCTAssertEqual(durable, fixture.prior.id)
+  }
+
+  private func beginPair(
+    _ fixture: PairingPersistenceFixture,
+    calls: inout AsyncStream<ControlledBluetoothGateway.Call>.Iterator,
+    updates: inout AsyncStream<WirelessConnectionState>.Iterator,
+    disconnectFirst: Bool
   ) async throws {
+    await fixture.coordinator.startDiscovery()
+    if disconnectFirst { _ = await calls.next(isolation: #isolation) }
+    _ = await calls.next(isolation: #isolation)
+    fixture.gateway.discovered([fixture.advertisement])
+    _ = try await state(&updates) { $0.discoveredCameras == [fixture.advertisement] }
+    await fixture.coordinator.pair(fixture.advertisement)
+    _ = await calls.next(isolation: #isolation)
+    fixture.gateway.completeLink()
+  }
+
+  private func verifyCommittedPairSelectionIsReverted(hadSelection: Bool) async throws {
     let fixture = Fixture(selected: hadSelection)
     var calls = fixture.gateway.operations.makeAsyncIterator()
     let states = await fixture.coordinator.states()
@@ -450,22 +566,14 @@ final class WirelessConnectionCoordinatorTests: XCTestCase {
     }
     let disconnect = await calls.next(isolation: #isolation)
     XCTAssertEqual(disconnect, .disconnect)
-    if failRestore { await fixture.store.failNextSelection(.unavailableStorage) }
     await fixture.store.resumeSelection()
     await interrupted.value
     await fixture.coordinator.setActivity(.active)
     let expected = hadSelection ? fixture.first.id : nil
     let selected = await fixture.store.selected()
-    XCTAssertEqual(selected, failRestore ? fixture.second.id : expected)
+    XCTAssertEqual(selected, expected)
     let current = try await snapshot(fixture.coordinator)
     XCTAssertEqual(current.selectedCameraID, expected)
-    if failRestore {
-      XCTAssertEqual(current.failure, .unavailableStorage)
-      XCTAssertFalse(fixture.gateway.calls.contains(.reconnect(fixture.second.id, prompt: false)))
-      try await fixture.coordinator.select(fixture.first.id)
-      let repaired = await fixture.store.selected()
-      XCTAssertEqual(repaired, fixture.first.id)
-    }
     if hadSelection {
       let attempt = await nextReconnect(&calls)
       XCTAssertEqual(attempt, .reconnect(fixture.first.id, prompt: false))
@@ -610,6 +718,123 @@ final class WirelessConnectionCoordinatorTests: XCTestCase {
   }
 }
 
+@MainActor
+private final class PairingPersistenceFixture {
+  let namespace: String
+  let defaults: UserDefaults
+  let keychain: ReplayCameraKeychain
+  let store: SuspendedSelectionStore
+  let gateway: ControlledBluetoothGateway
+  let coordinator: WirelessConnectionCoordinator
+  let prior = SavedCamera(id: WirelessCameraID(), peripheralID: UUID(), model: .xt5, displayName: "X-T5")
+  let candidate = SavedCamera(id: WirelessCameraID(), peripheralID: UUID(), model: .xe3, displayName: "X-E3")
+
+  var advertisement: DiscoveredCamera {
+    DiscoveredCamera(
+      peripheralID: candidate.peripheralID, advertisedModelHint: candidate.model,
+      displayName: candidate.displayName)
+  }
+
+  init() throws {
+    namespace = "FujiStudio.Tests.PairingPersistence.\(UUID())"
+    defaults = try XCTUnwrap(UserDefaults(suiteName: namespace))
+    keychain = ReplayCameraKeychain(service: namespace)
+    store = SuspendedSelectionStore(
+      KeychainCameraStore(defaults: defaults, service: namespace, keychain: keychain))
+    gateway = ControlledBluetoothGateway(store: store)
+    coordinator = WirelessConnectionCoordinator(bluetooth: gateway, store: store, authorization: { .allowed })
+  }
+
+  func makeNativeStore() -> KeychainCameraStore {
+    KeychainCameraStore(defaults: defaults, service: namespace, keychain: keychain)
+  }
+
+  func saveCameras(selectPrior: Bool) async throws {
+    try await store.save(prior)
+    try await store.save(candidate)
+    if selectPrior { try await store.select(prior.id) }
+  }
+
+  func removeDefaults() { defaults.removePersistentDomain(forName: namespace) }
+}
+
+private actor SuspendedSelectionStore: SavedCameraStore {
+  let selectionCommits: AsyncStream<WirelessCameraID?>
+  private let selectionCommit: AsyncStream<WirelessCameraID?>.Continuation
+  let selectionReads: AsyncStream<Void>
+  private let selectionRead: AsyncStream<Void>.Continuation
+  private let native: KeychainCameraStore
+  private var remainingCameraFailures = 0
+  private var failSelectionRead = false
+  private var holdSelectionCompletion = false
+  private var holdSelectionRead = false
+  private var completion: CheckedContinuation<Void, Never>?
+  private var read: CheckedContinuation<Void, Never>?
+
+  init(_ native: KeychainCameraStore) {
+    self.native = native
+    (selectionCommits, selectionCommit) = AsyncStream.makeStream()
+    (selectionReads, selectionRead) = AsyncStream.makeStream()
+  }
+
+  func failNextCameraReads(_ count: Int) { remainingCameraFailures = count }
+  func failNextSelectionRead() { failSelectionRead = true }
+  func suspendNextSelectionCompletion() { holdSelectionCompletion = true }
+  func suspendNextSelectionRead() { holdSelectionRead = true }
+
+  func resumeSelectionCompletion() {
+    completion?.resume()
+    completion = nil
+  }
+
+  func resumeSelectionRead() {
+    read?.resume()
+    read = nil
+  }
+
+  func cameras() async throws -> [SavedCamera] {
+    if remainingCameraFailures > 0 {
+      remainingCameraFailures -= 1
+      throw WirelessFailure.unavailableStorage
+    }
+    return try await native.cameras()
+  }
+
+  func selected() async throws -> WirelessCameraID? {
+    if failSelectionRead {
+      failSelectionRead = false
+      throw WirelessFailure.unavailableStorage
+    }
+    if holdSelectionRead {
+      holdSelectionRead = false
+      await withCheckedContinuation { continuation in
+        read = continuation
+        selectionRead.yield(())
+      }
+    }
+    return try await native.selected()
+  }
+
+  func save(_ camera: SavedCamera) async throws { try await native.save(camera) }
+
+  func select(_ id: WirelessCameraID?) async throws {
+    try await native.select(id)
+    if holdSelectionCompletion {
+      holdSelectionCompletion = false
+      await withCheckedContinuation { continuation in
+        completion = continuation
+        selectionCommit.yield(id)
+      }
+    }
+  }
+
+  func forget(_ id: WirelessCameraID) async throws { try await native.forget(id) }
+
+  func restoreSelection(_ previous: WirelessCameraID?, replacing candidate: WirelessCameraID) async {
+    await native.restoreSelection(previous, replacing: candidate)
+  }
+}
+
 private actor MemorySavedCameraStore: SavedCameraStore {
   private var saved: [SavedCamera]
   private var selection: WirelessCameraID?
@@ -668,6 +893,10 @@ private actor MemorySavedCameraStore: SavedCameraStore {
     }
   }
 
+  func restoreSelection(_ previous: WirelessCameraID?, replacing candidate: WirelessCameraID) {
+    if selection == candidate { selection = previous }
+  }
+
   func forget(_ id: WirelessCameraID) {
     saved.removeAll { $0.id == id }
     if selection == id { selection = nil }
@@ -689,7 +918,7 @@ private final class ControlledBluetoothGateway: BluetoothGateway {
   private(set) var reconnectCamera: SavedCamera?
   var pauseDisconnect = false
   var pairedCamera: SavedCamera?
-  private let store: MemorySavedCameraStore
+  private let store: any SavedCameraStore
   private let operation: AsyncStream<Call>.Continuation
   private var event: AsyncStream<BluetoothGatewayEvent>.Continuation?
   private var discovery: AsyncThrowingStream<[DiscoveredCamera], Error>.Continuation?
@@ -697,7 +926,7 @@ private final class ControlledBluetoothGateway: BluetoothGateway {
   private var disconnectWaiter: CheckedContinuation<Void, Never>?
   private var camera: SavedCamera?
 
-  init(store: MemorySavedCameraStore) {
+  init(store: any SavedCameraStore) {
     self.store = store
     (operations, operation) = AsyncStream.makeStream()
   }
@@ -712,10 +941,10 @@ private final class ControlledBluetoothGateway: BluetoothGateway {
   func discovered(_ candidates: [DiscoveredCamera]) { discovery?.yield(candidates) }
 
   func pair(_ candidate: DiscoveredCamera) async throws -> SavedCamera {
-    let cameras = await store.cameras()
+    let cameras = try await store.cameras()
     let saved = try XCTUnwrap(pairedCamera ?? cameras.first { $0.peripheralID == candidate.peripheralID })
     try await connect(saved, as: .pair(candidate.peripheralID))
-    await store.save(saved)
+    try await store.save(saved)
     return saved
   }
 

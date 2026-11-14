@@ -73,9 +73,7 @@ final class KeychainCameraStore: CameraPairingStore, CameraNetworkCredentialProv
   }
 
   func selected() async throws -> WirelessCameraID? {
-    guard let value = defaults.string(forKey: selectionKey), let uuid = UUID(uuidString: value)
-    else { return nil }
-    let id = WirelessCameraID(rawValue: uuid)
+    guard let id = storedSelection else { return nil }
     guard try record(for: id) != nil else {
       defaults.removeObject(forKey: selectionKey)
       return nil
@@ -101,6 +99,24 @@ final class KeychainCameraStore: CameraPairingStore, CameraNetworkCredentialProv
       guard try record(for: id) != nil else { throw WirelessFailure.peerMismatch }
     }
     try Task.checkCancellation()
+    writeSelection(id)
+  }
+
+  // The previous ID was already validated. Rollback must work while protected
+  // records are locked, and comparison and write must share one actor turn.
+  func restoreSelection(_ previous: WirelessCameraID?, replacing candidate: WirelessCameraID) {
+    guard storedSelection == candidate else { return }
+    writeSelection(previous)
+  }
+
+  private var storedSelection: WirelessCameraID? {
+    guard let value = defaults.string(forKey: selectionKey), let uuid = UUID(uuidString: value) else {
+      return nil
+    }
+    return WirelessCameraID(rawValue: uuid)
+  }
+
+  private func writeSelection(_ id: WirelessCameraID?) {
     if let id {
       defaults.set(id.rawValue.uuidString, forKey: selectionKey)
     } else {

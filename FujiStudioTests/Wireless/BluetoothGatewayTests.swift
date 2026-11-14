@@ -479,6 +479,7 @@ private final class SuspendedCameraLookup: CameraPairingStore {
   func selected() async throws -> WirelessCameraID? { camera.id }
   func save(_ camera: SavedCamera) async throws {}
   func select(_ id: WirelessCameraID?) async throws {}
+  func restoreSelection(_ previous: WirelessCameraID?, replacing candidate: WirelessCameraID) async {}
   func forget(_ id: WirelessCameraID) async throws {}
 }
 

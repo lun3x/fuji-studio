@@ -7,6 +7,27 @@ import XCTest
 
 @MainActor
 final class SavedCameraStoreTests: XCTestCase {
+  func testRollbackUsesOnlyRawSelectionAndPreservesNewerSelection() async throws {
+    let namespace = "FujiStudio.Tests.SelectionRestore.\(UUID())"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: namespace))
+    defer { defaults.removePersistentDomain(forName: namespace) }
+    let keychain = ReplayCameraKeychain(service: namespace)
+    let store = KeychainCameraStore(defaults: defaults, service: namespace, keychain: keychain)
+    let prior = SavedCamera(id: WirelessCameraID(), peripheralID: UUID(), model: .xt5, displayName: "X-T5")
+    let candidate = SavedCamera(id: WirelessCameraID(), peripheralID: UUID(), model: .xe3, displayName: "X-E3")
+    try await store.save(prior)
+    try await store.save(candidate)
+    try await store.select(candidate.id)
+    keychain.isLocked = true
+    let queries = keychain.copyCount
+    store.restoreSelection(prior.id, replacing: candidate.id)
+    store.restoreSelection(nil, replacing: candidate.id)
+    XCTAssertEqual(keychain.copyCount, queries)
+    keychain.isLocked = false
+    let selected = try await store.selected()
+    XCTAssertEqual(selected, prior.id)
+  }
+
   func testRelaunchAndForgetOnlyTargetProtectedRecord() async throws {
     let namespace = "FujiStudio.Tests.CameraStore.\(UUID())"
     let defaults = try XCTUnwrap(UserDefaults(suiteName: namespace))
@@ -86,13 +107,17 @@ final class SavedCameraStoreTests: XCTestCase {
 final class ReplayCameraKeychain: CameraKeychain {
   private let service: String
   private var items: [String: Data] = [:]
+  var isLocked = false
+  private(set) var copyCount = 0
 
   init(service: String) {
     self.service = service
   }
 
   func copy(_ query: [String: Any]) -> (OSStatus, Any?) {
+    copyCount += 1
     validate(query)
+    if isLocked { return (errSecInteractionNotAllowed, nil) }
     XCTAssertEqual(query[kSecReturnData as String] as? Bool, true)
     if let account = query[kSecAttrAccount as String] as? String {
       guard let data = items[account] else { return (errSecItemNotFound, nil) }
