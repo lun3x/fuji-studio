@@ -4,11 +4,17 @@ import FujiCameraCore
 protocol BluetoothGateway: Sendable {
   func discover() async throws -> AsyncThrowingStream<[DiscoveredCamera], Error>
   func pair(_ camera: DiscoveredCamera) async throws -> SavedCamera
-  func reconnect(_ camera: SavedCamera) async throws
+  func reconnect(_ camera: SavedCamera, allowPermissionPrompt: Bool) async throws
   func identity(for id: WirelessCameraID) async throws -> WirelessIdentity
   func activateWiFi(for id: WirelessCameraID) async throws -> CameraNetwork
   func events() async -> AsyncStream<BluetoothGatewayEvent>
   func disconnect() async
+}
+
+extension BluetoothGateway {
+  func reconnect(_ camera: SavedCamera) async throws {
+    try await reconnect(camera, allowPermissionPrompt: false)
+  }
 }
 
 enum BluetoothAvailability: Equatable, Sendable {

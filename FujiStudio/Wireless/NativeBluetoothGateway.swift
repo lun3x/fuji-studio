@@ -117,10 +117,10 @@ final class NativeBluetoothGateway: BluetoothGateway {
       Session(
         peripheralID: camera.peripheralID, displayName: camera.displayName,
         modelHint: camera.advertisedModelHint, rememberedCameras: remembered),
-      requestID: requestID, pairing: true, token: advertisement.token)
+      requestID: requestID, pairing: true, token: advertisement.token, allowPermissionPrompt: true)
   }
 
-  func reconnect(_ camera: SavedCamera) async throws {
+  func reconnect(_ camera: SavedCamera, allowPermissionPrompt: Bool) async throws {
     let requestID = try reserveLinkRequest()
     defer { releaseLinkRequest(requestID) }
     let cameras = try await store.cameras()
@@ -135,7 +135,7 @@ final class NativeBluetoothGateway: BluetoothGateway {
       Session(
         peripheralID: saved.peripheralID, displayName: saved.displayName, modelHint: saved.model,
         rememberedCameras: [], camera: saved),
-      requestID: requestID, pairing: false, token: token)
+      requestID: requestID, pairing: false, token: token, allowPermissionPrompt: allowPermissionPrompt)
   }
 
   func identity(for id: WirelessCameraID) async throws -> WirelessIdentity {
@@ -210,11 +210,12 @@ final class NativeBluetoothGateway: BluetoothGateway {
   }
 
   private func link(
-    _ created: Session, requestID: UUID, pairing: Bool, token: WirelessProtocolPeerKey?
+    _ created: Session, requestID: UUID, pairing: Bool, token: WirelessProtocolPeerKey?,
+    allowPermissionPrompt: Bool
   ) async throws -> SavedCamera {
     guard session == nil else { throw WirelessFailure.connectionLost }
     try checkLinkRequest(requestID)
-    try driver.start(allowPermissionPrompt: pairing)
+    try driver.start(allowPermissionPrompt: allowPermissionPrompt)
     if let failure = availability.failure { throw failure }
     finishDiscovery()
     advertisements.removeAll()

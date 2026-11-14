@@ -53,6 +53,22 @@ final class BluetoothGatewayTests: XCTestCase {
     await gateway.disconnect()
   }
 
+  func testExplicitReconnectCanRequestBluetoothPermissionWithoutPairing() async throws {
+    let camera = SavedCamera(
+      id: WirelessCameraID(), peripheralID: UUID(), model: .xe3, displayName: "X-E3")
+    let store = SuspendedCameraLookup(camera: camera)
+    store.suspend = false
+    let driver = ReplayBluetoothDriver()
+    let gateway = NativeBluetoothGateway(store: store, driver: driver)
+
+    try await gateway.reconnect(camera, allowPermissionPrompt: true)
+
+    XCTAssertEqual(driver.startRequests, [true])
+    XCTAssertEqual(driver.reconnectedPeripheralIDs, [camera.peripheralID])
+    XCTAssertFalse(driver.writes.contains { $0.1 == .pair })
+    await gateway.disconnect()
+  }
+
   func testRadioShutdownWithoutNativeTerminalReleasesReconnectAndExplicitDisconnect() async throws {
     let camera = SavedCamera(
       id: WirelessCameraID(), peripheralID: UUID(), model: .xe3, displayName: "X-E3")

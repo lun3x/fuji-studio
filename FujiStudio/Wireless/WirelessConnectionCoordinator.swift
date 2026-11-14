@@ -1,0 +1,518 @@
+@preconcurrency import CoreBluetooth
+import Foundation
+import FujiCameraCore
+
+actor WirelessConnectionCoordinator {
+  private enum Work {
+    case discovery
+    case pair(DiscoveredCamera)
+    case reconnect(SavedCamera, prompt: Bool)
+  }
+
+  private struct WiFiRequest {
+    let intent: WirelessConnectionIntent
+    var waiter: CheckedContinuation<WirelessConnectionIntent, Error>?
+  }
+
+  private let bluetooth: any BluetoothGateway
+  private let store: any SavedCameraStore
+  private let authorization: @Sendable () -> WirelessBluetoothAuthorization
+  private let sleep: @Sendable (Duration) async throws -> Void
+
+  private var snapshot = WirelessConnectionState() {
+    didSet {
+      guard snapshot != oldValue else { return }
+      for observer in observers.values { observer.yield(snapshot) }
+    }
+  }
+  private var observers: [UUID: AsyncStream<WirelessConnectionState>.Continuation] = [:]
+  private var savedLoaded = false
+  private var loading: Task<Void, Never>?
+  private var mutatingStore = false
+
+  private var work: (id: UUID, kind: Work, task: Task<Void, Never>)?
+  private var cleanup: Task<Void, Never>?
+  private var eventListener: (id: UUID, task: Task<Void, Never>)?
+  private var terminalDuringLink: WirelessFailure?
+  private var gatewayUsed = false
+  private var retry: (id: UUID, task: Task<Void, Never>)?
+  private var backoffIndex = 0
+  private static let retryDelays: [Duration] = [.seconds(3), .seconds(6), .seconds(12), .seconds(30)]
+  private var blockedFailure: WirelessFailure?
+
+  private var wifiRequest: WiFiRequest?
+  private var activeTransfer: WirelessConnectionIntent?
+
+  init(
+    bluetooth: any BluetoothGateway, store: any SavedCameraStore,
+    authorization: @escaping @Sendable () -> WirelessBluetoothAuthorization = {
+      switch CBManager.authorization {
+      case .allowedAlways: .allowed
+      case .notDetermined: .notDetermined
+      default: .denied
+      }
+    },
+    sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+  ) {
+    self.bluetooth = bluetooth
+    self.store = store
+    self.authorization = authorization
+    self.sleep = sleep
+  }
+
+  func states() -> AsyncStream<WirelessConnectionState> {
+    let id = UUID()
+    let (stream, observer) = AsyncStream<WirelessConnectionState>.makeStream(bufferingPolicy: .bufferingNewest(1))
+    observers[id] = observer
+    observer.onTermination = { [weak self] _ in
+      Task { await self?.removeObserver(id) }
+    }
+    observer.yield(snapshot)
+    return stream
+  }
+
+  func setActivity(_ activity: WirelessActivity) async {
+    guard snapshot.activity != activity else { return }
+    snapshot.activity = activity
+    switch activity {
+    case .active:
+      await loadSavedCameras()
+      startAutomaticReconnect()
+    case .inactive:
+      break
+    case .background:
+      await resetConnection()
+      startAutomaticReconnect()
+    }
+  }
+
+  func select(_ id: WirelessCameraID) async throws {
+    try await withSavedCameraMutation {
+      guard id != snapshot.selectedCameraID else { return }
+      guard snapshot.savedCameras.contains(where: { $0.id == id }) else {
+        throw WirelessFailure.peerMismatch
+      }
+      await resetConnection()
+      try await store.select(id)
+      blockedFailure = nil
+      snapshot.selectedCameraID = id
+      clearFailures()
+    }
+  }
+
+  func forget(_ id: WirelessCameraID) async throws {
+    try await withSavedCameraMutation {
+      let isSelected = snapshot.selectedCameraID == id
+      // A pending pair can target a remembered camera even if it was unselected.
+      if isSelected || isPairing {
+        await resetConnection()
+      }
+      try await store.forget(id)
+      snapshot.savedCameras.removeAll { $0.id == id }
+      if isSelected {
+        snapshot.selectedCameraID = nil
+        blockedFailure = nil
+        clearFailures()
+      }
+    }
+  }
+
+  func startDiscovery() async {
+    await loadSavedCameras()
+    guard snapshot.activity != .background, !mutatingStore, cleanup == nil,
+      activeTransfer == nil, wifiRequest == nil
+    else { return }
+    if case .discovery = work?.kind { return }
+    await resetConnection()
+    guard snapshot.activity != .background, !mutatingStore, cleanup == nil,
+      activeTransfer == nil, wifiRequest == nil, work == nil
+    else { return }
+    clearFailures()
+    guard authorization() != .denied else {
+      recordBluetoothFailure(.permissionDenied(.bluetooth))
+      return
+    }
+    snapshot.bluetooth = .discovering
+    begin(.discovery)
+  }
+
+  func pair(_ camera: DiscoveredCamera) {
+    guard snapshot.activity != .background, !mutatingStore, activeTransfer == nil,
+      case .discovery = work?.kind, snapshot.discoveredCameras.contains(camera)
+    else { return }
+    // Pair uses the gateway's cached advertisement. A full disconnect would discard it.
+    work?.task.cancel()
+    snapshot.connectionGeneration &+= 1
+    snapshot.discoveredCameras = []
+    snapshot.bluetooth = .pairing
+    clearFailures()
+    begin(.pair(camera))
+  }
+
+  func retryBluetooth() async {
+    await loadSavedCameras()
+    guard snapshot.activity != .background, !mutatingStore, cleanup == nil,
+      work == nil, activeTransfer == nil, snapshot.bluetooth != .ready
+    else { return }
+    cancelRetry()
+    blockedFailure = nil
+    clearFailures()
+    startReconnect(prompt: true)
+  }
+
+  /// Call after acquiring exclusive camera ownership. The native WiFi stages belong
+  /// to the holder of the returned intent and must check it across suspension points.
+  func prepareWiFiConnection() async throws -> WirelessConnectionIntent {
+    await loadSavedCameras()
+    try Task.checkCancellation()
+    guard snapshot.activity != .background else { throw CancellationError() }
+    guard let camera = selectedCamera else { throw WirelessFailure.peerMismatch }
+    guard !mutatingStore, cleanup == nil, wifiRequest == nil, activeTransfer == nil,
+      !isPairing, snapshot.bluetooth != .discovering
+    else { throw WirelessFailure.cameraBusy }
+
+    snapshot.connectionGeneration &+= 1
+    let intent = WirelessConnectionIntent(cameraID: camera.id, connectionGeneration: snapshot.connectionGeneration)
+    let prepared: WirelessConnectionIntent = try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { waiter in
+        wifiRequest = WiFiRequest(intent: intent, waiter: waiter)
+        snapshot.wifiFailure = nil
+        snapshot.wifi = .waitingForBluetooth
+        if snapshot.bluetooth == .ready {
+          satisfyWiFiRequest()
+        } else if work == nil {
+          cancelRetry()
+          blockedFailure = nil
+          clearFailures()
+          startReconnect(prompt: true)
+        }
+      }
+    } onCancel: {
+      Task { await self.finishWiFiConnection(intent) }
+    }
+    guard !Task.isCancelled, isCurrent(prepared) else {
+      finishWiFiConnection(intent)
+      throw CancellationError()
+    }
+    return prepared
+  }
+
+  func isCurrent(_ intent: WirelessConnectionIntent) -> Bool {
+    wifiRequest?.intent == intent && snapshot.activity != .background
+  }
+
+  func finishWiFiConnection(_ intent: WirelessConnectionIntent) {
+    guard isCurrent(intent) else { return }
+    endWiFiRequest()
+  }
+
+  /// An old transfer still owns its lock until its pause or cancellation completes.
+  func setTransferActive(_ active: Bool, for intent: WirelessConnectionIntent) throws {
+    if active {
+      guard isCurrent(intent), snapshot.wifi == .bluetoothReady else { throw CancellationError() }
+      guard activeTransfer == nil || activeTransfer == intent else { throw WirelessFailure.cameraBusy }
+      activeTransfer = intent
+    } else if activeTransfer == intent {
+      activeTransfer = nil
+      startAutomaticReconnect()
+    }
+  }
+
+  func cancelConnection() async {
+    if wifiRequest != nil {
+      endWiFiRequest()
+    } else if isPairing || snapshot.bluetooth == .discovering || isExplicitReconnect {
+      await resetConnection()
+      await loadSavedCameras()
+      startAutomaticReconnect()
+    }
+  }
+
+  private var selectedCamera: SavedCamera? {
+    snapshot.savedCameras.first { $0.id == snapshot.selectedCameraID }
+  }
+
+  private var isPairing: Bool {
+    if case .pair = work?.kind { return true }
+    return false
+  }
+
+  private var isExplicitReconnect: Bool {
+    if case .reconnect(_, prompt: true) = work?.kind { return true }
+    return false
+  }
+
+
+  private func loadSavedCameras() async {
+    guard !savedLoaded else { return }
+    if let cleanup { await cleanup.value }
+    guard !savedLoaded else { return }
+    if let loading {
+      await loading.value
+      return
+    }
+    let task = Task { await readSavedCameras() }
+    loading = task
+    await task.value
+  }
+
+  private func readSavedCameras() async {
+    defer { loading = nil }
+    do {
+      let cameras = try await store.cameras()
+      let selected = try await store.selected()
+      snapshot.savedCameras = cameras
+      snapshot.selectedCameraID = cameras.first { $0.id == selected }?.id
+      savedLoaded = true
+    } catch {
+      snapshot.failure = (error as? WirelessFailure) ?? .unavailableStorage
+    }
+  }
+
+  private func withSavedCameraMutation(_ body: () async throws -> Void) async throws {
+    await loadSavedCameras()
+    guard !mutatingStore, activeTransfer == nil else { throw WirelessFailure.cameraBusy }
+    mutatingStore = true
+    defer {
+      mutatingStore = false
+      startAutomaticReconnect()
+    }
+    do {
+      try await body()
+    } catch {
+      await loadSavedCameras()
+      throw error
+    }
+    await loadSavedCameras()
+  }
+
+  private func startAutomaticReconnect() {
+    guard snapshot.activity == .active, !mutatingStore, cleanup == nil, activeTransfer == nil,
+      work == nil, savedLoaded, retry == nil, blockedFailure == nil, snapshot.bluetooth != .ready
+    else { return }
+    startReconnect(prompt: false)
+  }
+
+  private func startReconnect(prompt: Bool) {
+    guard let camera = selectedCamera else { return }
+    let permission = authorization()
+    guard permission == .allowed || (permission == .notDetermined && prompt) else {
+      recordBluetoothFailure(.permissionDenied(.bluetooth))
+      return
+    }
+    snapshot.bluetooth = .connecting
+    begin(.reconnect(camera, prompt: prompt))
+  }
+
+  private func begin(_ kind: Work) {
+    let id = UUID()
+    let bluetooth = self.bluetooth
+    eventListener?.task.cancel()
+    eventListener = nil
+    terminalDuringLink = nil
+    let task = Task { [weak self] in
+      let events = await bluetooth.events()
+      guard await self?.listen(to: events, id: id) == true else { return }
+      do {
+        try Task.checkCancellation()
+        switch kind {
+        case .discovery:
+          let candidates = try await bluetooth.discover()
+          for try await cameras in candidates {
+            await self?.receiveDiscovery(cameras, id: id)
+          }
+          await self?.finishDiscovery(id: id)
+        case .pair(let candidate):
+          let camera = try await bluetooth.pair(candidate)
+          await self?.finishPairing(camera, id: id)
+        case .reconnect(let camera, let prompt):
+          try await bluetooth.reconnect(camera, allowPermissionPrompt: prompt)
+          await self?.finishReconnect(id: id)
+        }
+      } catch {
+        await self?.workFailed(error, id: id)
+      }
+    }
+    work = (id, kind, task)
+  }
+
+  private func listen(to events: AsyncStream<BluetoothGatewayEvent>, id: UUID) -> Bool {
+    guard work?.id == id else { return false }
+    gatewayUsed = true
+    let task = Task { [weak self] in
+      for await event in events { await self?.receive(event, id: id) }
+    }
+    eventListener = (id, task)
+    return true
+  }
+
+  private func receive(_ event: BluetoothGatewayEvent, id: UUID) {
+    guard eventListener?.id == id else { return }
+    guard case .disconnected(let cameraID, let failure) = event else { return }
+    if work?.id == id {
+      terminalDuringLink = failure
+    } else if snapshot.bluetooth == .ready, snapshot.selectedCameraID == cameraID {
+      recordBluetoothFailure(failure)
+      scheduleRetry()
+    }
+  }
+
+  private func receiveDiscovery(_ cameras: [DiscoveredCamera], id: UUID) {
+    guard work?.id == id else { return }
+    snapshot.discoveredCameras = cameras
+  }
+
+  private func finishDiscovery(id: UUID) {
+    guard work?.id == id else { return }
+    work = nil
+    snapshot.discoveredCameras = []
+    snapshot.bluetooth = .idle
+  }
+
+  private func finishPairing(_ camera: SavedCamera, id: UUID) async {
+    guard work?.id == id else { return }
+    do {
+      if let failure = terminalDuringLink { throw failure }
+      try Task.checkCancellation()
+      try await store.select(camera.id)
+      guard work?.id == id else { return }
+      snapshot.selectedCameraID = camera.id
+      if let index = snapshot.savedCameras.firstIndex(where: { $0.id == camera.id }) {
+        snapshot.savedCameras[index] = camera
+      } else {
+        snapshot.savedCameras.append(camera)
+      }
+      finishReconnect(id: id)
+    } catch {
+      guard work?.id == id else { return }
+      // Pair has already authenticated. Close that link if persistence failed.
+      let failure = (error as? WirelessFailure) ?? .unavailableStorage
+      work = nil
+      await resetConnection()
+      recordBluetoothFailure(failure)
+    }
+  }
+
+  private func finishReconnect(id: UUID) {
+    guard work?.id == id else { return }
+    if let failure = terminalDuringLink {
+      workFailed(failure, id: id)
+      return
+    }
+    work = nil
+    backoffIndex = 0
+    blockedFailure = nil
+    snapshot.bluetooth = .ready
+    snapshot.failure = nil
+    satisfyWiFiRequest()
+  }
+
+  private func workFailed(_ error: Error, id: UUID) {
+    guard let current = work, current.id == id else { return }
+    work = nil
+    snapshot.discoveredCameras = []
+    if let pairingFailure = error as? BluetoothPairingFailure {
+      snapshot.pairingFailure = pairingFailure
+      snapshot.bluetooth = .unavailable
+      return
+    }
+    let failure = (error as? WirelessFailure) ?? .unavailableStorage
+    recordBluetoothFailure(failure)
+    if case .reconnect = current.kind { scheduleRetry() }
+  }
+
+  private func recordBluetoothFailure(_ failure: WirelessFailure) {
+    if wifiRequest != nil { endWiFiRequest(failure: failure) }
+    switch failure {
+    case .connectionLost, .timeout, .cameraBusy:
+      snapshot.bluetooth = .waitingForCamera
+      snapshot.failure = nil
+    default:
+      blockedFailure = failure
+      snapshot.bluetooth = .unavailable
+      snapshot.failure = failure
+    }
+  }
+
+  private func scheduleRetry() {
+    guard snapshot.activity == .active, activeTransfer == nil, blockedFailure == nil else { return }
+    let id = UUID()
+    let delay = Self.retryDelays[backoffIndex]
+    backoffIndex = min(backoffIndex + 1, Self.retryDelays.count - 1)
+    let sleep = self.sleep
+    let task = Task { [weak self] in
+      do { try await sleep(delay) } catch { return }
+      await self?.retryDue(id)
+    }
+    retry = (id, task)
+  }
+
+  private func retryDue(_ id: UUID) {
+    guard retry?.id == id else { return }
+    retry = nil
+    startAutomaticReconnect()
+  }
+
+  private func cancelRetry() {
+    retry?.task.cancel()
+    retry = nil
+  }
+
+  private func satisfyWiFiRequest() {
+    guard let current = wifiRequest, let waiter = current.waiter else { return }
+    wifiRequest?.waiter = nil
+    snapshot.wifi = .bluetoothReady
+    waiter.resume(returning: current.intent)
+  }
+
+  private func endWiFiRequest(failure: WirelessFailure? = nil) {
+    guard let current = wifiRequest else { return }
+    wifiRequest = nil
+    snapshot.connectionGeneration &+= 1
+    snapshot.wifi = .idle
+    snapshot.wifiFailure = failure
+    if let failure {
+      current.waiter?.resume(throwing: failure)
+    } else {
+      current.waiter?.resume(throwing: CancellationError())
+    }
+  }
+
+  private func resetConnection() async {
+    snapshot.connectionGeneration &+= 1
+    endWiFiRequest()
+    snapshot.wifiFailure = nil
+    cancelRetry()
+    backoffIndex = 0
+    let pending = work
+    if isPairing { savedLoaded = false }
+    work = nil
+    pending?.task.cancel()
+    eventListener?.task.cancel()
+    eventListener = nil
+    snapshot.discoveredCameras = []
+    snapshot.bluetooth = blockedFailure == nil ? .idle : .unavailable
+    snapshot.failure = blockedFailure
+    if let cleanup {
+      await cleanup.value
+    } else if gatewayUsed || pending != nil {
+      let bluetooth = self.bluetooth
+      let task = Task {
+        await bluetooth.disconnect()
+        await pending?.task.value
+      }
+      gatewayUsed = false
+      cleanup = task
+      await task.value
+      cleanup = nil
+    }
+  }
+
+  private func clearFailures() {
+    snapshot.failure = nil
+    snapshot.wifiFailure = nil
+    snapshot.pairingFailure = nil
+  }
+
+  private func removeObserver(_ id: UUID) { observers[id] = nil }
+}
