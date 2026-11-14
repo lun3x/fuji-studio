@@ -16,6 +16,7 @@ final class CameraBrowserModel {
     private(set) var inventory = WirelessStorageInventory()
     private(set) var isLoading = false
     private(set) var failure: WirelessFailure?
+    private(set) var requiresFreshSession = false
     private(set) var canSelectOriginals = false
     private(set) var selectedCount = 0
     private(set) var knownByteEstimate: UInt64 = 0
@@ -25,6 +26,7 @@ final class CameraBrowserModel {
     @ObservationIgnored private var visibleRows: [WirelessObjectDescriptor: CameraCapture] = [:]
     @ObservationIgnored private var camera: WirelessIdentity?
     @ObservationIgnored private var session: (any WirelessTransferSession)?
+    @ObservationIgnored private var invalidatedSessions: [UUID: WirelessFailure] = [:]
     @ObservationIgnored private var generation = UUID()
     @ObservationIgnored private var thumbnailGeneration = UUID()
     @ObservationIgnored private var thumbnailsSuspended = false
@@ -116,8 +118,10 @@ final class CameraBrowserModel {
             let data: Data
             do {
                 data = try await session.thumbnail(object)
-            } catch let failure as WirelessFailure where failure == .objectChanged || failure == .unavailableStorage {
-                self.invalidateInventory(failure, generation: generation)
+            } catch {
+                if let failure = Self.invalidatingPreviewFailure(error) {
+                    self.invalidateInventory(failure, sessionID: object.sessionID, generation: generation)
+                }
                 return nil
             }
             guard self.acceptsThumbnail(capture, generation, thumbnailGeneration, cancellation),
@@ -150,6 +154,7 @@ final class CameraBrowserModel {
         thumbnailsSuspended = false
         isLoading = false
         failure = nil
+        requiresFreshSession = false
         canSelectOriginals = false
         inventory = .init()
         camera = nil
@@ -203,6 +208,10 @@ final class CameraBrowserModel {
                       objectSessionID == nil || objectSessionID == object.sessionID else {
                     throw WirelessFailure.peerMismatch
                 }
+                if let failure = invalidatedSessions[object.sessionID] {
+                    invalidateInventory(failure, sessionID: object.sessionID, generation: generation)
+                    return
+                }
                 objectSessionID = object.sessionID
                 if let previous = objectsByCard[object.storageID]?[object.handle] {
                     guard previous == object else { throw WirelessFailure.objectChanged }
@@ -248,14 +257,32 @@ final class CameraBrowserModel {
         guard self.generation == generation, !cancellation.isCancelled else { throw CancellationError() }
     }
 
-    private func invalidateInventory(_ failure: WirelessFailure, generation: UUID) {
+    private func invalidateInventory(_ failure: WirelessFailure, sessionID: UUID, generation: UUID) {
+        // Camera-hosted enumeration replays the same session's cached descriptors.
+        invalidatedSessions[sessionID] = failure
         guard self.generation == generation else { return }
         self.generation = UUID()
         thumbnailGeneration = UUID()
         isLoading = false
         canSelectOriginals = false
+        requiresFreshSession = true
         self.failure = failure
         thumbnailCache = .init()
+    }
+
+    private static func invalidatingPreviewFailure(_ error: any Error) -> WirelessFailure? {
+        switch error {
+        case PTPError.responseCode(0x2009): return .objectChanged  // InvalidObjectHandle
+        case PTPError.responseCode(0x2008), PTPError.responseCode(0x2013):
+            return .unavailableStorage  // InvalidStorageID, StoreNotAvailable
+        case PTPError.responseCode(0x2003): return .connectionLost  // SessionNotOpen
+        case PTPError.timeout: return .timeout(.transactionInactivity)
+        case PTPError.responseCode, PTPError.busy, WirelessFailure.unsupportedProtocol, WirelessFailure.cameraBusy:
+            // A correlated command rejection can leave the session synchronized.
+            return nil
+        case let failure as WirelessFailure: return failure
+        default: return .connectionLost
+        }
     }
 
     private func acceptsThumbnail(

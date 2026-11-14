@@ -179,7 +179,7 @@ final class CameraBrowserModelTests: XCTestCase {
     func testOriginalEvidenceChangeObservedDuringThumbnailInvalidatesSelection() async throws {
         let raw = CaptureFixture.object(1, .raf)
         let browser = CameraBrowserModel()
-        let session = BrowserSessionFixture(objects: [raw], thumbnailFailures: [1: .objectChanged])
+        let session = BrowserSessionFixture(objects: [raw], thumbnailFailures: [1: WirelessFailure.objectChanged])
         await browser.load(session: session)
         let capture = try XCTUnwrap(browser.captures.first)
         try browser.select(capture.id, policy: .rawOnly)
@@ -190,6 +190,127 @@ final class CameraBrowserModelTests: XCTestCase {
         XCTAssertEqual(browser.failure, .objectChanged)
         XCTAssertThrowsError(try browser.selectionForImport())
         XCTAssertFalse(browser.canSelectOriginals)
+    }
+
+    func testInvalidObjectHandleRequiresFreshInventoryAndNewSelection() async throws {
+        let raw = CaptureFixture.object(1, .raf)
+        let session = BrowserSessionFixture(objects: [raw], thumbnailFailures: [1: PTPError.responseCode(0x2009)])
+        let browser = CameraBrowserModel()
+        await browser.load(session: session)
+        let old = try XCTUnwrap(browser.captures.first)
+        try browser.select(old.id, policy: .rawOnly)
+        _ = await browser.thumbnail(for: old)
+        await browser.suspendThumbnails()
+
+        XCTAssertEqual(browser.failure, .objectChanged)
+        XCTAssertThrowsError(try browser.selectionForImport())
+        XCTAssertFalse(browser.canSelectOriginals)
+        XCTAssertTrue(browser.requiresFreshSession)
+
+        browser.cancel()
+        await browser.load(session: session)
+        XCTAssertEqual(browser.failure, .objectChanged)
+        XCTAssertFalse(browser.canSelectOriginals)
+        XCTAssertTrue(browser.requiresFreshSession)
+        XCTAssertThrowsError(try browser.select(old.id, policy: .rawOnly))
+
+        let replacement = CaptureFixture.object(14, .raf, session: CaptureFixture.otherSessionID)
+        await browser.load(session: BrowserSessionFixture(objects: [replacement]))
+        let current = try XCTUnwrap(browser.captures.first)
+        XCTAssertEqual(current.id, old.id)
+        XCTAssertNil(browser.failure)
+        XCTAssertFalse(browser.requiresFreshSession)
+        XCTAssertEqual(try browser.selectionForImport(), [])
+        try browser.select(current.id, policy: .rawOnly)
+        XCTAssertEqual(try browser.selectionForImport().first?.descriptors, [replacement])
+    }
+
+    func testStoreRejectionsInvalidateOriginalSelection() async throws {
+        for code in [UInt16(0x2008), 0x2013] {
+            let raw = CaptureFixture.object(1, .raf)
+            let session = BrowserSessionFixture(objects: [raw], thumbnailFailures: [1: PTPError.responseCode(code)])
+            let browser = CameraBrowserModel()
+            await browser.load(session: session)
+            let capture = try XCTUnwrap(browser.captures.first)
+            try browser.select(capture.id, policy: .rawOnly)
+            _ = await browser.thumbnail(for: capture)
+
+            XCTAssertEqual(browser.failure, .unavailableStorage)
+            XCTAssertThrowsError(try browser.selectionForImport())
+        }
+    }
+
+    func testLateInvalidHandleRetiresOnlyItsOwnSession() async throws {
+        let old = CaptureFixture.object(1, .raf)
+        let invalid = BrowserSessionFixture(objects: [old], heldThumbnails: [1],
+                                            thumbnailFailures: [1: PTPError.responseCode(0x2009)])
+        let fresh = CaptureFixture.object(1, .raf, session: CaptureFixture.otherSessionID)
+        let browser = CameraBrowserModel()
+        await browser.load(session: invalid)
+        let row = try XCTUnwrap(browser.captures.first)
+        var calls = invalid.calls.makeAsyncIterator()
+        let thumbnail = Task { await browser.thumbnail(for: row) }
+        while let call = await calls.next(), call != .thumbnail(1) {}
+
+        let (started, signal) = AsyncStream<Void>.makeStream()
+        let reload = Task {
+            signal.yield(())
+            await browser.load(session: BrowserSessionFixture(objects: [fresh]))
+        }
+        var awaitingReload = started.makeAsyncIterator()
+        _ = await awaitingReload.next()
+        await invalid.release(thumbnail: 1)
+        await reload.value
+        _ = await thumbnail.value
+
+        XCTAssertEqual(browser.captures.flatMap(\.objects), [fresh])
+        XCTAssertNil(browser.failure)
+        XCTAssertTrue(browser.canSelectOriginals)
+
+        await browser.load(session: invalid)
+        XCTAssertEqual(browser.failure, .objectChanged)
+        XCTAssertTrue(browser.requiresFreshSession)
+        XCTAssertFalse(browser.canSelectOriginals)
+    }
+
+    func testThumbnailInactivityTimeoutInvalidatesSelectionBeforeImportHandoff() async throws {
+        let raw = CaptureFixture.object(1, .raf)
+        let session = BrowserSessionFixture(objects: [raw], heldThumbnails: [1],
+            thumbnailFailures: [1: WirelessFailure.timeout(.transactionInactivity)])
+        let browser = CameraBrowserModel()
+        await browser.load(session: session)
+        let capture = try XCTUnwrap(browser.captures.first)
+        try browser.select(capture.id, policy: .rawOnly)
+        var calls = session.calls.makeAsyncIterator()
+        let thumbnail = Task { await browser.thumbnail(for: capture) }
+        while let call = await calls.next(), call != .thumbnail(1) {}
+
+        let release = Task { await session.release(thumbnail: 1) }
+        await browser.suspendThumbnails()
+        await release.value
+        _ = await thumbnail.value
+        XCTAssertEqual(browser.failure, .timeout(.transactionInactivity))
+        XCTAssertThrowsError(try browser.selectionForImport())
+        XCTAssertFalse(browser.canSelectOriginals)
+        XCTAssertTrue(browser.requiresFreshSession)
+    }
+
+    func testOrdinaryPreviewRejectionsKeepOriginalSelectionEligible() async throws {
+        for rejection: any Error in [WirelessFailure.unsupportedProtocol, WirelessFailure.cameraBusy,
+                                     PTPError.responseCode(0x2005), PTPError.responseCode(0x2019), PTPError.busy] {
+            let raw = CaptureFixture.object(1, .raf)
+            let session = BrowserSessionFixture(objects: [raw], thumbnailFailures: [1: rejection])
+            let browser = CameraBrowserModel()
+            await browser.load(session: session)
+            let capture = try XCTUnwrap(browser.captures.first)
+            try browser.select(capture.id, policy: .rawOnly)
+            let thumbnail = await browser.thumbnail(for: capture)
+
+            XCTAssertNil(thumbnail)
+            XCTAssertNil(browser.failure)
+            XCTAssertFalse(browser.requiresFreshSession)
+            XCTAssertEqual(try browser.selectionForImport().first?.descriptors, [raw])
+        }
     }
 
     func testReloadDropsSelectionEvenIfIdenticalHandlesAreReused() async throws {
@@ -343,7 +464,7 @@ private actor BrowserSessionFixture: WirelessTransferSession {
     private let mode: WirelessMode
     private let originalSizeVerified: Bool
     private let thumbnailSizes: [UInt32: Int]
-    private let thumbnailFailures: [UInt32: WirelessFailure]
+    private let thumbnailFailures: [UInt32: any Error]
     private var heldBatches: Set<Int>
     private var heldThumbnails: Set<UInt32>
     private var metadataWaits: [Int: CheckedContinuation<Void, Never>] = [:]
@@ -358,7 +479,7 @@ private actor BrowserSessionFixture: WirelessTransferSession {
     init(
         batches: [WirelessInventoryBatch], mode: WirelessMode = .xApp, originalSizeVerified: Bool = true,
         heldBatches: Set<Int> = [], thumbnailSizes: [UInt32: Int] = [:], heldThumbnails: Set<UInt32> = [],
-        thumbnailFailures: [UInt32: WirelessFailure] = [:]
+        thumbnailFailures: [UInt32: any Error] = [:]
     ) {
         (calls, events) = AsyncStream.makeStream()
         self.batches = batches
@@ -373,7 +494,7 @@ private actor BrowserSessionFixture: WirelessTransferSession {
     init(
         objects: [WirelessObjectDescriptor], mode: WirelessMode = .xApp, originalSizeVerified: Bool = true,
         thumbnailSizes: [UInt32: Int] = [:], heldThumbnails: Set<UInt32> = [],
-        thumbnailFailures: [UInt32: WirelessFailure] = [:]
+        thumbnailFailures: [UInt32: any Error] = [:]
     ) {
         self.init(batches: [.init(objects: objects, storageChanges: [1: .complete, 2: .complete],
                                   rawExposure: .available)], mode: mode, originalSizeVerified: originalSizeVerified,

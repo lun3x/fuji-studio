@@ -112,6 +112,20 @@ final class CaptureResolverTests: XCTestCase {
         XCTAssertEqual(resolve([raw, jpeg, undated]).map(\.availability), [.ambiguous, .ambiguous, .ambiguous])
     }
 
+    func testUnreportedOffsetKeepsSameWallTimeMatePlausible() {
+        for (matchingDate, competingDate) in [
+            ("20261114T180000Z", "20261114T180000"),
+            ("20261114T180000", "20261114T180000Z")
+        ] {
+            let raw = CaptureFixture.object(1, .raf, date: matchingDate)
+            let jpeg = CaptureFixture.object(2, .jpeg, date: matchingDate)
+            let competitor = CaptureFixture.object(3, .jpeg, date: competingDate)
+            XCTAssertEqual(resolve([raw, jpeg, competitor]).map(\.availability),
+                           [.ambiguous, .ambiguous, .ambiguous])
+            XCTAssertFalse(resolve([raw, competitor]).contains { $0.availability == .pair })
+        }
+    }
+
     func testDescriptiveIDsSurviveNewHandlesButChangeWhenCardEvidenceChanges() throws {
         let original = CaptureFixture.object(4, .raf, stem: "dscf0001", directory: "dcim\\100_fuji",
                                              reportedStorageID: 14)

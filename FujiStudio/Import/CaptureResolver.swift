@@ -147,24 +147,35 @@ enum CaptureResolver {
 
         private let allOnCard: [CameraCaptureTimestamp?: [UInt32: [Evidence]]]
         private let byDirectory: [Bucket: [Evidence]]
+        private let datesByWallTime: [String: Set<CameraCaptureTimestamp>]
 
         init(_ evidence: some Sequence<Evidence>) {
             var allOnCard: [CameraCaptureTimestamp?: [UInt32: [Evidence]]] = [:]
             var byDirectory: [Bucket: [Evidence]] = [:]
+            var datesByWallTime: [String: Set<CameraCaptureTimestamp>] = [:]
             for item in evidence {
                 let storage = item.object.storageID
                 allOnCard[item.date, default: [:]][storage, default: []].append(item)
                 byDirectory[.init(date: item.date, storage: storage, directory: item.location.directory),
                             default: []].append(item)
+                if let date = item.date {
+                    datesByWallTime[date.wallTime, default: []].insert(date)
+                }
             }
             self.allOnCard = allOnCard
             self.byDirectory = byDirectory
+            self.datesByWallTime = datesByWallTime
         }
 
         func uniquePlausibleMate(for source: Evidence) -> Evidence? {
             guard let date = source.date else { return nil }
+            // Same wall time with an unknown offset can compete for uniqueness.
+            // The full timestamp still has to match before it can corroborate a pair.
+            let compatibleDates = (datesByWallTime[date.wallTime] ?? []).filter {
+                date.offset == nil || $0.offset == nil || date.offset == $0.offset
+            }
             var match: Evidence?
-            for candidateDate in [date, nil] {
+            for candidateDate in compatibleDates.map(Optional.some) + [nil] {
                 for (storage, all) in allOnCard[candidateDate] ?? [:] {
                     let sameCard = storage == source.object.storageID
                     let lists: [[Evidence]]
