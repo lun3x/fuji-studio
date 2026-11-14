@@ -111,6 +111,7 @@ public enum WirelessTimeoutStage: Equatable, Sendable {
   case tcpSetup
   case transactionInactivity
   case autoSaveRegistration
+  case autoSaveSession
 }
 
 public enum WirelessFailure: Error, Equatable, Sendable {
@@ -125,6 +126,11 @@ public enum WirelessFailure: Error, Equatable, Sendable {
   case unavailableStorage
   case objectChanged
   case originalSizeUnavailable
+  case autoSaveEntitlementUnavailable
+  case autoSaveIdentityUnavailable
+  case autoSaveRegistrationRequired
+  /// Discovery arrived, but the camera could not complete the unicast handshake.
+  case autoSavePeerUnreachable
   case routeUnavailable
   case connectionLost
 }

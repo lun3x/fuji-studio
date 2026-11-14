@@ -30,6 +30,9 @@ enum WirelessWiFiPhase: Equatable, Sendable {
   case bluetoothReady
   case activatingCamera
   case joiningNetwork
+  case registeringAutoSave
+  case verifyingAutoSave
+  case waitingForAutoSave
   case openingSession
   case checkingFirmware
   case loadingInventory
@@ -52,6 +55,7 @@ struct WirelessConnectionState: Equatable, Sendable {
   var failure: WirelessFailure?
   var wifiFailure: WirelessFailure?
   var wifiFailurePhase: WirelessWiFiPhase?
+  var verifiedAutoSaveCameraID: WirelessCameraID?
   var pairingFailure: BluetoothPairingFailure?
   var connectionGeneration: UInt64 = 0
 }

@@ -20,6 +20,7 @@ actor WirelessConnectionCoordinator {
   private struct WiFiAttempt {
     let id: UUID
     let task: Task<Void, Never>
+    let autoSave: Bool
     var bluetoothFailure: (reason: WirelessFailure, phase: WirelessWiFiPhase)?
   }
 
@@ -29,6 +30,7 @@ actor WirelessConnectionCoordinator {
   private let wifi: (any WiFiJoinGateway)?
   private let ownership: (any WirelessCameraOwnershipGateway)?
   private let sessionFactory: WirelessTransferSessionFactory?
+  private let autoSave: (any AutoSaveGateway)?
   private let sleep: @Sendable (Duration) async throws -> Void
 
   private var snapshot = WirelessConnectionState() {
@@ -73,7 +75,7 @@ actor WirelessConnectionCoordinator {
     },
     sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
     wifi: (any WiFiJoinGateway)? = nil, ownership: (any WirelessCameraOwnershipGateway)? = nil,
-    sessionFactory: WirelessTransferSessionFactory? = nil
+    sessionFactory: WirelessTransferSessionFactory? = nil, autoSave: (any AutoSaveGateway)? = nil
   ) {
     self.bluetooth = bluetooth
     self.store = store
@@ -82,6 +84,7 @@ actor WirelessConnectionCoordinator {
     self.wifi = wifi
     self.ownership = ownership
     self.sessionFactory = sessionFactory
+    self.autoSave = autoSave
   }
 
   func states() -> AsyncStream<WirelessConnectionState> {
@@ -135,6 +138,7 @@ actor WirelessConnectionCoordinator {
       guard !isSelected || wifiLease == nil else { throw WirelessFailure.cameraBusy }
       try await store.forget(id)
       snapshot.savedCameras.removeAll { $0.id == id }
+      if snapshot.verifiedAutoSaveCameraID == id { snapshot.verifiedAutoSaveCameraID = nil }
       if isSelected {
         snapshot.selectedCameraID = nil
         blockedFailure = nil
@@ -185,7 +189,8 @@ actor WirelessConnectionCoordinator {
   func retryBluetooth() async {
     await loadSavedCameras()
     guard snapshot.activity != .background, !mutatingStore, cleanup == nil, pendingDiscovery == nil,
-      work == nil, activeTransfer == nil, wifiLease == nil, snapshot.bluetooth != .ready
+      work == nil, activeTransfer == nil, wifiLease == nil,
+      wifiAttempt?.autoSave != true, snapshot.bluetooth != .ready
     else { return }
     cancelRetry()
     blockedFailure = nil
@@ -201,6 +206,7 @@ actor WirelessConnectionCoordinator {
     guard snapshot.activity != .background else { throw CancellationError() }
     guard let camera = selectedCamera else { throw WirelessFailure.peerMismatch }
     guard !mutatingStore, cleanup == nil, wifiRequest == nil, activeTransfer == nil, pendingDiscovery == nil,
+      wifiAttempt?.autoSave != true,
       !isPairing, snapshot.bluetooth != .discovering
     else { throw WirelessFailure.cameraBusy }
 
@@ -415,6 +421,7 @@ actor WirelessConnectionCoordinator {
   private func finishPairing(_ camera: SavedCamera, id: UUID) async {
     guard work?.id == id else { return }
     // The gateway has already persisted these credentials, regardless of selection.
+    if snapshot.verifiedAutoSaveCameraID == camera.id { snapshot.verifiedAutoSaveCameraID = nil }
     if let index = snapshot.savedCameras.firstIndex(where: { $0.id == camera.id }) {
       snapshot.savedCameras[index] = camera
     } else {
@@ -499,7 +506,7 @@ actor WirelessConnectionCoordinator {
   }
 
   private func recordBluetoothFailure(_ failure: WirelessFailure) {
-    if wifiRequest != nil, !cameraWiFiActivationStarted {
+    if wifiRequest != nil, wifiAttempt?.autoSave != true, !cameraWiFiActivationStarted {
       wifiAttempt?.bluetoothFailure = (reason: failure, phase: snapshot.wifi)
       endWiFiRequest(failure: failure)
     }
@@ -569,6 +576,10 @@ actor WirelessConnectionCoordinator {
       snapshot.wifiFailure = nil
       snapshot.wifiFailurePhase = nil
     }
+    await stopBluetoothWork()
+  }
+
+  private func stopBluetoothWork() async {
     cancelRetry()
     backoffIndex = 0
     let pending = work
@@ -614,6 +625,29 @@ extension WirelessConnectionCoordinator {
       snapshot.wifiFailure = .unsupportedProtocol
       return
     }
+    await startWiFiAttempt(autoSave: false) { id in
+      await self.runWiFi(id, wifi: wifi, ownership: ownership, makeSession: sessionFactory)
+    }
+  }
+
+  func setUpAutoSave() async { await startAutoSave(register: true) }
+
+  func waitForAutoSave() async { await startAutoSave(register: false) }
+
+  private func startAutoSave(register: Bool) async {
+    guard let autoSave, let ownership else {
+      snapshot.wifiFailure = .autoSaveEntitlementUnavailable
+      snapshot.wifiFailurePhase = register ? .registeringAutoSave : .waitingForAutoSave
+      return
+    }
+    await startWiFiAttempt(autoSave: true) { id in
+      await self.runAutoSave(id, gateway: autoSave, ownership: ownership, register: register)
+    }
+  }
+
+  private func startWiFiAttempt(
+    autoSave: Bool, run: @escaping @Sendable (UUID) async -> Void
+  ) async {
     guard !Task.isCancelled, snapshot.activity == .active, !mutatingStore,
       wifiAttempt == nil, wifiTeardown == nil, wifiLease == nil, wifiRequest == nil,
       activeTransfer == nil, pendingDiscovery == nil, !isPairing, snapshot.bluetooth != .discovering
@@ -622,8 +656,8 @@ extension WirelessConnectionCoordinator {
     snapshot.wifiFailurePhase = nil
     snapshot.wifi = .acquiringOwnership
     let id = UUID()
-    let attempt = Task { await runWiFi(id, wifi: wifi, ownership: ownership, makeSession: sessionFactory) }
-    wifiAttempt = WiFiAttempt(id: id, task: attempt)
+    let attempt = Task { await run(id) }
+    wifiAttempt = WiFiAttempt(id: id, task: attempt, autoSave: autoSave)
     await withTaskCancellationHandler {
       await attempt.value
     } onCancel: {
@@ -698,30 +732,103 @@ extension WirelessConnectionCoordinator {
           || policy.assess(model: peer.model.rawValue, firmware: bleIdentity.firmware)
             == .supported(peer.model)
       else { throw WirelessFailure.unsupportedFirmware }
-      snapshot.wifi = .loadingInventory
-      let stream = try await opened.enumerate()
-      try checkWiFiAttempt(id, intent)
-      for try await batch in stream {
-        try checkWiFiAttempt(id, intent)
-        if !batch.objects.isEmpty || batch.storageChanges.values.contains(.complete) {
-          snapshot.wifi = .ready
-          return
-        }
-      }
-      throw WirelessFailure.unavailableStorage
+      try await loadFirstInventory(opened, id: id, intent: intent)
     } catch {
-      guard wifiTeardown == nil, let attempt = wifiAttempt, attempt.id == id else { return }
-      let interruptedByBluetooth = Task.isCancelled ? nil : attempt.bluetoothFailure
-      let cancellation = Task.isCancelled || error is CancellationError
-      let phase = interruptedByBluetooth?.phase ?? snapshot.wifi
-      let failure = interruptedByBluetooth?.reason
-        ?? (cancellation ? nil : (error as? WirelessFailure) ?? .connectionLost)
-      endWiFiRequest(failure: failure)
-      snapshot.wifiFailure = failure
-      snapshot.wifiFailurePhase = failure == nil ? nil : phase
-      snapshot.wifi = .disconnecting
-      await teardownWiFi(waitingFor: nil)
+      await failWiFi(id, error: error)
     }
+  }
+
+  private func runAutoSave(
+    _ id: UUID, gateway: any AutoSaveGateway, ownership: any WirelessCameraOwnershipGateway,
+    register: Bool
+  ) async {
+    let phase: WirelessWiFiPhase = register ? .registeringAutoSave : .waitingForAutoSave
+    do {
+      await loadSavedCameras()
+      try checkWiFiAttempt(id)
+      snapshot.wifi = phase
+      guard let camera = selectedCamera, camera.model == .xe3 else {
+        throw WirelessFailure.unsupportedProtocol
+      }
+      try await gateway.checkAvailability()
+      try checkWiFiAttempt(id)
+      snapshot.wifi = .acquiringOwnership
+      wifiLease = try await ownership.acquireWireless()
+      try checkWiFiAttempt(id)
+      snapshot.connectionGeneration &+= 1
+      let intent = WirelessConnectionIntent(cameraID: camera.id, connectionGeneration: snapshot.connectionGeneration)
+      wifiRequest = WiFiRequest(intent: intent)
+      await stopBluetoothWork()
+      try checkWiFiAttempt(id, intent)
+      snapshot.wifi = phase
+
+      if register {
+        let registration = try await gateway.register(camera: camera) {
+          try await self.verifyAutoSaveRegistration(id, intent: intent)
+        }
+        try checkWiFiAttempt(id, intent)
+        guard registration.cameraID == camera.id else { throw WirelessFailure.peerMismatch }
+        snapshot.verifiedAutoSaveCameraID = camera.id
+        endWiFiRequest()
+        snapshot.wifi = .disconnecting
+        await teardownWiFi(waitingFor: nil)
+        return
+      }
+
+      let registration = try await gateway.savedRegistration(for: camera.id)
+      try checkWiFiAttempt(id, intent)
+      guard registration.cameraID == camera.id else { throw WirelessFailure.peerMismatch }
+      snapshot.verifiedAutoSaveCameraID = camera.id
+      let opened = try await gateway.waitForSession(registration: registration)
+      session = opened
+      try checkWiFiAttempt(id, intent)
+      snapshot.wifi = .checkingFirmware
+      let peer = try await opened.open()
+      try checkWiFiAttempt(id, intent)
+      guard peer.cameraID == camera.id, peer.model == .xe3,
+        peer.protocolPeerKey == registration.peerKey
+      else { throw WirelessFailure.peerMismatch }
+      guard WirelessSupportPolicy().assess(model: peer.model.rawValue, firmware: peer.firmware) == .supported(.xe3)
+      else { throw WirelessFailure.unsupportedFirmware }
+      try await loadFirstInventory(opened, id: id, intent: intent)
+    } catch {
+      await failWiFi(id, error: error)
+    }
+  }
+
+  private func verifyAutoSaveRegistration(_ id: UUID, intent: WirelessConnectionIntent) throws {
+    try checkWiFiAttempt(id, intent)
+    snapshot.wifi = .verifyingAutoSave
+  }
+
+  private func loadFirstInventory(
+    _ opened: any WirelessTransferSession, id: UUID, intent: WirelessConnectionIntent
+  ) async throws {
+    snapshot.wifi = .loadingInventory
+    let stream = try await opened.enumerate()
+    try checkWiFiAttempt(id, intent)
+    for try await batch in stream {
+      try checkWiFiAttempt(id, intent)
+      if !batch.objects.isEmpty || batch.storageChanges.values.contains(.complete) {
+        snapshot.wifi = .ready
+        return
+      }
+    }
+    throw WirelessFailure.unavailableStorage
+  }
+
+  private func failWiFi(_ id: UUID, error: any Error) async {
+    guard wifiTeardown == nil, let attempt = wifiAttempt, attempt.id == id else { return }
+    let interruptedByBluetooth = Task.isCancelled ? nil : attempt.bluetoothFailure
+    let cancellation = Task.isCancelled || error is CancellationError
+    let phase = interruptedByBluetooth?.phase ?? snapshot.wifi
+    let failure = interruptedByBluetooth?.reason
+      ?? (cancellation ? nil : (error as? WirelessFailure) ?? .connectionLost)
+    endWiFiRequest(failure: failure)
+    snapshot.wifiFailure = failure
+    snapshot.wifiFailurePhase = failure == nil ? nil : phase
+    snapshot.wifi = .disconnecting
+    await teardownWiFi(waitingFor: nil)
   }
 
   private func checkWiFiAttempt(_ id: UUID, _ intent: WirelessConnectionIntent? = nil) throws {
@@ -732,13 +839,15 @@ extension WirelessConnectionCoordinator {
   }
 
   private func teardownWiFi(waitingFor previous: Task<Void, Never>?) async {
+    let isAutoSave = wifiAttempt?.autoSave == true
     let cleanup = Task {
+      if isAutoSave { await autoSave?.cancel() }
       // Close an in-progress socket first so its pending native I/O can finish.
       let earlySession = self.session
       var confirmed = await confirmClose(earlySession)
       await previous?.value
       if earlySession == nil { confirmed = await confirmClose(session) }
-      await wifi?.drainPendingJoin()
+      if !isAutoSave { await wifi?.drainPendingJoin() }
       if let joinedNetwork {
         await wifi?.leave(joinedNetwork)
         self.joinedNetwork = nil

@@ -1,9 +1,112 @@
+import CryptoKit
 import Foundation
 import XCTest
 
 @testable import FujiCameraCore
 
 final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
+  func testAutoSaveRejectsTruncatedOrDifferentPeerBeforeInventory() async throws {
+    for serial in ["", "other"] {
+      let channel = Replay(start(.xe3, "1.32", serial: serial) + [.read(0x1003)])
+      let session = autoSaveSession(channel)
+      await expect(.peerMismatch) { _ = try await session.open() }
+      try await session.close()
+      let operations = await channel.operations
+      XCTAssertEqual(operations, [0x1002, 0x1001, 0x1003])
+    }
+  }
+
+  func testAutoSaveKeepsOriginalsGatedAndEnumeratesSyntheticPairWithoutMarkers() async throws {
+    let jpegInfo = object("DSCF0001.JPG", format: 0x3801, bytes: 3)
+    let rafInfo = object("DSCF0001.RAF", format: 0xb103, bytes: 5)
+    let channel = Replay(start(.xe3, "1.32") + autoSaveSetup(count: 2) + beginLegacyLengths + [
+      .read(0x1008, [1], jpegInfo), .read(0x1008, [2], rafInfo),
+    ] + endLegacyLengths + [.read(0x1003)])
+    let session = autoSaveSession(channel)
+    _ = try await session.open()
+    let stream = try await session.enumerate()
+    var iterator = stream.makeAsyncIterator()
+    let batch = try await iterator.next()
+    let files = try XCTUnwrap(batch).objects
+    XCTAssertEqual(files.map(\.format), [.jpeg, .raf])
+    XCTAssertEqual(files.map(\.byteLength), [3, 5])
+    let reported = try await session.capabilities()
+    XCTAssertEqual(reported.mode, .autoSave)
+    XCTAssertFalse(reported.originalSizeVerified)
+    XCTAssertEqual(reported.rawExposure, .available)
+    await expect(.originalSizeUnavailable) {
+      try await session.download(files[1]) { _ in XCTFail("Unverified AutoSave bytes reached the sink") }
+    }
+    try await session.close()
+    let leftover = await channel.remaining
+    XCTAssertEqual(leftover, 0)
+  }
+
+  func testAutoSaveRejectsUnknownFirmwareBeforeModeSetup() async throws {
+    for firmware in ["1.31", "1.33", ""] {
+      let channel = Replay(start(.xe3, firmware) + [.read(0x1003)])
+      let session = autoSaveSession(channel)
+      _ = try await session.open()
+      await expect(.unsupportedFirmware) { _ = try await session.enumerate() }
+      try await session.close()
+      let leftover = await channel.remaining
+      XCTAssertEqual(leftover, 0)
+    }
+  }
+
+  #if DEBUG
+  func testAutoSaveDiagnosticStreamsFreshBoundedCandidatesWithoutMarkers() async throws {
+    let jpeg = object("DSCF0001.JPG", format: 0x3801, bytes: 3)
+    let raf = object("DSCF0001.RAF", format: 0xb103, bytes: 5)
+    let channel = Replay(start(.xe3, "1.32") + autoSaveSetup(count: 2)
+      + beginLegacyLengths + [.read(0x1008, [1], jpeg), .read(0x1008, [2], raf)] + endLegacyLengths
+      + beginLegacyLengths + [.read(0x1008, [1], jpeg), .read(0x101b, [1, 0, 3], Data([1, 2, 3]))]
+      + endLegacyLengths
+      + beginLegacyLengths + [.read(0x1008, [2], raf), .read(0x101b, [2, 0, 5], Data([1, 2, 3, 4, 5]))]
+      + endLegacyLengths + [.read(0x1003)])
+    let session = autoSaveSession(channel)
+    _ = try await session.open()
+    let stream = try await session.enumerate()
+    var iterator = stream.makeAsyncIterator()
+    let batch = try await iterator.next()
+    let files = try XCTUnwrap(batch).objects
+    let diagnostic = try XCTUnwrap(session as? any WirelessDiagnosticCandidateSession)
+    for (object, expected) in zip(files, [Data([1, 2, 3]), Data([1, 2, 3, 4, 5])]) {
+      let output = Bytes()
+      try await diagnostic.downloadDiagnosticCandidate(object) { await output.append($0) }
+      let bytes = await output.value
+      XCTAssertEqual(bytes, expected)
+    }
+    try await session.close()
+    let leftover = await channel.remaining
+    XCTAssertEqual(leftover, 0)
+  }
+  #endif
+
+  private func autoSaveSetup(count: UInt32) -> [Exchange] {
+    [.property(0xd212, events([(0xdf00, 3), (0xd222, count)])),
+     .property(0xdf24, word(.max)), .write(0xdf01, [3, 0]), .property(0xd212, events()),
+     .property(0xdf23, word(0x20001)), .write(0xdf23, [1, 0, 2, 0])]
+  }
+
+  private var beginLegacyLengths: [Exchange] {
+    [.property(0xd212, events()), .write(0xd227, [1, 0])]
+  }
+
+  private var endLegacyLengths: [Exchange] {
+    [.property(0xd212, events()), .write(0xd227, [0, 0])]
+  }
+
+  private func autoSaveSession(_ channel: Replay) -> any WirelessTransferSession {
+    let key = Data(SHA256.hash(data: Data("FujiStudio:PTP-DeviceInfo:X-E3:private".utf8)))
+    return AutoSaveTransferAdapter.makeSession(
+      transport: .init(channel: channel),
+      expectedIdentity: .init(
+        cameraID: WirelessCameraID(), model: .xe3, firmware: "1.32",
+        protocolPeerKey: .init(bytes: key)),
+      clientGUID: Data(repeating: 1, count: 16))
+  }
+
   func testXAppEnumeratesBothSlotsAndRefetchesInOriginalModeBeforeStreaming() async throws {
     let handle: UInt32 = 44
     let info = object("DSCF0044.RAF", format: 0xb103, bytes: 5)
@@ -291,13 +394,14 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
   }
 
   private func start(
-    _ model: WirelessCameraModel, _ firmware: String, formats: [UInt16] = [0x3801, 0xb103]
+    _ model: WirelessCameraModel, _ firmware: String, formats: [UInt16] = [0x3801, 0xb103],
+    serial: String = "private"
   ) -> [Exchange] {
     var device = word(100, 2) + word(14) + word(100, 2) + string("") + word(0, 2)
     device += Data(repeating: 0, count: 16)
     device += word(UInt32(formats.count))
     for format in formats { device += word(UInt32(format), 2) }
-    device += string("FUJIFILM") + string(model.rawValue) + string(firmware) + string("private")
+    device += string("FUJIFILM") + string(model.rawValue) + string(firmware) + string(serial)
     return [.read(0x1002, [1]), .read(0x1001, [], device)]
   }
 

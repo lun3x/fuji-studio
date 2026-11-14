@@ -52,6 +52,31 @@ struct WirelessProtocolProbe: View {
           }
           Button("Disconnect") { Task { await probe.coordinator.cancelConnection() } }
         }
+        if !bluetoothOnly, probe.isSelectedXE3 {
+          Section("PC Auto Save") {
+            if probe.autoSaveAvailable {
+              Text("Connect the X-E3 and iPhone to the same Wi-Fi network with client isolation disabled.")
+              switch probe.state.wifi {
+              case .registeringAutoSave:
+                Text("Start PC AUTO SAVE SETTING on the X-E3 and choose FujiStudio on the camera.")
+              case .verifyingAutoSave, .waitingForAutoSave:
+                Text("Start PC AUTO SAVE in the camera’s playback menu and choose the FujiStudio destination.")
+              default:
+                if let cameraID = probe.state.selectedCameraID,
+                  probe.state.verifiedAutoSaveCameraID == cameraID
+                {
+                  Text("Destination verified for the selected X-E3.")
+                }
+              }
+              Button("Set up PC Auto Save") { Task { await probe.coordinator.setUpAutoSave() } }
+                .disabled(probe.state.wifi != .idle)
+              Button("Wait for PC Auto Save") { Task { await probe.coordinator.waitForAutoSave() } }
+                .disabled(probe.state.wifi != .idle)
+            } else {
+              Text("PC Auto Save needs a build signed with Apple’s Multicast Networking capability.")
+            }
+          }
+        }
         if probe.state.wifi == .ready {
           Section("Camera inventory") {
             Button("Read inventory") { Task { await probe.readInventory() } }
@@ -62,8 +87,8 @@ struct WirelessProtocolProbe: View {
               if capability.mode == .xApp, !capability.originalSizeVerified {
                 Text("XApp originals require a readable original-size setting. The probe leaves that setting as found.")
               }
-              if capability.mode == .phone {
-                Text("Phone files are diagnostic candidates. Compare their hashes with independent card copies.")
+              if capability.mode != .xApp {
+                Text("Compare the diagnostic candidate hashes with independent card copies.")
               }
             }
             ForEach(probe.files.indices, id: \.self) { index in
@@ -78,8 +103,8 @@ struct WirelessProtocolProbe: View {
                 Text(file.filename)
               }
             }
-            Button(probe.capability?.mode == .phone
-              ? "Stage selected diagnostic candidates" : "Stage selected originals privately") {
+            Button(probe.capability?.mode == .xApp
+              ? "Stage selected originals privately" : "Stage selected diagnostic candidates") {
               Task { await probe.downloadSelection() }
             }
               .disabled(probe.selected.isEmpty || probe.working)
@@ -107,12 +132,18 @@ struct WirelessProtocolProbe: View {
 private final class WirelessProbeModel {
   let runID = UUID()
   let coordinator: WirelessConnectionCoordinator
+  private let autoSaveGateway: NativeAutoSaveGateway?
   var state = WirelessConnectionState()
   var files: [WirelessObjectDescriptor] = []
   var selected: Set<WirelessObjectDescriptor> = []
   var status = "Select a camera to begin."
   var capability: WirelessCapabilities?
   var working = false
+  var autoSaveAvailable = false
+
+  var isSelectedXE3: Bool {
+    state.savedCameras.contains { $0.id == state.selectedCameraID && $0.model == .xe3 }
+  }
 
   init(bluetoothOnly: Bool) {
     let suite = "com.lun3x.FujiStudio.wireless-protocol-probe"
@@ -122,6 +153,8 @@ private final class WirelessProbeModel {
     let clientID = defaults.string(forKey: "clientID").flatMap(UUID.init(uuidString:)) ?? UUID()
     defaults.set(clientID.uuidString, forKey: "clientID")
     let guid = withUnsafeBytes(of: clientID.uuid) { Data($0) }
+    let autoSave = bluetoothOnly ? nil : NativeAutoSaveGateway(store: store, clientGUID: guid)
+    autoSaveGateway = autoSave
 
     coordinator = WirelessConnectionCoordinator(
       bluetooth: NativeBluetoothGateway(store: store), store: store,
@@ -138,10 +171,13 @@ private final class WirelessProbeModel {
           return PhoneTransferAdapter.makeSession(
             transport: transport, expectedIdentity: identity, clientGUID: guid)
         }
-      })
+      }, autoSave: autoSave)
   }
 
   func observe() async {
+    if let autoSaveGateway {
+      autoSaveAvailable = (try? await autoSaveGateway.checkAvailability()) != nil
+    }
     for await update in await coordinator.states() {
       let previous = state
       state = update
@@ -220,12 +256,12 @@ private final class WirelessProbeModel {
       let capabilities = try await session.capabilities()
       let diagnostic: (any WirelessDiagnosticCandidateSession)?
       let representation: ProbeStagedFile.Representation
-      if capabilities.mode == .phone {
+      if capabilities.mode != .xApp {
         guard let candidateSession = session as? any WirelessDiagnosticCandidateSession else {
           throw WirelessFailure.unsupportedProtocol
         }
         diagnostic = candidateSession
-        representation = .phoneDiagnosticCandidate
+        representation = capabilities.mode == .autoSave ? .autoSaveDiagnosticCandidate : .phoneDiagnosticCandidate
       } else {
         diagnostic = nil
         representation = .xAppOriginalSizeControlObserved
@@ -242,7 +278,7 @@ private final class WirelessProbeModel {
           }
           let receipt = try await file.finish(representation: representation)
           count += 1
-          let kind = diagnostic == nil ? "originals in XApp original-size mode" : "phone diagnostic candidates"
+          let kind = diagnostic == nil ? "originals in XApp original-size mode" : "diagnostic candidates"
           status = "Staged \(count) of \(selection.count) \(kind). SHA-256 \(receipt.sha256)."
           record("Staged \(representation.rawValue), \(receipt.byteLength) bytes, SHA-256 \(receipt.sha256).")
         } catch {
@@ -287,6 +323,14 @@ private final class WirelessProbeModel {
     if let failure = error as? WirelessFailure {
       switch failure {
       case .originalSizeUnavailable: return "The camera’s original-size setting could not be verified."
+      case .autoSaveEntitlementUnavailable: return "This build needs Apple’s Multicast Networking capability."
+      case .autoSaveIdentityUnavailable: return "PC Auto Save needs an independently verified identity for this X-E3."
+      case .autoSaveRegistrationRequired: return "Set up a PC Auto Save destination for the selected camera first."
+      case .autoSavePeerUnreachable:
+        return "The camera was detected, but the connection failed. Check for Wi-Fi client isolation."
+      case .permissionDenied(.localNetwork): return "Allow Fuji Studio to access the Local Network in Settings."
+      case .timeout(.autoSaveRegistration), .timeout(.autoSaveSession):
+        return "PC Auto Save timed out. Check the camera menu and use the same Wi-Fi network on both devices."
       default: return "Wireless failure \(failure)"
       }
     }
@@ -318,6 +362,7 @@ private actor ProbeCameraOwnership: WirelessCameraOwnershipGateway {
 private actor ProbeStagedFile {
   enum Representation: String, Encodable, Sendable {
     case phoneDiagnosticCandidate
+    case autoSaveDiagnosticCandidate
     case xAppOriginalSizeControlObserved
   }
 

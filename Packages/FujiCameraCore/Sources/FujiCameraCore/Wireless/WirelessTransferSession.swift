@@ -51,8 +51,8 @@ actor CameraHostedTransferSession: WirelessTransferSession {
   private var declaresJPEGOnly = false
   private var inventoryFailure: (any Error)?
   private var xAppOriginalControlObserved = false
-  var phoneObjectCount: UInt32?
-  var phoneAccurateLengthsEnabled = false
+  var legacyObjectCount: UInt32?
+  var legacyAccurateLengthsEnabled = false
 
   init(
     transport: WirelessPTPTransport, expectedIdentity: WirelessIdentity, mode: WirelessMode,
@@ -66,8 +66,11 @@ actor CameraHostedTransferSession: WirelessTransferSession {
 
   func open() async throws -> WirelessIdentity {
     guard (mode == .xApp && expectedIdentity.model == .xt5)
-      || (mode == .phone && expectedIdentity.model == .xe3)
+      || (mode != .xApp && expectedIdentity.model == .xe3)
     else { throw WirelessFailure.unsupportedProtocol }
+    if mode == .autoSave, expectedIdentity.protocolPeerKey?.bytes.count != 32 {
+      throw WirelessFailure.autoSaveIdentityUnavailable
+    }
     if let peer, closing == nil { return peer }
     try begin()
     defer { busy = false }
@@ -89,6 +92,9 @@ actor CameraHostedTransferSession: WirelessTransferSession {
       guard device.manufacturer.uppercased() == "FUJIFILM",
         device.model == expectedIdentity.model.rawValue
       else { throw WirelessFailure.peerMismatch }
+      if mode == .autoSave, evidence != expectedIdentity.protocolPeerKey {
+        throw WirelessFailure.peerMismatch
+      }
       let observed = WirelessIdentity(
         cameraID: expectedIdentity.cameraID, model: expectedIdentity.model,
         firmware: device.firmware.isEmpty ? nil : device.firmware, protocolPeerKey: evidence)
@@ -103,10 +109,15 @@ actor CameraHostedTransferSession: WirelessTransferSession {
 
   func capabilities() throws -> WirelessCapabilities {
     try requireAdmission()
+    let evidenceID: String
+    switch mode {
+    case .xApp: evidenceID = "libfuji-xapp-reference"
+    case .phone: evidenceID = "libfuji-phone-reference"
+    case .autoSave: evidenceID = "libfuji-autosave-reference"
+    }
     return WirelessCapabilities(
       mode: mode, rawExposure: rawExposure, storageIDs: storageIDs ?? [],
-      originalSizeVerified: xAppOriginalControlObserved,
-      evidenceID: mode == .xApp ? "libfuji-xapp-reference" : "libfuji-phone-reference")
+      originalSizeVerified: xAppOriginalControlObserved, evidenceID: evidenceID)
   }
 
   func enumerate() async throws -> AsyncThrowingStream<WirelessInventoryBatch, Error> {
@@ -116,7 +127,12 @@ actor CameraHostedTransferSession: WirelessTransferSession {
       try begin()
       defer { busy = false }
       do {
-        let slots = try await (mode == .xApp ? configureXApp() : configurePhone())
+        let slots: [UInt32]
+        switch mode {
+        case .xApp: slots = try await configureXApp()
+        case .phone: slots = try await configurePhone()
+        case .autoSave: slots = try await configureAutoSave()
+        }
         storageIDs = slots.sorted()
         pendingStorage = slots
       } catch {
@@ -157,9 +173,9 @@ actor CameraHostedTransferSession: WirelessTransferSession {
       if mode == .xApp {
         handles = try await configureXAppCard(storage)
         if let handles, !handles.isEmpty { xAppOriginalControlObserved = try await observesXAppOriginalSize() }
-      } else if let phoneObjectCount {
-        // The legacy phone gallery exposes consecutive handles starting at 1.
-        handles = (0..<phoneObjectCount).map { $0 + 1 }
+      } else if let legacyObjectCount {
+        // The legacy gallery exposes consecutive handles starting at 1.
+        handles = (0..<legacyObjectCount).map { $0 + 1 }
       } else {
         throw WirelessFailure.unavailableStorage
       }
@@ -176,7 +192,7 @@ actor CameraHostedTransferSession: WirelessTransferSession {
     let previousExposure = rawExposure
     let end = min(scan.index + 16, scan.handles.count)
     if scan.index < end {
-      additions = try await withAccuratePhoneLengths {
+      additions = try await withAccurateLegacyLengths {
         var metadata: [WirelessObjectDescriptor] = []
         for handle in scan.handles[scan.index..<end] {
           metadata.append(try await objectInfo(handle: handle, storage: scan.id))
@@ -205,7 +221,7 @@ actor CameraHostedTransferSession: WirelessTransferSession {
     try begin()
     defer { busy = false }
     try await selectStorage(for: object.storageID)
-    return try await withAccuratePhoneLengths {
+    return try await withAccurateLegacyLengths {
       // Libfuji observes that newer camera bodies require ObjectInfo immediately before GetThumb.
       try await verifyObject(object)
       return try await execute(0x100a, [object.handle]).data
@@ -216,7 +232,7 @@ actor CameraHostedTransferSession: WirelessTransferSession {
     _ object: WirelessObjectDescriptor, to sink: @escaping @Sendable (Data) async throws -> Void
   ) async throws {
     try checkMember(object)
-    // Phone D227 verifies size reporting. The returned representation still needs target evidence.
+    // Legacy D227 verifies size reporting. The representation still needs target evidence.
     guard mode == .xApp else { throw WirelessFailure.originalSizeUnavailable }
     try begin()
     defer { busy = false }
@@ -231,10 +247,10 @@ actor CameraHostedTransferSession: WirelessTransferSession {
     _ object: WirelessObjectDescriptor, to sink: @escaping @Sendable (Data) async throws -> Void
   ) async throws {
     try checkMember(object)
-    guard mode == .phone else { throw WirelessFailure.unsupportedProtocol }
+    guard mode != .xApp else { throw WirelessFailure.unsupportedProtocol }
     try begin()
     defer { busy = false }
-    try await withAccuratePhoneLengths { try await streamMatchingObject(object, to: sink) }
+    try await withAccurateLegacyLengths { try await streamMatchingObject(object, to: sink) }
   }
   #endif
 
@@ -263,7 +279,7 @@ actor CameraHostedTransferSession: WirelessTransferSession {
     let shouldCloseSession = didOpenSession && !busy && !Task.isCancelled
     let close = Task {
       if shouldCloseSession {
-        if mode == .phone, phoneAccurateLengthsEnabled { try? await resetPhoneLengthReporting(whileClosing: true) }
+        if legacyAccurateLengthsEnabled { try? await resetLegacyLengthReporting(whileClosing: true) }
         // Even a PTP refusal must be followed by confirmed native socket teardown.
         _ = try? await execute(0x1003, whileClosing: true)
       }
@@ -380,7 +396,8 @@ actor CameraHostedTransferSession: WirelessTransferSession {
         captureDate: captureDate.isEmpty ? nil : captureDate,
         dimensions: width > 0 && height > 0 ? .init(width: Int(width), height: Int(height)) : nil,
         orientation: orientation.flatMap { (1...8).contains($0) ? $0 : nil },
-        reportedStorageID: reportedStorage == 0 ? nil : reportedStorage, hasThumbnail: thumbnailBytes > 0)
+        reportedStorageID: reportedStorage == 0 ? nil : reportedStorage,
+        hasThumbnail: mode != .autoSave && thumbnailBytes > 0)
     } catch is PTPDatasetError {
       throw WirelessFailure.malformedData
     }

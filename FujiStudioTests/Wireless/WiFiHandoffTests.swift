@@ -6,6 +6,55 @@ import XCTest
 
 @MainActor
 final class WiFiHandoffTests: XCTestCase {
+  func testAutoSaveSetupWaitsForVerificationAndKeepsCameraOwnership() async throws {
+    let gateway = HandoffAutoSave()
+    let fixture = Fixture(model: .xe3, autoSave: gateway)
+    await fixture.start()
+    let setup = Task { await fixture.coordinator.setUpAutoSave() }
+    await gateway.verifying.entered()
+    let verifying = await snapshot(fixture.coordinator)
+    XCTAssertEqual(verifying.wifi, .verifyingAutoSave)
+    await fixture.coordinator.connectWiFi()
+    XCTAssertEqual(fixture.log.events.filter { $0 == "ownership" }.count, 1)
+    XCTAssertFalse(fixture.log.events.contains("credentials"))
+    await expectNoSession(fixture.coordinator)
+
+    await gateway.verifying.release()
+    await setup.value
+    let registered = await snapshot(fixture.coordinator)
+    XCTAssertNil(registered.wifiFailure)
+    XCTAssertEqual(registered.verifiedAutoSaveCameraID, fixture.id)
+    XCTAssertEqual(fixture.log.events.filter { $0 == "release ownership" }.count, 1)
+    await fixture.coordinator.waitForAutoSave()
+    let ready = await snapshot(fixture.coordinator)
+    XCTAssertEqual(ready.wifi, .ready)
+    let peer = try await fixture.coordinator.transferSession().open()
+    XCTAssertEqual(peer.model, .xe3)
+    await fixture.coordinator.disconnectWiFi()
+    XCTAssertEqual(Array(fixture.log.events.suffix(2)), ["close socket", "release ownership"])
+    XCTAssertFalse(fixture.log.events.contains("native join"))
+  }
+
+  func testBackgroundDrainsAutoSaveBeforeReleasingOwnershipAndDiscardsLateSession() async {
+    let gateway = HandoffAutoSave()
+    let fixture = Fixture(model: .xe3, autoSave: gateway)
+    await fixture.start()
+    await gateway.verifying.release()
+    await fixture.coordinator.setUpAutoSave()
+    gateway.holdWait()
+    let connect = Task { await fixture.coordinator.waitForAutoSave() }
+    await gateway.waiting.entered()
+    let background = Task { await fixture.coordinator.setActivity(.background) }
+    await gateway.cancelled.entered()
+    XCTAssertEqual(fixture.log.events.filter { $0 == "release ownership" }.count, 1)
+    await gateway.cancelled.release()
+    await background.value
+    await connect.value
+    XCTAssertEqual(Array(fixture.log.events.suffix(2)), ["close socket", "release ownership"])
+    XCTAssertFalse(fixture.log.events.contains("inventory"))
+    await expectNoSession(fixture.coordinator)
+  }
+
   func testOnlyAdmittedPeerWithUsableInventoryBecomesReady() async throws {
     let fixture = Fixture()
     await fixture.start()
@@ -227,8 +276,10 @@ private final class Fixture {
   let gateway: HandoffWiFi
   let coordinator: WirelessConnectionCoordinator
 
-  init(failure: WirelessFailure? = nil) {
-    let camera = SavedCamera(id: id, peripheralID: UUID(), model: .xt5, displayName: "Fixture")
+  init(
+    failure: WirelessFailure? = nil, model: WirelessCameraModel = .xt5, autoSave: HandoffAutoSave? = nil
+  ) {
+    let camera = SavedCamera(id: id, peripheralID: UUID(), model: model, displayName: "Fixture")
     let bluetooth = HandoffBluetooth(id: id, log: log, failure: failure)
     let gateway = HandoffWiFi(log: log, failure: failure)
     let log = self.log
@@ -240,7 +291,8 @@ private final class Fixture {
       sessionFactory: { identity, _ in
         await log.record("allocate socket")
         return HandoffSession(identity: identity, log: log, failure: failure)
-      })
+      }, autoSave: autoSave)
+    autoSave?.use(log: log)
   }
 
   func start() async {
@@ -248,6 +300,55 @@ private final class Fixture {
     let stream = await coordinator.states()
     var iterator = stream.makeAsyncIterator()
     while let state = await iterator.next(), state.bluetooth != .ready {}
+  }
+}
+
+@MainActor
+private final class HandoffAutoSave: AutoSaveGateway {
+  let verifying = HandoffBarrier()
+  let waiting = HandoffBarrier()
+  let cancelled = HandoffBarrier()
+  private var shouldWait = false
+  private var log: HandoffLog?
+  private var registration: AutoSaveRegistration?
+
+  func use(log: HandoffLog) { self.log = log }
+  func holdWait() { shouldWait = true }
+  func checkAvailability() throws { try Task.checkCancellation() }
+
+  func register(
+    camera: SavedCamera, onRegistered: @escaping @Sendable () async throws -> Void
+  ) async throws -> AutoSaveRegistration {
+    try await onRegistered()
+    await verifying.wait()
+    let receipt = AutoSaveRegistration(
+      cameraID: camera.id, peerKey: .init(bytes: Data(repeating: 1, count: 32)),
+      importer: "FujiStudio-test", cameraName: "Fixture")
+    registration = receipt
+    return receipt
+  }
+
+  func savedRegistration(for cameraID: WirelessCameraID) throws -> AutoSaveRegistration {
+    guard let registration, registration.cameraID == cameraID else {
+      throw WirelessFailure.autoSaveRegistrationRequired
+    }
+    return registration
+  }
+
+  func waitForSession(registration: AutoSaveRegistration) async throws -> any WirelessTransferSession {
+    if shouldWait { await waiting.wait() }
+    let log = try XCTUnwrap(log)
+    return HandoffSession(
+      identity: .init(
+        cameraID: registration.cameraID, model: .xe3, firmware: "1.32", protocolPeerKey: registration.peerKey),
+      log: log, failure: nil)
+  }
+
+  func cancel() async {
+    if shouldWait {
+      await cancelled.wait()
+      await waiting.release()
+    }
   }
 }
 

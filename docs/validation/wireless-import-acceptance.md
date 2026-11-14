@@ -83,3 +83,35 @@ reconnect for each body after unplugging its USB cable. Check the camera's
 the JPEG and RAF of a known paired capture and a standalone RAF in the X-T5
 probe inventory. Compare the staged receipts with SHA-256 of files copied
 independently from the card.
+
+### X-E3 1.32 PC AutoSave feasibility
+
+On 2026-11-15, Fujifilm’s official pages still listed X-E3 1.32 and X-T5
+4.32. The PC AutoSave physical gate is blocked at provisioning. The
+multicast-only automatic development signing attempt used the app’s bundle ID
+and development team `AZH3P824F3`. Xcode rejected it because Personal
+development teams cannot provision Multicast Networking. It also reported that
+Apple must approve and assign the capability to the team and bundle ID. The
+existing signed Bluetooth diagnostic’s code signature and embedded development
+profile were inspected separately. Both lacked
+`com.apple.developer.networking.multicast`. The next signing prerequisite is
+an eligible team and a profile for the app ID with Apple’s granted capability.
+The project leaves multicast out of its entitlements and reports AutoSave
+unavailable. [Apple provisioning with managed capabilities](https://developer.apple.com/help/account/reference/provisioning-with-managed-capabilities),
+[Fujifilm X-E3 firmware](https://www.fujifilm-x.com/en-us/support/download/firmware/cameras/x-e3/),
+[Fujifilm X-T5 firmware](https://www.fujifilm-x.com/en-us/support/download/firmware/cameras/x-t5/)
+
+| Check | Result |
+| --- | --- |
+| Source-derived handshake | The bounded codec and native implementation use UDP/TCP 51542 for registration, UDP/TCP 51541 for transfer discovery and invitation, TCP 51540 for NOTIFY and TCP 55740 for the camera command socket. The intended topology is both devices on the same Wi-Fi network with client isolation disabled. The native handshake has no Bonjour dependency. Replay uses the pinned X-H1 transcript and synthetic X-E3 data. |
+| Selected-camera binding | REGISTER and IMPORT carry a claimed name. Setup completes only after the first transfer returns an exact DeviceInfo key previously verified for the selected camera, along with the expected manufacturer, model and firmware. The binding and the destination token are stored together in the selected camera’s device-local Keychain record. A fresh, scoped importer token rejects old destination discoveries. Retries recheck the stored registration and the command peer. The token travels in plaintext and the PTP serial is a device claim, so neither establishes cryptographic authentication of the LAN peer. Whether this X-E3 supplies a usable, stable DeviceInfo identifier is pending. |
+| Failure stages | The app allows up to 120 seconds for registration and its first transfer verification, and 60 seconds for a later session wait. Detected Local Network denial is reported separately from Wi-Fi route failure and missing multicast provisioning. If discovery arrives and unicast fails, the probe suggests checking client isolation. A network that also drops discovery can only be reported as a timeout. |
+| Files | Synthetic replay enumerates a JPEG and a RAF and streams bounded Debug-only candidates after refreshing their ObjectInfo. D227 scopes ObjectInfo length reporting and does not certify original bytes. The production original-size flag remains false. Signed-iPhone discovery, camera-side registration, command identity, enumeration and both independent card-hash comparisons are all pending. |
+| Completion and retry | The adapter sends no D228 database status or other AutoSave completion write. The protocol’s registration/import acknowledgement and the PTP close are network operations. Documentation describes D228 tentatively, so any implicit queue advancement, behavior after cancellation or retry, and object visibility in a second session are pending physical validation. A Photos receipt must come from the import transaction. |
+
+The app’s X-E3 AutoSave path stays unavailable pending the signed-iPhone
+result and original-file verification. The pinned source for the replay and
+diagnostic commands is libfuji at `3b9932a46d025405dae505ddb624733b6ea3edd1`.
+[Handshake notes](https://github.com/petabyt/libfuji/blob/3b9932a46d025405dae505ddb624733b6ea3edd1/docs/autosave.md),
+[Port handling](https://github.com/petabyt/libfuji/blob/3b9932a46d025405dae505ddb624733b6ea3edd1/lib/discovery.c),
+[PTP setup and streaming](https://github.com/petabyt/libfuji/blob/3b9932a46d025405dae505ddb624733b6ea3edd1/lib/fuji.c)

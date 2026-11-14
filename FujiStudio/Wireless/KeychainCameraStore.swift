@@ -31,7 +31,7 @@ private struct SecurityCameraKeychain: CameraKeychain {
 /// Each camera and its secrets share one device-local record, so replacing or
 /// forgetting it cannot leave a token or password in a separate item.
 @MainActor
-final class KeychainCameraStore: CameraPairingStore, CameraNetworkCredentialProvider {
+final class KeychainCameraStore: CameraPairingStore, CameraNetworkCredentialProvider, AutoSaveRegistrationStore {
   private struct Password: Codable {
     let reference: CameraCredentialReference
     let value: String
@@ -41,6 +41,7 @@ final class KeychainCameraStore: CameraPairingStore, CameraNetworkCredentialProv
     var camera: SavedCamera
     var peerKey: Data?
     var wifi: Password?
+    var autoSave: AutoSaveRegistration?
   }
 
   private let service: String
@@ -162,6 +163,22 @@ final class KeychainCameraStore: CameraPairingStore, CameraNetworkCredentialProv
       wifi.reference == reference
     else { throw WirelessFailure.authentication }
     return wifi.value
+  }
+
+  func saveAutoSaveRegistration(_ registration: AutoSaveRegistration, for camera: SavedCamera) async throws {
+    guard registration.cameraID == camera.id, camera.model == .xe3, registration.peerKey.bytes.count == 32,
+      storedSelection == camera.id, var record = try record(for: camera.id),
+      record.camera.model == .xe3, record.camera.peripheralID == camera.peripheralID,
+      record.camera.peerKeyReference == camera.peerKeyReference
+    else { throw WirelessFailure.peerMismatch }
+    try Task.checkCancellation()
+    record.autoSave = registration
+    try write(record)
+  }
+
+  func autoSaveRegistration(for id: WirelessCameraID) async throws -> AutoSaveRegistration? {
+    guard storedSelection == id else { return nil }
+    return try record(for: id)?.autoSave
   }
 
   private var baseQuery: [String: Any] {

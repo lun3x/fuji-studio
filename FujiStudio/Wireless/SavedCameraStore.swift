@@ -16,6 +16,12 @@ protocol CameraNetworkCredentialProvider: Sendable {
   func password(for reference: CameraCredentialReference) async throws -> String
 }
 
+@MainActor
+protocol AutoSaveRegistrationStore: Sendable {
+  func saveAutoSaveRegistration(_ registration: AutoSaveRegistration, for camera: SavedCamera) async throws
+  func autoSaveRegistration(for id: WirelessCameraID) async throws -> AutoSaveRegistration?
+}
+
 struct CameraCredentialReference: Codable, Equatable, Sendable, CustomStringConvertible,
   CustomDebugStringConvertible, CustomReflectable
 {

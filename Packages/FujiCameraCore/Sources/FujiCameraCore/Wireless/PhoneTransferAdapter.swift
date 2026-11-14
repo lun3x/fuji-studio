@@ -39,7 +39,7 @@ extension CameraHostedTransferSession {
     _ = try await readEvents()
     try await setProperty(0xdf25, 5, width: 4)
     _ = try await readEvents()
-    guard phoneObjectCount != nil else { throw WirelessFailure.unavailableStorage }
+    guard legacyObjectCount != nil else { throw WirelessFailure.unavailableStorage }
     selectedStorage = 0  // The legacy single-card gallery has no slot selection command.
     return [0]
   }
@@ -55,41 +55,41 @@ extension CameraHostedTransferSession {
       let property = try Self.scalar(data.subdata(in: offset..<(offset + 2)), widths: [2])
       events[property] = try Self.scalar(data.subdata(in: (offset + 2)..<(offset + 6)))
     }
-    if mode == .phone, let count = events[0xd222] {
+    if mode != .xApp, let count = events[0xd222] {
       guard count <= WirelessPTPTransport.maximumObjectsPerStorage else {
         throw WirelessFailure.malformedData
       }
-      phoneObjectCount = count
+      legacyObjectCount = count
     }
     return events
   }
 
   /// D227 changes the reported length, independently of the camera's resize preference.
-  func withAccuratePhoneLengths<Value: Sendable>(
+  func withAccurateLegacyLengths<Value: Sendable>(
     _ operation: () async throws -> Value
   ) async throws -> Value {
-    guard mode == .phone else { return try await operation() }
+    guard mode != .xApp else { return try await operation() }
     try await readEvents()
     try await setProperty(0xd227, 1, width: 2)
-    phoneAccurateLengthsEnabled = true
+    legacyAccurateLengthsEnabled = true
     let value: Value
     do {
       value = try await operation()
     } catch {
       // An interrupted wire transaction can already have retired the transport.
-      let cleanup = Task { try await resetPhoneLengthReporting() }
+      let cleanup = Task { try await resetLegacyLengthReporting() }
       _ = try? await cleanup.value
       throw error
     }
     // Restore even when cancellation arrives just after the final successful transaction.
-    let cleanup = Task { try await resetPhoneLengthReporting() }
+    let cleanup = Task { try await resetLegacyLengthReporting() }
     try await cleanup.value
     return value
   }
 
-  func resetPhoneLengthReporting(whileClosing: Bool = false) async throws {
+  func resetLegacyLengthReporting(whileClosing: Bool = false) async throws {
     try await readEvents(whileClosing: whileClosing)
     try await setProperty(0xd227, 0, width: 2, whileClosing: whileClosing)
-    phoneAccurateLengthsEnabled = false
+    legacyAccurateLengthsEnabled = false
   }
 }
