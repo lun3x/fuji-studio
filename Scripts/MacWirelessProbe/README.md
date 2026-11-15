@@ -24,9 +24,12 @@ Status and events omit peripheral identifiers, names, credentials, and raw firmw
 
 To check the saved reconnect advertisement, run `"$ctl" "$run" observe-saved` while idle. The probe scans for up to 15 seconds and stops when one connectable report contains the expected service and manufacturer shape for the saved CoreBluetooth identity. The status shows which criteria were observed and whether they occurred together. The camera model comes from the saved record. Send `reconnect` separately after the scan when you want to attempt a link.
 
+To compare secure status, complete a first pair and then disconnect and reconnect in the same probe process. The probe keeps a valid first-pair baseline in memory after authenticated readiness and compares it only with a verified X-T5 session for the same saved peripheral. When `secure_status_compared=true`, the prefix and whole-value flags report equality. Quit discards the baseline.
+
 On macOS the probe uses the file-based Keychain. It enumerates persistent references within the dedicated probe service before reading the individual records. The iOS app uses its platform Keychain path.
 
 Run `Scripts/MacWirelessProbe/test.sh` to check the command and file permissions without starting Bluetooth.
 Run `Scripts/MacWirelessProbe/test-keychain.sh` to exercise enumeration and saved selection using synthetic records in unique temporary Keychain services.
 Run `Scripts/MacWirelessProbe/test-wifi.sh` to check the activation boundary with a test gateway.
 Run `Scripts/MacWirelessProbe/test-saved-advertisement.sh` to check scan matching with synthetic reports.
+Run `Scripts/MacWirelessProbe/test-secure-status.sh` to check secure-status comparison with synthetic events.

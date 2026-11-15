@@ -52,6 +52,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
   private var savedModel: WirelessCameraModel?
   private var cameraNetwork: CameraNetwork?
   private var savedAdvertisement = SavedAdvertisementObservation()
+  private var secureStatus = ProbeSecureStatusComparison()
   private var messages: [String] = []
   private var previousStatus: String?
 
@@ -74,12 +75,15 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
     let forward = driver.eventHandler
     driver.eventHandler = { [weak self] event in
       guard let self else { return }
+      var statusObservation: ProbeSecureStatusComparison.Observation?
       switch event {
       case .availability(let availability):
         self.record("Driver reported Bluetooth \(availability)")
-      case .peerModel(let session, let value) where self.phase == .pairing:
+      case .peerModel(let session, let value)
+        where self.phase == .pairing || self.phase == .reconnecting:
         if value.flatMap(WirelessCameraModel.init(bluetoothModelNumber:)) == .xt5 {
-          self.verifiedPairingSession = session
+          self.secureStatus.verifyXT5(session: session)
+          if self.phase == .pairing { self.verifiedPairingSession = session }
         }
       case .protocolEvent(let session, .services) where self.phase == .pairing:
         guard self.verifiedPairingSession == session else {
@@ -87,15 +91,24 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
           forward?(.linkFailed(session, .unsupportedProtocol))
           return
         }
+      case .protocolEvent(let session, let protocolEvent)
+        where self.phase == .pairing || self.phase == .reconnecting:
+        if self.secureStatus.receive(protocolEvent, session: session) {
+          statusObservation = self.secureStatus.observation
+        }
       default:
         break
       }
       forward?(event)
+      if let statusObservation {
+        self.record("Secure status: " + statusObservation.statusLines.joined(separator: " "))
+        self.publish()
+      }
     }
   }
 
   func applicationDidFinishLaunching(_ notification: Notification) {
-    let frame = NSRect(x: 0, y: 0, width: 460, height: 300)
+    let frame = NSRect(x: 0, y: 0, width: 460, height: 360)
     let window = NSWindow(
       contentRect: frame, styleMask: [.titled, .closable, .miniaturizable, .resizable],
       backing: .buffered, defer: false)
@@ -239,6 +252,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
     }
     verifiedPairingSession = nil
     savedAdvertisement = SavedAdvertisementObservation()
+    secureStatus.begin(.pairing, peripheralID: candidate.peripheralID)
     begin("pair", phase: .pairing)
     operation = Task {
       defer { clearDiscovery() }
@@ -257,6 +271,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
   private func reconnect() {
     guard phase == .idle else { return reject("reconnect", "busy") }
     cameraNetwork = nil
+    secureStatus.resetObservation()
     begin("reconnect", phase: .reconnecting)
     operation = Task {
       do {
@@ -268,6 +283,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
           return
         }
         try Task.checkCancellation()
+        secureStatus.begin(.reconnect, peripheralID: camera.peripheralID)
         savedModel = camera.model
         publish()
         try await gateway.reconnect(camera, allowPermissionPrompt: true)
@@ -341,6 +357,13 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
     let identity = try await gateway.identity(for: camera.id)
     try Task.checkCancellation()
     guard identity.model == .xt5 else { throw WirelessFailure.peerMismatch }
+    if phase == .pairing {
+      if secureStatus.commitPairing(peripheralID: camera.peripheralID) {
+        record("Secure status baseline committed: true")
+      }
+    } else {
+      secureStatus.endAttempt()
+    }
     linkedCamera = camera
     savedModel = camera.model
     operation = nil
@@ -349,6 +372,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
 
   private func linkFailed(_ error: Error, expectedPhase: Phase) async {
     guard phase == expectedPhase else { return }
+    secureStatus.endAttempt()
     await gateway.disconnect()
     guard phase == expectedPhase else { return }
     operation = nil
@@ -357,11 +381,15 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
 
   private func disconnect(shutdown: Bool = false) {
     if phase == .stopped { return }
-    if shutdown { shutdownRequested = true }
+    if shutdown {
+      shutdownRequested = true
+      secureStatus = ProbeSecureStatusComparison()
+    }
     if phase == .disconnecting {
       if shutdown { lastCommand = "quit" }
       return
     }
+    secureStatus.endAttempt()
     cameraNetwork = nil
     begin(shutdown ? "quit" : "disconnect", phase: .disconnecting)
     clearDiscovery()
@@ -426,6 +454,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
       "saved_advert_shape=\(savedAdvertisement.matchingShape)",
       "saved_advert_ready=\(savedAdvertisement.ready)",
     ]
+    lines.append(contentsOf: secureStatus.observation.statusLines)
     for handle in candidates.keys.sorted() {
       let model = candidates[handle]?.advertisedModelHint?.rawValue ?? "unresolved"
       lines.append("candidate=\(handle) \(model)")
