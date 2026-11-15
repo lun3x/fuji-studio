@@ -11,30 +11,37 @@ enum ImportStagingError: Error, Equatable, Sendable {
 struct ImportStagingStore: Sendable {
     private let disk: ImportDisk
     private let beforeChunkWrite: @Sendable () throws -> Void
+    private let availableCapacity: @Sendable () throws -> UInt64?
 
-    init(root: URL = ImportDisk.root("staging"), beforeChunkWrite: @escaping @Sendable () throws -> Void = {}) throws {
+    init(root: URL = ImportDisk.root("staging"), beforeChunkWrite: @escaping @Sendable () throws -> Void = {},
+         availableCapacity: (@Sendable () throws -> UInt64?)? = nil) throws {
         disk = try ImportDisk(root: root)
         self.beforeChunkWrite = beforeChunkWrite
+        let stagingPath = disk.root.path
+        self.availableCapacity = availableCapacity ?? {
+            let directory = URL(fileURLWithPath: stagingPath, isDirectory: true)
+            let values = try directory.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey,
+                                                                 .volumeAvailableCapacityKey])
+            return (values.volumeAvailableCapacityForImportantUsage ?? values.volumeAvailableCapacity.map(Int64.init))
+                .flatMap(UInt64.init(exactly:))
+        }
     }
 
-    static func requiredCapacity(for remainingByteLengths: [UInt64]) throws -> UInt64 {
+    static func requiredCapacity(stagingByteLengths: [UInt64], photoCopyByteLengths: [UInt64]) throws -> UInt64 {
         var total: UInt64 = 64 * 1024 * 1024
-        for length in remainingByteLengths {
+        for length in stagingByteLengths + photoCopyByteLengths {
             guard length > 0 else { throw ImportStagingError.unknownLength }
-            let (copies, copyOverflow) = length.multipliedReportingOverflow(by: 2)
-            let (required, totalOverflow) = total.addingReportingOverflow(copies)
-            guard !copyOverflow, !totalOverflow else { throw ImportStagingError.lengthOverflow }
+            let (required, overflow) = total.addingReportingOverflow(length)
+            guard !overflow else { throw ImportStagingError.lengthOverflow }
             total = required
         }
         return total
     }
 
-    func preflight(remainingByteLengths: [UInt64]) throws {
-        let required = try Self.requiredCapacity(for: remainingByteLengths)
-        let values = try disk.root.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey,
-                                                           .volumeAvailableCapacityKey])
-        if let available = values.volumeAvailableCapacityForImportantUsage ?? values.volumeAvailableCapacity.map(Int64.init),
-           let capacity = UInt64(exactly: available), capacity < required {
+    /// Estimate headroom for new staged files and the Photos copies of the active capture.
+    func preflight(stagingByteLengths: [UInt64], photoCopyByteLengths: [UInt64]) throws {
+        let required = try Self.requiredCapacity(stagingByteLengths: stagingByteLengths, photoCopyByteLengths: photoCopyByteLengths)
+        if let capacity = try availableCapacity(), capacity < required {
             throw ImportStagingError.insufficientCapacity(required: required, available: capacity)
         }
     }

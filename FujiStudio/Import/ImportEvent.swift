@@ -13,6 +13,13 @@ struct ImportActions: OptionSet, Equatable, Sendable {
     static let managePhotos = Self(rawValue: 1 << 6)
 }
 
+/// Matches only the observed routes in this exact run and wireless session.
+struct ImportRouteEvidence: Equatable, Sendable {
+    let runID: UUID
+    let sessionID: UUID
+    let fingerprints: [WirelessObjectDescriptor: ImportOriginalFingerprint]
+}
+
 struct ImportEvent: Equatable, Sendable {
     struct Component: Equatable, Sendable {
         let role: ImportOriginalRole
@@ -40,6 +47,7 @@ struct ImportEvent: Equatable, Sendable {
     let invalidatedSession: Bool
     let wirelessFailure: WirelessFailure?
     let receipts: [ImportReceipt]
+    let routeEvidence: ImportRouteEvidence?
     let retainedBytes: UInt64
     let recoveryRequired: Bool
 }

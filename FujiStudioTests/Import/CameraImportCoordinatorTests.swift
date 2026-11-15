@@ -147,6 +147,47 @@ final class CameraImportCoordinatorTests: XCTestCase {
         _ = await importEvent(harness.coordinator, jobID: jobID) { $0.receipts.count == 1 && !$0.isRunning }
     }
 
+    func testResumeReservesPhotosCopyForRetainedRawBeforeDownloadingJPEG() async throws {
+        let availableBytes = Mutex(UInt64.max)
+        let harness = try CameraImportHarness(availableCapacity: { availableBytes.withLock { $0 } })
+        defer { harness.fixture.cleanUp() }
+        let selection = harness.selection(1)
+        let jobID = try await harness.coordinator.start(
+            [selection], session: harness.session([selection], interrupt: .jpeg))
+        _ = await importEvent(harness.coordinator, jobID: jobID) { $0.pauseReason == .connectionLost && !$0.isRunning }
+        availableBytes.withLock { $0 = 64 * 1024 * 1024 + 2 * UInt64(harness.fixture.jpeg.count) }
+
+        let current = harness.selection(1, sessionID: UUID(), handleOffset: 100)
+        let fresh = harness.session([current])
+        try await harness.coordinator.resume(jobID: jobID, session: fresh)
+        let paused = await importEvent(harness.coordinator, jobID: jobID) { !$0.isRunning }
+        XCTAssertEqual(paused?.pauseReason, .storage)
+        let downloads = await fresh.handles
+        let creates = await harness.photos.submittedPaths.count
+        XCTAssertTrue(downloads.isEmpty)
+        XCTAssertEqual(creates, 0)
+        XCTAssertEqual(try harness.stagedFiles().map(\.pathExtension), ["raf"])
+    }
+
+    func testCapacityDropAfterPreflightBlocksPhotosWithBothFilesStaged() async throws {
+        let checkedCapacity = Mutex(false)
+        let harness = try CameraImportHarness(availableCapacity: {
+            checkedCapacity.withLock {
+                defer { $0 = true }
+                return $0 ? 64 * 1024 * 1024 : UInt64.max
+            }
+        })
+        defer { harness.fixture.cleanUp() }
+        let selection = harness.selection(1)
+        let jobID = try await harness.coordinator.start([selection], session: harness.session([selection]))
+        let paused = await importEvent(harness.coordinator, jobID: jobID) { !$0.isRunning }
+        XCTAssertEqual(paused?.pauseReason, .storage)
+        XCTAssertEqual(paused?.stage, .readyToSave)
+        let creates = await harness.photos.submittedPaths.count
+        XCTAssertEqual(creates, 0)
+        XCTAssertEqual(try harness.stagedFiles().count, 2)
+    }
+
     func testCancelWhileDownloadingDropsPartialAndPreservesEarlierReceipt() async throws {
         let harness = try CameraImportHarness()
         defer { harness.fixture.cleanUp() }
@@ -227,11 +268,13 @@ struct CameraImportHarness {
 
     init(beforeChunkWrite: @escaping @Sendable () throws -> Void = {},
          beforeJournalReplace: @escaping @Sendable () throws -> Void = {},
-         beforeJournalDirectorySync: @escaping @Sendable () throws -> Void = {}) throws {
+         beforeJournalDirectorySync: @escaping @Sendable () throws -> Void = {},
+         availableCapacity: (@Sendable () throws -> UInt64?)? = nil) throws {
         fixture = try ImportFileFixture()
         journal = try ImportJournal(root: fixture.root.appendingPathComponent("journal"),
             beforeReplace: beforeJournalReplace, beforeDirectorySync: beforeJournalDirectorySync)
-        staging = try ImportStagingStore(root: fixture.root.appendingPathComponent("staging"), beforeChunkWrite: beforeChunkWrite)
+        staging = try ImportStagingStore(root: fixture.root.appendingPathComponent("staging"),
+            beforeChunkWrite: beforeChunkWrite, availableCapacity: availableCapacity)
         photos = .init(journal: journal, trace: trace)
         coordinator = .init(journal: journal, staging: staging, gateway: photos)
     }

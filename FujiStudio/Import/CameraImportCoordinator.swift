@@ -19,6 +19,20 @@ actor CameraImportCoordinator {
         var isVerifyingPhotos = false
         var componentID: UUID?
         var componentBytes: UInt64 = 0
+        var verifiedRoutes: [WirelessObjectDescriptor: ImportOriginalFingerprint] = [:]
+
+        var routeEvidence: ImportRouteEvidence? {
+            guard !invalidatedSession, let sessionID, !verifiedRoutes.isEmpty else { return nil }
+            return .init(runID: id, sessionID: sessionID, fingerprints: verifiedRoutes)
+        }
+
+        mutating func recordRoutes(for capture: ValidatedCapture) {
+            guard !invalidatedSession, let sessionID,
+                  capture.originals.allSatisfy({ $0.descriptor.sessionID == sessionID }) else { return }
+            for original in capture.originals {
+                verifiedRoutes[original.descriptor] = original.fingerprint
+            }
+        }
     }
 
     private struct Loan {
@@ -67,6 +81,11 @@ actor CameraImportCoordinator {
     /// Read after start/resume to bind the run to the caller's connection generation.
     /// This includes an already-settled run, even after foreground reconciliation.
     func latestRunEvent(jobID: UUID) -> ImportEvent? { latestRunEvents[jobID] }
+
+    /// Read after reconciliation for every unfinished job, independent of the live event buffer.
+    func recoverySnapshot() -> [ImportEvent] {
+        latest.values.filter { $0.captureIndex != nil }.sorted { $0.sequence < $1.sequence }
+    }
 
     private func removeListener(_ id: UUID) {
         listeners[id] = nil
@@ -343,6 +362,7 @@ actor CameraImportCoordinator {
                 let entry = current.captures[index]
                 let validated = try OriginalImportValidator(staging: staging)
                     .validate(entry.selection, originals: entry.originals, importDate: current.importDate)
+                run?.recordRoutes(for: validated)
                 if entry.stage != .readyToSave {
                     current.captures[index].stage = .readyToSave
                     current = try await save(current)
@@ -389,7 +409,8 @@ actor CameraImportCoordinator {
         let completed = run
         run = nil
         publish(current, requestedPause: reason, wirelessFailure: failure, retryableSubmission: retryableSubmission,
-                runID: completed?.id, invalidatedSession: completed?.invalidatedSession == true)
+                runID: completed?.id, invalidatedSession: completed?.invalidatedSession == true,
+                routeEvidence: completed?.routeEvidence)
         scheduleReconcile()
     }
 
@@ -398,7 +419,10 @@ actor CameraImportCoordinator {
         var job = job
         let contains = job.captures[index].originals
         let remaining = objects.filter { object in !contains.contains(where: { $0.describes(object) }) }
-        if !remaining.isEmpty { try staging.preflight(remainingByteLengths: remaining.map(\.byteLength)) }
+        if !remaining.isEmpty {
+            try staging.preflight(stagingByteLengths: remaining.map(\.byteLength),
+                                  photoCopyByteLengths: objects.map(\.byteLength))
+        }
         if job.captures[index].stage != .readyToSave {
             job.captures[index].stage = .downloading
             job = try await save(job)
@@ -491,6 +515,7 @@ actor CameraImportCoordinator {
         }
         if existing.status == .inaccessible { return .init(job: job, pauseReason: .photosAccess) }
 
+        try staging.preflight(stagingByteLengths: [], photoCopyByteLengths: capture.originals.map(\.byteCount))
         job.captures[index].stage = .submitting
         job = try await save(job)
         if let requested = run?.requestedPause {
@@ -567,7 +592,8 @@ actor CameraImportCoordinator {
 
     private func publish(_ job: ImportJob, requestedPause: ImportPauseReason? = nil,
                          component: ImportEvent.Component? = nil, wirelessFailure: WirelessFailure? = nil,
-                         retryableSubmission: Bool = false, runID: UUID? = nil, invalidatedSession: Bool = false) {
+                         retryableSubmission: Bool = false, runID: UUID? = nil, invalidatedSession: Bool = false,
+                         routeEvidence: ImportRouteEvidence? = nil) {
         let active = run?.job.id == job.id
         let pause = requestedPause ?? (active ? run?.requestedPause : nil) ?? job.pauseReason
         let index = job.nextCaptureIndex
@@ -593,6 +619,7 @@ actor CameraImportCoordinator {
             isRunning: active, pauseReason: pause, actions: actions, needsSession: needsSession,
             invalidatedSession: invalidatedSession || (active && run?.invalidatedSession == true),
             wirelessFailure: wirelessFailure, receipts: job.captures.compactMap(\.receipt),
+            routeEvidence: active ? run?.routeEvidence : routeEvidence,
             retainedBytes: job.retainedBytes, recoveryRequired: pause == .journalUnavailable)
         latest[job.id] = event
         if event.runID != nil { latestRunEvents[job.id] = event }
@@ -604,7 +631,7 @@ actor CameraImportCoordinator {
         let event = ImportEvent(sequence: sequence, jobID: nil, runID: nil, cameraID: nil, captureID: nil,
             captureIndex: nil, captureCount: 0, stage: nil, component: nil, isVerifyingPhotos: false,
             isRunning: false, pauseReason: .journalUnavailable, actions: [], needsSession: false, invalidatedSession: false,
-            wirelessFailure: nil, receipts: [], retainedBytes: 0, recoveryRequired: true)
+            wirelessFailure: nil, receipts: [], routeEvidence: nil, retainedBytes: 0, recoveryRequired: true)
         journalIssue = event
         for continuation in listeners.values { continuation.yield(event) }
     }

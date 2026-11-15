@@ -43,9 +43,12 @@ final class ImportStagingStoreTests: XCTestCase {
             _ = try await store.write(object: fixture.object(.raf, byteLength: 0), session: ImportFileSession(bytes: fixture.raf))
         }
         XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: fixture.root.path).isEmpty)
-        XCTAssertThrowsError(try ImportStagingStore.requiredCapacity(for: [UInt64.max]))
-        XCTAssertThrowsError(try ImportStagingStore.requiredCapacity(for: [0]))
-        XCTAssertEqual(try ImportStagingStore.requiredCapacity(for: [1, 2]), 67_108_870)
+        XCTAssertThrowsError(try ImportStagingStore.requiredCapacity(stagingByteLengths: [], photoCopyByteLengths: [UInt64.max]))
+        XCTAssertThrowsError(try ImportStagingStore.requiredCapacity(stagingByteLengths: [0], photoCopyByteLengths: []))
+        XCTAssertEqual(try ImportStagingStore.requiredCapacity(stagingByteLengths: [1, 2], photoCopyByteLengths: [1, 2]), 67_108_870)
+        let mebibyte: UInt64 = 1024 * 1024
+        XCTAssertEqual(try ImportStagingStore.requiredCapacity(stagingByteLengths: [10 * mebibyte],
+            photoCopyByteLengths: [100 * mebibyte, 10 * mebibyte]), 184 * mebibyte)
     }
 
     func testDisconnectRestartsPartialAndCompleteFileUsesFreshMatchingObject() async throws {

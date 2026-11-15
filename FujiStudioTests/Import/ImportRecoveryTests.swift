@@ -205,6 +205,45 @@ final class ImportRecoveryTests: XCTestCase {
         XCTAssertEqual(creations, 1)
     }
 
+    func testFullyStagedLocalRetryRequiresSpaceForBothPhotosCopies() async throws {
+        let harness = try CameraImportHarness(availableCapacity: { 64 * 1024 * 1024 })
+        defer { harness.fixture.cleanUp() }
+        let job = try await seed(.readyToSave, with: harness, selection: harness.selection(1))
+        let reopened = try harness.reopened()
+        await reopened.reconcile()
+        try await reopened.retryCapture(jobID: job.id)
+        let paused = await importEvent(reopened, jobID: job.id) { !$0.isRunning }
+        XCTAssertEqual(paused?.pauseReason, .storage)
+        XCTAssertEqual(paused?.stage, .readyToSave)
+        let creates = await harness.photos.submittedPaths.count
+        XCTAssertEqual(creates, 0)
+        XCTAssertEqual(try harness.stagedFiles().count, 2)
+    }
+
+    func testRecoverySnapshotKeepsOlderUnresolvedJobBeyondProgressBuffer() async throws {
+        let harness = try CameraImportHarness()
+        defer { harness.fixture.cleanUp() }
+        let selection = harness.selection(1, pair: false)
+        let unresolved = try await seed(.submitting, with: harness, selection: selection)
+        for index in 0..<66 {
+            var job = try ImportJob(selections: [selection], importDate: Date(timeIntervalSinceReferenceDate: Double(index)))
+            let original = try await harness.staging.write(object: selection.descriptors[0],
+                session: ImportFileSession(bytes: harness.fixture.raf))
+            job.captures[0].stage = .readyToSave
+            job.captures[0].originals = [original]
+            job = try await harness.journal.save(job)
+            try await harness.journal.recordReceipt(.init(captureID: selection.captureID, fingerprints: [original.fingerprint],
+                assetID: "history-\(index)", verifiedAt: job.importDate), jobID: job.id)
+        }
+
+        let reopened = try harness.reopened()
+        await reopened.reconcile()
+        let snapshot = await reopened.recoverySnapshot()
+        XCTAssertEqual(snapshot.map(\.jobID), [Optional(unresolved.id)])
+        XCTAssertEqual(snapshot.first?.actions.contains(.managePhotos), true)
+        XCTAssertEqual(snapshot.first?.retainedBytes, UInt64(harness.fixture.raf.count))
+    }
+
     func testSameFilenameAndLengthWithDifferentDownloadedHashCreatesNewAsset() async throws {
         let harness = try CameraImportHarness()
         defer { harness.fixture.cleanUp() }
@@ -282,6 +321,37 @@ final class ImportRecoveryTests: XCTestCase {
         let freshRow = try XCTUnwrap(browser.captures.first)
         try await browser.refreshImportReceipts(using: recovery, originalFingerprints: fingerprints)
         XCTAssertNil(browser.importReceiptStatus(for: freshRow))
+    }
+
+    func testResumedImportProvesNewRoutesForCurrentBrowserBadge() async throws {
+        let harness = try CameraImportHarness()
+        defer { harness.fixture.cleanUp() }
+        let original = harness.selection(1)
+        let interrupted = harness.session([original], interrupt: .jpeg)
+        let jobID = try await harness.coordinator.start([original], session: interrupted)
+        _ = await importEvent(harness.coordinator, jobID: jobID) { $0.pauseReason == .connectionLost && !$0.isRunning }
+        let currentSessionID = UUID()
+        let resumed = harness.selection(1, sessionID: currentSessionID, handleOffset: 100)
+        let session = harness.session([resumed])
+        try await harness.coordinator.resume(jobID: jobID, session: session)
+        _ = await importEvent(harness.coordinator, jobID: jobID) { $0.receipts.count == 1 && !$0.isRunning }
+        await harness.coordinator.reconcile()
+
+        let latestRun = await harness.coordinator.latestRunEvent(jobID: jobID)
+        let run = try XCTUnwrap(latestRun)
+        let evidence = try XCTUnwrap(run.routeEvidence)
+        XCTAssertEqual(evidence.runID, run.runID)
+        XCTAssertEqual(evidence.sessionID, currentSessionID)
+        XCTAssertEqual(Set(evidence.fingerprints.keys), Set(resumed.descriptors))
+        XCTAssertTrue(original.descriptors.allSatisfy { evidence.fingerprints[$0] == nil })
+
+        let browser = CameraBrowserModel()
+        await browser.load(session: session)
+        let row = try XCTUnwrap(browser.captures.first)
+        try await browser.refreshImportReceipts(using: harness.coordinator.recovery, originalFingerprints: evidence.fingerprints)
+        XCTAssertEqual(browser.importReceiptStatus(for: row), .verified)
+        let downloads = await session.handles
+        XCTAssertEqual(downloads, [102, 103])
     }
 
     func testCompleteOrphanCleanupRequiresAllJournalsReadable() async throws {
