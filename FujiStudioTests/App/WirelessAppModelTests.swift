@@ -317,6 +317,88 @@ final class WirelessAppModelTests: XCTestCase {
         try await waitUntil { model.sources.contains { $0.id == photo.id } }
     }
 
+    func testFirstLimitedGrantReconcilesSettledPlaceholderWithoutAnotherCreate() async throws {
+        let fixture = try await FixtureEnvironment.make(access: .limited, wireless: .paired)
+        let model = AppModel(environment: fixture.environment)
+        await model.start()
+        model.send(.sourceTapped("source-0"))
+        model.send(.select)
+        try await browse(model)
+        await fixture.wireless.photos.hideNextSaveFromLibrary()
+        await model.importSelectedCaptures()
+        try await waitUntil {
+            model.importEvents.first?.pauseReason == .unresolvedSave && model.importEvents.first?.isRunning == false
+        }
+        let jobID = try XCTUnwrap(model.importEvents.first?.jobID)
+        let job = try await fixture.environment.wireless.importer.recovery.load(jobID)
+        let placeholder = try XCTUnwrap(job.captures.first?.placeholderAssetID)
+        XCTAssertEqual(placeholder, "wireless-1")
+        let priorInsertions = await fixture.reader.wirelessInsertionNotificationCount
+        XCTAssertEqual(priorInsertions, 0)
+        XCTAssertTrue(model.importEvents.first?.receipts.isEmpty == true)
+        XCTAssertFalse(model.sources.contains { $0.id == placeholder })
+
+        // Present the limited picker and let its immediate read-only check finish
+        // while the user has yet to grant access to the new asset.
+        await model.manageImportPhotos()
+        XCTAssertEqual(fixture.platform.manageCalls, 1)
+        XCTAssertTrue(model.importEvents.first?.receipts.isEmpty == true)
+        let revision = model.validationScene.revision
+        let discoveryRequests = await fixture.reader.discoveryRequests
+        await fixture.wireless.photos.grantLibraryAccess(to: placeholder)
+        try await waitUntil {
+            model.importEvents.first?.receipts.map(\.assetID) == [placeholder] &&
+                model.sources.contains { $0.id == placeholder }
+        }
+        let afterGrant = try await fixture.environment.wireless.importer.recovery.load(jobID)
+        XCTAssertEqual(afterGrant.captures.first?.receipt?.assetID, placeholder)
+        let creates = await fixture.wireless.photos.createCount
+        XCTAssertEqual(creates, 1)
+        XCTAssertEqual(model.validationScene.revision, revision)
+        XCTAssertEqual(model.state.viewedSourceID, "source-0")
+        XCTAssertEqual(model.state.checkedSourceIDs, ["source-0"])
+        let observedDiscoveries = await fixture.reader.discoveryRequests
+        XCTAssertEqual(observedDiscoveries, discoveryRequests)
+    }
+
+    func testLimitedGrantQueuesFreshReadWhenPickerProbeAlreadyReadOldAccess() async throws {
+        let fixture = try await FixtureEnvironment.make(access: .limited, wireless: .paired)
+        let model = AppModel(environment: fixture.environment)
+        await model.start()
+        try await browse(model)
+        await fixture.wireless.photos.hideNextSaveFromLibrary()
+        await model.importSelectedCaptures()
+        try await waitUntil {
+            model.importEvents.first?.pauseReason == .unresolvedSave && model.importEvents.first?.isRunning == false
+        }
+        let holdOldRead = FixtureBarrier()
+        await fixture.wireless.photos.holdNextInspection(holdOldRead)
+        let earlierCheck = Task { await model.manageImportPhotos() }
+        await holdOldRead.entered()
+        await fixture.wireless.photos.grantLibraryAccess(to: "wireless-1")
+        // The ordinary change stream handles these events in order. A separate
+        // edit with no access change signals that the grant has been consumed.
+        await fixture.reader.insertExternalRAW("stream-marker", filename: "MARKER.RAF", date: Date(), notify: false)
+        await fixture.reader.revertEdit("source-0")
+        do {
+            try await waitUntil { model.sources.contains { $0.id == "stream-marker" } }
+        } catch {
+            await holdOldRead.release()
+            await earlierCheck.value
+            throw error
+        }
+        XCTAssertTrue(model.importEvents.first?.receipts.isEmpty == true)
+        XCTAssertFalse(model.sources.contains { $0.id == "wireless-1" })
+        await holdOldRead.release()
+        await earlierCheck.value
+        try await waitUntil {
+            model.importEvents.first?.receipts.map(\.assetID) == ["wireless-1"] &&
+                model.sources.contains { $0.id == "wireless-1" }
+        }
+        let creates = await fixture.wireless.photos.createCount
+        XCTAssertEqual(creates, 1)
+    }
+
     func testUnverifiedPlaceholderDoesNotBecomeAnImportedTraySourceOnLibraryChange() async throws {
         let fixture = try await FixtureEnvironment.make(wireless: .unverifiedSave)
         let model = AppModel(environment: fixture.environment)

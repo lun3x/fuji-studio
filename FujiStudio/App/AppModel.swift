@@ -475,8 +475,13 @@ import Observation
         if wirelessAvailable, !event.authorizationChanged, event.removedIDs.isEmpty,
            !event.insertedIDs.isEmpty, event.changedIDs == event.insertedIDs,
            event.insertedIDs.isDisjoint(with: observedImportInsertions),
-           await isCurrentImportInsertion(event.insertedIDs) {
+           let insertion = await currentImportInsertion(event.insertedIDs) {
             observedImportInsertions.formUnion(event.insertedIDs)
+            // Under limited access the first appearance of a known placeholder
+            // may be the grant that makes its saved originals readable.
+            if insertion == .pendingVerification, event.accessScopeChanged, wirelessActivity != .background {
+                await reconcileImports(afterPhotoVisibilityChange: true)
+            }
             return
         }
         // A later grant can reinsert the same Photos asset. Treat that as a library
@@ -500,7 +505,9 @@ import Observation
         await reloadLibrary()
         refreshBrowserBadges()
         recoveryNeeded = true; await recoverWhenIdle()
-        if wirelessAvailable, wirelessActivity == .active, event.accessScopeChanged { await reconcileImports() }
+        if wirelessAvailable, wirelessActivity == .active, event.accessScopeChanged {
+            await reconcileImports(afterPhotoVisibilityChange: true)
+        }
     }
 
     private func adoptVerifiedReplacements() async {
@@ -1512,7 +1519,7 @@ extension AppModel {
         importCommand = nil
         isPreparingImport = false
         releaseBrowserIfIdle()
-        if importReconcilePending, wirelessActivity == .active { await reconcileImports() }
+        if importReconcilePending, wirelessActivity != .background { await reconcileImports() }
     }
 
     private func performImportCommand(_ operation: ImportCommand, epoch: UInt64) async {
@@ -1629,14 +1636,21 @@ extension AppModel {
         releaseBrowserIfIdle()
     }
 
-    private func reconcileImports() async {
+    private func reconcileImports(afterPhotoVisibilityChange: Bool = false) async {
         guard importCommand == nil else { importReconcilePending = true; return }
-        if let importReconciliation { await importReconciliation.value; return }
-        importReconcilePending = false
-        let task = Task { [weak self] in await self?.reconcileImportSnapshot() ?? () }
-        importReconciliation = task
-        await task.value
-        importReconciliation = nil
+        if let importReconciliation {
+            // The current pass may already have read this asset under the earlier grant.
+            if afterPhotoVisibilityChange { importReconcilePending = true }
+            else { await importReconciliation.value }
+            return
+        }
+        repeat {
+            importReconcilePending = false
+            let task = Task { [weak self] in await self?.reconcileImportSnapshot() ?? () }
+            importReconciliation = task
+            await task.value
+            importReconciliation = nil
+        } while importReconcilePending && importCommand == nil && wirelessActivity != .background
     }
 
     private func reconcileImportSnapshot() async {
@@ -1694,11 +1708,13 @@ extension AppModel {
         }
     }
 
-    private func isCurrentImportInsertion(_ ids: Set<SourceID>) async -> Bool {
+    private enum ImportInsertion { case verified, pendingVerification }
+
+    private func currentImportInsertion(_ ids: Set<SourceID>) async -> ImportInsertion? {
         let visibility = await importPhotoVisibility(indexInsertionOwners: true)
         let importer = environment.wireless.importer
         for id in ids {
-            guard let jobs = visibility.jobsByAssetID[id] else { return false }
+            guard let jobs = visibility.jobsByAssetID[id] else { return nil }
             var owned = false
             for jobID in jobs {
                 if importBinding[jobID] != nil || importEventsByJob[jobID]?.isRunning == true {
@@ -1711,9 +1727,9 @@ extension AppModel {
                     break
                 }
             }
-            if !owned { return false }
+            if !owned { return nil }
         }
-        return true
+        return visibility.pending.isDisjoint(with: ids) ? .verified : .pendingVerification
     }
 
     private func importPhotoVisibility(indexInsertionOwners: Bool = false) async -> ImportPhotoVisibility {

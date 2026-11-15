@@ -223,8 +223,11 @@ actor FixtureImportPhotos: PhotoImportGateway {
     private let verifySaves: Bool
     private let providesPlaceholder: Bool
     private var createBarrier: FixtureBarrier?
+    private var inspectionBarrier: FixtureBarrier?
     private var rejection: PhotoImportFailure?
     private var notifyInsertions = true
+    private var hideNextAsset = false
+    private var hiddenCaptures: [String: ValidatedCapture] = [:]
     private var assets: [String: ImportedAssetInspection] = [:]
     private(set) var createCount = 0
 
@@ -232,8 +235,16 @@ actor FixtureImportPhotos: PhotoImportGateway {
         self.reader = reader; self.verifySaves = verifySaves; self.providesPlaceholder = providesPlaceholder
     }
     func holdCreate(_ barrier: FixtureBarrier) { createBarrier = barrier }
+    func holdNextInspection(_ barrier: FixtureBarrier) { inspectionBarrier = barrier }
     func rejectNextCreate(_ failure: PhotoImportFailure) { rejection = failure }
     func suppressInsertionNotifications() { notifyInsertions = false }
+    func hideNextSaveFromLibrary() { hideNextAsset = true }
+
+    func grantLibraryAccess(to assetID: String) async {
+        guard let capture = hiddenCaptures.removeValue(forKey: assetID) else { return }
+        assets[assetID] = .found(verifiableAsset(id: assetID, capture: capture))
+        await reader?.addWirelessImport(assetID, capture: capture, notify: true)
+    }
 
     func create(_ capture: ValidatedCapture,
                 onPlaceholder: @escaping @Sendable (String) throws -> Void) async -> PhotoImportOutcome {
@@ -246,19 +257,35 @@ actor FixtureImportPhotos: PhotoImportGateway {
         if providesPlaceholder {
             do { try onPlaceholder(id) } catch { return .uncertain(assetID: id) }
         }
+        if hideNextAsset {
+            hideNextAsset = false
+            hiddenCaptures[id] = capture
+            return .submitted(assetID: id)
+        }
         await reader?.addWirelessImport(id, capture: capture, notify: notifyInsertions)
         if let barrier = createBarrier {
             createBarrier = nil
             await barrier.wait()
         }
+        assets[id] = verifySaves ? .found(verifiableAsset(id: id, capture: capture)) : .foundUnreadable
+        return providesPlaceholder ? .submitted(assetID: id) : .uncertain(assetID: nil)
+    }
+
+    private func verifiableAsset(id: String, capture: ValidatedCapture) -> ImportedAssetSnapshot {
         let resources = capture.originals.map { original in
             ImportedResourceFingerprint(role: capture.originals.count == 2 && original.role == .raf ? .alternate : .primary,
                 format: original.role, originalFilename: original.originalFilename, byteCount: original.byteCount, sha256: original.sha256)
         }
-        assets[id] = verifySaves ? .found(.init(assetID: id, originals: resources)) : .foundUnreadable
-        return providesPlaceholder ? .submitted(assetID: id) : .uncertain(assetID: nil)
+        return .init(assetID: id, originals: resources)
     }
-    func inspect(assetID: String) -> ImportedAssetInspection { assets[assetID] ?? .unavailable }
+    func inspect(assetID: String) async -> ImportedAssetInspection {
+        let result = assets[assetID] ?? .unavailable
+        if let barrier = inspectionBarrier {
+            inspectionBarrier = nil
+            await barrier.wait()
+        }
+        return result
+    }
     func candidates(for capture: ValidatedCapture) -> [String] { [] }
 }
 #endif
