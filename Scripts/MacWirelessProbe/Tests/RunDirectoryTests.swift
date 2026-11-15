@@ -84,7 +84,7 @@ private struct RunDirectoryTests {
     expect(try self.run(CommandLine.arguments[1], [path, "ptp-identity"]) == 0,
       "controller could not queue the PTP identity trial")
     expect(try directory.nextCommand() == "ptp-identity", "probe could not read the PTP identity trial")
-    for command in ["wifi-only-preflight", "wifi-restore-rehearsal", "ptp-identity-wifi-only"] {
+    for command in ["wifi-only-preflight", "wifi-restore-rehearsal", "ptp-identity-wifi-only", "wifi-inspect"] {
       expect(try self.run(CommandLine.arguments[1], [path, command]) == 0, "controller could not queue \(command)")
       expect(try directory.nextCommand() == command, "probe could not read \(command)")
     }

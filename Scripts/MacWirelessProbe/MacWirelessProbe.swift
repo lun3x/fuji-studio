@@ -71,6 +71,10 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
   private var restorationRehearsal = ProbeWiFiOnlyRehearsal()
   private let association = ProbeMacWiFiAssociation()
   private lazy var location = CLLocationManager()
+  private let parentWiFiInspection = ProbeWiFiParentInspection()
+  private var inspectedLocation = "notRun"
+  private var inspectedParent = "notRun"
+  private var inspectedWorker = "notRun"
   private var savedAdvertisement = SavedAdvertisementObservation()
   private var secureStatus = ProbeSecureStatusComparison()
   private var messages: [(timestamp: Date, line: String)] = []
@@ -227,6 +231,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
       case ("wifi-image-viewing", 1): activateWiFi(imageViewing: true)
       case ("wifi-preflight", 1): preflightWiFi()
       case ("wifi-only-preflight", 1): preflightWiFi(wifiOnly: true)
+      case ("wifi-inspect", 1): inspectWiFi()
       case ("wifi-restore-rehearsal", 1): rehearseWiFiRestore()
       case ("ptp-identity", 1): probePTPIdentity()
       case ("ptp-identity-wifi-only", 1): probePTPIdentity(wifiOnly: true)
@@ -450,6 +455,49 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
     }
   }
 
+  private func inspectWiFi() {
+    let command = "wifi-inspect"
+    guard phase == .idle || phase == .linked else { return reject(command, "busy") }
+    let authorization = location.authorizationStatus
+    inspectedLocation = switch authorization {
+    case .notDetermined: "notDetermined"
+    case .denied: "denied"
+    case .restricted: "restricted"
+    case .authorizedAlways: "authorizedAlways"
+    case .authorizedWhenInUse: "authorizedWhenInUse"
+    @unknown default: "unknown"
+    }
+    inspectedParent = "notRun"
+    inspectedWorker = "notRun"
+    switch authorization {
+    case .authorizedAlways, .authorizedWhenInUse:
+      break
+    default:
+      return reject(command, "locationPermissionRequired")
+    }
+    begin(command, phase: .checkingWiFi)
+    operation = Task {
+      let parent: String
+      do {
+        parent = try await parentWiFiInspection.inspect(read: ProbeMacWiFiWorker.inspectCurrentInterface).status
+      } catch {
+        parent = ProbePTPIdentity.failureLabel(error)
+      }
+      guard phase == .checkingWiFi, !Task.isCancelled else { return }
+      let worker: String
+      do {
+        worker = try await association.inspect().status
+      } catch {
+        worker = ProbePTPIdentity.failureLabel(error)
+      }
+      guard phase == .checkingWiFi, !Task.isCancelled else { return }
+      inspectedParent = parent
+      inspectedWorker = worker
+      operation = nil
+      finish("wifiInspectionComplete", phase: linkedCamera == nil ? .idle : .linked)
+    }
+  }
+
   private func preflightWiFi(wifiOnly: Bool = false) {
     let command = wifiOnly ? "wifi-only-preflight" : "wifi-preflight"
     guard phase == .idle || phase == .linked else { return reject(command, "busy") }
@@ -667,6 +715,9 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
       "wifi_ready=\(cameraNetwork != nil)",
       "wifi_security=\(cameraNetwork?.network.security == .wpaPersonal ? "wpaPersonal" : "none")",
       "wifi_model=\(cameraNetwork == nil ? "none" : WirelessCameraModel.xt5.rawValue)",
+      "wifi_inspect_parent_location=\(inspectedLocation)",
+      "wifi_inspect_parent=\(inspectedParent)",
+      "wifi_inspect_worker=\(inspectedWorker)",
       "ptp_launch=\(ptpReport.launch?.rawValue ?? "none")",
       "ptp_camera_associated=\(ptpReport.associated)",
       "ptp_identity_verified=\(ptpReport.verified)",

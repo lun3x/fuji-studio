@@ -12,6 +12,7 @@ xcrun swiftc -swift-version 6 -target "$(uname -m)-apple-macosx27.0" -parse-as-l
   "$source_dir/ProbePTPIdentity.swift" "$source_dir/ProbeFirmwareObservation.swift" \
   "$source_dir/ProbeWiFiActivation.swift" "$source_dir/ProbeMacWiFiAssociation.swift" \
   "$source_dir/ProbeWiFiOnlyRecovery.swift" \
+  "$source_dir/ProbeWiFiInterfaceInspection.swift" \
   "$source_dir/ProbeWiFiWorkerProcess.swift" "$source_dir/Tests/PTPIdentityTests.swift" \
   "$wireless/AutoSaveGateway.swift" "$wireless/BluetoothGateway.swift" \
   "$wireless/SavedCameraStore.swift" "$core/libFujiCameraCore.a" -o "$build/PTPIdentityTests"

@@ -2,7 +2,7 @@
 set -eu
 
 usage() {
-  echo "Usage: $0 RUN_DIR {status|list|events|discover|select N|pair|disconnect|observe-saved|reconnect|reconnect-registration|wifi|wifi-image-viewing|wifi-preflight|ptp-identity|wifi-only-preflight|wifi-restore-rehearsal|ptp-identity-wifi-only|quit}" >&2
+  echo "Usage: $0 RUN_DIR {status|list|events|discover|select N|pair|disconnect|observe-saved|reconnect|reconnect-registration|wifi|wifi-image-viewing|wifi-preflight|ptp-identity|wifi-inspect|wifi-only-preflight|wifi-restore-rehearsal|ptp-identity-wifi-only|quit}" >&2
   exit 2
 }
 
@@ -37,7 +37,7 @@ case "$command" in
     esac
     command="select $1"
     ;;
-  discover|pair|disconnect|observe-saved|reconnect|reconnect-registration|wifi|wifi-image-viewing|wifi-preflight|ptp-identity|wifi-only-preflight|wifi-restore-rehearsal|ptp-identity-wifi-only|quit)
+  discover|pair|disconnect|observe-saved|reconnect|reconnect-registration|wifi|wifi-image-viewing|wifi-preflight|ptp-identity|wifi-inspect|wifi-only-preflight|wifi-restore-rehearsal|ptp-identity-wifi-only|quit)
     (( $# == 0 )) || usage
     ;;
   *) usage ;;

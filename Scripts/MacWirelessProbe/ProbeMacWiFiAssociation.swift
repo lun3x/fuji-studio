@@ -42,6 +42,7 @@ enum ProbeWiFiWorkerFailure: String, Codable, Error {
   case currentWiFiUnavailable, currentWiFiNotRemembered, wiredRouteUnavailable
   case associationChanged, cameraNetworkUnavailable, cameraAssociationFailed, restoreUnverified
   case wifiRouteUnavailable, internetCheckFailed, restoreRehearsalRequired, associationGapUnobserved
+  case parentWiFiReadBusy, parentWiFiReadTimedOut
 
   /// These join-worker results arise before calling the native association API.
   var stoppedBeforeAssociation: Bool {
@@ -61,6 +62,7 @@ enum ProbeCameraWiFiRoute: Codable {
 
 enum ProbeWiFiWorkerRequest: Codable {
   case snapshot
+  case inspect
   case scan(ProbeWiFiSnapshot, cameraSSID: Data)
   case join(ProbeWiFiSnapshot, cameraSSID: Data, password: String, route: ProbeCameraWiFiRoute)
   case verify(ProbeWiFiSnapshot, cameraSSID: Data)
@@ -72,6 +74,7 @@ enum ProbeWiFiWorkerRequest: Codable {
 
 enum ProbeWiFiWorkerReply: Codable {
   case snapshot(ProbeWiFiSnapshot)
+  case inspection(ProbeWiFiInterfaceInspection)
   case completed
   case failure(ProbeWiFiWorkerFailure)
 }
@@ -93,6 +96,12 @@ struct ProbeMacWiFiAssociation: ProbeWiFiOnlyAssociating {
     let reply = try await call(.snapshot, timeout: .seconds(4))
     guard case .snapshot(let original) = reply else { throw ProbeWiFiWorkerFailure.invalidWorkerResponse }
     return original
+  }
+
+  func inspect() async throws -> ProbeWiFiInterfaceInspection {
+    let reply = try await call(.inspect, timeout: .seconds(4))
+    guard case .inspection(let observation) = reply else { throw ProbeWiFiWorkerFailure.invalidWorkerResponse }
+    return observation
   }
 
   func scan(from original: ProbeWiFiSnapshot, cameraSSID: Data) async throws {
@@ -215,6 +224,35 @@ enum ProbeWiredRoute {
 }
 
 enum ProbeMacWiFiWorker {
+  private struct InterfaceReading {
+    let observation: ProbeWiFiInterfaceInspection
+    let interface: CWInterface?
+    let name: String?
+    let ssid: Data?
+  }
+
+  static func inspectCurrentInterface() -> ProbeWiFiInterfaceInspection {
+    readCurrentInterface().observation
+  }
+
+  private static func readCurrentInterface() -> InterfaceReading {
+    let interfaces = CWWiFiClient.shared().interfaces()
+    let measured = interfaces?.map { interface in
+      (interface: interface, powered: interface.powerOn(), serviceActive: interface.serviceActive())
+    } ?? []
+    let eligible = measured.filter { $0.powered && $0.serviceActive }
+    let selected = eligible.count == 1 ? eligible.first : (measured.count == 1 ? measured.first : nil)
+    let interface = selected?.interface
+    let name = interface?.interfaceName
+    let shouldReadSSID = eligible.count == 1 && name != nil
+    let ssid = shouldReadSSID ? interface?.ssidData() : nil
+    let observation = ProbeWiFiInterfaceInspection(
+      interfaces: interfaces?.count, eligible: interfaces.map { _ in eligible.count },
+      named: selected.map { _ in name != nil }, powered: selected?.powered, serviceActive: selected?.serviceActive,
+      ssidChecked: shouldReadSSID, ssid: ssid)
+    return InterfaceReading(observation: observation, interface: interface, name: name, ssid: ssid)
+  }
+
   // The parent supervises this same PID after exec. The saved SSID is the only
   // private argument passed to Apple's utility, and no password is supplied.
   static func reassociate() -> Int32 {
@@ -258,10 +296,12 @@ enum ProbeMacWiFiWorker {
 
   private static func perform(_ request: ProbeWiFiWorkerRequest) throws -> ProbeWiFiWorkerReply {
     switch request {
+    case .inspect:
+      return .inspection(inspectCurrentInterface())
     case .snapshot:
-      let interfaces = CWWiFiClient.shared().interfaces()?.filter { $0.powerOn() && $0.serviceActive() } ?? []
-      guard interfaces.count == 1, let interface = interfaces.first,
-        let name = interface.interfaceName, let ssid = interface.ssidData(), (1...32).contains(ssid.count)
+      let reading = readCurrentInterface()
+      guard let interface = reading.interface, let name = reading.name,
+        let ssid = reading.ssid, reading.observation.ssidLengthValid == true
       else { throw ProbeWiFiWorkerFailure.currentWiFiUnavailable }
       guard let profiles = interface.configuration()?.networkProfiles,
         profiles.contains(where: { ($0 as? CWNetworkProfile)?.ssidData == ssid })

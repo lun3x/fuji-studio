@@ -140,7 +140,62 @@ private struct PTPIdentityTests {
     print("PTP identity admission, selected-link loss, timeout, socket close, and restoration checks passed.")
 
     try await checkWiFiOnlyRecovery()
+    try await checkWiFiInspection()
     try await checkWorkerSupervision()
+  }
+
+  private static func checkWiFiInspection() async throws {
+    let privateSSID = Data("synthetic-private-SSID".utf8)
+    let usable = ProbeWiFiInterfaceInspection(
+      interfaces: 2, eligible: 1, named: true, powered: true, serviceActive: true,
+      ssidChecked: true, ssid: privateSSID)
+    let expected = "interfaces:multiple eligible:one named:true powered:true serviceActive:true "
+      + "ssidReadable:true ssidLengthValid:true"
+    precondition(usable.status == expected)
+    let encoded = try JSONEncoder().encode(ProbeWiFiWorkerReply.inspection(usable))
+    let serialized = String(decoding: encoded, as: UTF8.self)
+    precondition(!serialized.contains("synthetic-private") && !serialized.contains(privateSSID.base64EncodedString()))
+    let reply = try JSONDecoder().decode(ProbeWiFiWorkerReply.self, from: encoded)
+    guard case .inspection(let workerObservation) = reply else { preconditionFailure("Inspection reply changed") }
+    precondition(workerObservation == usable)
+
+    let missing = ProbeWiFiInterfaceInspection(
+      interfaces: nil, eligible: nil, named: nil, powered: nil, serviceActive: nil,
+      ssidChecked: false, ssid: nil)
+    precondition(missing.interfaces == .unavailable && missing.eligible == .unavailable && missing.ssidReadable == nil)
+    let inactive = ProbeWiFiInterfaceInspection(
+      interfaces: 1, eligible: 0, named: true, powered: true, serviceActive: false,
+      ssidChecked: false, ssid: nil)
+    precondition(inactive.eligible == .none && inactive.serviceActive == false && inactive.ssidReadable == nil)
+    let unreadable = ProbeWiFiInterfaceInspection(
+      interfaces: 1, eligible: 1, named: true, powered: true, serviceActive: true,
+      ssidChecked: true, ssid: nil)
+    precondition(unreadable.ssidReadable == false && unreadable.ssidLengthValid == nil)
+    for length in [0, 1, 32, 33] {
+      let observation = ProbeWiFiInterfaceInspection(
+        interfaces: 1, eligible: 1, named: true, powered: true, serviceActive: true,
+        ssidChecked: true, ssid: Data(repeating: 0x41, count: length))
+      precondition(observation.ssidReadable == true && observation.ssidLengthValid == (1...32).contains(length))
+    }
+
+    let parent = ProbeWiFiParentInspection()
+    let release = DispatchSemaphore(value: 0)
+    do {
+      _ = try await parent.inspect(timeout: .milliseconds(30)) { release.wait(); return usable }
+      preconditionFailure("A held in-process observation ignored its deadline")
+    } catch ProbeWiFiWorkerFailure.parentWiFiReadTimedOut {}
+    do {
+      _ = try await parent.inspect { preconditionFailure("A second in-process read overlapped the first") }
+      preconditionFailure("A stalled in-process read did not hold its fence")
+    } catch ProbeWiFiWorkerFailure.parentWiFiReadBusy {}
+    release.signal()
+    var resumed: ProbeWiFiInterfaceInspection?
+    for _ in 0..<50 where resumed == nil {
+      do { resumed = try await parent.inspect { unreadable } }
+      catch ProbeWiFiWorkerFailure.parentWiFiReadBusy { try await Task.sleep(for: .milliseconds(2)) }
+    }
+    precondition(resumed == unreadable, "The stale result was reused or the fence did not retire")
+    print("Wi-Fi interface categories, private-data redaction, observation deadline, and parent fence checks passed.")
   }
 
   private static func checkWiFiOnlyRecovery() async throws {
