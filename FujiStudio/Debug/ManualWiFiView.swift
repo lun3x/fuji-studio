@@ -18,6 +18,24 @@ struct ManualWiFiView: View {
           } footer: {
             Text("Temporary test for X-T5 firmware 4.30 or later. It reads the model and firmware without transferring photos.")
           }
+          if let mode = probe.registrationMode {
+            Section("Check registration on the camera") {
+              let destination = ManualWiFiBluetoothDriver.phoneDestinationName
+              if mode == .pair {
+                Text("On the camera, check that pairing completed and that \(destination) appears in Select Pairing Destination. Select that destination.")
+              } else {
+                Text("On the camera, select \(destination) in Select Pairing Destination. If that name is absent, cancel and start a new pairing from Bluetooth discovery.")
+              }
+              Button(probe.registrationConfirmed ? "Camera registration confirmed" : "I verified \(destination) on the camera") {
+                probe.confirmRegistration()
+              }
+              .accessibilityIdentifier("manualWiFi.confirmRegistration")
+              .disabled(!probe.canConfirmRegistration)
+              Button("Start camera Wi-Fi") { probe.startWiFi() }
+                .accessibilityIdentifier("manualWiFi.startWiFi")
+                .disabled(!probe.canStartWiFi)
+            }
+          }
           if let network = probe.handoff, scenePhase == .active {
             Section("Join the camera network") {
               Text("In Settings → Wi-Fi, choose this network. If it is hidden, tap Other, enter the name exactly and choose WPA2 if prompted for security.")
@@ -47,14 +65,22 @@ struct ManualWiFiView: View {
             }
           }
           Section("Camera selection") {
-            ForEach(probe.saved) { camera in
-              Button("Reconnect to \(camera.displayName)") { probe.connect(.saved(camera)) }
+            ForEach(Array(probe.saved.enumerated()), id: \.element.id) { index, camera in
+              let localRecord = "local record \(index + 1)"
+              let linked = probe.linkedRecordID == camera.id
+              Button("Reconnect to \(camera.displayName) (\(localRecord)\(linked ? ", linked" : ""))") {
+                probe.connect(.saved(camera))
+              }
                 .accessibilityIdentifier("manualWiFi.savedCamera")
                 .disabled(!probe.canSelect)
             }
             Button("Discover Bluetooth cameras") { probe.scan() }
               .disabled(!probe.canScan)
             ForEach(probe.discovered) { camera in
+              if let saved = ManualWiFiProbe.matchingSavedCamera(for: camera, among: probe.saved) {
+                Button("Reconnect to nearby \(camera.displayName)") { probe.connect(.saved(saved)) }
+                  .disabled(!probe.canSelect)
+              }
               Button("Pair with \(camera.displayName)") { probe.connect(.discovered(camera)) }
                 .disabled(!probe.canSelect)
             }

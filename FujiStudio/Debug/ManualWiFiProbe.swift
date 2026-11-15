@@ -10,12 +10,25 @@ final class ManualWiFiProbe {
   enum Selection {
     case saved(SavedCamera), discovered(DiscoveredCamera)
 
+    var linkMode: ManualWiFiEvent.LinkMode {
+      switch self {
+      case .saved: .reconnect
+      case .discovered: .pair
+      }
+    }
+
     var peripheralID: UUID {
       switch self {
       case .saved(let camera): camera.peripheralID
       case .discovered(let camera): camera.peripheralID
       }
     }
+  }
+
+  private struct LinkedCamera {
+    let identity: WirelessIdentity
+    let peripheralID: UUID
+    let mode: ManualWiFiEvent.LinkMode
   }
 
   typealias SessionFactory = @Sendable (WirelessIdentity) async throws -> any WirelessTransferSession
@@ -36,7 +49,8 @@ final class ManualWiFiProbe {
   private var leaseID: UUID?
   private var endLease: (() -> Void)?
   private var attempt: UUID?
-  private var identity: WirelessIdentity?
+  private var linkedCamera: LinkedCamera?
+  private var identity: WirelessIdentity? { linkedCamera?.identity }
   private var secret: String?
   private var revealing = false
   private var foreground = false
@@ -45,11 +59,16 @@ final class ManualWiFiProbe {
   private(set) var discovered: [DiscoveredCamera] = []
   private(set) var status = "Select a saved camera or start Bluetooth discovery."
   private(set) var handoff: CameraNetwork?
+  private(set) var registrationConfirmed = false
   private(set) var userConfirmed = false
 
   var visiblePassword: String? { foreground && revealing ? secret : nil }
   var canSelect: Bool { foreground && operation == nil }
-  var canScan: Bool { canSelect && handoff == nil && scanning == nil }
+  var canScan: Bool { canSelect && linkedCamera == nil && scanning == nil }
+  var registrationMode: ManualWiFiEvent.LinkMode? { handoff == nil ? linkedCamera?.mode : nil }
+  var linkedRecordID: WirelessCameraID? { identity?.cameraID }
+  var canConfirmRegistration: Bool { canSelect && registrationMode != nil && !registrationConfirmed }
+  var canStartWiFi: Bool { canSelect && registrationMode != nil && registrationConfirmed }
   var canConfirm: Bool { canSelect && handoff != nil && !userConfirmed }
   var canIdentify: Bool { canSelect && handoff != nil && userConfirmed }
   var canCancel: Bool { attempt != nil || scanning != nil }
@@ -103,13 +122,19 @@ final class ManualWiFiProbe {
     }
   }
 
+  static func matchingSavedCamera(for discovered: DiscoveredCamera, among saved: [SavedCamera]) -> SavedCamera? {
+    guard discovered.advertisedModelHint == .xt5 else { return nil }
+    let matches = saved.filter { $0.peripheralID == discovered.peripheralID && $0.model == .xt5 }
+    return matches.count == 1 ? matches.first : nil
+  }
+
   func connect(_ selection: Selection) {
     guard canSelect else { return }
     let replace = attempt != nil
     invalidateHandoff()
     let id = UUID()
     attempt = id
-    update(.authenticating, "Connecting to the selected camera over Bluetooth…")
+    update(.authenticating, "Connecting to the selected camera over Bluetooth…", linkMode: selection.linkMode)
     operation = Task {
       if replace { await bluetooth.disconnect() }
       do {
@@ -134,15 +159,41 @@ final class ManualWiFiProbe {
         let firmware = ManualWiFiEvent.firmware(observed.firmware)
         guard firmware != "unavailable" else { throw WirelessFailure.unsupportedFirmware }
 
-        identity = observed
-        update(.activating, "Starting the camera Wi-Fi network…", firmware: firmware)
-        let selectionIsCurrent = currentSelectionCheck(id)
-        try authorizeLaunch(selection.peripheralID, selectionIsCurrent)
-        let network = try await bluetooth.activateWiFi(for: camera.id)
+        linkedCamera = LinkedCamera(identity: observed, peripheralID: selection.peripheralID, mode: selection.linkMode)
+        operation = nil
+        update(.bluetoothLinked, "Bluetooth link established. Camera registration has not been confirmed.",
+          firmware: firmware, linkMode: selection.linkMode)
+      } catch {
+        guard attempt == id else { return }
+        await finish(.bluetoothFailed, Self.failureMessage(error, fallback: "The camera connection stopped. Select it again to retry."),
+          failure: ManualWiFiEvent.Failure(error), linkMode: selection.linkMode)
+      }
+    }
+  }
+
+  func confirmRegistration() {
+    guard canConfirmRegistration, let mode = registrationMode else { return }
+    registrationConfirmed = true
+    update(.registrationConfirmed, "Camera registration confirmed by you. Start camera Wi-Fi when ready.", linkMode: mode)
+  }
+
+  func startWiFi() {
+    guard canStartWiFi, let id = attempt, let linkedCamera else { return }
+    let observed = linkedCamera.identity
+    let firmware = ManualWiFiEvent.firmware(observed.firmware)
+    update(.activating, "Starting the camera Wi-Fi network…", firmware: firmware, linkMode: linkedCamera.mode)
+    operation = Task {
+      do {
         try check(id)
-        guard network.credential.cameraID == camera.id else { throw WirelessFailure.peerMismatch }
+        guard try await bluetooth.identity(for: observed.cameraID) == observed else { throw WirelessFailure.peerMismatch }
+        try check(id)
+        let selectionIsCurrent = currentSelectionCheck(id)
+        try authorizeLaunch(linkedCamera.peripheralID, selectionIsCurrent)
+        let network = try await bluetooth.activateWiFi(for: observed.cameraID)
+        try check(id)
+        guard network.credential.cameraID == observed.cameraID else { throw WirelessFailure.peerMismatch }
         let activationPassword = try await password(network.credential)
-        guard try await bluetooth.identity(for: camera.id) == observed else { throw WirelessFailure.peerMismatch }
+        guard try await bluetooth.identity(for: observed.cameraID) == observed else { throw WirelessFailure.peerMismatch }
         try check(id)
         handoff = network
         secret = activationPassword
@@ -150,9 +201,8 @@ final class ManualWiFiProbe {
         update(.ready, "Camera Wi-Fi is ready. Join it in Settings, then return here.", firmware: firmware)
       } catch {
         guard attempt == id else { return }
-        let phase: ManualWiFiEvent.Phase = identity == nil ? .bluetoothFailed : .activationFailed
-        await finish(phase, Self.failureMessage(error, fallback: "The camera connection stopped. Select it again to retry."),
-          failure: ManualWiFiEvent.Failure(error))
+        await finish(.activationFailed, Self.failureMessage(error, fallback: "The camera connection stopped. Select it again to retry."),
+          failure: ManualWiFiEvent.Failure(error), linkMode: linkedCamera.mode)
       }
     }
   }
@@ -234,8 +284,9 @@ final class ManualWiFiProbe {
 
   func bluetoothEvent(_ event: BluetoothGatewayEvent) {
     // The gateway delivers a terminal link error to the pending activation as well.
-    // Let that operation classify failure before any handoff has been published.
-    guard attempt != nil, handoff != nil else { return }
+    // An in-flight activation owns that failure. An idle Bluetooth link or
+    // an existing Wi-Fi handoff has no pending activation to retire it.
+    guard attempt != nil, handoff != nil || (identity != nil && operation == nil) else { return }
     switch event {
     case .disconnected(let id, _) where identity?.cameraID == id:
       retire(.bluetoothLost, "Bluetooth connection lost. Check the camera and select it to retry.")
@@ -282,10 +333,11 @@ final class ManualWiFiProbe {
 
   private func invalidateHandoff() {
     attempt = nil
-    identity = nil
+    linkedCamera = nil
     handoff = nil
     secret = nil
     revealing = false
+    registrationConfirmed = false
     userConfirmed = false
   }
 
@@ -308,21 +360,23 @@ final class ManualWiFiProbe {
 
   private func finish(
     _ phase: ManualWiFiEvent.Phase, _ message: String,
-    firmware: String? = nil, failure: ManualWiFiEvent.Failure? = nil
+    firmware: String? = nil, failure: ManualWiFiEvent.Failure? = nil,
+    linkMode: ManualWiFiEvent.LinkMode? = nil
   ) async {
     invalidateHandoff()
     stopScan()
     await bluetooth.disconnect()
-    update(phase, message, firmware: firmware, failure: failure)
+    update(phase, message, firmware: firmware, failure: failure, linkMode: linkMode)
     operation = nil
   }
 
   private func update(
     _ phase: ManualWiFiEvent.Phase, _ message: String,
-    firmware: String? = nil, failure: ManualWiFiEvent.Failure? = nil
+    firmware: String? = nil, failure: ManualWiFiEvent.Failure? = nil,
+    linkMode: ManualWiFiEvent.LinkMode? = nil
   ) {
     status = message
-    record(ManualWiFiEvent(phase: phase, observedFirmware: firmware, failure: failure))
+    record(ManualWiFiEvent(phase: phase, observedFirmware: firmware, failure: failure, linkMode: linkMode))
   }
 
   private static func failureMessage(_ error: Error, fallback: String) -> String {
@@ -366,10 +420,12 @@ final class ManualWiFiProbe {
 
 struct ManualWiFiEvent: Encodable {
   enum Phase: String, Encodable {
-    case discovering, authenticating, bluetoothFailed, activating, activationFailed
+    case discovering, authenticating, bluetoothLinked, bluetoothFailed, registrationConfirmed, activating, activationFailed
     case ready, confirmationRequired, userConfirmed, identifying, identified, identityFailed
     case cancelled, leftDuringOperation, leaseExpired, bluetoothLost
   }
+
+  enum LinkMode: String, Encodable { case pair, reconnect }
 
   enum Failure: String, Encodable {
     case wifiReadinessTimeout, tcpSetupTimeout, ptpTimeout, bluetoothPermission, localNetworkPermission
@@ -399,11 +455,13 @@ struct ManualWiFiEvent: Encodable {
   let phase: Phase
   let observedFirmware: String?
   let failure: Failure?
+  let linkMode: LinkMode?
 
-  init(phase: Phase, observedFirmware: String?, failure: Failure?) {
+  init(phase: Phase, observedFirmware: String?, failure: Failure?, linkMode: LinkMode?) {
     self.phase = phase
     self.observedFirmware = observedFirmware.map(Self.firmware)
     self.failure = failure
+    self.linkMode = linkMode
   }
 
   static func firmware(_ raw: String?) -> String {

@@ -41,6 +41,7 @@ final class ManualWiFiFixture {
     private var activationFailure: WirelessFailure?
     private var disconnectBarrier: FixtureBarrier?
     private(set) var disconnectCount = 0
+    private(set) var activationCount = 0
 
     func holdActivation(_ barrier: FixtureBarrier, thenThrow failure: WirelessFailure? = nil) {
       activationBarrier = barrier
@@ -53,7 +54,12 @@ final class ManualWiFiFixture {
       AsyncThrowingStream { $0.finish() }
     }
 
-    func pair(_ camera: DiscoveredCamera) async throws -> SavedCamera { throw WirelessFailure.unsupportedProtocol }
+    func pair(_ camera: DiscoveredCamera) async throws -> SavedCamera {
+      let paired = SavedCamera(id: WirelessCameraID(), peripheralID: camera.peripheralID,
+        model: .xt5, displayName: camera.displayName)
+      selected = paired
+      return paired
+    }
 
     func reconnect(_ camera: SavedCamera, allowPermissionPrompt: Bool) async throws { selected = camera }
 
@@ -64,6 +70,7 @@ final class ManualWiFiFixture {
 
     func activateWiFi(for id: WirelessCameraID) async throws -> CameraNetwork {
       guard selected?.id == id else { throw WirelessFailure.peerMismatch }
+      activationCount += 1
       await activationBarrier?.wait()
       if let activationFailure { throw activationFailure }
       return CameraNetwork(ssid: "fixture-network", security: .wpaPersonal,

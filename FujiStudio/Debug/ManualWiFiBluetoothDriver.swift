@@ -5,6 +5,11 @@ import FujiCameraCore
 /// The normal profile still owns authentication, firmware and the readiness notification.
 @MainActor
 final class ManualWiFiBluetoothDriver: BluetoothPeripheralDriver {
+  static let phoneDestinationName = "Fuji iPhone"
+  private static let identification = BLEGATTCharacteristic(
+    service: "123d8f06-62a1-4935-9322-833c531ee225",
+    characteristic: "85b9163e-62d1-49ff-a6f5-054b4630d4a1")
+
   private let native: any BluetoothPeripheralDriver
   private var link: (peripheralID: UUID, session: UUID, verifiedXT5: Bool)?
   private var imageViewing: ProbeImageViewingLaunch?
@@ -46,6 +51,13 @@ final class ManualWiFiBluetoothDriver: BluetoothPeripheralDriver {
       guard handle(decision, session: session) else { return }
     } else if case .write(_, _, .activateWiFi) = action {
       eventHandler?(.linkFailed(session, .unsupportedProtocol))
+      return
+    }
+    if link?.verifiedXT5 == true,
+      case .write(Self.identification, let bytes, .identify) = action,
+      bytes == Data("Fuji Studio".utf8)
+    {
+      native.perform(.write(Self.identification, Data(Self.phoneDestinationName.utf8), .identify), session: session)
       return
     }
     native.perform(action, session: session)

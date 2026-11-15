@@ -10,6 +10,14 @@ final class ManualWiFiTests: XCTestCase {
     XCTAssertTrue(connect.waitForExistence(timeout: 10))
     connect.tap()
 
+    let start = app.buttons["manualWiFi.startWiFi"]
+    XCTAssertTrue(start.waitForExistence(timeout: 10))
+    XCTAssertFalse(start.isEnabled)
+    XCTAssertFalse(app.buttons["manualWiFi.reveal"].exists)
+    app.buttons["manualWiFi.confirmRegistration"].tap()
+    XCTAssertTrue(start.isEnabled)
+    start.tap()
+
     let reveal = app.buttons["manualWiFi.reveal"]
     XCTAssertTrue(reveal.waitForExistence(timeout: 10))
     XCTAssertFalse(app.staticTexts["manualWiFi.password"].exists)

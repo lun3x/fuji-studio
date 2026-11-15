@@ -1,4 +1,5 @@
 #if targetEnvironment(simulator)
+import Foundation
 import FujiCameraCore
 import Testing
 @testable import FujiStudio
@@ -16,6 +17,9 @@ struct ManualWiFiProbeTests {
     let probe = fixture.probe
     probe.connect(.saved(fixture.camera))
     await probe.waitForOperation()
+    probe.confirmRegistration()
+    probe.startWiFi()
+    await probe.waitForOperation()
     #expect(probe.handoff != nil)
     probe.identify()
     #expect(probe.handoff != nil)
@@ -28,13 +32,81 @@ struct ManualWiFiProbeTests {
     #expect(probe.handoff == nil)
   }
 
+  @Test(arguments: [false, true]) func cameraRegistrationMustBeConfirmedBeforeStartingWiFi(pair: Bool) async {
+    let fixture = ManualWiFiFixture()
+    let probe = fixture.probe
+    let nearby = DiscoveredCamera(peripheralID: fixture.camera.peripheralID,
+      advertisedModelHint: .xt5, displayName: fixture.camera.displayName)
+    probe.connect(pair ? .discovered(nearby) : .saved(fixture.camera))
+    await probe.waitForOperation()
+    #expect(fixture.events.last?.phase == .bluetoothLinked)
+    #expect(fixture.events.last?.linkMode == (pair ? .pair : .reconnect))
+    #expect(probe.canConfirmRegistration)
+    probe.startWiFi()
+    #expect(await fixture.bluetooth.activationCount == 0)
+    #expect(probe.handoff == nil)
+
+    probe.confirmRegistration()
+    #expect(fixture.events.last?.phase == .registrationConfirmed)
+    #expect(fixture.events.last?.linkMode == (pair ? .pair : .reconnect))
+    #expect(await fixture.bluetooth.activationCount == 0)
+    probe.startWiFi()
+    await probe.waitForOperation()
+    #expect(await fixture.bluetooth.activationCount == 1)
+    #expect(probe.handoff != nil)
+  }
+
+  @Test(arguments: [false, true]) func retiringHeldLinkClearsRegistration(background: Bool) async {
+    let fixture = ManualWiFiFixture()
+    let probe = fixture.probe
+    probe.connect(.saved(fixture.camera))
+    await probe.waitForOperation()
+    probe.confirmRegistration()
+    if background {
+      probe.sceneChanged(.inactive)
+      #expect(probe.registrationConfirmed)
+      probe.sceneChanged(.background)
+      #expect(!fixture.leaseHeld)
+    } else {
+      probe.bluetoothEvent(.disconnected(fixture.camera.id, .connectionLost))
+    }
+    await probe.waitForOperation()
+    #expect(!probe.registrationConfirmed)
+    #expect(probe.linkedRecordID == nil)
+    #expect(await fixture.bluetooth.disconnectCount == 1)
+    #expect(await fixture.bluetooth.activationCount == 0)
+  }
+
+  @Test func nearbyReconnectRequiresAnUnambiguousPeripheralAndModelMatch() {
+    let fixture = ManualWiFiFixture()
+    let camera = fixture.camera
+    let nearby = DiscoveredCamera(peripheralID: camera.peripheralID,
+      advertisedModelHint: .xt5, displayName: "Different advertisement label")
+    let duplicate = SavedCamera(id: WirelessCameraID(), peripheralID: camera.peripheralID,
+      model: .xt5, displayName: camera.displayName)
+    let unresolved = DiscoveredCamera(peripheralID: camera.peripheralID,
+      advertisedModelHint: nil, displayName: camera.displayName)
+    #expect(ManualWiFiProbe.matchingSavedCamera(for: nearby, among: [fixture.otherCamera, camera]) == camera)
+    #expect(ManualWiFiProbe.matchingSavedCamera(for: nearby, among: [duplicate, camera]) == nil)
+    #expect(ManualWiFiProbe.matchingSavedCamera(for: nearby, among: [fixture.otherCamera]) == nil)
+    #expect(ManualWiFiProbe.matchingSavedCamera(for: unresolved, among: [camera]) == nil)
+  }
+
   @Test func selectionChangeRequiresASeparateFreshConfirmation() async {
     let fixture = ManualWiFiFixture()
     let probe = fixture.probe
     probe.connect(.saved(fixture.camera))
     await probe.waitForOperation()
+    probe.confirmRegistration()
+    probe.startWiFi()
+    await probe.waitForOperation()
     probe.confirmJoined()
     probe.connect(.saved(fixture.otherCamera))
+    await probe.waitForOperation()
+    #expect(!probe.registrationConfirmed)
+    #expect(probe.linkedRecordID == fixture.otherCamera.id)
+    probe.confirmRegistration()
+    probe.startWiFi()
     await probe.waitForOperation()
     #expect(probe.handoff?.credential.cameraID == fixture.otherCamera.id)
     #expect(!probe.userConfirmed)
@@ -46,6 +118,9 @@ struct ManualWiFiProbeTests {
     let fixture = ManualWiFiFixture()
     let probe = fixture.probe
     probe.connect(.saved(fixture.camera))
+    await probe.waitForOperation()
+    probe.confirmRegistration()
+    probe.startWiFi()
     await probe.waitForOperation()
     probe.confirmJoined()
     probe.sceneChanged(.inactive)
@@ -63,6 +138,9 @@ struct ManualWiFiProbeTests {
     let fixture = ManualWiFiFixture()
     let probe = fixture.probe
     probe.connect(.saved(fixture.camera))
+    await probe.waitForOperation()
+    probe.confirmRegistration()
+    probe.startWiFi()
     await probe.waitForOperation()
     probe.revealPassword()
     probe.confirmJoined()
@@ -88,6 +166,9 @@ struct ManualWiFiProbeTests {
     let probe = fixture.probe
     probe.connect(.saved(fixture.camera))
     await probe.waitForOperation()
+    probe.confirmRegistration()
+    probe.startWiFi()
+    await probe.waitForOperation()
     probe.sceneChanged(.background)
     let disconnect = FixtureBarrier()
     await fixture.bluetooth.holdDisconnect(disconnect)
@@ -108,6 +189,9 @@ struct ManualWiFiProbeTests {
     await fixture.bluetooth.holdActivation(barrier, thenThrow: failure)
     let probe = fixture.probe
     probe.connect(.saved(fixture.camera))
+    await probe.waitForOperation()
+    probe.confirmRegistration()
+    probe.startWiFi()
     await barrier.entered()
     probe.bluetoothEvent(.disconnected(fixture.camera.id, failure))
     await barrier.release()
@@ -123,6 +207,9 @@ struct ManualWiFiProbeTests {
     await fixture.bluetooth.holdActivation(barrier)
     let probe = fixture.probe
     probe.connect(.saved(fixture.camera))
+    await probe.waitForOperation()
+    probe.confirmRegistration()
+    probe.startWiFi()
     await barrier.entered()
     probe.cancel()
     await barrier.release()
@@ -136,6 +223,9 @@ struct ManualWiFiProbeTests {
     let fixture = ManualWiFiFixture()
     let probe = fixture.probe
     probe.connect(.saved(fixture.camera))
+    await probe.waitForOperation()
+    probe.confirmRegistration()
+    probe.startWiFi()
     await probe.waitForOperation()
     probe.confirmJoined()
     probe.bluetoothEvent(.disconnected(fixture.camera.id, .connectionLost))
