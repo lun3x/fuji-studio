@@ -28,7 +28,7 @@ struct MacWirelessProbe {
 @MainActor
 private final class WirelessProbe: NSObject, NSApplicationDelegate {
   private enum Phase: String {
-    case idle, discovering, pairing, reconnecting, linked, activatingWiFi, disconnecting, stopped
+    case idle, discovering, pairing, observingSaved, reconnecting, linked, activatingWiFi, disconnecting, stopped
   }
 
   private let directory: RunDirectory
@@ -51,6 +51,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
   private var linkedCamera: SavedCamera?
   private var savedModel: WirelessCameraModel?
   private var cameraNetwork: CameraNetwork?
+  private var savedAdvertisement = SavedAdvertisementObservation()
   private var messages: [String] = []
   private var previousStatus: String?
 
@@ -167,6 +168,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
       case ("select", 2): select(Int(words[1]))
       case ("pair", 1): pair()
       case ("disconnect", 1): disconnect()
+      case ("observe-saved", 1): observeSavedAdvertisement()
       case ("reconnect", 1): reconnect()
       case ("wifi", 1): activateWiFi()
       case ("quit", 1): NSApp.terminate(nil)
@@ -236,6 +238,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
       return reject("pair", "selectCandidateFirst")
     }
     verifiedPairingSession = nil
+    savedAdvertisement = SavedAdvertisementObservation()
     begin("pair", phase: .pairing)
     operation = Task {
       defer { clearDiscovery() }
@@ -258,9 +261,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
     operation = Task {
       do {
         try Task.checkCancellation()
-        guard let selected = try await store.selected(),
-          let camera = try await store.cameras().first(where: { $0.id == selected && $0.model == .xt5 })
-        else {
+        guard let camera = try await selectedXT5() else {
           try Task.checkCancellation()
           finish("noSavedXT5", phase: .idle)
           operation = nil
@@ -274,6 +275,42 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
       } catch {
         await linkFailed(error, expectedPhase: .reconnecting)
       }
+    }
+  }
+
+  private func selectedXT5() async throws -> SavedCamera? {
+    guard let selected = try await store.selected() else { return nil }
+    try Task.checkCancellation()
+    return try await store.cameras().first { $0.id == selected && $0.model == .xt5 }
+  }
+
+  private func observeSavedAdvertisement() {
+    guard phase == .idle else { return reject("observe-saved", "busy") }
+    savedAdvertisement = SavedAdvertisementObservation()
+    begin("observe-saved", phase: .observingSaved)
+    operation = Task {
+      let label: String
+      do {
+        try Task.checkCancellation()
+        if let camera = try await selectedXT5() {
+          try Task.checkCancellation()
+          savedModel = camera.model
+          publish()
+          let observer = ProbeSavedAdvertisementObserver(savedPeripheralID: camera.peripheralID)
+          let observation = try await observer.observe()
+          try Task.checkCancellation()
+          guard phase == .observingSaved else { return }
+          savedAdvertisement = observation
+          label = observation.ready ? "savedAdvertReady" : "savedAdvertTimedOut"
+        } else {
+          label = "noSavedXT5"
+        }
+      } catch {
+        label = Self.failureLabel(error)
+      }
+      guard phase == .observingSaved else { return }
+      operation = nil
+      finish(label, phase: .idle)
     }
   }
 
@@ -384,6 +421,10 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
       "wifi_ready=\(cameraNetwork != nil)",
       "wifi_security=\(cameraNetwork?.security == .wpaPersonal ? "wpaPersonal" : "none")",
       "wifi_model=\(cameraNetwork == nil ? "none" : WirelessCameraModel.xt5.rawValue)",
+      "saved_advert_identity=\(savedAdvertisement.matchingIdentity)",
+      "saved_advert_service=\(savedAdvertisement.matchingService)",
+      "saved_advert_shape=\(savedAdvertisement.matchingShape)",
+      "saved_advert_ready=\(savedAdvertisement.ready)",
     ]
     for handle in candidates.keys.sorted() {
       let model = candidates[handle]?.advertisedModelHint?.rawValue ?? "unresolved"
