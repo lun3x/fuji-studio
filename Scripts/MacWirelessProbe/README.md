@@ -22,6 +22,8 @@ Each launch takes an empty owner-only directory with no ACL entries. The initial
 
 Status and events omit peripheral identifiers, names, credentials, and raw firmware. An unrecognized Device Information model is recorded only in the separate owner-only `private-bluetooth-model.json` file. The Wi-Fi status reports readiness, the security category, and the camera model.
 
+`ble_firmware` displays the authenticated link's Device Information firmware as a short ASCII version or a fixed diagnostic category. The Wi-Fi command still applies the bundled firmware policy to the original identity value.
+
 To check the saved reconnect advertisement, run `"$ctl" "$run" observe-saved` while idle. The probe scans for up to 15 seconds and stops when one connectable report contains the expected service and manufacturer shape for the saved CoreBluetooth identity. The status shows which criteria were observed and whether they occurred together. The camera model comes from the saved record. Send `reconnect` separately after the scan when you want to attempt a link.
 
 To compare secure status, complete a first pair and then disconnect and reconnect in the same probe process. The probe keeps a valid first-pair baseline in memory after authenticated readiness and compares it only with a verified X-T5 session for the same saved peripheral. When `secure_status_compared=true`, the prefix and whole-value flags report equality. Quit discards the baseline.
