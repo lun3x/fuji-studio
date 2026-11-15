@@ -136,6 +136,65 @@ final class WirelessAppModelTests: XCTestCase {
         XCTAssertTrue(model.importEvents.isEmpty)
     }
 
+    func testStartupWaitsForSavedCameraPreferenceBeforeAutomaticUSBDiscovery() async throws {
+        let fixture = try await FixtureEnvironment.make(wireless: .paired)
+        let selectionRead = FixtureBarrier()
+        await fixture.wireless.holdSavedCameraSelectionRead(selectionRead)
+        let model = AppModel(environment: fixture.environment)
+        let start = Task { await model.start() }
+        defer { Task { await selectionRead.release() } }
+
+        await selectionRead.entered()
+        try await waitUntil { model.wirelessState.activity == .active }
+        XCTAssertNil(model.wirelessState.selectedCameraID)
+        let connectsWhileReading = await fixture.camera.connectCount
+        XCTAssertEqual(connectsWhileReading, 0)
+
+        await selectionRead.release()
+        await start.value
+        try await waitUntil { model.wirelessState.bluetooth == .ready }
+        let usbConnects = await fixture.camera.connectCount
+        let prompts = await fixture.wireless.bluetooth.reconnectPrompts
+        XCTAssertEqual(usbConnects, 0)
+        XCTAssertEqual(prompts, [false])
+    }
+
+    func testStartupBeginsAutomaticUSBDiscoveryWhenSavedPreferenceIsEmpty() async throws {
+        let fixture = try await FixtureEnvironment.make(wireless: .unpaired)
+        let selectionRead = FixtureBarrier()
+        await fixture.wireless.holdSavedCameraSelectionRead(selectionRead)
+        let model = AppModel(environment: fixture.environment)
+        let start = Task { await model.start() }
+        defer { Task { await selectionRead.release() } }
+
+        await selectionRead.entered()
+        try await waitUntil { model.wirelessState.activity == .active }
+        let connectsWhileReading = await fixture.camera.connectCount
+        XCTAssertEqual(connectsWhileReading, 0)
+
+        await selectionRead.release()
+        await start.value
+        try await waitUntil { model.state.isCameraReady }
+        let usbConnects = await fixture.camera.connectCount
+        XCTAssertEqual(usbConnects, 1)
+    }
+
+    func testUnreadableSavedPreferenceReportsFailureAndAllowsExplicitUSBDiscovery() async throws {
+        let fixture = try await FixtureEnvironment.make(wireless: .paired)
+        await fixture.wireless.failSavedCameraSelectionRead()
+        let model = AppModel(environment: fixture.environment)
+        await model.start()
+
+        XCTAssertEqual(model.wirelessState.failure, .unavailableStorage)
+        let automaticUSBConnects = await fixture.camera.connectCount
+        XCTAssertEqual(automaticUSBConnects, 0)
+
+        await model.connect()
+        try await waitUntil { model.state.isCameraReady }
+        let manualUSBConnects = await fixture.camera.connectCount
+        XCTAssertEqual(manualUSBConnects, 1)
+    }
+
     func testBackgroundClosesNativeSessionBeforePendingPhotosCallbackSettles() async throws {
         let fixture = try await FixtureEnvironment.make(wireless: .paired)
         let model = AppModel(environment: fixture.environment)

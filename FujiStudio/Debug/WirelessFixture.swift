@@ -49,6 +49,14 @@ import FujiCameraCore
     let journalRoot: URL
     private let savedCameras: FixtureSavedCameras
 
+    func holdSavedCameraSelectionRead(_ barrier: FixtureBarrier) async {
+        await savedCameras.holdSelectionRead(barrier)
+    }
+
+    func failSavedCameraSelectionRead() async {
+        await savedCameras.failSelectionRead()
+    }
+
     init(mode: Mode, root: URL, reader: FixtureLibrary, ownership: some WirelessCameraOwnershipGateway) throws {
         let persistenceSuite = ProcessInfo.processInfo.environment["FUJI_STUDIO_SETTINGS_SUITE"]
         let autoSaveCameraID = UUID(uuid: (0xFE, 0xE3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1))
@@ -145,6 +153,8 @@ actor FixtureSavedCameras: SavedCameraStore {
     }
     private var remembered: [SavedCamera]
     private var selection: WirelessCameraID?
+    private var selectionRead: FixtureBarrier?
+    private var selectionReadFails = false
 
     init(selected: Bool, model: WirelessCameraModel = .xt5, cameraID: WirelessCameraID = .init(), dual: Bool = false) {
         camera = SavedCamera(id: cameraID, peripheralID: UUID(), model: model, displayName: "Fixture \(model.rawValue)")
@@ -162,7 +172,13 @@ actor FixtureSavedCameras: SavedCameraStore {
     }
 
     func cameras() -> [SavedCamera] { remembered }
-    func selected() -> WirelessCameraID? { selection }
+    func holdSelectionRead(_ barrier: FixtureBarrier) { selectionRead = barrier }
+    func failSelectionRead() { selectionReadFails = true }
+    func selected() async throws -> WirelessCameraID? {
+        if let selectionRead { await selectionRead.wait() }
+        if selectionReadFails { throw WirelessFailure.unavailableStorage }
+        return selection
+    }
     func save(_ camera: SavedCamera) {
         if let index = remembered.firstIndex(where: { $0.id == camera.id }) {
             remembered[index] = camera

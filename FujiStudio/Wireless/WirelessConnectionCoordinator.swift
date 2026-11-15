@@ -47,7 +47,6 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
     }
   }
   private var observers: [UUID: AsyncStream<WirelessConnectionState>.Continuation] = [:]
-  private var savedLoaded = false
   private var loading: (id: UUID, task: Task<Void, Never>)?
   private var mutatingStore = false
 
@@ -318,9 +317,9 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
 
 
   private func loadSavedCameras() async {
-    guard !savedLoaded else { return }
+    guard !snapshot.hasLoadedSavedCameraPreference else { return }
     if let cleanup { await cleanup.value }
-    guard !savedLoaded, !isPairing, cleanup == nil else { return }
+    guard !snapshot.hasLoadedSavedCameraPreference, !isPairing, cleanup == nil else { return }
     if let loading {
       await loading.task.value
       return
@@ -342,7 +341,7 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
       guard loading?.id == id, !isPairing, cleanup == nil else { return }
       snapshot.savedCameras = cameras
       snapshot.selectedCameraID = cameras.first { $0.id == selected }?.id
-      savedLoaded = true
+      snapshot.hasLoadedSavedCameraPreference = true
     } catch {
       guard loading?.id == id, !isPairing, cleanup == nil else { return }
       snapshot.failure = (error as? WirelessFailure) ?? .unavailableStorage
@@ -370,7 +369,7 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
   private func startAutomaticReconnect() {
     guard snapshot.activity == .active, !bluetoothSuspendedForUSB, !mutatingStore, cleanup == nil, activeTransfer == nil, pendingDiscovery == nil,
       wifiAttempt == nil, wifiTeardown == nil, wifiLease == nil,
-      work == nil, savedLoaded, retry == nil, blockedFailure == nil, snapshot.bluetooth != .ready
+      work == nil, snapshot.hasLoadedSavedCameraPreference, retry == nil, blockedFailure == nil, snapshot.bluetooth != .ready
     else { return }
     startReconnect(prompt: false)
   }
@@ -464,7 +463,7 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
     let savedCameras: [SavedCamera]
     do {
       if let failure = terminalDuringLink { throw failure }
-      if savedLoaded {
+      if snapshot.hasLoadedSavedCameraPreference {
         previousSelection = snapshot.selectedCameraID
         savedCameras = snapshot.savedCameras
       } else {
@@ -498,7 +497,7 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
     }
     snapshot.savedCameras = savedCameras
     snapshot.selectedCameraID = camera.id
-    savedLoaded = true
+    snapshot.hasLoadedSavedCameraPreference = true
     finishReconnect(id: id)
   }
 
@@ -618,7 +617,7 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
     backoffIndex = 0
     let pending = work
     if isPairing {
-      savedLoaded = false
+      snapshot.hasLoadedSavedCameraPreference = false
       loading = nil
     }
     work = nil

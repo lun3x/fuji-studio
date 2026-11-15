@@ -720,6 +720,7 @@ import Observation
 
     private func startAutomaticConnection() {
         guard started, automaticConnectionEnabled, foreground, !isSuspended, automaticConnectionTask == nil,
+              !wirelessAvailable || wirelessState.hasLoadedSavedCameraPreference,
               wirelessState.selectedCameraID == nil, !bluetoothChoiceActive, !state.wirelessRestrictsUSB else { return }
         let wait = connectionRetryWait
         automaticConnectionTask = Task { [weak self] in

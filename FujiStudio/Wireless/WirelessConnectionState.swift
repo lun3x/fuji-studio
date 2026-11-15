@@ -69,6 +69,7 @@ struct WirelessConnectionState: Equatable, Sendable {
   var activity: WirelessActivity = .background
   var savedCameras: [SavedCamera] = []
   var selectedCameraID: WirelessCameraID?
+  var hasLoadedSavedCameraPreference = false
   var discoveredCameras: [DiscoveredCamera] = []
   var bluetooth: WirelessBluetoothReadiness = .idle
   var wifi: WirelessWiFiPhase = .idle

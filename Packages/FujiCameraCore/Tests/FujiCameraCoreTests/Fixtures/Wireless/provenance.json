@@ -1,0 +1,84 @@
+{
+  "formatVersion": 1,
+  "protocolReplays": [
+    {
+      "kind": "synthetic",
+      "fixtureLocation": "FujiBLEProfileTests.swift",
+      "referenceSources": [
+        {
+          "url": "https://github.com/gkoh/furble/blob/0cac22aacc3d9ef250be40849118af78a5f39f27/lib/furble/FujifilmSecure.cpp",
+          "license": "MIT",
+          "appliesTo": "Secure BLE ordering"
+        },
+        {
+          "url": "https://github.com/petabyt/libfuji/blob/3b9932a46d025405dae505ddb624733b6ea3edd1/lib/bluetooth.c",
+          "license": "MIT",
+          "appliesTo": "Legacy BLE and camera-hosted WiFi activation"
+        }
+      ],
+      "scope": "Exercises the profiles with constructed GATT events. No captured pairing traffic or credentials from either target body."
+    },
+    {
+      "kind": "synthetic",
+      "fixtureLocation": "WirelessTransferSessionTests.swift",
+      "referenceSources": [
+        {
+          "url": "https://github.com/petabyt/libfuji/blob/3b9932a46d025405dae505ddb624733b6ea3edd1/lib/fuji.c",
+          "license": "MIT",
+          "appliesTo": "Fuji setup and card, object and length controls"
+        },
+        {
+          "url": "https://github.com/epsalmond/ptpsim/blob/a2cea30d8622ba9e71d49338b0d0eda20b664689/packages/camera-config-data/fuji/gfx100ii/evidence/IMAGE_TRANSFER_FW230.md",
+          "license": "MIT OR Apache-2.0",
+          "appliesTo": "Published XApp setup and gallery observations from GFX100 II 2.30"
+        }
+      ],
+      "scope": "Constructed PTP exchanges exercise XApp, phone and AutoSave admission, enumeration and byte gates. Names, firmware strings, object IDs and object data in these exchanges are test values."
+    },
+    {
+      "kind": "synthetic",
+      "fixtureLocation": "AutoSaveCodecTests.swift",
+      "referenceSources": [
+        {
+          "url": "https://github.com/petabyt/libfuji/blob/3b9932a46d025405dae505ddb624733b6ea3edd1/docs/autosave.md",
+          "license": "MIT",
+          "appliesTo": "Published AutoSave handshake examples including an X-H1"
+        },
+        {
+          "url": "https://github.com/petabyt/libfuji/blob/3b9932a46d025405dae505ddb624733b6ea3edd1/lib/discovery.c",
+          "license": "MIT",
+          "appliesTo": "Discovery and port handling"
+        }
+      ],
+      "scope": "Constructed datagrams and protocol replies exercise parsing and peer admission. X-E3 registration and completion markers remain pending physical validation."
+    }
+  ],
+  "nativePhotoKitFixtures": {
+    "fixtureLocation": "FujiStudioTests/Import/NativePhotoImportIntegrationTests.swift",
+    "scope": "Public sample bytes exercise native Photos resource roles and readback. All resources bypass wireless transfer. Firmware and camera card matching are outside the scope of these fixtures.",
+    "files": [
+      {
+        "file": "X-T5.RAF",
+        "url": "https://raw.pixls.us/getfile.php/6122/nice/Fujifilm%20-%20X-T5%20-%2014bit%2014bit%20compressed%20(3:2).RAF",
+        "license": "CC0-1.0",
+        "bytes": 43113376,
+        "sha256": "b2a067e7fda16338f15c2532caa12b238b2415dc1c75a96a6d24d3445cfd0ae3"
+      },
+      {
+        "file": "X-T5-embedded.JPG",
+        "derivedFrom": "X-T5.RAF",
+        "extraction": "Copy the full embedded preview. Its offset and length are two consecutive big-endian UInt32 values starting at RAF byte 84.",
+        "license": "CC0-1.0",
+        "bytes": 4016595,
+        "sha256": "80f410d7f09c1d9fbd902c9c0bf52b859aa0ada585d8e6e17aa517d0b27daab4"
+      },
+      {
+        "file": "X-E3.RAF",
+        "url": "https://raw.pixls.us/getfile.php/1865/nice/Fujifilm%20-%20X-E3%20-%2014bit%2014bit%20compressed%20(3:2).RAF",
+        "license": "CC0-1.0",
+        "bytes": 27799280,
+        "sha256": "03d6e79ae79107c51d0e1c1c9e488a0ab20268cd9fe43f47d8ea3ea310df35c6"
+      }
+    ]
+  }
+}
