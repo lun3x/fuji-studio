@@ -132,6 +132,15 @@ private struct RegistrationReconnectTests {
     unexpected.emit(.subscribed(ProbeGeotagSubscription.networkName))
     unexpected.expectRejected(.geotagUnexpectedSequence, nativeActionCount: heldCount)
 
+    let skipped = GeotagTrial(includeFirmware: false)
+    skipped.reachConfigurationAcknowledgement()
+    skipped.emit(.subscriptionUnavailable(ProbeGeotagSubscription.networkName))
+    guard !skipped.ready else {
+      print("FAIL: network-name skip completed the profile without a geotag acknowledgment")
+      exit(1)
+    }
+    skipped.expectRejected(.geotagUnexpectedSequence, nativeActionCount: heldCount)
+
     let cancelled = GeotagTrial()
     cancelled.reachConfigurationAcknowledgement()
     cancelled.adapter.cancelGeotagSubscription()
@@ -149,6 +158,7 @@ private struct RegistrationReconnectTests {
       case read(BLEGATTCharacteristic, Data)
       case wrote(BLEGATTCharacteristic)
       case subscribed(BLEGATTCharacteristic)
+      case subscriptionUnavailable(BLEGATTCharacteristic)
     }
 
     private static let status = ProbeSecureStatusComparison.characteristic
@@ -171,7 +181,7 @@ private struct RegistrationReconnectTests {
 
     init(
       extraSubscription: Bool = true, includeCharacteristic: Bool = true,
-      connectRequestedPeer: Bool = true, model: String = "FF220001"
+      connectRequestedPeer: Bool = true, model: String = "FF220001", includeFirmware: Bool = true
     ) {
       adapter = ProbeRegistrationBluetoothDriver(native: native)
       adapter.eventHandler = { [weak self] event in self?.receive(event) }
@@ -180,9 +190,10 @@ private struct RegistrationReconnectTests {
       adapter.connect(peripheralID: connectRequestedPeer ? peer : UUID(), session: session)
       native.eventHandler?(.peerModel(session, model))
       var keys: Set = [
-        Self.status, Self.identify, Self.readiness, Self.second, Self.firmware,
+        Self.status, Self.identify, Self.readiness, Self.second,
         ProbeGeotagSubscription.configurationNotification, ProbeGeotagSubscription.networkName,
       ]
+      if includeFirmware { keys.insert(Self.firmware) }
       if includeCharacteristic { keys.insert(ProbeGeotagSubscription.characteristic) }
       emit(.services(keys))
     }
@@ -222,6 +233,7 @@ private struct RegistrationReconnectTests {
       case .read(let key, let data): events.append(.read(key, data))
       case .wrote(let key): events.append(.wrote(key))
       case .subscribed(let key): events.append(.subscribed(key))
+      case .subscriptionUnavailable(let key): events.append(.subscriptionUnavailable(key))
       default: preconditionFailure("Unexpected event reached the production profile")
       }
       for action in try! profile.receive(event) {

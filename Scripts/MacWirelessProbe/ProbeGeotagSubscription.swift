@@ -131,10 +131,12 @@ struct ProbeGeotagSubscription {
       return .reject(.geotagSubscriptionUnsupported, session)
     case .failed(Self.characteristic, _):
       return .reject(.geotagSubscriptionFailed, session)
-    default:
-      if case .awaitingGeotagAcknowledgement = stage, case .subscribed = event {
+    case .subscribed, .subscriptionUnavailable:
+      if case .awaitingGeotagAcknowledgement = stage {
         return .reject(.geotagUnexpectedSequence, session)
       }
+    default:
+      break
     }
     return .forward
   }
