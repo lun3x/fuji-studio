@@ -26,7 +26,7 @@ To check the saved reconnect advertisement, run `"$ctl" "$run" observe-saved` wh
 
 To compare secure status, complete a first pair and then disconnect and reconnect in the same probe process. The probe keeps a valid first-pair baseline in memory after authenticated readiness and compares it only with a verified X-T5 session for the same saved peripheral. When `secure_status_compared=true`, the prefix and whole-value flags report equality. Quit discards the baseline.
 
-After a standard reconnect fails with `secure_status_compared=true` and `secure_status_prefix_equal=false`, `reconnect-registration` runs one additional hypothesis test. It requires the same selected X-T5 record and a verified status read in the new session. The test submits the in-memory registration value with the acknowledgment bit set. `registration_ack_used=true` means the test submitted that write to CoreBluetooth. Standard `reconnect` uses the production acknowledgment.
+After a standard reconnect fails with `secure_status_compared=true` and `secure_status_prefix_equal=false`, `reconnect-registration` runs one additional hypothesis test. It requires the same selected X-T5 record and a verified status read in the new session. The test submits the in-memory registration value with the acknowledgment bit set. `registration_ack_used=true` records only that the probe submitted the substituted write to the production Bluetooth driver. Standard `reconnect` uses the production acknowledgment.
 
 On macOS the probe uses the file-based Keychain. It enumerates persistent references within the dedicated probe service before reading the individual records. The iOS app uses its platform Keychain path.
 
