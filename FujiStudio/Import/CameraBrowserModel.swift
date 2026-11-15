@@ -20,6 +20,7 @@ final class CameraBrowserModel {
     private(set) var canSelectOriginals = false
     private(set) var selectedCount = 0
     private(set) var knownByteEstimate: UInt64 = 0
+    private var receiptStatuses: [WirelessObjectDescriptor: ImportReceiptStatus] = [:]
 
     private var selected: [CameraCaptureID: ImportSelection] = [:]
     @ObservationIgnored private var capturesByID: [CameraCaptureID: [CameraCapture]] = [:]
@@ -29,6 +30,7 @@ final class CameraBrowserModel {
     @ObservationIgnored private var invalidatedSessions: [UUID: WirelessFailure] = [:]
     @ObservationIgnored private var generation = UUID()
     @ObservationIgnored private var thumbnailGeneration = UUID()
+    @ObservationIgnored private var receiptGeneration = UUID()
     @ObservationIgnored private var thumbnailsSuspended = false
     @ObservationIgnored private var operationTail: Task<Void, Never>?
     @ObservationIgnored private var thumbnailCache = ThumbnailCache()
@@ -83,6 +85,38 @@ final class CameraBrowserModel {
     }
 
     func selectedPolicy(for id: CameraCaptureID) -> ImportPolicy? { selected[id]?.policy }
+
+    func importReceiptStatus(for capture: CameraCapture) -> ImportReceiptStatus? {
+        receiptStatuses[capture.rowID]
+    }
+
+    /// Evidence is scoped to the exact observed session objects. This reads Photos
+    /// for receipts only and does not initiate original downloads while browsing.
+    func refreshImportReceipts(using recovery: ImportRecovery,
+                               originalFingerprints: [WirelessObjectDescriptor: ImportOriginalFingerprint]) async throws {
+        clearReceiptStatuses()
+        guard !originalFingerprints.isEmpty, !isLoading, failure == nil else { return }
+        let generation = receiptGeneration
+        let jobs = try await recovery.journal.loadJobs()
+        var statuses: [WirelessObjectDescriptor: ImportReceiptStatus] = [:]
+        for capture in captures {
+            try Task.checkCancellation()
+            guard generation == receiptGeneration else { return }
+            let originals = capture.objects.compactMap { object in
+                originalFingerprints[object].flatMap { $0.describes(object) ? $0 : nil }
+            }
+            guard capture.raw != nil, originals.count == capture.objects.count else { continue }
+            statuses[capture.rowID] = await recovery.lookup(originals, jobs: jobs).status
+        }
+        try Task.checkCancellation()
+        guard generation == receiptGeneration else { return }
+        receiptStatuses = statuses
+    }
+
+    private func clearReceiptStatuses() {
+        receiptGeneration = UUID()
+        receiptStatuses.removeAll()
+    }
 
     func selectionForImport() throws -> [ImportSelection] {
         guard !selected.isEmpty else { return [] }
@@ -159,6 +193,7 @@ final class CameraBrowserModel {
         inventory = .init()
         camera = nil
         session = nil
+        clearReceiptStatuses()
         publish([])
         selected.removeAll()
         updateSelectionTotals()
@@ -267,6 +302,7 @@ final class CameraBrowserModel {
         canSelectOriginals = false
         requiresFreshSession = true
         self.failure = failure
+        clearReceiptStatuses()
         thumbnailCache = .init()
     }
 

@@ -5,6 +5,13 @@ enum ImportJournalError: Error, Equatable, Sendable {
     case invalidJob, invalidTransition, staleRevision, missingJob, recoveryRequired
 }
 
+enum ImportNoSaveEvidence: Equatable, Sendable {
+    /// The submitting intent was recorded, but the gateway did not issue a change.
+    case rejectedBeforeIssuance
+    /// A reconciliation of this exact submission revision proved authoritative absence.
+    case authoritativeAbsence
+}
+
 /// Queue transitions and the native Photos callback use the same durable store. Retain the
 /// returned revision after each save. Reload after a placeholder/receipt update or stale save.
 actor ImportJournal {
@@ -30,8 +37,14 @@ actor ImportJournal {
         try placeholderWriter.persistPlaceholder(jobID: jobID, captureID: captureID, assetID: assetID)
     }
 
-    func recordReceipt(_ receipt: ImportReceipt, jobID: UUID) throws {
-        try placeholderWriter.recordReceipt(receipt, jobID: jobID)
+    func recordReceipt(_ receipt: ImportReceipt, jobID: UUID, expectedRevision: UInt64? = nil) throws {
+        try placeholderWriter.recordReceipt(receipt, jobID: jobID, expectedRevision: expectedRevision)
+    }
+
+    func reopenAfterProvenNoSave(jobID: UUID, captureID: CameraCaptureID, expectedRevision: UInt64,
+                               evidence: ImportNoSaveEvidence) throws -> ImportJob {
+        try placeholderWriter.reopenAfterProvenNoSave(jobID: jobID, captureID: captureID,
+                                                       expectedRevision: expectedRevision, evidence: evidence)
     }
 }
 
@@ -90,33 +103,45 @@ final class ImportJournalStore: Sendable {
     /// Called within PhotoKit's synchronous changes block. This takes a lock rather than
     /// awaiting actor work. A thrown write leaves submitting intent and staged bytes intact.
     func persistPlaceholder(jobID: UUID, captureID: CameraCaptureID, assetID: String) throws {
-        try edit(jobID: jobID, captureID: captureID) { capture in
+        _ = try edit(jobID: jobID, captureID: captureID) { capture in
             if capture.placeholderAssetID == assetID { return }
             try capture.setPlaceholder(assetID)
         }
     }
 
-    fileprivate func recordReceipt(_ receipt: ImportReceipt, jobID: UUID) throws {
-        try edit(jobID: jobID, captureID: receipt.captureID) { capture in
+    fileprivate func recordReceipt(_ receipt: ImportReceipt, jobID: UUID, expectedRevision: UInt64?) throws {
+        _ = try edit(jobID: jobID, captureID: receipt.captureID, expectedRevision: expectedRevision) { capture in
             if capture.receipt == receipt { return }
             try capture.verify(receipt)
         }
     }
 
-    private func edit(jobID: UUID, captureID: CameraCaptureID, _ change: (inout ImportCaptureProgress) throws -> Void) throws {
+    fileprivate func reopenAfterProvenNoSave(jobID: UUID, captureID: CameraCaptureID, expectedRevision: UInt64,
+                                              evidence: ImportNoSaveEvidence) throws -> ImportJob {
+        try edit(jobID: jobID, captureID: captureID, expectedRevision: expectedRevision) {
+            try $0.reopenAfterProvenNoSave(evidence)
+        }
+    }
+
+    private func edit(jobID: UUID, captureID: CameraCaptureID, expectedRevision: UInt64? = nil,
+                      _ change: (inout ImportCaptureProgress) throws -> Void) throws -> ImportJob {
         try Self.lock.withLock {
             guard var job = try currentJob(jobID),
                   let index = job.captures.firstIndex(where: { $0.id == captureID }) else {
                 throw ImportJournalError.missingJob
             }
+            guard expectedRevision == nil || expectedRevision == job.revision else {
+                throw ImportJournalError.staleRevision
+            }
             let current = job.captures[index]
             try change(&job.captures[index])
             if job.captures[index] != current {
                 try job.validate()
-                _ = try persistNext(job)
+                return try persistNext(job)
             } else {
                 // An identical retry can see a replacement whose previous sync failed.
                 try synchronizeDirectory()
+                return job
             }
         }
     }

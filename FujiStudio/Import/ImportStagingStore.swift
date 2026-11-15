@@ -40,7 +40,7 @@ struct ImportStagingStore: Sendable {
     }
 
     func write(object: WirelessObjectDescriptor, session: any WirelessTransferSession,
-               progress: @escaping @Sendable (UInt64) -> Void = { _ in }) async throws -> StagedOriginal {
+               progress: @escaping @Sendable (UInt64) async -> Void = { _ in }) async throws -> StagedOriginal {
         guard let role = ImportOriginalRole(object.format) else { throw ImportStagingError.unsupportedFormat }
         guard object.byteLength > 0 else { throw ImportStagingError.unknownLength }
         guard object.byteLength <= UInt64(Int64.max) else { throw ImportStagingError.lengthOverflow }
@@ -53,13 +53,8 @@ struct ImportStagingStore: Sendable {
         let (partial, handle) = try disk.createFile(named: id + ".part")
         defer { try? FileManager.default.removeItem(at: partial) }
         defer { try? handle.close() }
-        let writer = OriginalFileWriter(handle: handle, expected: object.byteLength, beforeWrite: beforeChunkWrite)
-        try await session.download(object) { data in
-            let total = try await writer.append(data)
-            progress(total)
-        }
-        try Task.checkCancellation()
-        let sha256 = try await writer.finish()
+        let writer = OriginalStreamVerifier(handle: handle, expected: object.byteLength, beforeWrite: beforeChunkWrite)
+        let sha256 = try await stream(object, from: session, into: writer, progress: progress)
         let metadata = try OriginalImportValidator.inspect(file: partial, object: object)
         try Task.checkCancellation()
         let destination = disk.root.appendingPathComponent(relativePath)
@@ -103,6 +98,35 @@ struct ImportStagingStore: Sendable {
         return original
     }
 
+    /// ObjectInfo does not contain a card identity or checksum. On a new session,
+    /// compare the complete remote fingerprint before reusing the already-staged file.
+    func rebind(_ original: StagedOriginal, to object: WirelessObjectDescriptor, session: any WirelessTransferSession,
+                progress: @escaping @Sendable (UInt64) async -> Void) async throws -> StagedOriginal {
+        let capabilities = try await session.capabilities()
+        guard capabilities.originalSizeVerified, capabilities.mode == original.verifiedTransferMode else {
+            throw WirelessFailure.originalSizeUnavailable
+        }
+        guard original.describes(object) else { throw ImportStagingError.originalChanged }
+        let verifier = OriginalStreamVerifier(expected: original.byteCount)
+        guard try await stream(object, from: session, into: verifier, progress: progress) == original.sha256 else {
+            throw ImportStagingError.originalChanged
+        }
+        return .init(relativePath: original.relativePath, fingerprint: original.fingerprint,
+                     metadata: original.metadata, descriptor: object, verifiedTransferMode: original.verifiedTransferMode)
+    }
+
+    private func stream(_ object: WirelessObjectDescriptor, from session: any WirelessTransferSession,
+                        into verifier: OriginalStreamVerifier,
+                        progress: @escaping @Sendable (UInt64) async -> Void) async throws -> String {
+        try Task.checkCancellation()
+        try await session.download(object) { data in
+            let total = try await verifier.append(data)
+            await progress(total)
+        }
+        try Task.checkCancellation()
+        return try await verifier.finish()
+    }
+
     func checkIntegrity(_ original: StagedOriginal) throws {
         let url = try fileURL(for: original)
         let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize
@@ -127,6 +151,17 @@ struct ImportStagingStore: Sendable {
         try disk.synchronizeDirectory()
     }
 
+    func removeUnreferencedOriginals(retaining originals: Set<String>) throws {
+        let files = try FileManager.default.contentsOfDirectory(at: disk.root, includingPropertiesForKeys: nil)
+        for file in files {
+            let name = file.lastPathComponent
+            guard !originals.contains(name),
+                  Self.isOriginalPath(name, role: .raf) || Self.isOriginalPath(name, role: .jpeg) else { continue }
+            try disk.unlink(file)
+        }
+        try disk.synchronizeDirectory()
+    }
+
     static func isOriginalPath(_ name: String, role: ImportOriginalRole) -> Bool {
         isGeneratedPath(name, extension: role.fileExtension)
     }
@@ -139,17 +174,16 @@ struct ImportStagingStore: Sendable {
     }
 }
 
-/// The transport calls the sink for bounded chunks. Serialize writes so each byte updates
-/// the on-disk length and incremental hash together, even with a concurrent sink caller.
-private actor OriginalFileWriter {
-    private let handle: FileHandle
+/// Count and hash bounded transfer chunks, optionally writing a new staged original.
+private actor OriginalStreamVerifier {
+    private let handle: FileHandle?
     private let expected: UInt64
     private let beforeWrite: @Sendable () throws -> Void
     private var length: UInt64 = 0
     private var hash = SHA256()
     private var completed = false
 
-    init(handle: FileHandle, expected: UInt64, beforeWrite: @escaping @Sendable () throws -> Void) {
+    init(handle: FileHandle? = nil, expected: UInt64, beforeWrite: @escaping @Sendable () throws -> Void = {}) {
         self.handle = handle
         self.expected = expected
         self.beforeWrite = beforeWrite
@@ -161,7 +195,7 @@ private actor OriginalFileWriter {
             try Task.checkCancellation()
             guard UInt64(data.count) <= expected - length else { throw ImportStagingError.lengthMismatch }
             try beforeWrite()
-            try handle.write(contentsOf: data)
+            try handle?.write(contentsOf: data)
             hash.update(data: data)
             length += UInt64(data.count)
             return length
@@ -174,8 +208,8 @@ private actor OriginalFileWriter {
     func finish() throws -> String {
         guard !completed, length == expected else { throw ImportStagingError.lengthMismatch }
         completed = true
-        try handle.synchronize()
-        try handle.close()
+        try handle?.synchronize()
+        try handle?.close()
         return hash.finalize().map { String(format: "%02x", $0) }.joined()
     }
 }

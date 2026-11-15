@@ -11,6 +11,7 @@ enum ImportStage: String, Codable, Sendable {
 
 enum ImportPauseReason: String, Codable, Sendable {
     case userRequested, backgrounded, connectionLost, storage, captureFailed, photosAccess, unresolvedSave
+    case cancelled, interrupted, freshSelectionRequired, journalUnavailable
 }
 
 enum ImportOriginalRole: String, Codable, Hashable, Sendable {
@@ -32,6 +33,10 @@ struct ImportOriginalFingerprint: Codable, Hashable, Sendable {
     let originalFilename: String
     let byteCount: UInt64
     let sha256: String
+
+    func describes(_ object: WirelessObjectDescriptor) -> Bool {
+        role == ImportOriginalRole(object.format) && originalFilename == object.filename && byteCount == object.byteLength
+    }
 }
 
 struct ImportLocation: Codable, Equatable, Sendable {
@@ -62,8 +67,7 @@ struct StagedOriginal: Codable, Equatable, Sendable {
     var sha256: String { fingerprint.sha256 }
 
     func describes(_ object: WirelessObjectDescriptor) -> Bool {
-        descriptor.matchesOriginal(object) && originalFilename == object.filename
-            && byteCount == object.byteLength && role == ImportOriginalRole(object.format)
+        descriptor.matchesOriginal(object) && fingerprint.describes(object)
     }
 }
 
@@ -133,6 +137,7 @@ struct ImportCaptureProgress: Equatable, Sendable {
     fileprivate(set) var receipt: ImportReceipt?
 
     var id: CameraCaptureID { selection.captureID }
+    var isFinished: Bool { stage == .imported || stage == .skipped }
 
     mutating func setPlaceholder(_ assetID: String) throws {
         guard stage.mayHaveSubmitted, !assetID.isEmpty,
@@ -153,6 +158,15 @@ struct ImportCaptureProgress: Equatable, Sendable {
         stage = .imported
     }
 
+    mutating func reopenAfterProvenNoSave(_ evidence: ImportNoSaveEvidence) throws {
+        guard stage.mayHaveSubmitted,
+              evidence == .authoritativeAbsence || (stage == .submitting && placeholderAssetID == nil) else {
+            throw ImportJournalError.invalidTransition
+        }
+        placeholderAssetID = nil
+        stage = .readyToSave
+    }
+
     var hasCompleteOriginals: Bool { originals.count == selection.descriptors.count }
 
     func preservesSaveEvidence(from current: Self) -> Bool {
@@ -160,7 +174,7 @@ struct ImportCaptureProgress: Equatable, Sendable {
         if current.stage.mayHaveSubmitted {
             return stage.mayHaveSubmitted && originals == current.originals
         }
-        if current.stage == .imported { return stage == .imported }
+        if current.isFinished { return stage == current.stage }
         return true
     }
 }
