@@ -352,7 +352,7 @@ final class NativeBluetoothGateway: BluetoothGateway {
     guard case .link(_, let pairing, let token) = pending else { return }
     let model: WirelessCameraModel
     if let reported = active.peerModel {
-      guard let observed = WirelessCameraModel(rawValue: reported) else {
+      guard let observed = WirelessCameraModel(bluetoothModelNumber: reported) else {
         throw WirelessFailure.unsupportedProtocol
       }
       if let hint = active.modelHint, observed != hint { throw WirelessFailure.peerMismatch }

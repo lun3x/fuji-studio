@@ -1,6 +1,17 @@
 import Foundation
 import FujiCameraCore
 
+extension WirelessCameraModel {
+  /// The Device Information service can return the product model number.
+  init?(bluetoothModelNumber: String) {
+    if bluetoothModelNumber == "FF220001" {
+      self = .xt5
+    } else {
+      self.init(rawValue: bluetoothModelNumber)
+    }
+  }
+}
+
 protocol BluetoothGateway: Sendable {
   func discover() async throws -> AsyncThrowingStream<[DiscoveredCamera], Error>
   func pair(_ camera: DiscoveredCamera) async throws -> SavedCamera

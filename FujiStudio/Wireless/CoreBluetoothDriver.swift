@@ -316,10 +316,10 @@ final class CoreBluetoothDriver: NSObject, BluetoothPeripheralDriver,
       switch Self.modelRead(characteristic.value, error: error) {
       case .success(let model):
         #if DEBUG
-        let modelLabel = model.map { WirelessCameraModel(rawValue: $0)?.rawValue ?? "unrecognized" }
-          ?? "unavailable"
+        let observedModel = model.flatMap(WirelessCameraModel.init(bluetoothModelNumber:))
+        let modelLabel = observedModel?.rawValue ?? (model == nil ? "unavailable" : "unrecognized")
         observePairing?("Device Information model: \(modelLabel)")
-        if let model, WirelessCameraModel(rawValue: model) == nil { observeUnrecognizedModel?(model) }
+        if let model, observedModel == nil { observeUnrecognizedModel?(model) }
         #endif
         if let model { eventHandler?(.peerModel(link.id, model)) }
         publishServices(for: link.id)

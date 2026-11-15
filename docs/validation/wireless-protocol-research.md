@@ -1,15 +1,23 @@
 # Fujifilm wireless import protocol research
 
 Research date: 2026-11-14. Repository baseline: `8eec2a26` (`main@origin`).
-Status: research only; no Fuji Studio wireless implementation or physical wireless
-camera test has been performed. External observations below belong to their
-authors, not to this project.
+This document records the original research and a later X-T5 observation.
+See the [acceptance record](wireless-import-acceptance.md) for Fuji Studio’s
+implementation and physical test status.
 
 Scope update, 2026-11-14: the user subsequently chose **latest firmware only**
 for both cameras. The [current design](../superpowers/specs/2026-11-14-camera-wifi-import-design.md)
 supersedes the broad-firmware request and recommendations below. Current targets
 are X-T5 4.32 and X-E3 1.32. The historical protocol findings remain reference
 material, not requirements to support older releases.
+
+X-T5 device observation, 2026-11-15. During Pairing Registration, CoreBluetooth
+discovered the secure pairing, configuration, network, Wi-Fi launch and
+Device Information services on the test body. The Device Information Model
+Number returned Fujifilm's published X-T5 product number. The initial software
+recognized only the retail model name and stopped before reading secure status.
+The fix adds that exact product number as an X-T5 Bluetooth model alias.
+[Fujifilm X-T5 declaration of conformity](https://dl.fujifilm-x.com/global/products/cameras/x-t5/pdf/x-t5_doc-ysk.pdf)
 
 ## Requested behavior
 

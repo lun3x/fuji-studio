@@ -220,6 +220,69 @@ final class BluetoothGatewayTests: XCTestCase {
     XCTAssertTrue(saved.isEmpty)
   }
 
+  func testXT5ProductModelNumberResolvesRenamedCameraForSecurePairing() async throws {
+    let namespace = "FujiStudio.Tests.BluetoothProductModel.\(UUID())"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: namespace))
+    defer { defaults.removePersistentDomain(forName: namespace) }
+    let store = KeychainCameraStore(
+      defaults: defaults, service: namespace, keychain: ReplayCameraKeychain(service: namespace))
+    let driver = ReplayBluetoothDriver()
+    driver.peerModel = "FF220001"
+    driver.securePairing = true
+    let gateway = NativeBluetoothGateway(store: store, driver: driver)
+    let discoveries = try await gateway.discover()
+    let candidate = DiscoveredCamera(
+      peripheralID: UUID(), advertisedModelHint: nil, displayName: "Travel camera")
+    driver.eventHandler?(.discovered(candidate, token: nil))
+    var iterator = discoveries.makeAsyncIterator()
+    let discovered = try await iterator.next()
+    XCTAssertEqual(discovered, [candidate])
+
+    let saved = try await gateway.pair(candidate)
+
+    XCTAssertEqual(saved.model, .xt5)
+    XCTAssertNil(saved.peerKeyReference)
+    XCTAssertEqual(driver.writes.map(\.1), [.authenticate, .identify])
+    let identities = try await store.cameras()
+    XCTAssertEqual(identities, [saved])
+    await gateway.disconnect()
+  }
+
+  func testPairingRejectsUnknownOrMismatchedDeviceInformationModel() async throws {
+    let cases: [(String, WirelessCameraModel, WirelessFailure)] = [
+      ("FF220001", .xe3, .peerMismatch),
+      ("FF220002", .xt5, .unsupportedProtocol),
+    ]
+    for (reportedModel, hint, expectedFailure) in cases {
+      let namespace = "FujiStudio.Tests.BluetoothProductModel.\(UUID())"
+      let defaults = try XCTUnwrap(UserDefaults(suiteName: namespace))
+      defer { defaults.removePersistentDomain(forName: namespace) }
+      let store = KeychainCameraStore(
+        defaults: defaults, service: namespace, keychain: ReplayCameraKeychain(service: namespace))
+      let driver = ReplayBluetoothDriver()
+      driver.peerModel = reportedModel
+      driver.securePairing = true
+      let gateway = NativeBluetoothGateway(store: store, driver: driver)
+      let discoveries = try await gateway.discover()
+      let candidate = DiscoveredCamera(
+        peripheralID: UUID(), advertisedModelHint: hint, displayName: "Travel camera")
+      driver.eventHandler?(.discovered(candidate, token: nil))
+      var iterator = discoveries.makeAsyncIterator()
+      let discovered = try await iterator.next()
+      XCTAssertEqual(discovered, [candidate])
+
+      do {
+        _ = try await gateway.pair(candidate)
+        XCTFail("Pairing accepted a conflicting or unsupported model")
+      } catch {
+        XCTAssertEqual(error as? WirelessFailure, expectedFailure)
+      }
+      XCTAssertTrue(driver.actions.isEmpty)
+      let saved = try await store.cameras()
+      XCTAssertTrue(saved.isEmpty)
+    }
+  }
+
   func testEndingDiscoveryWhilePairStartsDoesNotStopTheLink() async throws {
     let namespace = "FujiStudio.Tests.BluetoothPair.\(UUID())"
     let defaults = try XCTUnwrap(UserDefaults(suiteName: namespace))
@@ -497,6 +560,10 @@ private final class ReplayBluetoothDriver: BluetoothPeripheralDriver {
   var pauseConnections = false
   var pauseDisconnects = false
   var peerModel: String?
+  var securePairing = false
+  private let status = BLEGATTCharacteristic(
+    service: "123d8f06-62a1-4935-9322-833c531ee225",
+    characteristic: "f557d96b-8284-4667-8793-b971c1deca2a")
   private let token = BLEGATTCharacteristic(
     service: "91f1de68-dff6-466e-8b65-ff13b0f16fb8",
     characteristic: "aba356eb-9633-4e60-b73f-f52516dbd671")
@@ -534,15 +601,23 @@ private final class ReplayBluetoothDriver: BluetoothPeripheralDriver {
 
   func reportServices(for session: UUID) {
     eventHandler?(.peerModel(session, peerModel))
-    eventHandler?(.protocolEvent(session, .services([token, name, readiness, ssid, password, launch])))
+    let pairing: [BLEGATTCharacteristic] = securePairing
+      ? [status, BLEGATTCharacteristic(service: status.service, characteristic: name.characteristic)]
+      : [token, name]
+    eventHandler?(.protocolEvent(
+      session, .services(Set(pairing + [readiness, ssid, password, launch]))))
   }
 
   func perform(_ action: BLEProtocolAction, session: UUID) {
     actions.append(action)
     switch action {
     case .read(let characteristic):
-      let value = characteristic == ssid ? "SecretSSID" : "PrivatePassphrase"
-      eventHandler?(.protocolEvent(session, .read(characteristic, Data(value.utf8))))
+      let value: Data = switch characteristic {
+      case status: Data([0, 0, 0, 0])
+      case ssid: Data("SecretSSID".utf8)
+      default: Data("PrivatePassphrase".utf8)
+      }
+      eventHandler?(.protocolEvent(session, .read(characteristic, value)))
     case .write(let characteristic, let value, let purpose):
       writes.append((value, purpose))
       eventHandler?(.protocolEvent(session, .wrote(characteristic)))
