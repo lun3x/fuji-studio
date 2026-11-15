@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleDisplayName</key>
+  <string>MacWirelessProbe</string>
+  <key>CFBundleExecutable</key>
+  <string>MacWirelessProbe</string>
+  <key>CFBundleIdentifier</key>
+  <string>com.lun3x.FujiStudio.MacWirelessProbe</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>MacWirelessProbe</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>1.0</string>
+  <key>CFBundleVersion</key>
+  <string>1</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>27.0</string>
+  <key>NSBluetoothAlwaysUsageDescription</key>
+  <string>MacWirelessProbe uses Bluetooth to test Fuji Studio discovery, pairing and reconnection with your camera.</string>
+</dict>
+</plist>
