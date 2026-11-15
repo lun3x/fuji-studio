@@ -39,6 +39,7 @@ import Observation
     var cameraBrowser: CameraBrowserModel { environment.wireless.browser }
     var importEvents: [ImportEvent] { importEventsByJob.values.sorted { $0.sequence < $1.sequence } }
     var importRecoveryEvents: [ImportEvent] { importEvents.filter { $0.captureIndex != nil || $0.recoveryRequired } }
+    var cameraImportActive: Bool { isPreparingImport || importEvents.contains(where: \.isRunning) }
     var wirelessAvailable: Bool { environment.wireless.isEnabled }
     @ObservationIgnored private var wirelessActivity: WirelessActivity = .active
     @ObservationIgnored private var wirelessEpoch: UInt64 = 0
@@ -1598,6 +1599,7 @@ extension AppModel {
 
     private func releaseBrowserIfIdle() {
         guard importCommand == nil, !importEvents.contains(where: \.isRunning) else { return }
+        cameraBrowser.deselectVerifiedCaptures()
         if let intent = browserIntent, importEvents.contains(where: { event in
             guard let jobID = event.jobID else { return false }
             return !event.needsSession && importBinding[jobID]?.intent == intent
@@ -1671,13 +1673,17 @@ extension AppModel {
     }
 
     private func refreshBrowserBadges() {
-        guard !browserFingerprints.isEmpty, browserIntent != nil else { return }
+        guard !browserFingerprints.isEmpty, let intent = browserIntent,
+              let sessionID = cameraBrowser.inventorySessionID else { return }
         browserBadgeTask?.cancel()
         let browser = cameraBrowser, recovery = environment.wireless.importer.recovery
         let fingerprints = browserFingerprints
-        browserBadgeTask = Task {
+        browserBadgeTask = Task { [weak self] in
             guard !Task.isCancelled else { return }
             try? await browser.refreshImportReceipts(using: recovery, originalFingerprints: fingerprints)
+            guard !Task.isCancelled, let self, self.browserIntent == intent,
+                  browser.inventorySessionID == sessionID else { return }
+            self.releaseBrowserIfIdle()
         }
     }
 
@@ -1805,6 +1811,7 @@ extension AppModel {
             let receipts = job.captures.compactMap(\.receipt)
             let imported = await mergeVerifiedPhotos(receipts)
             if let newest = imported.first {
+                importActionError = nil
                 reduce(.viewImported(ids: Set(imported.map(\.id)), newest: newest.id))
             } else if !receipts.isEmpty {
                 importActionError = "Imported photos are unavailable. Check Photos access."

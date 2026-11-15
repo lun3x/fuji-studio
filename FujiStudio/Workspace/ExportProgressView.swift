@@ -100,7 +100,13 @@ struct ExportProgressView: View {
 
 struct AppWorkspaceView: View {
     let model: AppModel
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var statusPresented = false
+    @State private var statusPath: [StatusDestination] = []
+    @State private var handledStatusDismissal = false
+
+    private enum StatusDestination: Hashable { case cameraBrowser, autoSave, cameraImports }
+
     var body: some View {
         WorkspaceView(state: model.state, sources: model.sources, thumbnails: model.environment.thumbnails,
             imageURL: model.displayFile?.fileURL, imageGeometry: model.displayFile?.geometry,
@@ -114,10 +120,24 @@ struct AppWorkspaceView: View {
             onEditPhoneRecipe: model.updatePhoneRecipe,
             onExport: { Task { await model.export() } },
             statusControl: { statusButton })
-        .sheet(isPresented: $statusPresented) {
-            NavigationStack {
+        .sheet(isPresented: $statusPresented, onDismiss: handleStatusDismissal) {
+            NavigationStack(path: $statusPath) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
+                        if model.wirelessAvailable {
+                            if model.importJournalIssue != nil { CameraImportJournalIssue() }
+                            if let error = model.importActionError {
+                                Text(error).foregroundStyle(.red).accessibilityIdentifier("app.importError")
+                            }
+                            if model.isPreparingImport || !model.importEvents.isEmpty || model.importActionError != nil {
+                                Button("Camera imports") { statusPath.append(.cameraImports) }
+                                    .accessibilityIdentifier("cameraImport.open")
+                            }
+                            CameraConnectionSection(model: model,
+                                onBrowse: { statusPath.append(.cameraBrowser) },
+                                onSetUpAutoSave: { statusPath.append(.autoSave) })
+                            Divider()
+                        }
                         Text(accessMessage).accessibilityIdentifier("app.access")
                         if model.state.libraryAccess == .limited { Button("Manage Photos", action: model.managePhotos).accessibilityIdentifier("app.managePhotos") }
                         if model.state.libraryAccess == .denied || model.state.libraryAccess == .restricted { Button("Open Settings", action: model.openSettings) }
@@ -169,16 +189,67 @@ struct AppWorkspaceView: View {
                                 .accessibilityIdentifier("settings.updateOriginalExplanation")
                         }
                     }.padding()
-                }.navigationTitle("Status & settings")
-                    .toolbar { Button("Done") { statusPresented = false } }
+                }
+                    .accessibilityIdentifier("app.statusScroll")
+                    .navigationTitle("Status & settings")
+                    .toolbar { Button("Done", action: closeStatus) }
+                    .navigationDestination(for: StatusDestination.self) { destination in
+                        switch destination {
+                        case .cameraBrowser:
+                            CameraBrowserView(model: model, onBack: popStatus, onImport: {
+                                statusPath.append(.cameraImports)
+                                Task { await model.importSelectedCaptures() }
+                            }, onSetUpAutoSave: setUpAutoSaveFromBrowser)
+                        case .autoSave:
+                            AutoSaveSetupView(model: model, onBack: popStatus, onBrowse: { statusPath = [.cameraBrowser] })
+                        case .cameraImports:
+                            CameraImportProgressView(model: model, onBack: popStatus, onViewImported: { statusPresented = false })
+                        }
+                    }
             }
+            .environment(\.dynamicTypeSize, dynamicTypeSize)
         }
     }
     private var statusButton: some View {
         CameraStatusControl(state: CameraIndicatorState(camera: model.state.cameraState,
             refreshingRecipes: model.isRefreshing || model.isResettingCamera,
             hasError: model.cameraError != nil || model.cameraResetError != nil), label: statusLabel,
-            exportProgress: model.exportEvent?.activeProgress) { statusPresented = true }
+            exportProgress: model.exportEvent?.activeProgress, wireless: wirelessStatus) {
+            statusPath.removeAll()
+            handledStatusDismissal = false
+            statusPresented = true
+        }
+    }
+    private func popStatus() {
+        if !statusPath.isEmpty { statusPath.removeLast() }
+    }
+    private func closeStatus() {
+        handleStatusDismissal()
+        statusPresented = false
+    }
+    private func handleStatusDismissal() {
+        guard !handledStatusDismissal else { return }
+        handledStatusDismissal = true
+        cancelUnfinishedConnection()
+    }
+    private func setUpAutoSaveFromBrowser() {
+        Task {
+            await model.disconnectCameraWiFi()
+            if statusPresented, statusPath.last == .cameraBrowser { statusPath = [.autoSave] }
+        }
+    }
+    private func cancelUnfinishedConnection() {
+        let wireless = model.wirelessState
+        guard wireless.wifi != .ready, wireless.wifi != .disconnecting,
+              !model.isDisconnectingWireless,
+              wireless.wifi != .idle || (model.state.wirelessRestrictsUSB && !wireless.hasTransferLease)
+                || wireless.bluetooth == .discovering
+                || wireless.bluetooth == .pairing || wireless.bluetooth == .connecting else { return }
+        Task { await model.cancelWirelessConnection() }
+    }
+    private var wirelessStatus: WirelessStatusSummary? {
+        guard model.wirelessAvailable else { return nil }
+        return WirelessStatusSummary(state: model.wirelessState)
     }
     private var statusLabel: String {
         if model.isResettingCamera { return "Resetting camera connection…" }
@@ -197,6 +268,7 @@ struct AppWorkspaceView: View {
         default: break
         }
         if model.isConnecting { return "Looking for camera…" }
+        if let wirelessStatus { return wirelessStatus.label }
         return model.state.currentCameraExecutionContext == nil ? "Photos · Camera disconnected" : "Photos · Camera ready"
     }
     private var accessMessage: String {
@@ -209,15 +281,21 @@ struct AppWorkspaceView: View {
         }
     }
     private var cameraMessage: String {
-        switch model.state.cameraState {
-        case .ready: "\(model.state.currentCameraExecutionContext?.model ?? "Camera") ready for conversion."
-        case .busy: "The camera is processing the current operation."
+        if model.state.wirelessRestrictsUSB {
+            return "USB conversion is unavailable while WiFi import uses the camera."
+        }
+        if model.wirelessState.selectedCameraID != nil, case .disconnected = model.state.cameraState {
+            return "For USB conversion, plug in a data cable, select USB RAW CONV./BACKUP RESTORE on the camera and tap Reset camera connection."
+        }
+        return switch model.state.cameraState {
+        case .ready: "\(model.state.currentCameraExecutionContext?.model ?? "Camera") ready for conversion over USB."
+        case .busy: "The USB camera is processing the current operation."
         case .attentionRequired: "Camera connection needs attention. Reset the connection to try again."
         case .authorizationRequired: "Allow camera control to read recipes and convert RAWs over USB. This does not take new pictures."
         case .authorizationDenied: "Camera control is denied. Allow it in Settings, then return to Fuji Studio to connect automatically."
         case .wrongMode: "Set the camera USB connection mode to USB RAW CONV./BACKUP RESTORE. Use a USB data cable."
         case .recoverableError: "Camera connection interrupted. Check its USB mode and data cable. Fuji Studio reconnects automatically."
-        case .opening, .discovering, .sessionOpen: "Connecting and verifying the camera…"
+        case .opening, .discovering, .sessionOpen: "Connecting and verifying the USB camera…"
         case .disconnected: "Plug in a supported Fujifilm camera with a USB data cable in USB RAW CONV./BACKUP RESTORE mode. Fuji Studio connects automatically and retries every three seconds while active. Browsing originals and saved versions works without the camera."
         }
     }

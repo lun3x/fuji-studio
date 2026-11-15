@@ -27,10 +27,28 @@ enum CameraIndicatorState: String {
     }
 }
 
+struct WirelessStatusSummary: Equatable {
+    let label: String
+    let symbol: String
+
+    init?(state: WirelessConnectionState) {
+        if state.wifi != .idle {
+            label = state.wifi.statusLabel
+            symbol = "wifi"
+        } else if state.bluetooth != .idle {
+            label = state.bluetooth.statusLabel
+            symbol = "antenna.radiowaves.left.and.right"
+        } else {
+            return nil
+        }
+    }
+}
+
 struct CameraStatusControl: View {
     let state: CameraIndicatorState
     let label: String
     var exportProgress: ExportSummary? = nil
+    var wireless: WirelessStatusSummary? = nil
     var onTap: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
@@ -39,10 +57,10 @@ struct CameraStatusControl: View {
 
     var body: some View {
         Button(action: onTap) {
-            Image(systemName: "camera")
+            Image(systemName: state == .disconnected ? wireless?.symbol ?? "camera" : "camera")
                 .font(.headline)
                 .overlay {
-                    if state == .disconnected {
+                    if state == .disconnected && wireless == nil {
                         CameraDisconnectedSlash().stroke(style: StrokeStyle(lineWidth: slashWidth, lineCap: .round))
                     }
                 }
@@ -68,8 +86,20 @@ struct CameraStatusControl: View {
     }
 
     private var accessibilityValue: String {
-        guard let exportProgress else { return state.rawValue }
-        return "\(state.rawValue), Exporting, \(exportProgress.processed) of \(exportProgress.total) processed"
+        var parts = [state.rawValue]
+        if let wireless {
+            parts[0] = switch state {
+            case .disconnected: "USB camera disconnected"
+            case .preparing: "Preparing USB camera"
+            case .ready: "USB camera ready"
+            case .error: "USB camera error"
+            }
+            parts.append(wireless.label)
+        }
+        if let exportProgress {
+            parts.append("Exporting, \(exportProgress.processed) of \(exportProgress.total) processed")
+        }
+        return parts.joined(separator: ", ")
     }
 }
 

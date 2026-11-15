@@ -1,7 +1,91 @@
 import XCTest
+import UIKit
 
 @MainActor
 final class WorkspaceAccessibilityTests: WorkspaceTestCase {
+    func testWirelessBrowserAndRecoveryInBothOrientationsAndLargestText() {
+        continueAfterFailure = false
+        defer { XCUIDevice.shared.orientation = .portrait }
+        for (orientation, name) in [(UIDeviceOrientation.portrait, "Portrait"),
+                                    (.landscapeLeft, "LandscapeLeft"), (.landscapeRight, "LandscapeRight")] {
+            for accessibility in [false, true] {
+                XCUIDevice.shared.orientation = orientation
+                let app = XCUIApplication()
+                app.launchArguments = ["--ui-fixtures", "--fixture-wireless-unverified-save"]
+                    + (accessibility ? ["--fixture-accessibility"] : [])
+                app.launch()
+                let status = app.buttons["app.status"]
+                XCTAssertTrue(status.waitForExistence(timeout: 10))
+                let window = app.windows.firstMatch
+                let rotated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                    let frame = window.frame
+                    return orientation.isLandscape ? frame.width > frame.height : frame.height > frame.width
+                }, object: nil)
+                XCTAssertEqual(XCTWaiter.wait(for: [rotated], timeout: 5), .completed)
+                status.tap()
+                let connection = app.scrollViews["app.statusScroll"]
+                let connect = app.buttons["wireless.connect"]
+                revealCameraControl(connect, in: connection)
+                connect.tap()
+                let browse = app.buttons["wireless.browse"]
+                XCTAssertTrue(browse.waitForExistence(timeout: 8))
+                revealCameraControl(browse, in: connection)
+                browse.tap()
+                let browser = app.scrollViews["cameraBrowser.scroll"]
+                let pair = app.buttons["cameraBrowser.select.1.1"]
+                revealCameraControl(pair, in: browser)
+                let selectable = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in pair.isEnabled }, object: nil)
+                XCTAssertEqual(XCTWaiter.wait(for: [selectable], timeout: 5), .completed)
+                XCTAssertTrue(pair.label.contains("RAW+JPEG"))
+                XCTAssertGreaterThanOrEqual(pair.frame.height, accessibility ? 70 : 44)
+                let summary = app.staticTexts["cameraBrowser.selection"]
+                let submit = app.buttons["cameraBrowser.import"]
+                XCTAssertEqual(summary.label, "0 photos selected")
+                XCTAssertFalse(submit.isEnabled)
+                XCTAssertFalse(submit.frame.intersects(pair.frame))
+                if accessibility { attachCameraScreen("\(name) AX5 Unselected Camera Browser") }
+                pair.tap()
+                let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                    pair.value as? String == "Selected" && summary.label == "1 photo selected"
+                        && !submit.frame.intersects(pair.frame) && !summary.frame.intersects(pair.frame)
+                }, object: nil)
+                XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 5), .completed)
+                XCTAssertTrue(app.buttons["cameraBrowser.done"].isHittable)
+                attachCameraScreen("\(name) \(accessibility ? "AX5" : "Standard") Camera Browser")
+                if accessibility {
+                    revealCameraControl(submit, in: browser, scrollDown: false)
+                    XCTAssertEqual(submit.label, "Import 1 photo")
+                    submit.tap()
+                    let recovery = app.scrollViews["cameraImport.scroll"]
+                    let manage = app.buttons["cameraImport.managePhotos"]
+                    XCTAssertTrue(manage.waitForExistence(timeout: 8))
+                    let cancel = app.buttons["cameraImport.cancel"]
+                    revealCameraControl(cancel, in: recovery)
+                    XCTAssertTrue(app.buttons["cameraImport.done"].isHittable)
+                    attachCameraScreen("\(name) AX5 Import Recovery")
+                    revealCameraControl(manage, in: recovery)
+                    XCTAssertTrue(manage.isEnabled)
+                }
+                app.terminate()
+            }
+        }
+    }
+
+    private func revealCameraControl(_ control: XCUIElement, in scroll: XCUIElement, scrollDown: Bool = true) {
+        XCTAssertTrue(scroll.waitForExistence(timeout: 5))
+        for _ in 0..<10 where !control.isHittable {
+            if scrollDown { scroll.swipeUp() } else { scroll.swipeDown() }
+        }
+        XCTAssertTrue(control.isHittable, "Could not reach \(control)")
+    }
+
+    private func attachCameraScreen(_ name: String) {
+        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
     func testDarkExpandedAndAccessibleHeaderAlternatives() {
         let app = launch(["--fixture-dark"])
         app.buttons["drawer.toggle"].tap()

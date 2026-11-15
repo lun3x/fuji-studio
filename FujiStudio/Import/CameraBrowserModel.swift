@@ -66,6 +66,15 @@ final class CameraBrowserModel {
     }
 
     func select(_ id: CameraCaptureID, policy: ImportPolicy) throws {
+        selected[id] = try proposedSelection(for: id, policy: policy)
+        updateSelectionTotals()
+    }
+
+    func permitsSelection(for id: CameraCaptureID, policy: ImportPolicy) -> Bool {
+        (try? proposedSelection(for: id, policy: policy)) != nil
+    }
+
+    private func proposedSelection(for id: CameraCaptureID, policy: ImportPolicy) throws -> ImportSelection {
         guard !isLoading, failure == nil, let camera else {
             throw CameraBrowserSelectionError.inventoryNotReady
         }
@@ -80,12 +89,23 @@ final class CameraBrowserModel {
         guard canSelectOriginals, descriptors.allSatisfy({ $0.byteLength > 0 && $0.byteLength <= UInt32.max }) else {
             throw WirelessFailure.originalSizeUnavailable
         }
-        selected[id] = .init(captureID: id, camera: camera, descriptors: descriptors, policy: policy)
-        updateSelectionTotals()
+        return .init(captureID: id, camera: camera, descriptors: descriptors, policy: policy)
     }
 
     func deselect(_ id: CameraCaptureID) {
-        selected.removeValue(forKey: id)
+        deselect([id])
+    }
+
+    func deselectVerifiedCaptures() {
+        guard !selected.isEmpty, !receiptStatuses.isEmpty else { return }
+        deselect(captures.compactMap { capture in
+            receiptStatuses[capture.rowID] == .verified && selected[capture.id] != nil ? capture.id : nil
+        })
+    }
+
+    private func deselect(_ ids: [CameraCaptureID]) {
+        guard !ids.isEmpty else { return }
+        for id in ids { selected.removeValue(forKey: id) }
         updateSelectionTotals()
     }
 
