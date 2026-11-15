@@ -97,7 +97,8 @@ actor CameraImportCoordinator {
 
     /// The session must already have completed browsing. A new job must use the same
     /// routes the user selected. A resumed job can rematch fresh session routes.
-    func start(_ selections: [ImportSelection], session: any WirelessTransferSession, loanID: UUID = UUID()) async throws -> UUID {
+    func start(_ selections: [ImportSelection], session: any WirelessTransferSession, loanID: UUID = UUID(),
+               cameraDisplayName: String? = nil) async throws -> UUID {
         let jobID = UUID()
         try beginCommand(jobID: jobID)
         defer { endCommand() }
@@ -111,7 +112,8 @@ actor CameraImportCoordinator {
         guard capabilities.originalSizeVerified, selections.allSatisfy({ selection in
             selection.descriptors.allSatisfy { $0.byteLength <= UInt32.max }
         }) else { throw WirelessFailure.originalSizeUnavailable }
-        let job = try ImportJob(id: jobID, selections: selections, importDate: Date(), mode: capabilities.mode)
+        let job = try ImportJob(id: jobID, selections: selections, importDate: Date(), mode: capabilities.mode,
+                                cameraDisplayName: cameraDisplayName)
         try Task.checkCancellation()
         let committed = try await journal.save(job)
         try await admit(committed, loan: .init(id: loanID, jobID: jobID, session: session), requireOriginalRoutes: true)
@@ -638,6 +640,8 @@ actor CameraImportCoordinator {
         }
         sequence += 1
         let event = ImportEvent(sequence: sequence, jobID: job.id, runID: active ? run?.id : runID, cameraID: job.camera.cameraID,
+            jobContext: .init(cameraModel: job.camera.model, cameraDisplayName: job.camera.displayName,
+                              startedAt: job.importDate, firstFilename: job.frozenSelections.first?.descriptors.first?.filename),
             captureID: current?.id, captureIndex: index, captureCount: job.captures.count,
             stage: current?.stage, component: component, isVerifyingPhotos: active && run?.isVerifyingPhotos == true,
             isRunning: active, pauseReason: pause, actions: actions, needsSession: needsSession,
@@ -652,7 +656,7 @@ actor CameraImportCoordinator {
 
     private func publishJournalIssue() {
         sequence += 1
-        let event = ImportEvent(sequence: sequence, jobID: nil, runID: nil, cameraID: nil, captureID: nil,
+        let event = ImportEvent(sequence: sequence, jobID: nil, runID: nil, cameraID: nil, jobContext: nil, captureID: nil,
             captureIndex: nil, captureCount: 0, stage: nil, component: nil, isVerifyingPhotos: false,
             isRunning: false, pauseReason: .journalUnavailable, actions: [], needsSession: false, invalidatedSession: false,
             wirelessFailure: nil, receipts: [], routeEvidence: nil, retainedBytes: 0, recoveryRequired: true)

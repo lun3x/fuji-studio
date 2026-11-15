@@ -103,7 +103,7 @@ struct AppWorkspaceView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var statusPresented = false
     @State private var statusPath: [StatusDestination] = []
-    @State private var handledStatusDismissal = false
+    @State private var connection = PresentedCameraConnection()
 
     private enum StatusDestination: Hashable { case cameraBrowser, autoSave, cameraImports }
 
@@ -120,7 +120,9 @@ struct AppWorkspaceView: View {
             onEditPhoneRecipe: model.updatePhoneRecipe,
             onExport: { Task { await model.export() } },
             statusControl: { statusButton })
-        .sheet(isPresented: $statusPresented, onDismiss: handleStatusDismissal) {
+        .sheet(isPresented: Binding(get: { statusPresented }, set: { presented in
+            if presented { statusPresented = true } else { closeStatus() }
+        })) {
             NavigationStack(path: $statusPath) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
@@ -133,7 +135,7 @@ struct AppWorkspaceView: View {
                                 Button("Camera imports") { statusPath.append(.cameraImports) }
                                     .accessibilityIdentifier("cameraImport.open")
                             }
-                            CameraConnectionSection(model: model,
+                            CameraConnectionSection(model: model, connection: connection,
                                 onBrowse: { statusPath.append(.cameraBrowser) },
                                 onSetUpAutoSave: { statusPath.append(.autoSave) })
                             Divider()
@@ -201,9 +203,9 @@ struct AppWorkspaceView: View {
                                 Task { await model.importSelectedCaptures() }
                             }, onSetUpAutoSave: setUpAutoSaveFromBrowser)
                         case .autoSave:
-                            AutoSaveSetupView(model: model, onBack: popStatus, onBrowse: { statusPath = [.cameraBrowser] })
+                            AutoSaveSetupView(model: model, connection: connection, onBack: popStatus, onBrowse: { statusPath = [.cameraBrowser] })
                         case .cameraImports:
-                            CameraImportProgressView(model: model, onBack: popStatus, onViewImported: { statusPresented = false })
+                            CameraImportProgressView(model: model, onBack: popStatus, onViewImported: closeStatus)
                         }
                     }
             }
@@ -216,7 +218,6 @@ struct AppWorkspaceView: View {
             hasError: model.cameraError != nil || model.cameraResetError != nil), label: statusLabel,
             exportProgress: model.exportEvent?.activeProgress, wireless: wirelessStatus) {
             statusPath.removeAll()
-            handledStatusDismissal = false
             statusPresented = true
         }
     }
@@ -224,28 +225,16 @@ struct AppWorkspaceView: View {
         if !statusPath.isEmpty { statusPath.removeLast() }
     }
     private func closeStatus() {
-        handleStatusDismissal()
+        connection.cancel { await model.cancelWirelessConnection() }
         statusPresented = false
-    }
-    private func handleStatusDismissal() {
-        guard !handledStatusDismissal else { return }
-        handledStatusDismissal = true
-        cancelUnfinishedConnection()
     }
     private func setUpAutoSaveFromBrowser() {
         Task {
             await model.disconnectCameraWiFi()
-            if statusPresented, statusPath.last == .cameraBrowser { statusPath = [.autoSave] }
+            if statusPresented, statusPath.last == .cameraBrowser {
+                statusPath = model.wirelessState.hasTransferLease ? [] : [.autoSave]
+            }
         }
-    }
-    private func cancelUnfinishedConnection() {
-        let wireless = model.wirelessState
-        guard wireless.wifi != .ready, wireless.wifi != .disconnecting,
-              !model.isDisconnectingWireless,
-              wireless.wifi != .idle || (model.state.wirelessRestrictsUSB && !wireless.hasTransferLease)
-                || wireless.bluetooth == .discovering
-                || wireless.bluetooth == .pairing || wireless.bluetooth == .connecting else { return }
-        Task { await model.cancelWirelessConnection() }
     }
     private var wirelessStatus: WirelessStatusSummary? {
         guard model.wirelessAvailable else { return nil }

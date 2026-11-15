@@ -146,6 +146,7 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
         throw WirelessFailure.peerMismatch
       }
       await resetConnection()
+      try Task.checkCancellation()
       guard wifiLease == nil else { throw WirelessFailure.cameraBusy }
       try await store.select(id)
       blockedFailure = nil
@@ -174,7 +175,7 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
   }
 
   func startDiscovery() async {
-    guard snapshot.activity != .background, !bluetoothSuspendedForUSB, !mutatingStore, cleanup == nil,
+    guard !Task.isCancelled, snapshot.activity != .background, !bluetoothSuspendedForUSB, !mutatingStore, cleanup == nil,
       activeTransfer == nil, wifiRequest == nil, wifiAttempt == nil, wifiLease == nil, pendingDiscovery == nil
     else { return }
     if case .discovery = work?.kind { return }
@@ -202,7 +203,7 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
   }
 
   func pair(_ camera: DiscoveredCamera) {
-    guard snapshot.activity != .background, !bluetoothSuspendedForUSB, !mutatingStore, activeTransfer == nil,
+    guard !Task.isCancelled, snapshot.activity != .background, !bluetoothSuspendedForUSB, !mutatingStore, activeTransfer == nil,
       case .discovery = work?.kind, snapshot.discoveredCameras.contains(camera)
     else { return }
     // Pair uses the gateway's cached advertisement. A full disconnect would discard it.
@@ -217,7 +218,7 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
 
   func retryBluetooth() async {
     await loadSavedCameras()
-    guard snapshot.activity != .background, !bluetoothSuspendedForUSB, !mutatingStore, cleanup == nil, pendingDiscovery == nil,
+    guard !Task.isCancelled, snapshot.activity != .background, !bluetoothSuspendedForUSB, !mutatingStore, cleanup == nil, pendingDiscovery == nil,
       work == nil, activeTransfer == nil, wifiLease == nil,
       wifiAttempt?.autoSave != true, snapshot.bluetooth != .ready
     else { return }
@@ -287,7 +288,9 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
     }
   }
 
-  func cancelConnection() async {
+  func cancelConnection(preservingReadyTransfer: Bool = false) async {
+    if preservingReadyTransfer,
+       snapshot.wifi == .ready || (snapshot.wifi == .idle && snapshot.hasTransferLease) { return }
     if wifiAttempt != nil || wifiTeardown != nil || wifiLease != nil {
       await disconnectWiFi()
     } else if wifiRequest != nil {
@@ -348,6 +351,7 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
 
   private func withSavedCameraMutation(_ body: () async throws -> Void) async throws {
     await loadSavedCameras()
+    try Task.checkCancellation()
     guard !mutatingStore, activeTransfer == nil else { throw WirelessFailure.cameraBusy }
     mutatingStore = true
     defer {
@@ -653,6 +657,7 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
 extension WirelessConnectionCoordinator {
   func connectWiFi() async {
     guard let wifi, let ownership, let sessionFactory else {
+      snapshot.transferRoute = .cameraNetwork
       snapshot.wifiFailure = .unsupportedProtocol
       return
     }
@@ -672,6 +677,7 @@ extension WirelessConnectionCoordinator {
 
   private func startAutoSave(register: Bool) async {
     guard let autoSave, let ownership else {
+      snapshot.transferRoute = .autoSave
       snapshot.wifiFailure = .autoSaveEntitlementUnavailable
       snapshot.wifiFailurePhase = register ? .registeringAutoSave : .waitingForAutoSave
       return
@@ -691,6 +697,7 @@ extension WirelessConnectionCoordinator {
     snapshot.wifiFailure = nil
     snapshot.wifiFailurePhase = nil
     snapshot.firmwareRejection = nil
+    snapshot.transferRoute = autoSave ? .autoSave : .cameraNetwork
     snapshot.wifi = .acquiringOwnership
     let id = UUID()
     let attempt = Task { await run(id) }
@@ -736,7 +743,7 @@ extension WirelessConnectionCoordinator {
   }
 
   private func cancelWiFi(_ id: UUID) async {
-    guard wifiAttempt?.id == id else { return }
+    guard wifiAttempt?.id == id, snapshot.wifi != .ready else { return }
     await disconnectWiFi()
   }
 
@@ -921,6 +928,10 @@ extension WirelessConnectionCoordinator {
         self.wifiLease = nil
         snapshot.hasTransferLease = false
       }
+      if confirmed, snapshot.wifiFailurePhase == .disconnecting {
+        snapshot.wifiFailure = nil
+        snapshot.wifiFailurePhase = nil
+      }
       wifiAttempt = nil
       wifiTeardown = nil
       cameraWiFiActivationStarted = false
@@ -940,6 +951,7 @@ extension WirelessConnectionCoordinator {
     } catch {
       snapshot.wifiFailure = (error as? WirelessFailure) ?? .connectionLost
       snapshot.wifiFailurePhase = .disconnecting
+      snapshot.firmwareRejection = nil
       return false
     }
   }

@@ -223,6 +223,81 @@ import XCTest
         wait { app.staticTexts["cameraImport.status"].label == "Import complete" }
     }
 
+    func testAutoSaveGuideShowsOwnershipAndInventoryFailures() {
+        for (fixture, guidance) in [
+            ("--fixture-wireless-auto-save-ownership-failure", "USB connection could not close"),
+            ("--fixture-wireless-auto-save-inventory-failure", "Camera storage could not be read")
+        ] {
+            let app = launch([fixture])
+            openAutoSave(in: app)
+            let register = app.buttons["wireless.autoSave.register"]
+            XCTAssertTrue(register.waitForExistence(timeout: 5))
+            register.tap()
+            if fixture.contains("inventory") {
+                XCTAssertTrue(app.staticTexts["wireless.autoSave.registered"].waitForExistence(timeout: 5))
+                app.buttons["wireless.autoSave.wait"].tap()
+            }
+            let error = app.staticTexts["wireless.autoSave.failure"]
+            XCTAssertTrue(error.waitForExistence(timeout: 5))
+            XCTAssertTrue(error.label.contains(guidance))
+            XCTAssertFalse(app.buttons["wireless.browse"].exists)
+            app.terminate()
+        }
+    }
+
+    func testAutoSaveFallbackKeepsUnconfirmedCloseAndRetryReachable() {
+        let app = launch(["--fixture-wireless-auto-save-close-failure"])
+        browse(app)
+        let fallback = app.buttons["cameraBrowser.autoSave"]
+        XCTAssertTrue(fallback.waitForExistence(timeout: 5))
+        fallback.tap()
+        XCTAssertTrue(app.navigationBars["Status & settings"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["wireless.wifiFailure"].exists)
+        let disconnect = app.buttons["wireless.disconnect"]
+        XCTAssertTrue(disconnect.isEnabled)
+        disconnect.tap()
+        wait { app.buttons["wireless.autoSave"].exists && app.buttons["wireless.autoSave"].isEnabled }
+        app.buttons["wireless.autoSave"].tap()
+        XCTAssertTrue(app.staticTexts["wireless.autoSave.unavailable"].waitForExistence(timeout: 5))
+    }
+
+    func testRecoveryDistinguishesRepeatedJobsAfterForgettingCamera() throws {
+        let app = launch(["--fixture-wireless-recovery-jobs"])
+        app.buttons["app.status"].tap()
+        let forget = app.buttons["wireless.forget"]
+        XCTAssertTrue(forget.waitForExistence(timeout: 5))
+        forget.tap()
+        app.alerts.buttons["Forget camera"].tap()
+        XCTAssertTrue(app.buttons["wireless.pair"].waitForExistence(timeout: 5))
+        app.buttons["cameraImport.open"].tap()
+        let jobs = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "cameraImport.job."))
+        wait { jobs.count == 3 }
+        let identifiers = jobs.allElementsBoundByIndex.map(\.identifier)
+        let groups = identifiers.map { app.descendants(matching: .any)[$0].firstMatch }
+        let labels = groups.map { $0.staticTexts["cameraImport.jobContext"] }
+        XCTAssertTrue(labels.allSatisfy(\.exists))
+        let xt5 = labels.filter { $0.label.contains("X-T5") }
+        XCTAssertEqual(xt5.count, 2)
+        XCTAssertEqual(labels.filter { $0.label.hasPrefix("X-E3 · Import") }.count, 1)
+        let targetLabel = xt5[0].label
+        let otherLabel = xt5[1].label
+        XCTAssertTrue(targetLabel.hasPrefix("Fixture X-T5 · Import"))
+        XCTAssertNotEqual(targetLabel, otherLabel)
+        let target = try XCTUnwrap(groups.first { $0.staticTexts["cameraImport.jobContext"].label == targetLabel })
+        let other = try XCTUnwrap(groups.first { $0.staticTexts["cameraImport.jobContext"].label == otherLabel })
+        XCTAssertEqual(target.staticTexts["cameraImport.counts"].label, other.staticTexts["cameraImport.counts"].label)
+        let retained = target.staticTexts["cameraImport.retainedBytes"].label
+        XCTAssertEqual(retained, other.staticTexts["cameraImport.retainedBytes"].label)
+        let discard = target.buttons["cameraImport.discard"]
+        reveal(discard, in: app)
+        discard.tap()
+        XCTAssertTrue(app.alerts.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", targetLabel)).firstMatch.exists)
+        app.alerts.buttons["Discard remaining"].tap()
+        wait { !discard.exists }
+        XCTAssertTrue(other.buttons["cameraImport.discard"].exists)
+        XCTAssertEqual(other.staticTexts["cameraImport.retainedBytes"].label, retained)
+    }
+
     private func openAutoSave(in app: XCUIApplication) {
         XCTAssertTrue(app.buttons["app.status"].waitForExistence(timeout: 10))
         app.buttons["app.status"].tap()

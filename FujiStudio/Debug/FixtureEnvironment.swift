@@ -88,6 +88,7 @@ import Observation
         let platform = FixturePlatform()
         let wireless = try WirelessFixture(mode: mode, root: root, reader: reader,
             ownership: selectedCamera.wirelessOwnership { await preview.invalidate() })
+        if mode == .recoveryJobs { try await wireless.seedRecoveryJobs() }
         if wireless.services.isEnabled { try await arbiter.installBluetoothController(wireless.services.connection) }
         // Cached recipes exercise useful disconnected browsing, without selecting a recipe.
         try await storage.0.replaceRecipes(try await camera.cachedRecipeCollection())

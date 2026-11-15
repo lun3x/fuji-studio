@@ -13,6 +13,8 @@ struct CameraImportProgressView: View {
     }
 
     var body: some View {
+        let events = events
+        let shortReferences = Dictionary(grouping: events.compactMap(\.jobID)) { String($0.uuidString.prefix(8)) }
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 if model.isPreparingImport {
@@ -31,7 +33,10 @@ struct CameraImportProgressView: View {
                 }
                 ForEach(events, id: \.jobID) { event in
                     if let jobID = event.jobID {
-                        CameraImportJobView(model: model, event: event, jobID: jobID, onViewImported: onViewImported)
+                        let shortReference = String(jobID.uuidString.prefix(8))
+                        let reference = shortReferences[shortReference]?.count == 1 ? shortReference : jobID.uuidString
+                        CameraImportJobView(model: model, event: event, jobID: jobID, reference: reference,
+                                            onViewImported: onViewImported)
                         Divider()
                     }
                 }
@@ -66,6 +71,7 @@ private struct CameraImportJobView: View {
     let model: AppModel
     let event: ImportEvent
     let jobID: UUID
+    let reference: String
     let onViewImported: () -> Void
     @State private var confirmingDiscard = false
 
@@ -84,8 +90,17 @@ private struct CameraImportJobView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(status).font(.headline)
+            Text(contextTitle).font(.headline)
                 .accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier("cameraImport.jobContext")
+            if let context = event.jobContext {
+                Text("Started \(context.startedAt.formatted(date: .abbreviated, time: .shortened))")
+                    .foregroundStyle(.secondary)
+                if let filename = context.firstFilename {
+                    Text("First original \(filename)").foregroundStyle(.secondary)
+                }
+            }
+            Text(status).font(.headline)
                 .accessibilityIdentifier("cameraImport.status")
             Text(counts).accessibilityIdentifier("cameraImport.counts")
             if let component = event.component {
@@ -125,8 +140,19 @@ private struct CameraImportJobView: View {
             Button("Discard remaining", role: .destructive) { Task { await model.discardImport(jobID: jobID) } }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This removes retained files for unfinished photos from this iPhone. Camera files and verified photos stay where they are.")
+            Text("\(contextTitle)\n\nThis removes retained files for unfinished photos from this iPhone. Camera files and verified photos stay where they are.")
         }
+    }
+
+    private var contextTitle: String {
+        guard let context = event.jobContext else { return "Import \(reference)" }
+        let modelName = context.cameraModel.rawValue
+        let cameraName = if let displayName = context.cameraDisplayName {
+            displayName.localizedCaseInsensitiveContains(modelName) ? displayName : "\(displayName) (\(modelName))"
+        } else {
+            modelName
+        }
+        return "\(cameraName) · Import \(reference)"
     }
 
     @ViewBuilder private var actions: some View {

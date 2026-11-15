@@ -21,6 +21,13 @@ struct ImportRouteEvidence: Equatable, Sendable {
 }
 
 struct ImportEvent: Equatable, Sendable {
+    struct JobContext: Equatable, Sendable {
+        let cameraModel: WirelessCameraModel
+        let cameraDisplayName: String?
+        let startedAt: Date
+        let firstFilename: String?
+    }
+
     struct Component: Equatable, Sendable {
         let role: ImportOriginalRole
         let receivedBytes: UInt64
@@ -32,6 +39,7 @@ struct ImportEvent: Equatable, Sendable {
     /// One admission attempt, including its final event. Recovered snapshots have no run.
     let runID: UUID?
     let cameraID: WirelessCameraID?
+    let jobContext: JobContext?
     let captureID: CameraCaptureID?
     let captureIndex: Int?
     let captureCount: Int

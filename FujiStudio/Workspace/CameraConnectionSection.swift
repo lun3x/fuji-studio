@@ -3,6 +3,7 @@ import SwiftUI
 
 struct CameraConnectionSection: View {
     let model: AppModel
+    let connection: PresentedCameraConnection
     let onBrowse: () -> Void
     let onSetUpAutoSave: () -> Void
     @State private var choosingCamera = false
@@ -14,7 +15,8 @@ struct CameraConnectionSection: View {
     private var discovering: Bool { state.bluetooth == .discovering || state.bluetooth == .pairing }
     private var connected: Bool { state.wifi == .ready && !model.isDisconnectingWireless }
     private var disconnecting: Bool { state.wifi == .disconnecting || model.isDisconnectingWireless }
-    private var canChoose: Bool { !model.state.wirelessRestrictsUSB && !discovering }
+    private var unconfirmedClose: Bool { state.wifi == .idle && state.hasTransferLease }
+    private var canChoose: Bool { !model.state.wirelessRestrictsUSB && !discovering && !connection.isWorking }
     private var canOpenTransfer: Bool { canChoose && !model.isSuspended && !model.cameraImportActive }
 
     var body: some View {
@@ -25,8 +27,7 @@ struct CameraConnectionSection: View {
             }
             Label(state.bluetooth.statusLabel, systemImage: "antenna.radiowaves.left.and.right")
                 .accessibilityIdentifier("wireless.bluetooth")
-            Label(disconnecting ? WirelessWiFiPhase.disconnecting.statusLabel : state.wifi.statusLabel,
-                  systemImage: "wifi")
+            Label(wifiStatus, systemImage: "wifi")
                 .accessibilityIdentifier("wireless.wifi")
             if connected {
                 Button("Browse camera photos", action: onBrowse)
@@ -34,15 +35,17 @@ struct CameraConnectionSection: View {
                 disconnectButton
             } else if disconnecting {
                 ProgressView().accessibilityLabel("Disconnecting WiFi")
-            } else if state.wifi == .idle && state.hasTransferLease {
-                Text("The wireless session still needs to close before USB conversion can start.")
+            } else if unconfirmedClose {
                 disconnectButton
-            } else if state.wifi != .idle || discovering {
+            } else if state.wifi != .idle || discovering || connection.isWorking {
                 if state.bluetooth == .discovering && state.wifi == .idle {
                     Text("Start pairing registration in the camera’s connection settings.")
                         .font(.footnote).foregroundStyle(.secondary)
                     ForEach(state.discoveredCameras) { camera in
-                        Button(camera.displayName) { Task { await model.pairWirelessCamera(camera) } }
+                        Button(camera.displayName) {
+                            connection.start(from: .status) { await model.pairWirelessCamera(camera) }
+                        }
+                            .disabled(connection.isWorking)
                             .accessibilityIdentifier(camera.discoveryAccessibilityID)
                     }
                 }
@@ -68,9 +71,16 @@ struct CameraConnectionSection: View {
         }
     }
 
+    private var wifiStatus: String {
+        if disconnecting { return WirelessWiFiPhase.disconnecting.statusLabel }
+        return unconfirmedClose ? "WiFi closure unconfirmed" : state.wifi.statusLabel
+    }
+
     @ViewBuilder private var connectionActions: some View {
         if let selected {
-            Button("Connect over WiFi") { Task { await model.connectCameraWiFi() } }
+            Button("Connect over WiFi") {
+                connection.start(from: .status) { await model.connectCameraWiFi() }
+            }
                 .buttonStyle(.borderedProminent)
                 .disabled(!canOpenTransfer)
                 .accessibilityIdentifier("wireless.connect")
@@ -83,7 +93,7 @@ struct CameraConnectionSection: View {
             if selected != nil {
                 Button("Retry Bluetooth") {
                     retryingBluetooth = true
-                    Task { await model.retryCameraBluetooth() }
+                    connection.start(from: .status) { await model.retryCameraBluetooth() }
                 }
                     .disabled(!canChoose).accessibilityIdentifier("wireless.retry")
             }
@@ -93,13 +103,15 @@ struct CameraConnectionSection: View {
                 if camera.id != selected?.id {
                     Button(camera.displayName) {
                         choosingCamera = false
-                        Task { await model.selectWirelessCamera(camera.id) }
+                        connection.start(from: .status) { await model.selectWirelessCamera(camera.id) }
                     }
                     .disabled(!canChoose)
                     .accessibilityIdentifier(camera.selectionAccessibilityID)
                 }
             }
-            Button("Pair camera") { Task { await model.discoverWirelessCameras() } }
+            Button("Pair camera") {
+                connection.start(from: .status) { await model.discoverWirelessCameras() }
+            }
                 .disabled(!canChoose).accessibilityIdentifier("wireless.pair")
         }
         if selected != nil {
@@ -113,8 +125,8 @@ struct CameraConnectionSection: View {
     @ViewBuilder private var connectionMessages: some View {
         if let rejection = state.firmwareRejection {
             Text(rejection.presentationGuidance).accessibilityIdentifier("wireless.firmware")
-        } else if let failure = state.wifiFailure {
-            Text(failure.connectionGuidance).accessibilityIdentifier("wireless.wifiFailure")
+        } else if let guidance = state.transferFailureGuidance {
+            Text(guidance).accessibilityIdentifier("wireless.wifiFailure")
         }
         if let failure = state.failure {
             Text(failure.connectionGuidance).accessibilityIdentifier("wireless.bluetoothFailure")
@@ -139,12 +151,22 @@ struct CameraConnectionSection: View {
     private func cancel() {
         choosingCamera = false
         retryingBluetooth = false
-        Task { await model.cancelWirelessConnection() }
+        connection.cancel { await model.cancelWirelessConnection() }
     }
 
     private var disconnectButton: some View {
         Button("Disconnect WiFi") { Task { await model.disconnectCameraWiFi() } }
             .accessibilityIdentifier("wireless.disconnect")
+    }
+}
+
+extension WirelessConnectionState {
+    var transferFailureGuidance: String? {
+        guard let wifiFailure else { return nil }
+        if wifiFailurePhase == .disconnecting {
+            return "The wireless session could not close safely. Tap Disconnect WiFi to retry."
+        }
+        return firmwareRejection?.presentationGuidance ?? wifiFailure.connectionGuidance
     }
 }
 

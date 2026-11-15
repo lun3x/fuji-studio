@@ -40,6 +40,11 @@ enum WirelessWiFiPhase: Equatable, Sendable {
   case disconnecting
 }
 
+enum WirelessTransferRoute: Equatable, Sendable {
+  case cameraNetwork
+  case autoSave
+}
+
 struct WirelessConnectionIntent: Equatable, Sendable {
   let cameraID: WirelessCameraID
   let connectionGeneration: UInt64
@@ -67,6 +72,8 @@ struct WirelessConnectionState: Equatable, Sendable {
   var discoveredCameras: [DiscoveredCamera] = []
   var bluetooth: WirelessBluetoothReadiness = .idle
   var wifi: WirelessWiFiPhase = .idle
+  /// Route of the current or last started transfer attempt.
+  var transferRoute: WirelessTransferRoute?
   var failure: WirelessFailure?
   var wifiFailure: WirelessFailure?
   var wifiFailurePhase: WirelessWiFiPhase?

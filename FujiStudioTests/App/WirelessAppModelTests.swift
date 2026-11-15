@@ -13,6 +13,62 @@ final class WirelessAppModelTests: XCTestCase {
         XCTAssertEqual(FixtureEnvironment.route(arguments: ["--ui-fixtures", paired], unitHost: true), .unitHost)
     }
 
+    func testCancellingPresentedAutoSaveBeforeItsTaskRunsDoesNotStartTransfer() async throws {
+        let fixture = try await FixtureEnvironment.make(wireless: .autoSave)
+        let model = AppModel(environment: fixture.environment)
+        await model.start()
+        let presentation = PresentedCameraConnection()
+        presentation.start(from: .autoSave) { await model.setUpCameraAutoSave() }
+        presentation.cancel(from: .autoSave) { await model.cancelWirelessConnection() }
+        try await waitUntil { !presentation.isWorking }
+        XCTAssertNil(model.wirelessState.transferRoute)
+        XCTAssertNil(model.wirelessState.verifiedAutoSaveCameraID)
+        XCTAssertFalse(model.state.wirelessRestrictsUSB)
+    }
+
+    func testCancellingPresentedConnectionKeepsAdmittedTransfer() async throws {
+        let fixture = try await FixtureEnvironment.make(wireless: .paired)
+        let model = AppModel(environment: fixture.environment)
+        await model.start()
+        let inventory = FixtureBarrier()
+        await fixture.wireless.session.holdBrowserInventory(inventory)
+        let presentation = PresentedCameraConnection()
+        presentation.start(from: .status) { await model.connectCameraWiFi() }
+        try await waitUntil { model.wirelessState.wifi == .ready && model.cameraBrowser.isLoading }
+        XCTAssertTrue(presentation.isWorking)
+        presentation.cancel { await model.cancelWirelessConnection() }
+        await inventory.release()
+        try await waitUntil { !presentation.isWorking }
+        let closeCount = await fixture.wireless.session.closeCount
+        XCTAssertEqual(closeCount, 0)
+        XCTAssertEqual(model.wirelessState.wifi, .ready)
+        XCTAssertTrue(model.wirelessState.hasTransferLease)
+    }
+
+    func testImportRecoveryRebuildsCameraAndFileContextFromJournalAfterForget() async throws {
+        let fixture = try await FixtureEnvironment.make(wireless: .recoverable)
+        let model = AppModel(environment: fixture.environment)
+        await model.start()
+        try await browse(model)
+        let original = try XCTUnwrap(model.cameraBrowser.captures.first { $0.availability == .pair })
+        try model.cameraBrowser.select(original.id, policy: .pair)
+        await model.importSelectedCaptures()
+        try await waitUntil { model.importRecoveryEvents.first?.pauseReason == .connectionLost }
+        try await waitUntil { model.wirelessState.wifi == .idle }
+        let first = try XCTUnwrap(model.importRecoveryEvents.first)
+        let cameraID = try XCTUnwrap(first.cameraID)
+        await model.forgetWirelessCamera(cameraID)
+        XCTAssertFalse(model.wirelessState.savedCameras.contains { $0.id == cameraID })
+        let recovered = AppModel(environment: fixture.environment)
+        await recovered.start()
+        try await waitUntil { recovered.importRecoveryEvents.first?.jobID == first.jobID }
+        let context = try XCTUnwrap(recovered.importRecoveryEvents.first?.jobContext)
+        XCTAssertEqual(context, first.jobContext)
+        XCTAssertEqual(context.cameraDisplayName, "Fixture X-T5")
+        XCTAssertEqual(context.cameraModel, .xt5)
+        XCTAssertEqual(context.firstFilename, original.rowID.filename)
+    }
+
     func testInactivePreservesExplicitWiFiJoinAndBackgroundReconnectsOnlyBluetooth() async throws {
         let fixture = try await FixtureEnvironment.make(wireless: .paired)
         let model = AppModel(environment: fixture.environment)

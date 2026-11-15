@@ -94,6 +94,34 @@ import XCTest
         wait { app.staticTexts["wireless.bluetooth"].label == "Bluetooth connected" }
     }
 
+    func testDismissalCancelsPairingBeforeHeldUSBHandoffCompletes() {
+        for interactive in [false, true] {
+            let app = launch(["--fixture-wireless-unpaired", "--fixture-held-usb-close"])
+            let status = app.buttons["app.status"]
+            wait { status.value as? String == "Camera ready" }
+            status.tap()
+            let pair = app.buttons["wireless.pair"]
+            XCTAssertTrue(pair.waitForExistence(timeout: 5))
+            pair.tap()
+            if interactive {
+                let bar = app.navigationBars["Status & settings"]
+                let top = bar.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2))
+                top.press(forDuration: 0.05, thenDragTo: top.withOffset(CGVector(dx: 0, dy: 450)))
+            } else {
+                app.buttons["Done"].tap()
+            }
+            let release = app.buttons["fixture.finishUSBClose"]
+            XCTAssertTrue(release.waitForExistence(timeout: 5))
+            XCTAssertEqual(release.value as? String, "USB close held")
+            release.tap()
+            wait { status.value as? String == "Camera ready" }
+            status.tap()
+            XCTAssertTrue(pair.waitForExistence(timeout: 5))
+            XCTAssertFalse(app.buttons["wireless.cancel"].exists)
+            app.terminate()
+        }
+    }
+
     func testFirmwareGuidanceComesFromAuthenticatedTransferFirmware() {
         for (fixture, guidance) in [
             ("--fixture-wireless-firmware-update", "Firmware update required. Update the X-T5 to firmware 4.32"),

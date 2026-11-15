@@ -1341,7 +1341,7 @@ extension AppModel {
     }
 
     private func prepareBluetoothChoice() async -> Bool {
-        guard wirelessAvailable, wirelessActivity == .active, !isSuspended, !state.wirelessRestrictsUSB,
+        guard !Task.isCancelled, wirelessAvailable, wirelessActivity == .active, !isSuspended, !state.wirelessRestrictsUSB,
               state.activeJobID == nil, !isSubmitting, !isRefreshing, !isResettingCamera else { return false }
         bluetoothChoiceActive = true
         stopAutomaticConnection()
@@ -1357,7 +1357,7 @@ extension AppModel {
             return true
         } catch {
             bluetoothChoiceActive = false
-            wirelessActionError = Self.explain(error)
+            if !Task.isCancelled { wirelessActionError = Self.explain(error) }
             startAutomaticConnection()
             return false
         }
@@ -1383,7 +1383,7 @@ extension AppModel {
         guard await prepareBluetoothChoice() else { return }
         defer { bluetoothChoiceActive = false }
         do { try await environment.wireless.connection.select(id) }
-        catch { wirelessActionError = Self.explain(error) }
+        catch { if !Task.isCancelled { wirelessActionError = Self.explain(error) } }
         adoptWirelessState(await environment.wireless.connection.currentState())
     }
 
@@ -1403,10 +1403,9 @@ extension AppModel {
     }
 
     func cancelWirelessConnection() async {
-        if state.wirelessRestrictsUSB { await disconnectCameraWiFi(); return }
-        await environment.wireless.connection.cancelConnection()
-        bluetoothChoiceActive = false
-        adoptWirelessState(await environment.wireless.connection.currentState())
+        let connection = environment.wireless.connection
+        await connection.cancelConnection(preservingReadyTransfer: true)
+        adoptWirelessState(await connection.currentState())
     }
 
     func connectCameraWiFi() async {
@@ -1426,7 +1425,7 @@ extension AppModel {
     }
 
     private func runWiFiCommand(_ operation: (WirelessConnectionCoordinator) async -> Void) async {
-        guard wirelessAvailable, wirelessActivity == .active, !isSuspended, wirelessState.wifi == .idle,
+        guard !Task.isCancelled, wirelessAvailable, wirelessActivity == .active, !isSuspended, wirelessState.wifi == .idle,
               !wifiCommandActive, importCommand == nil, !importEvents.contains(where: \.isRunning) else { return }
         wirelessActionError = nil
         wifiCommandActive = true
@@ -1556,7 +1555,9 @@ extension AppModel {
                 guard try await services.connection.admittedTransfer().intent == transfer.intent else {
                     throw CameraImportError.sessionRequired
                 }
-                jobID = try await services.importer.start(selections, session: transfer.session, loanID: transfer.loanID)
+                let cameraName = wirelessState.savedCameras.first { $0.id == transfer.intent.cameraID }?.displayName
+                jobID = try await services.importer.start(selections, session: transfer.session, loanID: transfer.loanID,
+                                                          cameraDisplayName: cameraName)
                 intent = transfer.intent
             case .resume(let id):
                 guard let transfer else { throw CameraImportError.sessionRequired }

@@ -99,13 +99,16 @@ struct ImportReceipt: Codable, Equatable, Sendable {
 struct ImportCameraSnapshot: Codable, Equatable, Sendable {
     let cameraID: WirelessCameraID
     let model: WirelessCameraModel
+    let displayName: String?
     private let firmware: String?
     private let mode: WirelessMode?
     private let peerKeyDigest: String?
 
-    init(_ camera: WirelessIdentity, mode: WirelessMode?) {
+    init(_ camera: WirelessIdentity, mode: WirelessMode?, displayName: String? = nil) {
         cameraID = camera.cameraID
         model = camera.model
+        let name = displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.displayName = name?.isEmpty == false ? name : nil
         firmware = camera.firmware
         self.mode = mode
         peerKeyDigest = camera.protocolPeerKey.map(Self.digest)
@@ -188,11 +191,12 @@ struct ImportJob: Equatable, Sendable {
     var captures: [ImportCaptureProgress]
     var pauseReason: ImportPauseReason?
 
-    init(id: UUID = UUID(), selections: [ImportSelection], importDate: Date, mode: WirelessMode? = nil) throws {
+    init(id: UUID = UUID(), selections: [ImportSelection], importDate: Date, mode: WirelessMode? = nil,
+         cameraDisplayName: String? = nil) throws {
         guard let camera = selections.first?.camera,
               selections.allSatisfy({ $0.camera == camera }) else { throw ImportJournalError.invalidJob }
         self.id = id
-        self.camera = .init(camera, mode: mode)
+        self.camera = .init(camera, mode: mode, displayName: cameraDisplayName)
         self.importDate = importDate
         revision = 0
         let redacted = self.camera.redactedIdentity

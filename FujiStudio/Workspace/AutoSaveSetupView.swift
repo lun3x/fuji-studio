@@ -3,12 +3,13 @@ import SwiftUI
 
 struct AutoSaveSetupView: View {
     let model: AppModel
+    let connection: PresentedCameraConnection
     let onBack: () -> Void
     let onBrowse: () -> Void
     @State private var availability: Result<Void, WirelessFailure>?
 
     private var state: WirelessConnectionState { model.wirelessState }
-    private var isBusy: Bool { state.wifi != .idle && state.wifi != .ready }
+    private var isBusy: Bool { connection.isWorking || state.wifi != .idle && state.wifi != .ready }
     private var registered: Bool {
         guard let id = state.selectedCameraID else { return false }
         return state.verifiedAutoSaveCameraID == id
@@ -68,19 +69,20 @@ struct AutoSaveSetupView: View {
         if state.wifi == .ready && !model.isDisconnectingWireless {
             Button("Browse camera photos", action: onBrowse).buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("wireless.browse")
+        } else if state.wifi == .idle && state.hasTransferLease && !model.isDisconnectingWireless {
+            Button("Disconnect WiFi") { Task { await model.disconnectCameraWiFi() } }
+                .accessibilityIdentifier("wireless.disconnect")
         } else if isBusy || model.isDisconnectingWireless {
             ProgressView(state.wifi.statusLabel)
                 .accessibilityIdentifier("wireless.autoSave.progress")
-            Button("Cancel") { Task { await model.cancelWirelessConnection() } }
+            Button("Cancel", action: cancel)
                 .disabled(model.isDisconnectingWireless || state.wifi == .disconnecting)
                 .accessibilityIdentifier("wireless.cancel")
         } else {
             transferActions
         }
-        if let failure = state.wifiFailure,
-           state.wifiFailurePhase == .registeringAutoSave || state.wifiFailurePhase == .waitingForAutoSave
-            || state.wifiFailurePhase == .verifyingAutoSave || state.wifiFailurePhase == .checkingFirmware {
-            Text(state.firmwareRejection?.presentationGuidance ?? failure.connectionGuidance)
+        if state.transferRoute == .autoSave, let failure = state.wifiFailure, let guidance = state.transferFailureGuidance {
+            Text(guidance)
                 .accessibilityIdentifier("wireless.autoSave.failure")
             if failure.opensSettings {
                 Button("Open Settings", action: model.openSettings)
@@ -90,12 +92,14 @@ struct AutoSaveSetupView: View {
     }
 
     private var canStart: Bool {
-        !model.state.wirelessRestrictsUSB && !model.cameraImportActive && !model.isSuspended
+        !connection.isWorking && !model.state.wirelessRestrictsUSB && !model.cameraImportActive && !model.isSuspended
     }
 
     @ViewBuilder private var transferActions: some View {
         if !registered || state.wifiFailure == .autoSaveRegistrationRequired {
-            Button("Register destination") { Task { await model.setUpCameraAutoSave() } }
+            Button("Register destination") {
+                connection.start(from: .autoSave) { await model.setUpCameraAutoSave() }
+            }
                 .buttonStyle(.borderedProminent)
                 .disabled(!canStart)
                 .accessibilityIdentifier("wireless.autoSave.register")
@@ -110,7 +114,9 @@ struct AutoSaveSetupView: View {
     }
 
     private var waitForCamera: some View {
-        Button("Wait for camera") { Task { await model.waitForCameraAutoSave() } }
+        Button("Wait for camera") {
+            connection.start(from: .autoSave) { await model.waitForCameraAutoSave() }
+        }
             .disabled(!canStart)
             .accessibilityIdentifier("wireless.autoSave.wait")
     }
@@ -127,7 +133,11 @@ struct AutoSaveSetupView: View {
     }
 
     private func back() {
-        if isBusy { Task { await model.cancelWirelessConnection() } }
+        cancel()
         onBack()
+    }
+
+    private func cancel() {
+        connection.cancel(from: .autoSave) { await model.cancelWirelessConnection() }
     }
 }

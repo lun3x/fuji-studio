@@ -45,6 +45,8 @@ private struct AppEntryView: View {
     @State private var fixturePhotoBarrier: FixtureBarrier?
     @State private var fixtureRecipeBarrier: FixtureBarrier?
     @State private var fixtureRecipeCamera: FixtureCamera?
+    @State private var fixtureUSBCloseBarrier: FixtureBarrier?
+    @State private var fixtureUSBCloseEntered = false
     #endif
     var body: some View {
         Group {
@@ -59,6 +61,14 @@ private struct AppEntryView: View {
                     if let barrier = fixtureStartBarrier {
                         Button("Finish fixture start") { Task { await barrier.release(); fixtureStartBarrier = nil } }
                             .accessibilityIdentifier("fixture.finishStart").accessibilityValue(String(describing: latestScenePhase))
+                    }
+                    if let barrier = fixtureUSBCloseBarrier {
+                        Button("Finish fixture USB close") {
+                            Task { await barrier.release(); fixtureUSBCloseBarrier = nil }
+                        }
+                        .accessibilityIdentifier("fixture.finishUSBClose")
+                        .accessibilityValue(fixtureUSBCloseEntered ? "USB close held" : "Waiting for USB close")
+                        .task { await barrier.entered(); fixtureUSBCloseEntered = true }
                     }
                     if fixture && ProcessInfo.processInfo.arguments.contains("--fixture-scene-controls") {
                         HStack {
@@ -127,6 +137,11 @@ private struct AppEntryView: View {
                     if flags.contains("--fixture-held-start") {
                         let barrier = FixtureBarrier(); fixtureStartBarrier = barrier
                         await bundle.reader.holdDiscovery(barrier)
+                    }
+                    if flags.contains("--fixture-held-usb-close") {
+                        let barrier = FixtureBarrier()
+                        fixtureUSBCloseBarrier = barrier
+                        await bundle.camera.holdDisconnect(barrier)
                     }
                     if flags.contains("--fixture-held-save") {
                         let barrier = FixtureBarrier(); fixtureSaveBarrier = barrier

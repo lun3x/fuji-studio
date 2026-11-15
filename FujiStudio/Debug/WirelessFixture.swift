@@ -23,9 +23,17 @@ import FujiCameraCore
         case retryable = "--fixture-wireless-retryable"
         case journalIssue = "--fixture-wireless-journal-issue"
         case autoSave = "--fixture-wireless-auto-save"
+        case autoSaveOwnershipFailure = "--fixture-wireless-auto-save-ownership-failure"
+        case autoSaveInventoryFailure = "--fixture-wireless-auto-save-inventory-failure"
+        case autoSaveCloseFailure = "--fixture-wireless-auto-save-close-failure"
+        case recoveryJobs = "--fixture-wireless-recovery-jobs"
+
+        var hasAutoSave: Bool {
+            self == .autoSave || self == .autoSaveOwnershipFailure || self == .autoSaveInventoryFailure
+        }
 
         var cameraModel: WirelessCameraModel {
-            self == .xe3Unpaired || self == .rawUnavailable || self == .autoSave ? .xe3 : .xt5
+            self == .xe3Unpaired || self == .rawUnavailable || self == .autoSaveCloseFailure || hasAutoSave ? .xe3 : .xt5
         }
 
         static func launchModes(in arguments: [String]) -> [Self] {
@@ -39,13 +47,15 @@ import FujiCameraCore
     let session: FixtureWirelessSession
     let photos: FixtureImportPhotos
     let journalRoot: URL
+    private let savedCameras: FixtureSavedCameras
 
     init(mode: Mode, root: URL, reader: FixtureLibrary, ownership: some WirelessCameraOwnershipGateway) throws {
         let persistenceSuite = ProcessInfo.processInfo.environment["FUJI_STUDIO_SETTINGS_SUITE"]
         let autoSaveCameraID = UUID(uuid: (0xFE, 0xE3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1))
         let cameraID = mode == .autoSave ? WirelessCameraID(rawValue: autoSaveCameraID) : WirelessCameraID()
         let store = FixtureSavedCameras(selected: mode != .unpaired && mode != .xe3Unpaired && mode != .disabled,
-                                        model: mode.cameraModel, cameraID: cameraID, dual: mode == .twoSaved)
+                                        model: mode.cameraModel, cameraID: cameraID, dual: mode == .twoSaved || mode == .recoveryJobs)
+        savedCameras = store
         let bluetooth = FixtureBluetooth(store: store, mode: mode)
         let wifi = FixtureWiFi(joinFailure: mode == .joinDenied ? .permissionDenied(.wifiJoin) : nil,
                               verifyFailure: mode == .localNetworkDenied ? .permissionDenied(.localNetwork) : nil)
@@ -57,7 +67,7 @@ import FujiCameraCore
         }
         let session = try FixtureWirelessSession(identity: .init(cameraID: identity.cameraID, model: identity.model,
             firmware: transferFirmware, protocolPeerKey: identity.protocolPeerKey), scenario: mode)
-        let autoSave: FixtureAutoSave? = if mode == .autoSave {
+        let autoSave: FixtureAutoSave? = if mode.hasAutoSave {
             FixtureAutoSave(session: try FixtureWirelessSession(identity: identity, scenario: mode, transport: .autoSave),
                             persistenceSuite: persistenceSuite)
         } else { nil }
@@ -71,7 +81,7 @@ import FujiCameraCore
             providesPlaceholder: mode != .unidentifiedSave, rejection: mode == .retryable ? .storage : nil)
         self.bluetooth = bluetooth; self.wifi = wifi; self.session = session; self.photos = photos
         let connection = WirelessConnectionCoordinator(bluetooth: bluetooth, store: store, authorization: { .allowed },
-            wifi: wifi, ownership: ownership, sessionFactory: { peer, _ in
+            wifi: wifi, ownership: FixtureWirelessOwnership(base: ownership, refuse: mode == .autoSaveOwnershipFailure), sessionFactory: { peer, _ in
                 if peer.cameraID == identity.cameraID {
                     await session.begin()
                     return session
@@ -82,6 +92,27 @@ import FujiCameraCore
                          isEnabled: mode != .disabled, requestPhotosAccess: { await reader.requestAccess() })
     }
 
+    func seedRecoveryJobs() async throws {
+        guard let alternate = savedCameras.alternate else { return }
+        let alternateSession = try FixtureWirelessSession(identity: savedCameras.identity(for: alternate), transport: .autoSave)
+        let journal = try ImportJournal(root: journalRoot)
+        let staging = try ImportStagingStore(root: journalRoot.deletingLastPathComponent().appendingPathComponent("import-staging"))
+        let date = Date(timeIntervalSince1970: 1_700_000_000)
+        for (transfer, mode, name) in [
+            (session, WirelessMode.xApp, savedCameras.camera.displayName as String?),
+            (session, .xApp, savedCameras.camera.displayName),
+            (alternateSession, .autoSave, nil)
+        ] {
+            let selection = await transfer.selections[0]
+            var job = try ImportJob(selections: [selection], importDate: date, mode: mode, cameraDisplayName: name)
+            let original = try await staging.write(object: selection.descriptors[0], session: transfer)
+            job.captures[0].originals = [original]
+            job.captures[0].stage = .downloading
+            job.pauseReason = .interrupted
+            try await journal.save(job)
+        }
+    }
+
     static func inactiveServices(journal: ImportJournal, staging: ImportStagingStore) -> WirelessServices {
         let store = FixtureSavedCameras(selected: false)
         let connection = WirelessConnectionCoordinator(bluetooth: FixtureBluetooth(store: store), store: store,
@@ -89,6 +120,20 @@ import FujiCameraCore
         return .init(connection: connection, journal: journal, staging: staging,
                      photoGateway: FixtureImportPhotos(reader: nil, verifySaves: false),
                      isEnabled: false, requestPhotosAccess: { .denied })
+    }
+}
+
+private struct FixtureWirelessOwnership: WirelessCameraOwnershipGateway {
+    let base: any WirelessCameraOwnershipGateway
+    let refuse: Bool
+
+    func acquireWireless() async throws -> CameraUseLease {
+        if refuse { throw WirelessFailure.usbCloseUnconfirmed }
+        return try await base.acquireWireless()
+    }
+
+    func releaseWireless(_ lease: CameraUseLease) async {
+        await base.releaseWireless(lease)
     }
 }
 
@@ -219,6 +264,7 @@ actor FixtureWirelessSession: WirelessTransferSession {
     private var closeBarrier: FixtureBarrier?
     private var downloadFailure: WirelessFailure?
     private var interruptPair = false
+    private var didFailClose = false
     private(set) var closeCount = 0
     private(set) var thumbnailCount = 0
     private(set) var downloadCount = 0
@@ -284,6 +330,7 @@ actor FixtureWirelessSession: WirelessTransferSession {
     }
     func enumerate() throws -> AsyncThrowingStream<WirelessInventoryBatch, Error> {
         _ = try open()
+        if transport == .autoSave && scenario == .autoSaveInventoryFailure { throw WirelessFailure.unavailableStorage }
         if inventoryHeld { commandsDuringInventory += 1; throw WirelessFailure.cameraBusy }
         enumerations += 1
         let objects = inventoryObjects
@@ -342,10 +389,14 @@ actor FixtureWirelessSession: WirelessTransferSession {
             try await sink(original)
         }
     }
-    func close() async {
+    func close() async throws {
         if let barrier = closeBarrier {
             closeBarrier = nil
             await barrier.wait()
+        }
+        if scenario == .autoSaveCloseFailure && !didFailClose {
+            didFailClose = true
+            throw WirelessFailure.connectionLost
         }
         if !closed { closed = true; closeCount += 1 }
     }

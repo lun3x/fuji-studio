@@ -59,6 +59,10 @@ final class WorkspaceAccessibilityTests: WorkspaceTestCase {
                     let recovery = app.scrollViews["cameraImport.scroll"]
                     let manage = app.buttons["cameraImport.managePhotos"]
                     XCTAssertTrue(manage.waitForExistence(timeout: 8))
+                    let context = app.staticTexts["cameraImport.jobContext"]
+                    XCTAssertTrue(context.isHittable)
+                    XCTAssertTrue(context.label.contains("Fixture X-T5"))
+                    attachCameraScreen("\(name) AX5 Import Context")
                     let cancel = app.buttons["cameraImport.cancel"]
                     revealCameraControl(cancel, in: recovery)
                     XCTAssertTrue(app.buttons["cameraImport.done"].isHittable)
