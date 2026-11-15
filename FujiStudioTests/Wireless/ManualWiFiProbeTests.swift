@@ -42,7 +42,24 @@ struct ManualWiFiProbeTests {
     #expect(await fixture.transfer.actions.isEmpty)
   }
 
-  @Test func leaseExpirationDiscardsSecretAndConfirmation() async {
+  @Test func returningFromBackgroundRequiresFreshConfirmation() async {
+    let fixture = ManualWiFiFixture()
+    let probe = fixture.probe
+    probe.connect(.saved(fixture.camera))
+    await probe.waitForOperation()
+    probe.confirmJoined()
+    probe.sceneChanged(.inactive)
+    #expect(probe.userConfirmed)
+    probe.sceneChanged(.background)
+    probe.sceneChanged(.active)
+    #expect(probe.handoff != nil)
+    #expect(!probe.canIdentify)
+    #expect(probe.canConfirm)
+    probe.confirmJoined()
+    #expect(probe.canIdentify)
+  }
+
+  @Test func watchdogInvalidatesHandoffWhileHoldingLeaseThroughDisconnect() async {
     let fixture = ManualWiFiFixture()
     let probe = fixture.probe
     probe.connect(.saved(fixture.camera))
@@ -53,12 +70,51 @@ struct ManualWiFiProbeTests {
     #expect(probe.handoff != nil)
     #expect(probe.visiblePassword == nil)
     probe.sceneChanged(.background)
-    fixture.expireLease()
-    await probe.waitForOperation()
-    probe.sceneChanged(.active)
+    let disconnect = FixtureBarrier()
+    await fixture.bluetooth.holdDisconnect(disconnect)
+    fixture.expireLease(.watchdog)
     #expect(probe.handoff == nil)
     #expect(!probe.userConfirmed)
+    await disconnect.entered()
+    #expect(fixture.leaseHeld)
+    await disconnect.release()
+    await probe.waitForOperation()
+    #expect(!fixture.leaseHeld)
     #expect(await fixture.bluetooth.disconnectCount == 1)
+  }
+
+  @Test func hardDeadlineReleasesLeaseWithoutWaitingForPendingDisconnect() async {
+    let fixture = ManualWiFiFixture()
+    let probe = fixture.probe
+    probe.connect(.saved(fixture.camera))
+    await probe.waitForOperation()
+    probe.sceneChanged(.background)
+    let disconnect = FixtureBarrier()
+    await fixture.bluetooth.holdDisconnect(disconnect)
+    fixture.expireLease(.watchdog)
+    await disconnect.entered()
+    fixture.expireLease(.hardDeadline)
+    #expect(!fixture.leaseHeld)
+    #expect(probe.handoff == nil)
+    await disconnect.release()
+    await probe.waitForOperation()
+    #expect(await fixture.bluetooth.disconnectCount == 1)
+  }
+
+  @Test func activationTimeoutKeepsItsReasonWhenDisconnectArrivesFirst() async {
+    let fixture = ManualWiFiFixture()
+    let barrier = FixtureBarrier()
+    let failure = WirelessFailure.timeout(.wifiReadiness)
+    await fixture.bluetooth.holdActivation(barrier, thenThrow: failure)
+    let probe = fixture.probe
+    probe.connect(.saved(fixture.camera))
+    await barrier.entered()
+    probe.bluetoothEvent(.disconnected(fixture.camera.id, failure))
+    await barrier.release()
+    await probe.waitForOperation()
+    #expect(fixture.events.last?.phase == .activationFailed)
+    #expect(fixture.events.last?.failure == .wifiReadinessTimeout)
+    #expect(probe.status == "Camera Wi-Fi did not become ready. Check the camera and retry.")
   }
 
   @Test func cancellingSuspendedActivationCannotPublishStaleCredentials() async {

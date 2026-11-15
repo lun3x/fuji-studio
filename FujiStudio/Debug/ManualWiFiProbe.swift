@@ -19,7 +19,9 @@ final class ManualWiFiProbe {
   }
 
   typealias SessionFactory = @Sendable (WirelessIdentity) async throws -> any WirelessTransferSession
-  typealias StartLease = (@escaping @MainActor () -> Void) -> (() -> Void)?
+  enum LeaseExpiration { case watchdog, hardDeadline }
+
+  typealias StartLease = (@escaping @MainActor (LeaseExpiration) -> Void) -> (() -> Void)?
 
   private let bluetooth: any BluetoothGateway
   private let loadSaved: () async throws -> [SavedCamera]
@@ -149,7 +151,8 @@ final class ManualWiFiProbe {
       } catch {
         guard attempt == id else { return }
         let phase: ManualWiFiEvent.Phase = identity == nil ? .bluetoothFailed : .activationFailed
-        await finish(phase, Self.failureMessage(error, fallback: "The camera connection stopped. Select it again to retry."))
+        await finish(phase, Self.failureMessage(error, fallback: "The camera connection stopped. Select it again to retry."),
+          failure: ManualWiFiEvent.Failure(error))
       }
     }
   }
@@ -186,7 +189,8 @@ final class ManualWiFiProbe {
         await finish(.identified, "X-T5 identified. Firmware \(firmware).", firmware: firmware)
       } catch {
         guard attempt == id else { return }
-        await finish(.identityFailed, Self.failureMessage(error, fallback: "Identity test failed. Check the camera network in Settings and retry."))
+        await finish(.identityFailed, Self.failureMessage(error, fallback: "Identity test failed. Check the camera network in Settings and retry."),
+          failure: ManualWiFiEvent.Failure(error))
       }
     }
   }
@@ -211,20 +215,27 @@ final class ManualWiFiProbe {
         return
       }
       guard leaseID == nil else { return }
+      if userConfirmed {
+        userConfirmed = false
+        update(.confirmationRequired, "Confirm the camera network again after returning from Settings.")
+      }
       let id = UUID()
       leaseID = id
-      endLease = startLease { [weak self] in
-        guard let self, self.leaseID == id else { return }
-        self.retire(.leaseExpired, "The Settings handoff expired. Select the camera to retry.")
+      let end = startLease { [weak self] expiration in
+        self?.expireLease(id, reason: expiration)
       }
-      if endLease == nil { retire(.leaseExpired, "The Settings handoff expired. Select the camera to retry.") }
+      guard leaseID == id else { end?(); return }
+      endLease = end
+      if end == nil { expireLease(id, reason: .hardDeadline) }
     @unknown default:
       if canCancel { retire(.leftDuringOperation, "The test stopped. Select a camera to retry.") }
     }
   }
 
   func bluetoothEvent(_ event: BluetoothGatewayEvent) {
-    guard attempt != nil else { return }
+    // The gateway delivers a terminal link error to the pending activation as well.
+    // Let that operation classify failure before any handoff has been published.
+    guard attempt != nil, handoff != nil else { return }
     switch event {
     case .disconnected(let id, _) where identity?.cameraID == id:
       retire(.bluetoothLost, "Bluetooth connection lost. Check the camera and select it to retry.")
@@ -259,8 +270,17 @@ final class ManualWiFiProbe {
     end?()
   }
 
+  private func expireLease(_ id: UUID, reason: LeaseExpiration) {
+    guard leaseID == id else { return }
+    if attempt != nil {
+      retire(.leaseExpired, "The Settings handoff expired. Select the camera to retry.",
+        releaseImmediately: reason == .hardDeadline)
+    } else if reason == .hardDeadline {
+      releaseLease()
+    }
+  }
+
   private func invalidateHandoff() {
-    releaseLease()
     attempt = nil
     identity = nil
     handoff = nil
@@ -269,30 +289,40 @@ final class ManualWiFiProbe {
     userConfirmed = false
   }
 
-  private func retire(_ phase: ManualWiFiEvent.Phase, _ message: String) {
+  private func retire(_ phase: ManualWiFiEvent.Phase, _ message: String, releaseImmediately: Bool = false) {
     let pending = operation
     pending?.cancel()
     invalidateHandoff()
+    // The watchdog leaves time for BLE teardown. The hard deadline ends the
+    // assertion as soon as the attempt is invalid, even if teardown is pending.
+    if releaseImmediately { releaseLease() }
     stopScan()
     update(phase, message)
     operation = Task {
       await bluetooth.disconnect()
+      releaseLease()
       await pending?.value
       operation = nil
     }
   }
 
-  private func finish(_ phase: ManualWiFiEvent.Phase, _ message: String, firmware: String? = nil) async {
+  private func finish(
+    _ phase: ManualWiFiEvent.Phase, _ message: String,
+    firmware: String? = nil, failure: ManualWiFiEvent.Failure? = nil
+  ) async {
     invalidateHandoff()
     stopScan()
     await bluetooth.disconnect()
-    update(phase, message, firmware: firmware)
+    update(phase, message, firmware: firmware, failure: failure)
     operation = nil
   }
 
-  private func update(_ phase: ManualWiFiEvent.Phase, _ message: String, firmware: String? = nil) {
+  private func update(
+    _ phase: ManualWiFiEvent.Phase, _ message: String,
+    firmware: String? = nil, failure: ManualWiFiEvent.Failure? = nil
+  ) {
     status = message
-    record(ManualWiFiEvent(phase: phase, observedFirmware: firmware))
+    record(ManualWiFiEvent(phase: phase, observedFirmware: firmware, failure: failure))
   }
 
   private static func failureMessage(_ error: Error, fallback: String) -> String {
@@ -337,17 +367,43 @@ final class ManualWiFiProbe {
 struct ManualWiFiEvent: Encodable {
   enum Phase: String, Encodable {
     case discovering, authenticating, bluetoothFailed, activating, activationFailed
-    case ready, userConfirmed, identifying, identified, identityFailed
+    case ready, confirmationRequired, userConfirmed, identifying, identified, identityFailed
     case cancelled, leftDuringOperation, leaseExpired, bluetoothLost
+  }
+
+  enum Failure: String, Encodable {
+    case wifiReadinessTimeout, tcpSetupTimeout, ptpTimeout, bluetoothPermission, localNetworkPermission
+    case unsupportedProtocol, unsupportedFirmware, cameraBusy, peerMismatch, connectionLost, authentication
+    case malformedData, other
+
+    init(_ error: Error) {
+      switch error as? WirelessFailure {
+      case .timeout(.wifiReadiness): self = .wifiReadinessTimeout
+      case .timeout(.tcpSetup): self = .tcpSetupTimeout
+      case .timeout(.transactionInactivity): self = .ptpTimeout
+      case .permissionDenied(.bluetooth): self = .bluetoothPermission
+      case .permissionDenied(.localNetwork): self = .localNetworkPermission
+      case .unsupportedProtocol: self = .unsupportedProtocol
+      case .unsupportedFirmware: self = .unsupportedFirmware
+      case .cameraBusy: self = .cameraBusy
+      case .peerMismatch: self = .peerMismatch
+      case .connectionLost: self = .connectionLost
+      case .authentication: self = .authentication
+      case .malformedData: self = .malformedData
+      default: self = .other
+      }
+    }
   }
 
   let timestamp = Date()
   let phase: Phase
   let observedFirmware: String?
+  let failure: Failure?
 
-  init(phase: Phase, observedFirmware: String?) {
+  init(phase: Phase, observedFirmware: String?, failure: Failure?) {
     self.phase = phase
     self.observedFirmware = observedFirmware.map(Self.firmware)
+    self.failure = failure
   }
 
   static func firmware(_ raw: String?) -> String {
@@ -406,12 +462,14 @@ extension ManualWiFiProbe {
       startLease: { expire in
         let app = UIApplication.shared
         let background = app.beginBackgroundTask(withName: "Camera Wi-Fi Settings handoff") {
-          MainActor.assumeIsolated { expire() }
+          MainActor.assumeIsolated { expire(.hardDeadline) }
         }
         guard background != .invalid else { return nil }
         let timer = Task {
           do { try await Task.sleep(for: .seconds(25)) } catch { return }
-          expire()
+          expire(.watchdog)
+          do { try await Task.sleep(for: .seconds(3)) } catch { return }
+          expire(.hardDeadline)
         }
         return {
           timer.cancel()

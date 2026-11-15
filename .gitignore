@@ -9,3 +9,4 @@ xcuserdata/
 Config/Signing.local.xcconfig
 Tests/Fixtures/Private/
 FujiManualWiFi.xcodeproj/
+/.manual-wifi-project.*

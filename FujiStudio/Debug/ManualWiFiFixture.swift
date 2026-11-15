@@ -6,7 +6,8 @@ import FujiCameraCore
 final class ManualWiFiFixture {
   @MainActor
   private final class Lease {
-    var expiration: (@MainActor () -> Void)?
+    var expiration: (@MainActor (ManualWiFiProbe.LeaseExpiration) -> Void)?
+    var events: [ManualWiFiEvent] = []
   }
 
   let camera = SavedCamera(id: WirelessCameraID(), peripheralID: UUID(), model: .xt5, displayName: "Fixture X-T5")
@@ -26,18 +27,27 @@ final class ManualWiFiFixture {
       authorizeLaunch: { _, _ in },
       makeSession: { identity in await transfer.setIdentity(identity); return transfer },
       startLease: { expire in lease.expiration = expire; return { lease.expiration = nil } },
-      record: { _ in })
+      record: { lease.events.append($0) })
     probe.sceneChanged(.active)
   }
 
-  func expireLease() { lease.expiration?() }
+  var leaseHeld: Bool { lease.expiration != nil }
+  var events: [ManualWiFiEvent] { lease.events }
+  func expireLease(_ reason: ManualWiFiProbe.LeaseExpiration) { lease.expiration?(reason) }
 
   actor Bluetooth: BluetoothGateway {
     private var selected: SavedCamera?
     private var activationBarrier: FixtureBarrier?
+    private var activationFailure: WirelessFailure?
+    private var disconnectBarrier: FixtureBarrier?
     private(set) var disconnectCount = 0
 
-    func holdActivation(_ barrier: FixtureBarrier) { activationBarrier = barrier }
+    func holdActivation(_ barrier: FixtureBarrier, thenThrow failure: WirelessFailure? = nil) {
+      activationBarrier = barrier
+      activationFailure = failure
+    }
+
+    func holdDisconnect(_ barrier: FixtureBarrier) { disconnectBarrier = barrier }
 
     func discover() async throws -> AsyncThrowingStream<[DiscoveredCamera], Error> {
       AsyncThrowingStream { $0.finish() }
@@ -55,6 +65,7 @@ final class ManualWiFiFixture {
     func activateWiFi(for id: WirelessCameraID) async throws -> CameraNetwork {
       guard selected?.id == id else { throw WirelessFailure.peerMismatch }
       await activationBarrier?.wait()
+      if let activationFailure { throw activationFailure }
       return CameraNetwork(ssid: "fixture-network", security: .wpaPersonal,
         credential: CameraCredentialReference(cameraID: id, version: UUID()), isHidden: true)
     }
@@ -63,6 +74,7 @@ final class ManualWiFiFixture {
 
     func disconnect() async {
       disconnectCount += 1
+      await disconnectBarrier?.wait()
       selected = nil
     }
   }
