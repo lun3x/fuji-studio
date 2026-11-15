@@ -13,6 +13,7 @@ private struct RegistrationReconnectTests {
   static func main() {
     checkEligibility()
     checkNotificationObservation()
+    checkGeotagSubscription()
 
     let normal = TestDriver()
     let normalAdapter = ProbeRegistrationBluetoothDriver(native: normal)
@@ -69,6 +70,168 @@ private struct RegistrationReconnectTests {
       session: wrongAction.session)
     precondition(wrongAction.native.actions.isEmpty && wrongAction.failures == [wrongAction.session])
     print("Registration reconnect eligibility, scoped substitution, and rejection checks passed.")
+  }
+
+  static func checkGeotagSubscription() {
+    let geo = ProbeGeotagSubscription.characteristic
+    let registration = Experiment(requestRead: false)
+    precondition(!registration.adapter.beginGeotagSubscription(peripheralID: UUID()))
+    let normal = GeotagTrial(extraSubscription: false)
+    normal.reachConfigurationAcknowledgement()
+    normal.finishPairing()
+    precondition(normal.ready && !normal.adapter.geotagSubscriptionAcknowledged)
+
+    let included = GeotagTrial()
+    precondition(!included.adapter.beginExperiment(registration.ticket) { true })
+    included.reachConfigurationAcknowledgement()
+    precondition(included.native.actions.last == .subscribe(geo))
+    precondition(!included.native.actions.contains(.subscribe(ProbeGeotagSubscription.networkName)))
+    precondition(!included.adapter.geotagSubscriptionAcknowledged)
+    included.emit(.subscribed(geo))
+    precondition(included.adapter.geotagSubscriptionAcknowledged)
+    included.finishPairing()
+    var expected = normal.native.actions
+    let next = expected.firstIndex(of: .subscribe(ProbeGeotagSubscription.networkName))!
+    expected.insert(.subscribe(geo), at: next)
+    precondition(included.ready && included.native.actions == expected)
+    precondition(included.hasSameForwardedEvents(as: normal), "An original profile event changed")
+    precondition(normal.native.actions.filter {
+      if case .write = $0 { return true }
+      return false
+    }.count == 2, "An extra value write reached the driver")
+    included.emit(.subscribed(geo))
+    precondition(included.native.actions == expected && included.failures == [included.session])
+
+    let missing = GeotagTrial(includeCharacteristic: false)
+    missing.expectRejected(.geotagCharacteristicMissing, nativeActionCount: 0)
+    let wrongPeer = GeotagTrial(connectRequestedPeer: false)
+    wrongPeer.expectRejected(.geotagUnexpectedPeer, nativeActionCount: 0)
+    precondition(wrongPeer.native.connections == 0)
+    let wrongModel = GeotagTrial(model: "X-E3")
+    wrongModel.expectRejected(.geotagUnexpectedPeer, nativeActionCount: 0)
+
+    let unsupported = GeotagTrial()
+    unsupported.reachConfigurationAcknowledgement()
+    let heldCount = unsupported.native.actions.count
+    unsupported.emit(.subscriptionUnavailable(geo))
+    unsupported.expectRejected(.geotagSubscriptionUnsupported, nativeActionCount: heldCount)
+
+    let failure = GeotagTrial()
+    failure.reachConfigurationAcknowledgement()
+    failure.emit(.failed(geo, .authentication))
+    failure.expectRejected(.geotagSubscriptionFailed, nativeActionCount: heldCount)
+
+    let stale = GeotagTrial()
+    stale.reachConfigurationAcknowledgement()
+    stale.emit(.subscribed(geo), session: UUID())
+    stale.emit(.subscribed(geo))
+    stale.expectRejected(.geotagUnexpectedPeer, nativeActionCount: heldCount)
+
+    let unexpected = GeotagTrial()
+    unexpected.reachConfigurationAcknowledgement()
+    unexpected.emit(.subscribed(ProbeGeotagSubscription.networkName))
+    unexpected.expectRejected(.geotagUnexpectedSequence, nativeActionCount: heldCount)
+
+    let cancelled = GeotagTrial()
+    cancelled.reachConfigurationAcknowledgement()
+    cancelled.adapter.cancelGeotagSubscription()
+    cancelled.adapter.disconnect(session: cancelled.session)
+    cancelled.emit(.subscribed(geo))
+    precondition(cancelled.native.actions.count == heldCount)
+    precondition(!cancelled.adapter.geotagSubscriptionAcknowledged && cancelled.failures.isEmpty)
+    print("Geotag subscription order, unchanged standard path, and rejection checks passed.")
+  }
+
+  @MainActor
+  final class GeotagTrial {
+    private enum Forwarded: Equatable {
+      case services(Set<BLEGATTCharacteristic>)
+      case read(BLEGATTCharacteristic, Data)
+      case wrote(BLEGATTCharacteristic)
+      case subscribed(BLEGATTCharacteristic)
+    }
+
+    private static let status = ProbeSecureStatusComparison.characteristic
+    private static let identify = BLEGATTCharacteristic(
+      service: status.service, characteristic: "85b9163e-62d1-49ff-a6f5-054b4630d4a1")
+    private static let readiness = BLEGATTCharacteristic(
+      service: ProbeGeotagSubscription.configurationNotification.service,
+      characteristic: "a68e3f66-0fcc-4395-8d4c-aa980b5877fa")
+    private static let second = BLEGATTCharacteristic(
+      service: readiness.service, characteristic: "bd17ba04-b76b-4892-a545-b73ba1f74dae")
+    private static let firmware = BLEGATTCharacteristic(service: "180a", characteristic: "2a26")
+
+    let native = TestDriver()
+    let adapter: ProbeRegistrationBluetoothDriver
+    let session = UUID()
+    private var profile = XT5BLEProfile()
+    private var events: [Forwarded] = []
+    private(set) var ready = false
+    private(set) var failures: [UUID] = []
+
+    init(
+      extraSubscription: Bool = true, includeCharacteristic: Bool = true,
+      connectRequestedPeer: Bool = true, model: String = "FF220001"
+    ) {
+      adapter = ProbeRegistrationBluetoothDriver(native: native)
+      adapter.eventHandler = { [weak self] event in self?.receive(event) }
+      let peer = UUID()
+      if extraSubscription { precondition(adapter.beginGeotagSubscription(peripheralID: peer)) }
+      adapter.connect(peripheralID: connectRequestedPeer ? peer : UUID(), session: session)
+      native.eventHandler?(.peerModel(session, model))
+      var keys: Set = [
+        Self.status, Self.identify, Self.readiness, Self.second, Self.firmware,
+        ProbeGeotagSubscription.configurationNotification, ProbeGeotagSubscription.networkName,
+      ]
+      if includeCharacteristic { keys.insert(ProbeGeotagSubscription.characteristic) }
+      emit(.services(keys))
+    }
+
+    func emit(_ event: BLEProtocolEvent, session: UUID? = nil) {
+      native.eventHandler?(.protocolEvent(session ?? self.session, event))
+    }
+
+    func reachConfigurationAcknowledgement() {
+      emit(.read(Self.status, Data([1, 2, 3, 4])))
+      emit(.wrote(Self.status))
+      emit(.wrote(Self.identify))
+      emit(.read(ProbeGeotagSubscription.networkName, Data("synthetic".utf8)))
+      emit(.subscribed(Self.readiness))
+      emit(.subscribed(Self.second))
+      emit(.subscribed(ProbeGeotagSubscription.configurationNotification))
+    }
+
+    func finishPairing() {
+      emit(.subscribed(ProbeGeotagSubscription.networkName))
+      emit(.read(Self.firmware, Data("4.32".utf8)))
+    }
+
+    func hasSameForwardedEvents(as other: GeotagTrial) -> Bool { events == other.events }
+
+    func expectRejected(_ reason: ProbeGeotagSubscription.Failure, nativeActionCount: Int) {
+      precondition(adapter.geotagSubscriptionFailure == reason && failures == [session])
+      precondition(native.actions.count == nativeActionCount && !adapter.geotagSubscriptionAcknowledged)
+    }
+
+    private func receive(_ event: BluetoothDriverEvent) {
+      if case .linkFailed(let session, _) = event { failures.append(session) }
+      guard case .protocolEvent(let session, let event) = event else { return }
+      precondition(self.session == session)
+      switch event {
+      case .services(let keys): events.append(.services(keys))
+      case .read(let key, let data): events.append(.read(key, data))
+      case .wrote(let key): events.append(.wrote(key))
+      case .subscribed(let key): events.append(.subscribed(key))
+      default: preconditionFailure("Unexpected event reached the production profile")
+      }
+      for action in try! profile.receive(event) {
+        if case .authenticated = action {
+          ready = true
+        } else {
+          adapter.perform(action, session: session)
+        }
+      }
+    }
   }
 
   static func checkNotificationObservation() {
@@ -157,12 +320,15 @@ private struct RegistrationReconnectTests {
     adapter.beginRegistrationObservation(peripheralID: peer)
     adapter.connect(peripheralID: peer, session: nextSession)
     native.eventHandler?(.peerModel(nextSession, "X-T5"))
+    emit(nextSession, key: ProbeGeotagSubscription.characteristic)
     for _ in 0..<80 { emit(nextSession) }
     precondition(flushed.count == 1, "Notification burst reached the sink before retirement")
     native.eventHandler?(.disconnected(nextSession, .connectionLost))
     precondition(flushed.count == 2)
     let truncated = flushed[1]
     precondition(truncated.count == 65 && truncated.last?.message == "Registration notifications truncated")
+    precondition(truncated.first?.message ==
+      "Registration notification: role=geotag-request length_class=1-2 timing=before-ready")
     precondition(zip(truncated, truncated.dropFirst()).allSatisfy { $0.timestamp <= $1.timestamp })
     print("Registration notification forwarding, deferred flush, timestamp, and bound checks passed.")
   }
@@ -214,6 +380,7 @@ private struct RegistrationReconnectTests {
   final class Experiment {
     let native = TestDriver()
     let adapter: ProbeRegistrationBluetoothDriver
+    let ticket: ProbeSecureStatusComparison.RegistrationTicket
     let session = UUID()
     var selectionIsCurrent = true
     var failures: [UUID] = []
@@ -228,7 +395,7 @@ private struct RegistrationReconnectTests {
       comparison.verifyXT5(session: failedSession)
       precondition(comparison.receive(.read(statusKey, current), session: failedSession))
       comparison.finishFailedReconnect()
-      let ticket = comparison.takeRegistrationTicket()!
+      ticket = comparison.takeRegistrationTicket()!
       adapter.eventHandler = { [weak self] event in
         if case .linkFailed(let id, _) = event { self?.failures.append(id) }
       }

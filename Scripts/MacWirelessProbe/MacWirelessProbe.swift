@@ -190,6 +190,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
       case ("discover", 1): discover()
       case ("select", 2): select(Int(words[1]))
       case ("pair", 1): pair()
+      case ("pair-geotag-subscription", 1): pair(withGeotagSubscription: true)
       case ("disconnect", 1): disconnect()
       case ("observe-saved", 1): observeSavedAdvertisement()
       case ("reconnect", 1): reconnect()
@@ -257,16 +258,20 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
     publish()
   }
 
-  private func pair() {
+  private func pair(withGeotagSubscription: Bool = false) {
+    let command = withGeotagSubscription ? "pair-geotag-subscription" : "pair"
     guard phase == .discovering, let selectedHandle, let candidate = candidates[selectedHandle] else {
-      return reject("pair", "selectCandidateFirst")
+      return reject(command, "selectCandidateFirst")
     }
     verifiedPairingSession = nil
     savedAdvertisement = SavedAdvertisementObservation()
     registrationDriver.resetObservation()
+    if withGeotagSubscription, !registrationDriver.beginGeotagSubscription(peripheralID: candidate.peripheralID) {
+      return reject(command, "busy")
+    }
     registrationDriver.beginRegistrationObservation(peripheralID: candidate.peripheralID)
     secureStatus.begin(.pairing, peripheralID: candidate.peripheralID)
-    begin("pair", phase: .pairing)
+    begin(command, phase: .pairing)
     operation = Task {
       defer { clearDiscovery() }
       do {
@@ -308,13 +313,14 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
             finish("registrationEvidenceRequired", phase: .idle)
             return
           }
-          registrationDriver.beginExperiment(ticket) { [weak self] in
+          let armed = registrationDriver.beginExperiment(ticket) { [weak self] in
             // Check the same selection the store validated, including if it
             // changes before the protected write is issued.
             guard let self, self.phase == .reconnecting else { return false }
             let selected = self.probeDefaults.string(forKey: "wireless.selectedCameraID")
             return selected.flatMap(UUID.init(uuidString:)) == camera.id.rawValue
           }
+          guard armed else { throw WirelessFailure.cameraBusy }
         }
         secureStatus.begin(usingRegistration ? .registrationReconnect : .reconnect,
           peripheralID: camera.peripheralID, cameraID: camera.id)
@@ -419,8 +425,9 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
       secureStatus.endAttempt()
     }
     registrationDriver.endExperiment()
+    registrationDriver.retireGeotagSubscription()
     operation = nil
-    finish(Self.failureLabel(error), phase: .idle)
+    finish(registrationDriver.geotagSubscriptionFailure?.rawValue ?? Self.failureLabel(error), phase: .idle)
   }
 
   private func disconnect(shutdown: Bool = false) {
@@ -435,6 +442,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
     }
     secureStatus.endAttempt()
     registrationDriver.endRegistrationObservation()
+    registrationDriver.cancelGeotagSubscription()
     cameraNetwork = nil
     begin(shutdown ? "quit" : "disconnect", phase: .disconnecting)
     clearDiscovery()
@@ -444,6 +452,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
       await gateway.disconnect()
       await previous?.value
       registrationDriver.endExperiment()
+      registrationDriver.retireGeotagSubscription()
       linkedCamera = nil
       operation = nil
       if shutdownRequested {
@@ -500,6 +509,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
       "saved_advert_shape=\(savedAdvertisement.matchingShape)",
       "saved_advert_ready=\(savedAdvertisement.ready)",
       "registration_ack_used=\(registrationDriver.acknowledgementUsed)",
+      "geotag_subscription_ack=\(registrationDriver.geotagSubscriptionAcknowledged)",
     ]
     lines.append(contentsOf: secureStatus.observation.statusLines)
     for handle in candidates.keys.sorted() {

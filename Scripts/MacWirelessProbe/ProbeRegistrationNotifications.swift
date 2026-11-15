@@ -22,6 +22,7 @@ struct ProbeRegistrationNotifications {
     .init(service: configuration, characteristic: "a68e3f66-0fcc-4395-8d4c-aa980b5877fa"): "readiness",
     .init(service: configuration, characteristic: "bd17ba04-b76b-4892-a545-b73ba1f74dae"): "second-indication",
     .init(service: configuration, characteristic: "f9150137-5d40-4801-a8dc-f7fc5b01da50"): "configuration",
+    ProbeGeotagSubscription.characteristic: "geotag-request",
     .init(service: network, characteristic: "bf6dc9cf-3606-4ec9-a4c8-d77576e93ea4"): "network-name",
     .init(service: network, characteristic: "75823784-fbb7-4b71-abae-cd9a34072e3c"): "notification-5",
     .init(service: configuration, characteristic: "e6692c5c-b7cd-44f4-95fc-eda07ce32560"): "notification-6",

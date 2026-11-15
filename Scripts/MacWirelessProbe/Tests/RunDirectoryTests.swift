@@ -69,6 +69,9 @@ private struct RunDirectoryTests {
     expect(try self.run(CommandLine.arguments[1], [path, "reconnect-registration"]) == 0,
       "controller could not queue registration reconnect")
     expect(try directory.nextCommand() == "reconnect-registration", "probe could not read registration reconnect")
+    expect(try self.run(CommandLine.arguments[1], [path, "pair-geotag-subscription"]) == 0,
+      "controller could not queue geotag subscription pairing")
+    expect(try directory.nextCommand() == "pair-geotag-subscription", "probe could not read geotag subscription pairing")
 
     let relocated = temporary.appending(path: "relocated")
     try files.moveItem(at: run, to: relocated)

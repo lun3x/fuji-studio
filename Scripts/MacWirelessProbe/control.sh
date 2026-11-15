@@ -2,7 +2,7 @@
 set -eu
 
 usage() {
-  echo "Usage: $0 RUN_DIR {status|list|events|discover|select N|pair|disconnect|observe-saved|reconnect|reconnect-registration|wifi|quit}" >&2
+  echo "Usage: $0 RUN_DIR {status|list|events|discover|select N|pair|pair-geotag-subscription|disconnect|observe-saved|reconnect|reconnect-registration|wifi|quit}" >&2
   exit 2
 }
 
@@ -37,7 +37,7 @@ case "$command" in
     esac
     command="select $1"
     ;;
-  discover|pair|disconnect|observe-saved|reconnect|reconnect-registration|wifi|quit)
+  discover|pair|pair-geotag-subscription|disconnect|observe-saved|reconnect|reconnect-registration|wifi|quit)
     (( $# == 0 )) || usage
     ;;
   *) usage ;;
