@@ -175,8 +175,20 @@ private final class WirelessProbeModel {
     let autoSave = bluetoothOnly ? nil : NativeAutoSaveGateway(store: store, clientGUID: guid)
     autoSaveGateway = autoSave
 
+    let driver = CoreBluetoothDriver()
+    if bluetoothOnly {
+      driver.observePairing = { [runID] observation in
+        Self.record(observation, for: runID)
+      }
+      driver.observeUnrecognizedModel = { [runID] model in
+        guard let folder = try? Self.runFolder(for: runID) else { return }
+        let file = folder.appending(path: "private-bluetooth-model.json")
+        try? JSONEncoder().encode(model).write(to: file, options: [.atomic, .completeFileProtection])
+      }
+    }
+
     coordinator = WirelessConnectionCoordinator(
-      bluetooth: NativeBluetoothGateway(store: store), store: store,
+      bluetooth: NativeBluetoothGateway(store: store, driver: driver), store: store,
       wifi: gateway, ownership: bluetoothOnly ? nil : ProbeCameraOwnership(),
       sessionFactory: { identity, _ in
         let mode: WirelessMode = identity.model == .xt5 ? .xApp : .phone
@@ -332,7 +344,11 @@ private final class WirelessProbeModel {
   }
 
   private func record(_ observation: String) {
-    guard let folder = try? runFolder() else { return }
+    Self.record(observation, for: runID)
+  }
+
+  private static func record(_ observation: String, for runID: UUID) {
+    guard let folder = try? runFolder(for: runID) else { return }
     let file = folder.appending(path: "observations.txt")
     let line = Data("\(Date().formatted(.iso8601)) \(observation)\n".utf8)
     if !FileManager.default.fileExists(atPath: file.path) {

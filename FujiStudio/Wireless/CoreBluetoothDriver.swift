@@ -21,6 +21,11 @@ final class CoreBluetoothDriver: NSObject, BluetoothPeripheralDriver,
   private var central: CBCentralManager? { connections.manager }
   private var active: Link?
 
+  #if DEBUG
+  var observePairing: ((String) -> Void)?
+  var observeUnrecognizedModel: ((String) -> Void)?
+  #endif
+
   private static let secureAdvertisement = CBUUID(string: "a9d2b304-e8d6-4902-8336-352b772d7597")
   private static let legacyAdvertisement = CBUUID(string: "af854c2e-b214-458e-97e2-912c4ecf2cb8")
   private static let xAppAdvertisement = CBUUID(string: "117c4142-edd4-4c77-8696-dd18eebb770a")
@@ -60,6 +65,9 @@ final class CoreBluetoothDriver: NSObject, BluetoothPeripheralDriver,
   func discardDiscoveries() { connections.discardDiscoveries() }
 
   func connect(peripheralID: UUID, session: UUID) {
+    #if DEBUG
+    observePairing?("BLE link requested")
+    #endif
     guard let central, central.state == .poweredOn,
       let peripheral = connections.begin(
         session: session, peripheralID: peripheralID, manager: central,
@@ -81,7 +89,19 @@ final class CoreBluetoothDriver: NSObject, BluetoothPeripheralDriver,
     case .read(let value), .write(let value, _, _), .subscribe(let value): key = value
     case .authenticated, .wifiReady: return
     }
+    #if DEBUG
+    let operation: String = switch action {
+    case .read: "read"
+    case .write: "write"
+    case .subscribe: "subscribe"
+    case .authenticated, .wifiReady: ""
+    }
+    observePairing?("BLE \(operation) \(Self.characteristicLabel(key))")
+    #endif
     guard let characteristic = link.characteristics[key] else {
+      #if DEBUG
+      observePairing?("Characteristic missing from discovery")
+      #endif
       fail(key, session: session, .unsupportedProtocol)
       return
     }
@@ -89,6 +109,9 @@ final class CoreBluetoothDriver: NSObject, BluetoothPeripheralDriver,
     switch action {
     case .read:
       guard characteristic.properties.contains(.read) else {
+        #if DEBUG
+        observePairing?("Read property missing")
+        #endif
         fail(key, session: session, .unsupportedProtocol)
         return
       }
@@ -99,6 +122,9 @@ final class CoreBluetoothDriver: NSObject, BluetoothPeripheralDriver,
         data.count <= BLEProtocolEvent.maximumAttributeBytes,
         data.count <= link.peripheral.maximumWriteValueLength(for: .withResponse)
       else {
+        #if DEBUG
+        observePairing?("Write rejected locally; write property \(characteristic.properties.contains(.write))")
+        #endif
         fail(key, session: session, .unsupportedProtocol)
         return
       }
@@ -109,6 +135,9 @@ final class CoreBluetoothDriver: NSObject, BluetoothPeripheralDriver,
         .notify, .indicate, .notifyEncryptionRequired, .indicateEncryptionRequired,
       ]
       guard !characteristic.properties.intersection(supported).isEmpty else {
+        #if DEBUG
+        observePairing?("Subscription properties missing")
+        #endif
         eventHandler?(.protocolEvent(session, .subscriptionUnavailable(key)))
         return
       }
@@ -146,6 +175,9 @@ final class CoreBluetoothDriver: NSObject, BluetoothPeripheralDriver,
     // An unavailable radio can end an attempt without a terminal delegate call.
     // Retire its manager before reusing a peripheral or advertising completion.
     let ended = central.state == .poweredOn ? nil : connections.retireManagerWithAttempt(central)
+    #if DEBUG
+    if ended != nil { observePairing?("Radio became unavailable: \(availability)") }
+    #endif
     if ended != nil {
       central.delegate = nil
       active?.peripheral.delegate = nil
@@ -191,6 +223,9 @@ final class CoreBluetoothDriver: NSObject, BluetoothPeripheralDriver,
 
   func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
     guard connections.isCurrent(central), link(for: peripheral) != nil else { return }
+    #if DEBUG
+    observePairing?("BLE link connected; discovering services")
+    #endif
     peripheral.discoverServices(Self.pairingServices)
   }
 
@@ -208,13 +243,22 @@ final class CoreBluetoothDriver: NSObject, BluetoothPeripheralDriver,
 
   func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
     guard let link = link(for: peripheral) else { return }
+    #if DEBUG
+    observePairing?("Service discovery \(Self.errorLabel(error))")
+    #endif
     if let error {
       abort(link, failure: Self.failure(from: error))
       return
     }
     let services = peripheral.services ?? []
     let ids = Set(services.map(\.uuid))
+    #if DEBUG
+    observePairing?("Services present: \(services.map { Self.serviceLabel($0.uuid) }.joined(separator: ", "))")
+    #endif
     guard ids.count == services.count else {
+      #if DEBUG
+      observePairing?("Duplicate services")
+      #endif
       abort(link, failure: .unsupportedProtocol)
       return
     }
@@ -227,12 +271,18 @@ final class CoreBluetoothDriver: NSObject, BluetoothPeripheralDriver,
     _ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?
   ) {
     guard let link = link(for: peripheral), link.discovering.contains(service.uuid) else { return }
+    #if DEBUG
+    observePairing?("Characteristic discovery for \(Self.serviceLabel(service.uuid)) \(Self.errorLabel(error))")
+    #endif
     if let error {
       abort(link, failure: Self.failure(from: error))
       return
     }
     for characteristic in service.characteristics ?? [] {
       guard let key = Self.key(for: characteristic), link.characteristics[key] == nil else {
+        #if DEBUG
+        observePairing?("Duplicate characteristic or missing parent service")
+        #endif
         abort(link, failure: .unsupportedProtocol)
         return
       }
@@ -257,9 +307,20 @@ final class CoreBluetoothDriver: NSObject, BluetoothPeripheralDriver,
     else { return }
     let isRead = link.pendingRead == key
     if isRead { active?.pendingRead = nil }
+    #if DEBUG
+    if isRead {
+      observePairing?("Read result for \(Self.characteristicLabel(key)) \(Self.errorLabel(error))")
+    }
+    #endif
     if isRead, key == Self.modelNumber {
       switch Self.modelRead(characteristic.value, error: error) {
       case .success(let model):
+        #if DEBUG
+        let modelLabel = model.map { WirelessCameraModel(rawValue: $0)?.rawValue ?? "unrecognized" }
+          ?? "unavailable"
+        observePairing?("Device Information model: \(modelLabel)")
+        if let model, WirelessCameraModel(rawValue: model) == nil { observeUnrecognizedModel?(model) }
+        #endif
         if let model { eventHandler?(.peerModel(link.id, model)) }
         publishServices(for: link.id)
       case .failure(let failure):
@@ -286,6 +347,9 @@ final class CoreBluetoothDriver: NSObject, BluetoothPeripheralDriver,
       write.characteristic == key
     else { return }
     active?.pendingWrite = nil
+    #if DEBUG
+    observePairing?("Write result for \(Self.characteristicLabel(key)) \(Self.errorLabel(error))")
+    #endif
     if let error {
       let failure = Self.failure(from: error)
       if (write.purpose == .pair || write.purpose == .authenticate), error is CBATTError {
@@ -305,6 +369,9 @@ final class CoreBluetoothDriver: NSObject, BluetoothPeripheralDriver,
     guard let link = link(for: peripheral), let key = Self.key(for: characteristic),
       link.characteristics[key] === characteristic
     else { return }
+    #if DEBUG
+    observePairing?("Subscription result for \(Self.characteristicLabel(key)) \(Self.errorLabel(error)); active \(characteristic.isNotifying)")
+    #endif
     if let error {
       fail(key, session: link.id, Self.failure(from: error))
     } else if characteristic.isNotifying {
@@ -321,6 +388,22 @@ final class CoreBluetoothDriver: NSObject, BluetoothPeripheralDriver,
 
   private func publishServices(for session: UUID) {
     guard let link = active, link.id == session, connections.active?.closing == false else { return }
+    #if DEBUG
+    if let observePairing {
+      let names = link.characteristics.compactMap { key, characteristic -> String? in
+        guard Self.knownCharacteristicLabel(key) != nil else { return nil }
+        let properties = characteristic.properties
+        let capabilities: [(CBCharacteristicProperties, String)] = [
+          (.read, "read"), (.write, "write"), (.writeWithoutResponse, "write without response"),
+          (.notify, "notify"), (.indicate, "indicate"),
+          (.notifyEncryptionRequired, "encrypted notify"), (.indicateEncryptionRequired, "encrypted indicate"),
+        ]
+        let flags = capabilities.compactMap { properties.contains($0.0) ? $0.1 : nil }
+        return "\(Self.characteristicLabel(key)) [\(flags.joined(separator: ", "))]"
+      }.sorted()
+      observePairing("Characteristics present: \(names.joined(separator: ", "))")
+    }
+    #endif
     eventHandler?(.protocolEvent(session, .services(Set(link.characteristics.keys))))
   }
 
@@ -331,16 +414,25 @@ final class CoreBluetoothDriver: NSObject, BluetoothPeripheralDriver,
   }
 
   private func fail(_ characteristic: BLEGATTCharacteristic, session: UUID, _ error: WirelessFailure) {
+    #if DEBUG
+    observePairing?("Protocol operation failed for \(Self.characteristicLabel(characteristic)): \(error)")
+    #endif
     eventHandler?(.protocolEvent(session, .failed(characteristic, error)))
   }
 
   private func abort(_ link: Link, failure: WirelessFailure) {
+    #if DEBUG
+    observePairing?("BLE link aborted: \(failure)")
+    #endif
     eventHandler?(.linkFailed(link.id, failure))
   }
 
   private func disconnected(_ central: CBCentralManager, peripheral: CBPeripheral, error: Error?) {
     guard let session = connections.consumeTerminal(manager: central, peripheral: peripheral)
     else { return }
+    #if DEBUG
+    observePairing?("BLE link ended \(Self.errorLabel(error))")
+    #endif
     finishLink(session: session, failure: error.map(Self.failure) ?? .connectionLost)
   }
 
@@ -393,4 +485,45 @@ final class CoreBluetoothDriver: NSObject, BluetoothPeripheralDriver,
     }
     return .connectionLost
   }
+
+  #if DEBUG
+  private static func serviceLabel(_ uuid: CBUUID) -> String {
+    guard let index = pairingServices.firstIndex(of: uuid) else { return "other service" }
+    return ["secure pairing", "legacy pairing", "configuration", "network", "Wi-Fi launch", "Device Information"][index]
+  }
+
+  nonisolated private static func knownCharacteristicLabel(_ key: BLEGATTCharacteristic) -> String? {
+    switch key.characteristic {
+    case "2a24": "model"
+    case "2a26": "firmware"
+    case "f557d96b-8284-4667-8793-b971c1deca2a": "secure status"
+    case "aba356eb-9633-4e60-b73f-f52516dbd671": "legacy pairing"
+    case "85b9163e-62d1-49ff-a6f5-054b4630d4a1": "client identification"
+    case "a68e3f66-0fcc-4395-8d4c-aa980b5877fa": "readiness indication"
+    case "bd17ba04-b76b-4892-a545-b73ba1f74dae": "second indication"
+    case "f9150137-5d40-4801-a8dc-f7fc5b01da50": "configuration notification"
+    case "bf6dc9cf-3606-4ec9-a4c8-d77576e93ea4": "network name"
+    case "e809256a-915c-4967-92e8-53b7d4cad213": "network password"
+    case "600655e6-3637-42f1-8fb2-44efc5c63b13": "Wi-Fi launch"
+    case "75823784-fbb7-4b71-abae-cd9a34072e3c": "notification 5"
+    case "e6692c5c-b7cd-44f4-95fc-eda07ce32560": "notification 6"
+    case "aab609c4-94dd-4d89-bc60-665d5090b828": "notification 7"
+    case "2a125640-706d-4dd1-b420-c0f4ab93c361": "notification 8"
+    case "82a9f452-c5ce-4ef5-8203-3fc9a47f8171": "notification 9"
+    case "deef7187-3f43-4364-9e22-11a8c8a15951": "notification 10"
+    default: nil
+    }
+  }
+
+  private static func characteristicLabel(_ key: BLEGATTCharacteristic) -> String {
+    "\(serviceLabel(CBUUID(string: key.service)))/\(knownCharacteristicLabel(key) ?? "other characteristic")"
+  }
+
+  private static func errorLabel(_ error: Error?) -> String {
+    guard let error else { return "succeeded" }
+    if let error = error as? CBATTError { return "ATT error \(error.code.rawValue)" }
+    if let error = error as? CBError { return "CoreBluetooth error \(error.code.rawValue)" }
+    return "unclassified error"
+  }
+  #endif
 }
