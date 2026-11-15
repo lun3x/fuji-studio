@@ -8,7 +8,7 @@ public struct RAFMetadataReader: Sendable {
     let checksum = try ResourceChecksum.sha256(resource.fileURL)
     guard checksum == resource.checksum else { throw ResourceError.checksumMismatch }
     let data = try Data(contentsOf: resource.fileURL, options: .mappedIfSafe)
-    let metadata = try parse(data, fileByteCount: data.count)
+    let metadata = try parse(prefix: data, fileByteCount: data.count).metadata
     return PreparedRAW(fileURL: resource.fileURL, sha256: checksum, sourceID: resource.token.assetID,
       sourceRevision: resource.token.sourceRevision, metadata: metadata)
   }
@@ -16,15 +16,41 @@ public struct RAFMetadataReader: Sendable {
   /// Structural inspection only. nil means another metadata block has not arrived yet.
   /// A known original size validates bounds without reading or hashing the pixel payload.
   public func metadata(in prefix: Data, fileByteCount: Int? = nil) throws -> RAWMetadata? {
-    do { return try parse(prefix, fileByteCount: fileByteCount ?? Int.max) }
+    do { return try parse(prefix: prefix, fileByteCount: fileByteCount ?? Int.max).metadata }
     catch is IncompleteMetadata { return nil }
+  }
+
+  /// Reads only bounded RAF header blocks, including the embedded JPEG metadata, using seeks.
+  /// A corrupt framing offset cannot make this read the full RAW pixel payload.
+  public func metadata(inFileAt url: URL) throws -> (metadata: RAWMetadata, embeddedJPEGProperties: [String: Any]) {
+    let handle = try FileHandle(forReadingFrom: url)
+    defer { try? handle.close() }
+    guard let size = Int(exactly: try handle.seekToEnd()) else {
+      throw ResourceError.invalidRAF("Invalid RAF file size")
+    }
+    return try parse(fileByteCount: size, maximumJPEGBytes: 32 * 1024 * 1024) { range in
+      try handle.seek(toOffset: UInt64(range.lowerBound))
+      guard let bytes = try handle.read(upToCount: range.count), bytes.count == range.count else {
+        throw ResourceError.invalidRAF("Truncated RAF block")
+      }
+      return bytes
+    }
   }
 
   private struct IncompleteMetadata: Error {}
 
-  private func parse(_ data: Data, fileByteCount: Int) throws -> RAWMetadata {
+  private func parse(prefix: Data, fileByteCount: Int) throws -> (metadata: RAWMetadata, embeddedJPEGProperties: [String: Any]) {
+    try parse(fileByteCount: fileByteCount, maximumJPEGBytes: Int.max) { range in
+      guard range.upperBound <= prefix.count else { throw IncompleteMetadata() }
+      return prefix.subdata(in: range)
+    }
+  }
+
+  private func parse(fileByteCount: Int, maximumJPEGBytes: Int, read: (Range<Int>) throws -> Data) throws
+    -> (metadata: RAWMetadata, embeddedJPEGProperties: [String: Any])
+  {
     guard fileByteCount >= 112 else { throw ResourceError.invalidRAF("Truncated RAF header") }
-    guard data.count >= 112 else { throw IncompleteMetadata() }
+    let data = try read(0..<112)
     guard Array(data.prefix(16)) == Array("FUJIFILMCCD-RAW ".utf8) else {
       throw ResourceError.invalidRAF("Missing RAF signature or truncated header")
     }
@@ -38,7 +64,12 @@ public struct RAFMetadataReader: Sendable {
     else {
       throw ResourceError.invalidRAF("Invalid RAW payload bounds")
     }
-    let jpeg = try section(data, offsetField: 84, lengthField: 88, fileByteCount: fileByteCount)
+    let jpegRange = try section(data, offsetField: 84, lengthField: 88, fileByteCount: fileByteCount)
+    let directoryRange = try section(data, offsetField: 92, lengthField: 96, fileByteCount: fileByteCount)
+    guard jpegRange.count <= maximumJPEGBytes else {
+      throw ResourceError.invalidRAF("Embedded JPEG metadata exceeds inspection limits")
+    }
+    let jpeg = try read(jpegRange)
     guard
       let source = CGImageSourceCreateWithData(
         jpeg as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
@@ -60,7 +91,8 @@ public struct RAFMetadataReader: Sendable {
     } else {
       captureDynamicRange = nil
     }
-    let directory = try section(data, offsetField: 92, lengthField: 96, fileByteCount: fileByteCount)
+    // At most 255 tags, each with a 16-bit length and a four-byte header.
+    let directory = try read(directoryRange.prefix(4 + 255 * (Int(UInt16.max) + 4)))
     guard directory.count >= 4 else { throw ResourceError.invalidRAF("Truncated RAF directory") }
     let count = integer(directory, 0, 4)
     guard count < 256 else { throw ResourceError.invalidRAF("Invalid RAF directory count") }
@@ -91,10 +123,7 @@ public struct RAFMetadataReader: Sendable {
     else {
       throw ResourceError.invalidRAF("Missing or inconsistent recorded geometry")
     }
-    let sensor = try RAFSensorMetadata.read(offset: payloadOffset, length: payloadLength) { range in
-      guard range.upperBound <= data.count else { throw IncompleteMetadata() }
-      return data.subdata(in: range)
-    }
+    let sensor = try RAFSensorMetadata.read(offset: payloadOffset, length: payloadLength, bytes: read)
     if let sensor, sensor.width != full[1] || sensor.height != full[0] {
       throw ResourceError.invalidRAF("Inconsistent sensor geometry")
     }
@@ -104,27 +133,27 @@ public struct RAFMetadataReader: Sendable {
     let version = String(data: data.subdata(in: 60..<64), encoding: .ascii).flatMap {
       $0.utf8.allSatisfy { (48...57).contains($0) } ? $0 : nil
     }
-    return RAWMetadata(
+    let metadata = RAWMetadata(
       cameraModel: model,
       containerGeometry: PixelSize(width: full[1], height: full[0]),
       recordedGeometry: PixelSize(width: crop[1], height: crop[0]),
       recordedAspect: PixelSize(width: aspect[1], height: aspect[0]),
       cropTop: origin[0], cropLeft: origin[1], orientation: orientation, compression: compression,
       bitDepth: sensor?.bits, rafVersion: version, captureDynamicRange: captureDynamicRange)
+    return (metadata, properties)
   }
 
   private func integer(_ data: Data, _ offset: Int, _ count: Int) -> Int {
     data[offset..<(offset + count)].reduce(0) { ($0 << 8) | Int($1) }
   }
 
-  private func section(_ data: Data, offsetField: Int, lengthField: Int, fileByteCount: Int) throws -> Data {
+  private func section(_ data: Data, offsetField: Int, lengthField: Int, fileByteCount: Int) throws -> Range<Int> {
     let offset = integer(data, offsetField, 4)
     let length = integer(data, lengthField, 4)
     guard offset >= 112, offset <= fileByteCount, length > 0, length <= fileByteCount - offset else {
       throw ResourceError.invalidRAF("Invalid RAF block bounds")
     }
-    guard offset + length <= data.count else { throw IncompleteMetadata() }
-    return Data(data[offset..<(offset + length)])
+    return offset..<(offset + length)
   }
   public init() {}
 
