@@ -19,7 +19,10 @@ targets:
   FujiStudio:
     type: application
     platform: iOS
-    sources: [FujiStudio]
+    sources:
+      - FujiStudio
+      - Scripts/MacWirelessProbe/ProbeImageViewingLaunch.swift
+      - Scripts/MacWirelessProbe/ProbeFirmwareObservation.swift
     dependencies:
       - package: FujiCameraCore
     settings:

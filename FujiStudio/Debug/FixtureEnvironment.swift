@@ -6,9 +6,16 @@ import Observation
 
 /// All deterministic UI routes are decided before ANY live service or probe is constructed.
 @MainActor enum FixtureEnvironment {
-    enum Route: Equatable { case unitHost, flow, workspace, grid, viewer, probe, wirelessProbe, live, liveAcceptance(UUID), invalid }
-    static func route(arguments: [String], unitHost: Bool) -> Route {
+    enum Route: Equatable { case unitHost, manualWiFi, manualWiFiFixture, flow, workspace, grid, viewer, probe, wirelessProbe, live, liveAcceptance(UUID), invalid }
+    static func route(arguments: [String], unitHost: Bool, manualWiFi: Bool = false) -> Route {
         if unitHost { return .unitHost }
+        #if targetEnvironment(simulator)
+        if arguments.contains("--manual-wifi-fixture") {
+            let modeArguments = arguments.filter { $0.contains("fixture") || $0.hasSuffix("-probe") || $0 == "--live-acceptance-run" }
+            return modeArguments == ["--manual-wifi-fixture"] ? .manualWiFiFixture : .invalid
+        }
+        #endif
+        if manualWiFi { return .manualWiFi }
         if arguments.contains("--wireless-protocol-probe") {
             guard arguments.filter({ $0 == "--wireless-protocol-probe" }).count == 1,
                   !arguments.contains(where: { argument in

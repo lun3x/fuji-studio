@@ -1,3 +1,4 @@
+#if os(macOS) || DEBUG
 import Foundation
 
 enum ProbeFirmwareObservation {
@@ -20,3 +21,4 @@ enum ProbeFirmwareObservation {
     return version
   }
 }
+#endif

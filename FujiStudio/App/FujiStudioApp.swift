@@ -1,14 +1,31 @@
 import FujiCameraCore
 import SwiftUI
 
+#if MANUAL_WIFI_DIAGNOSTIC && !DEBUG
+#error("The manual Wi-Fi diagnostic must use a Debug build.")
+#endif
+
 @main
 struct FujiStudioApp: App {
+    #if DEBUG
+    private var manualWiFi: Bool {
+        #if MANUAL_WIFI_DIAGNOSTIC
+        true
+        #else
+        false
+        #endif
+    }
+    #endif
+
     var body: some Scene {
         WindowGroup {
             #if DEBUG
             switch FixtureEnvironment.route(arguments: ProcessInfo.processInfo.arguments,
-                unitHost: ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil || NSClassFromString("XCTestCase") != nil) {
+                unitHost: ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil || NSClassFromString("XCTestCase") != nil,
+                manualWiFi: manualWiFi) {
             case .unitHost: Color.clear
+            case .manualWiFi: ManualWiFiView()
+            case .manualWiFiFixture: ManualWiFiView(fixture: true)
             case .flow: AppEntryView(fixture: true)
             case .liveAcceptance(let id): AppEntryView(acceptanceID: id)
             case .workspace: WorkspaceFixtureEntry()

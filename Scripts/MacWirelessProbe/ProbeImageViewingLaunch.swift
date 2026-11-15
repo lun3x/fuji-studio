@@ -1,3 +1,4 @@
+#if os(macOS) || DEBUG
 import Foundation
 import FujiCameraCore
 
@@ -61,3 +62,4 @@ struct ProbeImageViewingLaunch {
 
   mutating func cancel() { stage = .closed }
 }
+#endif

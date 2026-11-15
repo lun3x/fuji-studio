@@ -8,3 +8,4 @@ xcuserdata/
 *.xcuserstate
 Config/Signing.local.xcconfig
 Tests/Fixtures/Private/
+FujiManualWiFi.xcodeproj/
