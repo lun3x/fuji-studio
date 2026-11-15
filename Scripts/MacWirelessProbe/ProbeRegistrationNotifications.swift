@@ -1,14 +1,21 @@
 import Foundation
 import FujiCameraCore
 
+struct ProbeRegistrationNotificationEntry {
+  let timestamp: Date
+  let message: String
+}
+
 struct ProbeRegistrationNotifications {
   private struct Request {
     let peripheralID: UUID
     var session: UUID?
     var verified = false
     var ready = false
+    var observing = true
   }
 
+  private static let maximumEntries = 64
   private static let configuration = "4c0020fe-f3b6-40de-acc9-77d129067b14"
   private static let network = "4e941240-d01d-46b9-a5ea-67636806830b"
   private static let roles: [BLEGATTCharacteristic: String] = [
@@ -25,9 +32,13 @@ struct ProbeRegistrationNotifications {
   ]
 
   private var request: Request?
+  private var entries: [ProbeRegistrationNotificationEntry] = []
+  private var firstDroppedAt: Date?
 
   mutating func begin(peripheralID: UUID) {
     request = Request(peripheralID: peripheralID)
+    entries.removeAll(keepingCapacity: true)
+    firstDroppedAt = nil
   }
 
   mutating func requestedLink(peripheralID: UUID, session: UUID) {
@@ -40,28 +51,42 @@ struct ProbeRegistrationNotifications {
     request?.ready = true
   }
 
-  mutating func end() { request = nil }
+  mutating func pause() { request?.observing = false }
 
-  mutating func end(session: UUID) {
-    if request?.session == session { end() }
+  mutating func pause(session: UUID) {
+    if request?.session == session { pause() }
   }
 
-  mutating func receive(_ event: BluetoothDriverEvent) -> String? {
+  mutating func receive(_ event: BluetoothDriverEvent, at timestamp: Date) -> [ProbeRegistrationNotificationEntry] {
     switch event {
     case .peerModel(let session, let model) where request?.session == session:
       request?.verified = model.flatMap(WirelessCameraModel.init(bluetoothModelNumber:)) == .xt5
-    case .linkFailed(let session, _), .disconnected(let session, _):
-      end(session: session)
+    case .linkFailed(let session, _):
+      pause(session: session)
+    case .disconnected(let session, _) where request?.session == session:
+      request = nil
+      if let firstDroppedAt {
+        entries.append(.init(timestamp: firstDroppedAt, message: "Registration notifications truncated"))
+      }
+      let retired = entries
+      entries = []
+      firstDroppedAt = nil
+      return retired
     case .protocolEvent(let session, .notification(let key, let data)):
-      guard let request, request.session == session, request.verified,
+      guard let request, request.session == session, request.verified, request.observing,
         let role = Self.roles[key], let length = Self.lengthClass(data.count)
-      else { return nil }
+      else { break }
+      guard entries.count < Self.maximumEntries else {
+        if firstDroppedAt == nil { firstDroppedAt = timestamp }
+        break
+      }
       let timing = request.ready ? "after-ready" : "before-ready"
-      return "Registration notification: role=\(role) length_class=\(length) timing=\(timing)"
+      entries.append(.init(timestamp: timestamp,
+        message: "Registration notification: role=\(role) length_class=\(length) timing=\(timing)"))
     default:
       break
     }
-    return nil
+    return []
   }
 
   private static func lengthClass(_ count: Int) -> String? {

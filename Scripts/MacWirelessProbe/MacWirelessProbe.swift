@@ -55,7 +55,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
   private var cameraNetwork: CameraNetwork?
   private var savedAdvertisement = SavedAdvertisementObservation()
   private var secureStatus = ProbeSecureStatusComparison()
-  private var messages: [String] = []
+  private var messages: [(timestamp: Date, line: String)] = []
   private var previousStatus: String?
 
   init(directory: RunDirectory) {
@@ -78,7 +78,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
       self?.record("registration_ack_used=true")
       self?.publish()
     }
-    driver.observeRegistrationNotification = { [weak self] event in self?.record(event) }
+    driver.flushRegistrationNotifications = { [weak self] entries in self?.recordRegistrationNotifications(entries) }
 
     // Preserve the production link and profile. Only first pairing on this
     // test rig has a stricter admission rule: DIS must report X-T5.
@@ -518,10 +518,23 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
   }
 
   private func record(_ message: String) {
-    messages.append("\(Date().ISO8601Format()) \(message)")
-    if messages.count > 256 { messages.removeFirst() }
+    let timestamp = Date()
+    messages.append((timestamp, "\(timestamp.ISO8601Format()) \(message)"))
+    writeMessages()
+  }
+
+  private func recordRegistrationNotifications(_ entries: [ProbeRegistrationNotificationEntry]) {
+    messages.append(contentsOf: entries.map {
+      ($0.timestamp, "\($0.timestamp.ISO8601Format()) \($0.message)")
+    })
+    messages.sort { $0.timestamp < $1.timestamp }
+    writeMessages()
+  }
+
+  private func writeMessages() {
+    if messages.count > 256 { messages.removeFirst(messages.count - 256) }
     do {
-      try directory.write(messages.joined(separator: "\n") + "\n", to: "events")
+      try directory.write(messages.map { $0.line }.joined(separator: "\n") + "\n", to: "events")
     } catch {
       statusView.stringValue = "The private event file could not be written."
     }

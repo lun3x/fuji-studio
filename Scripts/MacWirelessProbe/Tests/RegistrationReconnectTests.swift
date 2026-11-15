@@ -85,7 +85,9 @@ private struct RegistrationReconnectTests {
     let bytes = Data([0xde, 0xad])
     var order: [String] = []
     var forwarded: [(UUID, BLEGATTCharacteristic, Data)] = []
+    var flushed: [[ProbeRegistrationNotificationEntry]] = []
     adapter.eventHandler = { event in
+      if case .disconnected = event { order.append("terminal") }
       guard case .protocolEvent(let id, .notification(let key, let data)) = event else { return }
       forwarded.append((id, key, data))
       order.append("forward")
@@ -93,7 +95,10 @@ private struct RegistrationReconnectTests {
       precondition(native.actions.last == .read(known))
       order.append("action")
     }
-    adapter.observeRegistrationNotification = { order.append($0) }
+    adapter.flushRegistrationNotifications = { entries in
+      order.append("flush")
+      flushed.append(entries)
+    }
     func emit(_ id: UUID, key: BLEGATTCharacteristic = known) {
       native.eventHandler?(.protocolEvent(id, .notification(key, bytes)))
     }
@@ -112,24 +117,54 @@ private struct RegistrationReconnectTests {
     precondition(order == Array(repeating: ["forward", "action"], count: 5).flatMap { $0 })
 
     order.removeAll()
+    let firstStart = Date()
     emit(session)
-    precondition(order == [
-      "forward", "action", "Registration notification: role=configuration length_class=1-2 timing=before-ready",
-    ])
+    let firstEnd = Date()
+    guard order == ["forward", "action"] else {
+      print("FAIL: notification reached the trace sink during an active link")
+      exit(1)
+    }
     order.removeAll()
     adapter.markRegistrationObservationReady(peripheralID: peer)
+    let secondStart = Date()
     emit(session)
-    precondition(order == [
-      "forward", "action", "Registration notification: role=configuration length_class=1-2 timing=after-ready",
-    ])
+    let secondEnd = Date()
+    precondition(order == ["forward", "action"] && flushed.isEmpty)
+    native.eventHandler?(.disconnected(otherSession, .connectionLost))
+    native.eventHandler?(.linkFailed(session, .connectionLost))
+    adapter.disconnect(session: session)
+    precondition(flushed.isEmpty, "A failure or pending disconnect flushed an active link")
     order.removeAll()
     native.eventHandler?(.disconnected(session, .connectionLost))
+    precondition(order == ["terminal", "flush"] && flushed.count == 1)
+    let entries = flushed[0]
+    precondition(entries.map(\.message) == [
+      "Registration notification: role=configuration length_class=1-2 timing=before-ready",
+      "Registration notification: role=configuration length_class=1-2 timing=after-ready",
+    ])
+    precondition((firstStart...firstEnd).contains(entries[0].timestamp))
+    precondition((secondStart...secondEnd).contains(entries[1].timestamp))
+    native.eventHandler?(.disconnected(session, .connectionLost))
+    precondition(flushed.count == 1, "Duplicate terminal callback flushed twice")
+    order.removeAll()
     emit(session)
     precondition(order == ["forward", "action"])
     precondition(forwarded.count == 8 && forwarded.allSatisfy { $0.2 == bytes })
     precondition(forwarded[3].0 == otherSession && forwarded[4].1 == unknown)
     precondition(native.actions.count == forwarded.count)
-    print("Registration notification gates, redaction, and forwarding order checks passed.")
+
+    let nextSession = UUID()
+    adapter.beginRegistrationObservation(peripheralID: peer)
+    adapter.connect(peripheralID: peer, session: nextSession)
+    native.eventHandler?(.peerModel(nextSession, "X-T5"))
+    for _ in 0..<80 { emit(nextSession) }
+    precondition(flushed.count == 1, "Notification burst reached the sink before retirement")
+    native.eventHandler?(.disconnected(nextSession, .connectionLost))
+    precondition(flushed.count == 2)
+    let truncated = flushed[1]
+    precondition(truncated.count == 65 && truncated.last?.message == "Registration notifications truncated")
+    precondition(zip(truncated, truncated.dropFirst()).allSatisfy { $0.timestamp <= $1.timestamp })
+    print("Registration notification forwarding, deferred flush, timestamp, and bound checks passed.")
   }
 
   static func checkEligibility() {

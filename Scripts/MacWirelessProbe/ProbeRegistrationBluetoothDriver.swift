@@ -33,7 +33,7 @@ final class ProbeRegistrationBluetoothDriver: BluetoothPeripheralDriver {
   private(set) var acknowledgementUsed = false
   var eventHandler: ((BluetoothDriverEvent) -> Void)?
   var observeAcknowledgement: (() -> Void)?
-  var observeRegistrationNotification: ((String) -> Void)?
+  var flushRegistrationNotifications: (([ProbeRegistrationNotificationEntry]) -> Void)?
 
   init(native: any BluetoothPeripheralDriver) {
     self.native = native
@@ -57,7 +57,7 @@ final class ProbeRegistrationBluetoothDriver: BluetoothPeripheralDriver {
     registrationNotifications.markReady(peripheralID: peripheralID)
   }
 
-  func endRegistrationObservation() { registrationNotifications.end() }
+  func endRegistrationObservation() { registrationNotifications.pause() }
 
   func start(allowPermissionPrompt: Bool) throws {
     if let experiment, !experiment.selectionIsCurrent() { throw WirelessFailure.peerMismatch }
@@ -68,7 +68,7 @@ final class ProbeRegistrationBluetoothDriver: BluetoothPeripheralDriver {
   func stopScan() { native.stopScan() }
   func discardDiscoveries() { native.discardDiscoveries() }
   func disconnect(session: UUID) {
-    registrationNotifications.end(session: session)
+    registrationNotifications.pause(session: session)
     native.disconnect(session: session)
   }
 
@@ -111,6 +111,7 @@ final class ProbeRegistrationBluetoothDriver: BluetoothPeripheralDriver {
   }
 
   private func receive(_ event: BluetoothDriverEvent) {
+    let occurredAt = Date()
     if let experiment {
       switch event {
       case .peerModel(let session, let model):
@@ -139,8 +140,9 @@ final class ProbeRegistrationBluetoothDriver: BluetoothPeripheralDriver {
       }
     }
     eventHandler?(event)
-    if let observation = registrationNotifications.receive(event) {
-      observeRegistrationNotification?(observation)
+    let observations = registrationNotifications.receive(event, at: occurredAt)
+    if !observations.isEmpty {
+      flushRegistrationNotifications?(observations)
     }
   }
 
