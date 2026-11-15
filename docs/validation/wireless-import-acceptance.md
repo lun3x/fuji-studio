@@ -44,7 +44,7 @@ To reproduce, install the test host with a regular test run on an isolated simul
 | Gate | Status and evidence |
 | --- | --- |
 | Signed iPhone Release | **Blocked at provisioning.** The repository Release build command with development team `AZH3P824F3` and automatic signing targeted the connected iPhone 15 Pro. Xcode exited 65 because the available development profile lacks Hotspot Configuration and Access Wi-Fi Information. The exact Release bundle was unavailable for strict signature verification, entitlement inspection, installation or normal launch. The separate earlier provisioning attempt also identified the team as Personal. Logs `/tmp/fuji-wifi-task14-release-phone.log` and `/tmp/fuji-task05-phone-provisioning.log`. |
-| On-device state | The Bluetooth-only Debug probe built from `ab44a48d` was signed, verified, installed and launched explicitly on the iPhone. It reached X-T5 service discovery and model identification. The integrated Release awaits provisioning. |
+| On-device state | The Bluetooth-only Debug probe from `74eedf3c` was signed, verified, installed and launched explicitly on the iPhone. It reached Bluetooth Ready once on the X-T5. Saved reconnect disconnected during the secure status write. The probe was stopped when connection testing moved to the Mac. The integrated Release awaits provisioning. |
 | Native connection and teardown | **Pending for both bodies.** Verify first pairing, reconnect after camera power cycle, selected-body-only reconnect with both nearby, denied/revoked Bluetooth and Local Network permission, native join accept/refuse, prompt inactivity, connection loss and safe WiFi teardown and USB handoff. Confirm no automatic WiFi rejoin or transfer resume and no USB Camera ready indication from the wireless state. Fixture runs exercise app admission and lifecycle. The native camera, permissions and join exchange still require the phone. |
 | X-E3 PC AutoSave | **Blocked at capability and identity gates.** Apple's managed Multicast Networking grant must be available to an eligible team and the app ID. Native discovery also requires an independently verified identity for the selected body. Registration, identity stability, original RAF/JPEG exposure, queue advancement and completion markers remain pending. The default native integration reports AutoSave unavailable. Log `/tmp/fuji-task06-multicast-provisioning.log`. |
 | Original bytes against card | **Pending for every route.** Acquire independent card originals and test at least 20 mixed captures per supported path where available. Include X-T5 split cards, same-card pairs, RAW-only, repeated filenames, missing mates, supported compressed and uncompressed RAF, disabled JPEG-only/HEIF/movie rows and large originals. Verify count, roles and SHA-256 of each Photos asset's originals against the independently copied card resources. The previous protected phone fixture could be listed but its bytes could not be copied and it supplied no target card evidence. |
@@ -62,8 +62,59 @@ Information. The app rejected the model before the secure status read, and the
 camera stayed in Pairing Registration. The fix recognizes this exact public
 product number alongside the existing model names. The regression tests cover
 secure pairing with a renamed X-T5, a conflicting model hint, and an unsupported
-product number. Physical pairing and saved reconnect await retest.
+product number.
 [Fujifilm X-T5 declaration of conformity](https://dl.fujifilm-x.com/global/products/cameras/x-t5/pdf/x-t5_doc-ysk.pdf)
+
+The `74eedf3c` Bluetooth-only iPhone probe read and acknowledged secure status,
+sent client identification, read the network-name attribute, subscribed to
+eight characteristics and read the firmware attribute. The app reached Bluetooth
+Ready once. The user saw the iPhone pairing dialog and a camera confirmation
+number. Camera-side pairing completion remains unconfirmed. Later attempts read
+secure status and disconnected before the write acknowledgement with CoreBluetooth
+error 7 (`peripheralDisconnected`). Saved reconnect remains unverified.
+[Fujifilm X-T5 pairing instructions](https://fujifilm-dsc.com/en/manual/x-t5/connections/usage_smartphone_app/index.html),
+[Apple Core Bluetooth error](https://developer.apple.com/documentation/corebluetooth/cberror-swift.struct/code/peripheraldisconnected)
+
+The first Mac probe attempt with the Keychain adapter from `6e2b9e6a`
+discovered the X-T5, connected and identified its model. The secure status read
+triggered a macOS numeric confirmation. After the Mac confirmation, the camera
+reported that pairing was canceled. The status read failed with ATT error 15
+(`insufficientEncryption`), and CoreBluetooth reported error 7. The probe
+did not reach the acknowledgement write or save a Mac pairing.
+
+### Follow-up automated verification
+
+The X-T5 model fix at `74eedf3c` passed the 12 Bluetooth gateway tests on a
+fresh iPhone 17 Pro simulator on iOS 27.0. The two new gateway tests reproduced
+the model recognition and disagreement failures before the fix. The fast and
+complete runs each executed 250 app XCTest cases with zero failures and two
+native PhotoKit fixture skips. Each also passed 613 Swift Testing cases in 73
+suites. Earlier native PhotoKit executions are recorded above.
+
+The complete run used one simulator worker and enabled both native Home
+lifecycle tests, which passed. It executed 116 UI XCTest cases. The native
+viewer rotation and hardware Escape cases skipped. Four drawer and grid
+fixture cases failed with six assertion failures. These fixture routes
+construct their workspace or grid directly, without starting the native
+Bluetooth gateway. The tests exercised these selectors:
+
+- `DrawerTrajectoryTests.testShortPhotoPullSpringsBackAndScrollHandsOffOnlyAfterReachingTop`
+- `PhotoGridTests.testCheckedStartSweepRemovesAndEdgeScrollExtendsRange`
+- `PhotoGridTests.testDayCheckboxSelectsWholeDayFromBrowseAndReflectsPartialSelection`
+- `PhotoGridTests.testFinalTwoRowViewportRevealsViewedTileAndPreservesCheckedSet`
+
+Running these four selectors at pre-fix revision `ab44a48d` on the same
+iPhone 17 Pro simulator reproduced all six failures at the same assertions.
+The earlier iPhone 15 Pro full run passed these four cases.
+The focused comparison log is at
+`/tmp/fuji-studio-xt5-ble-ui-control/.build/ui-control-baseline.log`.
+
+The full log and xcresult are at
+`/tmp/fuji-studio-xt5-ble-diagnosis/.build/xt5-model-full.log` and
+`/tmp/fuji-studio-xt5-ble-diagnosis/.build/TestResults/20261115-093657-45911.xcresult`.
+The same source also built as an unsigned Simulator Release for arm64 and
+x86_64. The Release binary contained the model comparison in the native gateway
+with the diagnostic launch flags and report strings present only in Debug.
 
 ## Evidence matrix
 
@@ -73,7 +124,7 @@ The other protocol observations below come from public sources. See the
 
 | Check | X-T5 4.32, XApp | X-E3 1.32, phone or AutoSave |
 | --- | --- | --- |
-| BLE pairing and reconnect | Fujifilm documents its 4.30 pairing security change and the switch to XApp on iOS. Furble’s maintainer reported secure reconnect on an updated X-T5 without specifying its firmware. The local probe observed the secure pairing service. iOS confirmation and saved reconnect remain open. [Firmware history](https://www.fujifilm-x.com/en-us/support/download/firmware/cameras/x-t5/), [Furble report](https://github.com/gkoh/furble/issues/208#issuecomment-3235389619) | Fujifilm reports a Camera Remote Bluetooth pairing fix for Android 16 in 1.32. Libfuji implements legacy pairing. The target’s service layout, iOS confirmation and saved reconnect are unknown. [Firmware history](https://www.fujifilm-x.com/en-us/support/download/firmware/cameras/x-e3/), [Libfuji BLE source](https://github.com/petabyt/libfuji/blob/3b9932a46d025405dae505ddb624733b6ea3edd1/lib/bluetooth.c) |
+| BLE pairing and reconnect | Fujifilm documents its 4.30 pairing security change and the switch to XApp on iOS. Furble’s maintainer reported secure reconnect on an updated X-T5 without specifying its firmware. The iPhone probe reached Bluetooth Ready once and later disconnected during saved reconnect. The first Mac probe disconnected during encryption setup. [Firmware history](https://www.fujifilm-x.com/en-us/support/download/firmware/cameras/x-t5/), [Furble report](https://github.com/gkoh/furble/issues/208#issuecomment-3235389619) | Fujifilm reports a Camera Remote Bluetooth pairing fix for Android 16 in 1.32. Libfuji implements legacy pairing. The target’s service layout, iOS confirmation and saved reconnect are unknown. [Firmware history](https://www.fujifilm-x.com/en-us/support/download/firmware/cameras/x-e3/), [Libfuji BLE source](https://github.com/petabyt/libfuji/blob/3b9932a46d025405dae505ddb624733b6ea3edd1/lib/bluetooth.c) |
 | Peer identity and firmware | Unknown which authenticated values are stable across BLE and WiFi and which field carries the body firmware on this release. Capture pairing, reconnect and same-model peer rejection. | Unknown which values bind the saved BLE peer to phone and AutoSave sessions. Capture body firmware and cross-transport identity for the selected body. |
 | WiFi readiness | Libfuji shows credential reads and a WiFi launch write. The positive readiness signal and usable TCP setup on this firmware are unknown. [Libfuji BLE source](https://github.com/petabyt/libfuji/blob/3b9932a46d025405dae505ddb624733b6ea3edd1/lib/bluetooth.c) | The manual documents wireless phone transfer and camera-initiated PC AutoSave on a shared network. Positive phone-mode readiness and signed-iPhone AutoSave discovery are unknown. [Wireless transfer manual](https://fujifilm-dsc.com/en-int/manual/x-e3/connections/wireless/index.html) |
 | Original-size control | Libfuji uses the XApp compression control (D226) before download. The target’s accepted control, response and original JPEG/RAF byte equality are unknown. [Libfuji PTP source](https://github.com/petabyt/libfuji/blob/3b9932a46d025405dae505ddb624733b6ea3edd1/lib/fuji.c) | Libfuji toggles the D227 file-size control in phone mode. Original-size behavior and byte equality are unknown for both target modes. [Libfuji PTP source](https://github.com/petabyt/libfuji/blob/3b9932a46d025405dae505ddb624733b6ea3edd1/lib/fuji.c) |
