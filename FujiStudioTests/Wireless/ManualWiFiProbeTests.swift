@@ -198,6 +198,7 @@ struct ManualWiFiProbeTests {
     await probe.waitForOperation()
     #expect(fixture.events.last?.phase == .activationFailed)
     #expect(fixture.events.last?.failure == .wifiReadinessTimeout)
+    #expect(fixture.events.last?.launchMode == .standard)
     #expect(probe.status == "Camera Wi-Fi did not become ready. Check the camera and retry.")
   }
 

@@ -44,6 +44,49 @@ struct ManualWiFiBluetoothDriverTests {
     ])
   }
 
+  @Test func forwardsOnlyTheOrderedStandardActivationForTheSelectedSession() throws {
+    let native = Driver()
+    let driver = ManualWiFiBluetoothDriver(native: native)
+    let peripheral = UUID()
+    let session = UUID()
+    let password = BLEProtocolAction.read(ProbeImageViewingLaunch.password)
+    let standard = BLEProtocolAction.write(
+      ProbeImageViewingLaunch.launch, Data([0x04, 0x00]), .activateWiFi)
+    driver.connect(peripheralID: peripheral, session: session)
+    native.eventHandler?(.peerModel(session, "X-T5"))
+    try driver.beginStandardActivation(peripheralID: peripheral) { true }
+    driver.perform(password, session: session)
+    native.eventHandler?(.protocolEvent(UUID(), .read(ProbeImageViewingLaunch.password, Data())))
+    #expect(native.actions == [password])
+    native.eventHandler?(.protocolEvent(session, .read(ProbeImageViewingLaunch.password, Data())))
+    driver.perform(standard, session: UUID())
+    driver.perform(standard, session: session)
+    #expect(native.actions == [password, standard])
+
+    driver.disconnect(session: session)
+    driver.perform(standard, session: session)
+    #expect(native.actions == [password, standard])
+  }
+
+  @Test(arguments: [false, true]) func rejectsActivationWithoutCurrentOrderedHandshake(selectionExpires: Bool) throws {
+    let native = Driver()
+    let driver = ManualWiFiBluetoothDriver(native: native)
+    let peripheral = UUID()
+    let session = UUID()
+    let password = BLEProtocolAction.read(ProbeImageViewingLaunch.password)
+    var current = true
+    driver.connect(peripheralID: peripheral, session: session)
+    native.eventHandler?(.peerModel(session, "X-T5"))
+    try driver.beginStandardActivation(peripheralID: peripheral) { current }
+    driver.perform(password, session: session)
+    if selectionExpires {
+      native.eventHandler?(.protocolEvent(session, .read(ProbeImageViewingLaunch.password, Data())))
+      current = false
+    }
+    driver.perform(.write(ProbeImageViewingLaunch.launch, Data([0x04, 0x00]), .activateWiFi), session: session)
+    #expect(native.actions == [password])
+  }
+
   private final class Driver: BluetoothPeripheralDriver {
     var eventHandler: ((BluetoothDriverEvent) -> Void)?
     var actions: [BLEProtocolAction] = []

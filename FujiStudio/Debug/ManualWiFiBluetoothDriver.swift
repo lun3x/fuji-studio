@@ -12,7 +12,7 @@ final class ManualWiFiBluetoothDriver: BluetoothPeripheralDriver {
 
   private let native: any BluetoothPeripheralDriver
   private var link: (peripheralID: UUID, session: UUID, verifiedXT5: Bool)?
-  private var imageViewing: ProbeImageViewingLaunch?
+  private var activationGuard: ProbeImageViewingLaunch?
   var eventHandler: ((BluetoothDriverEvent) -> Void)?
 
   init(native: any BluetoothPeripheralDriver = CoreBluetoothDriver()) {
@@ -20,11 +20,11 @@ final class ManualWiFiBluetoothDriver: BluetoothPeripheralDriver {
     native.eventHandler = { [weak self] in self?.receive($0) }
   }
 
-  func beginImageViewing(peripheralID: UUID, selectionIsCurrent: @escaping () -> Bool) throws {
+  func beginStandardActivation(peripheralID: UUID, selectionIsCurrent: @escaping () -> Bool) throws {
     guard let link, link.peripheralID == peripheralID, link.verifiedXT5,
-      selectionIsCurrent(), imageViewing == nil
+      selectionIsCurrent(), activationGuard == nil
     else { throw WirelessFailure.peerMismatch }
-    imageViewing = ProbeImageViewingLaunch(session: link.session, selectionIsCurrent: selectionIsCurrent)
+    activationGuard = ProbeImageViewingLaunch(session: link.session, selectionIsCurrent: selectionIsCurrent)
   }
 
   func start(allowPermissionPrompt: Bool) throws { try native.start(allowPermissionPrompt: allowPermissionPrompt) }
@@ -33,7 +33,7 @@ final class ManualWiFiBluetoothDriver: BluetoothPeripheralDriver {
   func discardDiscoveries() { native.discardDiscoveries() }
 
   func connect(peripheralID: UUID, session: UUID) {
-    imageViewing = nil
+    activationGuard = nil
     link = (peripheralID, session, false)
     native.connect(peripheralID: peripheralID, session: session)
   }
@@ -45,9 +45,9 @@ final class ManualWiFiBluetoothDriver: BluetoothPeripheralDriver {
 
   func perform(_ action: BLEProtocolAction, session: UUID) {
     guard link?.session == session else { return }
-    if var viewing = imageViewing {
-      let decision = viewing.perform(action, session: session)
-      imageViewing = viewing
+    if var guardedLaunch = activationGuard {
+      let decision = guardedLaunch.perform(action, session: session)
+      activationGuard = guardedLaunch
       guard handle(decision, session: session) else { return }
     } else if case .write(_, _, .activateWiFi) = action {
       eventHandler?(.linkFailed(session, .unsupportedProtocol))
@@ -73,10 +73,10 @@ final class ManualWiFiBluetoothDriver: BluetoothPeripheralDriver {
       return
     default: break
     }
-    if var viewing = imageViewing {
-      let decision = viewing.receive(event)
-      imageViewing = viewing
-      guard handle(decision, session: viewing.session) else { return }
+    if var guardedLaunch = activationGuard {
+      let decision = guardedLaunch.receive(event)
+      activationGuard = guardedLaunch
+      guard handle(decision, session: guardedLaunch.session) else { return }
     }
     eventHandler?(event)
   }
@@ -88,7 +88,8 @@ final class ManualWiFiBluetoothDriver: BluetoothPeripheralDriver {
     case .ignore:
       break
     case .submitImageViewing:
-      native.perform(.write(ProbeImageViewingLaunch.launch, Data([0x03, 0x00]), .activateWiFi), session: session)
+      // The shared guard recognized the profile's standard launch write.
+      return true
     case .reject(let failure):
       clear(session)
       eventHandler?(.linkFailed(session, failure))
@@ -99,7 +100,7 @@ final class ManualWiFiBluetoothDriver: BluetoothPeripheralDriver {
   private func clear(_ session: UUID) {
     guard link?.session == session else { return }
     link = nil
-    imageViewing = nil
+    activationGuard = nil
   }
 }
 #endif

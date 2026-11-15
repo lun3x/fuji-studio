@@ -426,6 +426,7 @@ struct ManualWiFiEvent: Encodable {
   }
 
   enum LinkMode: String, Encodable { case pair, reconnect }
+  enum LaunchMode: String, Encodable { case standard }
 
   enum Failure: String, Encodable {
     case wifiReadinessTimeout, tcpSetupTimeout, ptpTimeout, bluetoothPermission, localNetworkPermission
@@ -456,12 +457,17 @@ struct ManualWiFiEvent: Encodable {
   let observedFirmware: String?
   let failure: Failure?
   let linkMode: LinkMode?
+  let launchMode: LaunchMode?
 
   init(phase: Phase, observedFirmware: String?, failure: Failure?, linkMode: LinkMode?) {
     self.phase = phase
     self.observedFirmware = observedFirmware.map(Self.firmware)
     self.failure = failure
     self.linkMode = linkMode
+    self.launchMode = switch phase {
+    case .activating, .ready, .activationFailed: .standard
+    default: nil
+    }
   }
 
   static func firmware(_ raw: String?) -> String {
@@ -511,7 +517,7 @@ extension ManualWiFiProbe {
       bluetooth: NativeBluetoothGateway(store: store, driver: driver),
       loadSaved: { try await store.cameras() },
       password: { try await store.password(for: $0) },
-      authorizeLaunch: { try driver.beginImageViewing(peripheralID: $0, selectionIsCurrent: $1) },
+      authorizeLaunch: { try driver.beginStandardActivation(peripheralID: $0, selectionIsCurrent: $1) },
       makeSession: { identity in
         let channel = try await NetworkByteChannel.connect(to: .cameraHosted(mode: .xApp))
         return XAppTransferAdapter.makeSession(
