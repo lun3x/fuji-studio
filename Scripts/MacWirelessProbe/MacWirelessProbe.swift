@@ -1,5 +1,6 @@
 import AppKit
 import CoreBluetooth
+import CoreLocation
 import Darwin
 import Foundation
 import FujiCameraCore
@@ -10,6 +11,12 @@ struct MacWirelessProbe {
   static func main() {
     umask(0o077)
     let arguments = CommandLine.arguments
+    if arguments == [arguments[0], "--wifi-worker"] {
+      guard NSRunningApplication(processIdentifier: getppid())?.bundleURL?.resolvingSymlinksInPath()
+        == Bundle.main.bundleURL.resolvingSymlinksInPath()
+      else { exit(2) }
+      exit(ProbeMacWiFiWorker.main())
+    }
     guard arguments.count == 3, arguments[1] == "--run-dir",
       let directory = try? RunDirectory(path: arguments[2])
     else {
@@ -29,6 +36,7 @@ struct MacWirelessProbe {
 private final class WirelessProbe: NSObject, NSApplicationDelegate {
   private enum Phase: String {
     case idle, discovering, pairing, observingSaved, reconnecting, linked, activatingWiFi, disconnecting, stopped
+    case checkingWiFi, probingPTP
   }
 
   private enum ReconnectMode: String {
@@ -58,7 +66,10 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
   private var linkedCamera: SavedCamera?
   private var bleFirmware = "unavailable"
   private var savedModel: WirelessCameraModel?
-  private var cameraNetwork: CameraNetwork?
+  private var cameraNetwork: ProbeReadyCameraNetwork?
+  private var ptpReport = ProbePTPIdentityReport()
+  private let association = ProbeMacWiFiAssociation()
+  private lazy var location = CLLocationManager()
   private var savedAdvertisement = SavedAdvertisementObservation()
   private var secureStatus = ProbeSecureStatusComparison()
   private var messages: [(timestamp: Date, line: String)] = []
@@ -163,11 +174,22 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
           record("Bluetooth \(availability)")
           publish()
         case .disconnected(let id, let failure):
-          guard linkedCamera?.id == id, phase == .linked || phase == .activatingWiFi else {
+          guard linkedCamera?.id == id,
+            phase == .linked || phase == .activatingWiFi || phase == .checkingWiFi || phase == .probingPTP
+          else {
             continue
           }
           linkedCamera = nil
           let label = Self.failureLabel(failure)
+          if phase == .probingPTP {
+            operation?.cancel()
+            record("BLE disconnected during PTP identity test: \(label)")
+            continue
+          }
+          if phase == .checkingWiFi {
+            cameraNetwork = nil
+            continue
+          }
           if phase == .activatingWiFi || cameraNetwork != nil {
             // A body may close BLE while its access point starts. The
             // gateway's activation result still determines Wi-Fi readiness.
@@ -202,6 +224,8 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
       case ("reconnect-registration", 1): reconnect(.registration)
       case ("wifi", 1): activateWiFi()
       case ("wifi-image-viewing", 1): activateWiFi(imageViewing: true)
+      case ("wifi-preflight", 1): preflightWiFi()
+      case ("ptp-identity", 1): probePTPIdentity()
       case ("quit", 1): NSApp.terminate(nil)
       default: reject("unknown", "invalidCommand")
       }
@@ -270,6 +294,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
     }
     verifiedPairingSession = nil
     savedAdvertisement = SavedAdvertisementObservation()
+    ptpReport = ProbePTPIdentityReport()
     registrationDriver.resetObservation()
     registrationDriver.beginRegistrationObservation(peripheralID: candidate.peripheralID)
     secureStatus.begin(.pairing, peripheralID: candidate.peripheralID)
@@ -292,6 +317,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
     let command = mode.rawValue
     guard phase == .idle else { return reject(command, "busy") }
     cameraNetwork = nil
+    ptpReport = ProbePTPIdentityReport()
     registrationDriver.resetObservation()
     secureStatus.resetObservation()
     let ticket = secureStatus.takeRegistrationTicket()
@@ -381,15 +407,16 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
     let command = imageViewing ? "wifi-image-viewing" : "wifi"
     guard phase == .linked, let linkedCamera else { return reject(command, "connectCameraFirst") }
     cameraNetwork = nil
+    ptpReport = ProbePTPIdentityReport()
     registrationDriver.resetImageViewingObservation()
     begin(command, phase: .activatingWiFi)
-    operation = Task {
+    operation = Task { [self] in
       defer { registrationDriver.endImageViewing() }
       let label: String
       do {
         let selected = try await store.selected()
         let network = try await ProbeWiFiActivation.activate(
-          camera: linkedCamera, selected: selected, gateway: gateway
+          camera: linkedCamera, selected: selected, gateway: gateway, launch: imageViewing ? .imageViewing : .standard
         ) {
           guard imageViewing else { return }
           guard registrationDriver.beginImageViewing(peripheralID: linkedCamera.peripheralID,
@@ -400,6 +427,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
           else { throw WirelessFailure.peerMismatch }
         }
         guard phase == .activatingWiFi else { return }
+        if imageViewing, !registrationDriver.imageViewLaunchUsed { throw WirelessFailure.unsupportedProtocol }
         cameraNetwork = network
         label = "wifiReady"
       } catch {
@@ -409,6 +437,87 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
       operation = nil
       finish(label, phase: self.linkedCamera == nil ? .idle : .linked)
     }
+  }
+
+  private var wifiLocationAllowed: Bool {
+    switch location.authorizationStatus {
+    case .authorizedAlways, .authorizedWhenInUse: true
+    default: false
+    }
+  }
+
+  private func preflightWiFi() {
+    let command = "wifi-preflight"
+    guard phase == .idle || phase == .linked else { return reject(command, "busy") }
+    guard wifiLocationAllowed else {
+      if location.authorizationStatus == .notDetermined {
+        NSApp.activate()
+        location.requestWhenInUseAuthorization()
+      }
+      return reject(command, "locationPermissionRequired")
+    }
+    begin(command, phase: .checkingWiFi)
+    operation = Task {
+      let label: String
+      do {
+        try await ProbePTPIdentity.preflight(association: association, wiredRoute: ProbeWiredRoute.detect)
+        label = "wifiPreflightReady"
+      } catch {
+        label = ProbePTPIdentity.failureLabel(error)
+      }
+      guard phase == .checkingWiFi else { return }
+      operation = nil
+      finish(label, phase: linkedCamera == nil ? .idle : .linked)
+    }
+  }
+
+  private func probePTPIdentity() {
+    let command = "ptp-identity"
+    guard phase == .linked, let camera = linkedCamera, let receipt = cameraNetwork,
+      let session = registrationDriver.verifiedReadySession(for: camera.peripheralID),
+      receipt.identity.cameraID == camera.id
+    else { return reject(command, "connectCameraAndActivateWiFi") }
+    guard wifiLocationAllowed else { return reject(command, "locationPermissionRequired") }
+    let guid = ptpClientGUID()
+    cameraNetwork = nil
+    ptpReport = ProbePTPIdentityReport(launch: receipt.launch)
+    begin(command, phase: .probingPTP)
+    operation = Task {
+      let report: ProbePTPIdentityReport
+      do {
+        try Task.checkCancellation()
+        let currentIdentity = try await gateway.identity(for: camera.id)
+        report = await ProbePTPIdentity.run(
+          receipt, currentIdentity: currentIdentity, credentials: store, association: association,
+          wiredRoute: ProbeWiredRoute.detect,
+          isCurrent: { [self] in
+            linkedCamera?.id == camera.id && selectionMatches(camera.id, phase: .probingPTP)
+              && registrationDriver.verifiedReadySession(for: camera.peripheralID) == session
+          },
+          makeSession: { identity in
+            let channel = try await NetworkByteChannel.connect(to: .cameraHosted(mode: .xApp))
+            let transport = WirelessPTPTransport(channel: channel, inactivityTimeout: .seconds(5))
+            return XAppTransferAdapter.makeSession(transport: transport, expectedIdentity: identity, clientGUID: guid)
+          })
+      } catch {
+        var failure = ProbePTPIdentityReport(launch: receipt.launch)
+        failure.outcome = ProbePTPIdentity.failureLabel(error)
+        report = failure
+      }
+      ptpReport = report
+      record("PTP identity outcome=\(report.outcome) wifi_restore=\(report.restoration.rawValue)")
+      guard phase == .probingPTP else { publish(); return }
+      operation = nil
+      let label = report.restoration == .unverified ? "restoreUnverified" : report.outcome
+      finish(label, phase: linkedCamera == nil ? .idle : .linked)
+    }
+  }
+
+  private func ptpClientGUID() -> Data {
+    let key = "wireless.ptpClientID"
+    let client = probeDefaults.string(forKey: key).flatMap(UUID.init(uuidString:)) ?? UUID()
+    probeDefaults.set(client.uuidString, forKey: key)
+    return withUnsafeBytes(of: client.uuid) { Data($0) }
   }
 
   private func completeLink(_ camera: SavedCamera) async throws {
@@ -463,13 +572,15 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
     secureStatus.endAttempt()
     registrationDriver.endRegistrationObservation()
     cameraNetwork = nil
+    let restoringWiFi = phase == .probingPTP
     begin(shutdown ? "quit" : "disconnect", phase: .disconnecting)
     clearDiscovery()
     let previous = operation
     previous?.cancel()
     operation = Task {
+      if restoringWiFi { await previous?.value }
       await gateway.disconnect()
-      await previous?.value
+      if !restoringWiFi { await previous?.value }
       registrationDriver.endExperiment()
       linkedCamera = nil
       operation = nil
@@ -521,8 +632,13 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
       "ble_firmware=\(linkedCamera == nil ? "unavailable" : bleFirmware)",
       "selected=\(selectedHandle.map(String.init) ?? "none")",
       "wifi_ready=\(cameraNetwork != nil)",
-      "wifi_security=\(cameraNetwork?.security == .wpaPersonal ? "wpaPersonal" : "none")",
+      "wifi_security=\(cameraNetwork?.network.security == .wpaPersonal ? "wpaPersonal" : "none")",
       "wifi_model=\(cameraNetwork == nil ? "none" : WirelessCameraModel.xt5.rawValue)",
+      "ptp_launch=\(ptpReport.launch?.rawValue ?? "none")",
+      "ptp_camera_associated=\(ptpReport.associated)",
+      "ptp_identity_verified=\(ptpReport.verified)",
+      "ptp_firmware=\(ptpReport.firmware)",
+      "wifi_restore=\(ptpReport.restoration.rawValue)",
       "saved_advert_identity=\(savedAdvertisement.matchingIdentity)",
       "saved_advert_service=\(savedAdvertisement.matchingService)",
       "saved_advert_shape=\(savedAdvertisement.matchingShape)",

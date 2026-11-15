@@ -47,9 +47,11 @@ private struct ProbeWiFiActivationTests {
     let supportedFirmware = [target, "04.31", "4.99"]
     for firmware in supportedFirmware {
       gateway.firmware = firmware
-      let network = try await activate(camera.id)
-      precondition(network.credential.cameraID == camera.id)
-      precondition(network.security == .wpaPersonal)
+      let receipt = try await activate(camera.id)
+      precondition(receipt.network.credential.cameraID == camera.id)
+      precondition(receipt.network.security == .wpaPersonal)
+      precondition(receipt.identity.cameraID == camera.id && receipt.identity.firmware == firmware)
+      precondition(receipt.launch == .standard)
     }
     precondition(gateway.activations == supportedFirmware.count && armCount == supportedFirmware.count)
 
@@ -94,7 +96,7 @@ private struct ProbeWiFiActivationTests {
   }
 
   private static func rejects(
-    _ failure: WirelessFailure, _ action: () async throws -> CameraNetwork
+    _ failure: WirelessFailure, _ action: () async throws -> ProbeReadyCameraNetwork
   ) async -> Bool {
     do {
       _ = try await action()

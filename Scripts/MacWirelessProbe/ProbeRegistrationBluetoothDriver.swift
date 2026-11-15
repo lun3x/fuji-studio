@@ -78,6 +78,10 @@ final class ProbeRegistrationBluetoothDriver: BluetoothPeripheralDriver {
     registrationNotifications.markReady(peripheralID: peripheralID)
   }
 
+  func verifiedReadySession(for peripheralID: UUID) -> UUID? {
+    registrationNotifications.verifiedReadySession(for: peripheralID)
+  }
+
   func endRegistrationObservation() { registrationNotifications.pause() }
 
   func start(allowPermissionPrompt: Bool) throws {

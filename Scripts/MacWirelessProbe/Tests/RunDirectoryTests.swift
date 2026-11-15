@@ -78,6 +78,12 @@ private struct RunDirectoryTests {
     expect(try self.run(CommandLine.arguments[1], [path, "wifi-image-viewing"]) == 0,
       "controller could not queue the image-viewing launch")
     expect(try directory.nextCommand() == "wifi-image-viewing", "probe could not read the image-viewing launch")
+    expect(try self.run(CommandLine.arguments[1], [path, "wifi-preflight"]) == 0,
+      "controller could not queue the Wi-Fi preflight")
+    expect(try directory.nextCommand() == "wifi-preflight", "probe could not read the Wi-Fi preflight")
+    expect(try self.run(CommandLine.arguments[1], [path, "ptp-identity"]) == 0,
+      "controller could not queue the PTP identity trial")
+    expect(try directory.nextCommand() == "ptp-identity", "probe could not read the PTP identity trial")
     expect(try self.run(CommandLine.arguments[1], [path, "pair"]) == 0, "controller could not queue standard pairing")
     expect(try directory.nextCommand() == "pair", "probe could not read standard pairing")
     expect(try self.run(CommandLine.arguments[1], [path, "pair-geotag-subscription"]) != 0,

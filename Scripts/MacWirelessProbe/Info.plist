@@ -24,5 +24,11 @@
   <string>27.0</string>
   <key>NSBluetoothAlwaysUsageDescription</key>
   <string>MacWirelessProbe uses Bluetooth to test Fuji Studio discovery, pairing and reconnection with your camera.</string>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>MacWirelessProbe uses the local network to verify your selected camera's PTP connection.</string>
+  <key>NSLocationUsageDescription</key>
+  <string>MacWirelessProbe uses Wi-Fi network identification to verify the camera's network and check that your previous network returns.</string>
+  <key>NSLocationWhenInUseUsageDescription</key>
+  <string>MacWirelessProbe uses Wi-Fi network identification to verify the camera's network and check that your previous network returns.</string>
 </dict>
 </plist>

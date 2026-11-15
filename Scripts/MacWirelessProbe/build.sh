@@ -17,7 +17,7 @@ xcrun swiftc -swift-version 6 -target "$(uname -m)-apple-macosx27.0" -D DEBUG \
   "$wireless/AutoSaveGateway.swift" "$wireless/BluetoothGateway.swift" \
   "$wireless/CoreBluetoothConnections.swift" "$wireless/CoreBluetoothDriver.swift" \
   "$wireless/KeychainCameraStore.swift" "$wireless/NativeBluetoothGateway.swift" \
-  "$wireless/SavedCameraStore.swift" "$core/libFujiCameraCore.a" \
+  "$wireless/NetworkByteChannel.swift" "$wireless/SavedCameraStore.swift" "$core/libFujiCameraCore.a" \
   -o "$app/Contents/MacOS/MacWirelessProbe"
 
 codesign --force --sign - "$app"
