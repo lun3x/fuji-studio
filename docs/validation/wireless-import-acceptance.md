@@ -2,16 +2,55 @@
 
 ## Firmware targets
 
-Fujifilm’s official U.S. release pages were checked on 2026-11-14. Recheck both before release validation. The bundled policy admits one firmware version per model. Firmware admission and transfer capabilities are separate checks. Pairing and identity reads can establish admission before browsing or transfer begins.
+Fujifilm’s official U.S. release pages were rechecked on 2026-11-15. The bundled policy still matches both latest releases and admits one version per model. Firmware admission and transfer capabilities are separate checks. Pairing and identity reads can precede admission. The owner reported that the two bodies are on the target versions. The app has yet to read the versions from those bodies.
 
 | Camera | Latest official release | Intended path | Physical acceptance |
 | --- | --- | --- | --- |
 | X-T5 | 4.32, published 2026-11-10. [Release and update instructions](https://www.fujifilm-x.com/en-us/support/download/firmware/cameras/x-t5/) | Secure BLE and XApp transfer | Pending |
 | X-E3 | 1.32, published 2026-06-23. [Release and update instructions](https://www.fujifilm-x.com/en-us/support/download/firmware/cameras/x-e3/) | Legacy BLE and phone transfer, with guided PC AutoSave for RAF if needed and verified | Pending |
 
+## Integrated regression run
+
+The tested source revision is `e6bcf79e4200af327e05e00d6f78beb67dd12e87`. The runs used Xcode 27.1 (27A9275) and an isolated iPhone 15 Pro simulator on iOS 27.0. Logs and xcresults listed below are retained locally. Review the [fixture provenance manifest](../../Packages/FujiCameraCore/Tests/FujiCameraCoreTests/Fixtures/Wireless/provenance.json) for the origins and limits of the protocol replays and public media.
+
+`swift test --package-path Packages/FujiCameraCore` passed 52 XCTest cases and 141 Swift Testing cases in 20 suites. The setup replays exercised X-T5 4.31, 4.33 and unreadable firmware and X-E3 1.31, 1.33 and unreadable firmware. The iOS handoff replay also checked contradictory BLE and PTP versions, including an old BLE version paired with an admissible PTP report. Its assertions require rejection before inventory. No camera firmware was installed or downgraded. Logs `/tmp/fuji-wifi-task14-core-final.log` and `/tmp/fuji-wifi-task14-green.log`.
+
+The complete `Scripts/test-ios.sh` run used one simulator worker and `TEST_RUNNER_FUJI_STUDIO_NATIVE_LIFECYCLE=1`. It passed 239 app XCTest cases, 613 Swift Testing cases in 73 suites and 110 UI XCTest cases, with zero failures. The four opt-in skips were the two PhotoKit cases run separately below, native viewer rotation and hardware Escape. The Home and activate test passed with a held synthetic export save. Log `/tmp/fuji-wifi-task14-full.log` and xcresult `/tmp/fuji-studio-wifi-task14/.build/TestResults/20261115-054110-27688.xcresult`.
+
+The startup regression holds the saved-camera selection read while the active snapshot reaches AppModel. Before the fix it observed one USB discovery during the hold and then timed out waiting for the selected camera's BLE readiness. The fix waits for the saved preference before admitting automatic USB, reconnects the selected camera with zero USB attempts, and starts USB automatically after a successful empty selection read. A read failure remains visible at startup and explicit USB can still connect through the arbiter. The affected suites passed 69 cases. Logs `/tmp/fuji-wifi-task14-red.log` and `/tmp/fuji-wifi-task14-green.log`.
+
+The generic Simulator Release built successfully for arm64 and x86_64. Demangled symbols and binary strings confirmed the wireless probe routes, fixture flags and diagnostic download are present in Debug and absent in Release. The Release plist contains Boolean `PHPhotoLibraryPreventAutomaticLimitedAccessAlert=true` and no `UIBackgroundModes`. Logs `/tmp/fuji-wifi-task14-release-simulator.log` and `/tmp/fuji-wifi-task14-release-boundary.log`.
+
+## Native Photos resource readback
+
+The explicit native PhotoKit run on the tested source revision passed both cases with zero skips or failures. Log `/tmp/fuji-wifi-task14-native.log` and xcresult `/tmp/fuji-studio-wifi-task14/.build/TestResults/20261115-061737-29615.xcresult`.
+
+The native integration tests import public CC0 RAF samples on the isolated simulator. PhotoKit creates one new asset for the X-T5 pair and one for the X-E3 standalone RAF. The tests use `PHAssetResourceManager.writeData` to read each original into a separate temporary file and verify its role, byte count and SHA-256. They also check exact filename, assigned date and location, the pair's initial JPEG display choice, the durable placeholder, and staging retention. The JPEG is the exact embedded preview of the public X-T5 RAF. These cases establish native Photos resource behavior with the listed inputs. The files enter as local staged resources, so the results do not establish camera-produced pairing or wireless fidelity against card originals. [X-T5 RAF](https://raw.pixls.us/getfile.php/6122/nice/Fujifilm%20-%20X-T5%20-%2014bit%2014bit%20compressed%20(3:2).RAF), [X-E3 RAF](https://raw.pixls.us/getfile.php/1865/nice/Fujifilm%20-%20X-E3%20-%2014bit%2014bit%20compressed%20(3:2).RAF), [CC0 license](https://creativecommons.org/publicdomain/zero/1.0/)
+
+| Fixture | PhotoKit original role | Bytes | SHA-256 |
+| --- | --- | ---: | --- |
+| X-T5 RAF | `.alternatePhoto` in pair | 43,113,376 | `b2a067e7fda16338f15c2532caa12b238b2415dc1c75a96a6d24d3445cfd0ae3` |
+| X-T5 embedded JPEG | `.photo` in pair | 4,016,595 | `80f410d7f09c1d9fbd902c9c0bf52b859aa0ada585d8e6e17aa517d0b27daab4` |
+| X-E3 RAF | `.photo` in standalone asset | 27,799,280 | `03d6e79ae79107c51d0e1c1c9e488a0ab20268cd9fe43f47d8ea3ea310df35c6` |
+
+To reproduce, install the test host with a regular test run on an isolated simulator. Download the public samples as `X-T5.RAF` and `X-E3.RAF` and check them against the manifest. The X-T5 RAF supplies the JPEG offset and length as two consecutive big-endian UInt32 values starting at byte 84. Extract those bytes as `X-T5-embedded.JPG`. Copy all three inputs to `Library/Caches/NativePhotoImportFixtures` in the data container from `xcrun simctl get_app_container "$sim" com.lun3x.FujiStudio data`. Create a `RUN` marker in that directory and grant Photos read/write access with `xcrun simctl privacy "$sim" grant photos com.lun3x.FujiStudio`. Use `FUJI_STUDIO_DESTINATION="platform=iOS Simulator,id=$sim" FUJI_STUDIO_TEST_WORKERS=1 Scripts/test-ios.sh FujiStudioTests/NativePhotoImportIntegrationTests`. Query the data container again after the run and remove the marker before ordinary tests. The tests leave their imports in the isolated simulator.
+
+## Physical acceptance gates
+
+| Gate | Status and evidence |
+| --- | --- |
+| Signed iPhone Release | **Blocked at provisioning.** The repository Release build command with development team `AZH3P824F3` and automatic signing targeted the connected iPhone 15 Pro. Xcode exited 65 because the available development profile lacks Hotspot Configuration and Access Wi-Fi Information. The exact Release bundle was unavailable for strict signature verification, entitlement inspection, installation or normal launch. The separate earlier provisioning attempt also identified the team as Personal. Logs `/tmp/fuji-wifi-task14-release-phone.log` and `/tmp/fuji-task05-phone-provisioning.log`. |
+| On-device state | The installed app is the earlier Bluetooth-only debug diagnostic built from `80de1e2c`. Its previous explicit launch was denied by device trust. The integrated Release was never installed. Bluetooth pairing, protected storage and reconnect on iOS remain pending. |
+| Native connection and teardown | **Pending for both bodies.** Verify first pairing, reconnect after camera power cycle, selected-body-only reconnect with both nearby, denied/revoked Bluetooth and Local Network permission, native join accept/refuse, prompt inactivity, connection loss and safe WiFi teardown and USB handoff. Confirm no automatic WiFi rejoin or transfer resume and no USB Camera ready indication from the wireless state. Fixture runs exercise app admission and lifecycle. The native camera, permissions and join exchange still require the phone. |
+| X-E3 PC AutoSave | **Blocked at capability and identity gates.** Apple's managed Multicast Networking grant must be available to an eligible team and the app ID. Native discovery also requires an independently verified identity for the selected body. Registration, identity stability, original RAF/JPEG exposure, queue advancement and completion markers remain pending. The default native integration reports AutoSave unavailable. Log `/tmp/fuji-task06-multicast-provisioning.log`. |
+| Original bytes against card | **Pending for every route.** Acquire independent card originals and test at least 20 mixed captures per supported path where available. Include X-T5 split cards, same-card pairs, RAW-only, repeated filenames, missing mates, supported compressed and uncompressed RAF, disabled JPEG-only/HEIF/movie rows and large originals. Verify count, roles and SHA-256 of each Photos asset's originals against the independently copied card resources. The previous protected phone fixture could be listed but its bytes could not be copied and it supplied no target card evidence. |
+| Physical interrupted recovery | **Pending.** Terminate during each component, between validation and save, during Photos submission and after save before receipt. Also verify cancel/background/relaunch, denied/limited/full Photos access, storage exhaustion, explicit resume, no pair downgrade or duplicate save, preservation of existing Photos and camera files, and confirmed USB handoff or visible unresolved close. Unit, fixture UI and native PhotoKit resource tests cover narrower cases. |
+
+The release remains pending on signing, trusted execution of the phone build, AutoSave identity and capability verification, and independent originals from both target bodies. Release acceptance also requires the physical tests above.
+
 ## Evidence matrix
 
-No Fuji Studio camera or signed-iPhone wireless captures have been collected for these targets. The observations below come from public sources. See the [wireless protocol research](wireless-protocol-research.md) for the earlier investigation and its limits.
+No Fuji Studio wireless captures from the target bodies have been collected. The observations below come from public sources. See the [wireless protocol research](wireless-protocol-research.md) for the earlier investigation and its limits.
 
 | Check | X-T5 4.32, XApp | X-E3 1.32, phone or AutoSave |
 | --- | --- | --- |
