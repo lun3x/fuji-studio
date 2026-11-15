@@ -11,9 +11,13 @@ run="$1"
 command="$2"
 shift 2
 
+while [[ "$run" == */ && "$run" != / ]]; do
+  run="${run%/}"
+done
 [[ "$run" == /* && -d "$run" && ! -L "$run" ]] || usage
-if [[ "$(stat -f '%OLp:%u' "$run")" != "700:$(id -u)" ]]; then
-  echo "Use an owner-only run directory with mode 0700." >&2
+acl_listing="$(/bin/ls -ldeB "$run")"
+if [[ "$(stat -f '%OLp:%u' "$run")" != "700:$(id -u)" || "$acl_listing" == *$'\n'* ]]; then
+  echo "Use an owner-only run directory with mode 0700 and no ACL." >&2
   exit 1
 fi
 
@@ -48,7 +52,7 @@ umask 077
 pending="$(mktemp "$run/.command.XXXXXX")"
 trap 'rm -f "$pending"' EXIT
 printf '%s\n' "$command" > "$pending"
-if ! ln -h "$pending" "$run/command" 2>/dev/null; then
+if [[ -d "$run/command" ]] || ! ln -h "$pending" "$run/command" 2>/dev/null; then
   echo "A command is awaiting pickup." >&2
   exit 1
 fi

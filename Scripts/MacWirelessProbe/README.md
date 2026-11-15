@@ -11,7 +11,7 @@ ctl=Scripts/MacWirelessProbe/control.sh
 "$ctl" "$run" status
 ```
 
-Each launch takes a fresh owner-only directory. The initial `phase=idle` and `bluetooth=uninitialized` indicate that the app is waiting. Read `status` or `events` to see when a command completes.
+Each launch takes an empty owner-only directory with no ACL entries. The initial `phase=idle` and `bluetooth=uninitialized` indicate that the app is waiting. Read `status` or `events` to see when a command completes. When selecting a candidate, confirm both `result=selected` and the requested `selected` handle before pairing.
 
 1. Send `"$ctl" "$run" discover` while the camera is in Bluetooth pairing mode. Approve the macOS Bluetooth permission dialog if it appears.
 2. Run `"$ctl" "$run" list` and identify the intended X-T5. A camera without a known advertised model is listed as `unresolved`. If there are multiple plausible candidates, use only the intended camera in the test.
@@ -20,3 +20,5 @@ Each launch takes a fresh owner-only directory. The initial `phase=idle` and `bl
 5. Send `"$ctl" "$run" quit` to disconnect and exit. A fresh run directory with the same app bundle can test reconnect across launches.
 
 Status and events omit peripheral identifiers, names, credentials, and raw firmware. An unrecognized Device Information model is recorded only in the separate owner-only `private-bluetooth-model.json` file. The probe exercises Bluetooth through authenticated readiness.
+
+Run `Scripts/MacWirelessProbe/test.sh` to check the command and file permissions without starting Bluetooth.

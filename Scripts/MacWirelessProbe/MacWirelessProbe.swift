@@ -40,6 +40,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
   private var scan: Task<Void, Never>?
   private var operation: Task<Void, Never>?
   private var phase = Phase.idle
+  private var shutdownRequested = false
   private var availability = "uninitialized"
   private var result = "waiting"
   private var lastCommand = "none"
@@ -55,11 +56,14 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
   init(directory: RunDirectory) {
     self.directory = directory
     let service = "com.lun3x.FujiStudio.MacWirelessProbe.camera"
-    store = KeychainCameraStore(defaults: UserDefaults(suiteName: service)!, service: service)
+    let keychain = ProbeKeychain()
+    store = KeychainCameraStore(
+      defaults: UserDefaults(suiteName: service)!, service: service, keychain: keychain)
     let driver = CoreBluetoothDriver()
     gateway = NativeBluetoothGateway(store: store, driver: driver)
     super.init()
 
+    keychain.observe = { [weak self] event in self?.record(event) }
     driver.observePairing = { [weak self] event in self?.record(event) }
     driver.observeUnrecognizedModel = { [weak self] model in self?.captureUnknownModel(model) }
 
@@ -155,8 +159,10 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
       case ("quit", 1): NSApp.terminate(nil)
       default: reject("unknown", "invalidCommand")
       }
+    } catch RunDirectory.Failure.invalidCommandFile {
+      reject("unknown", "invalidCommandFile")
     } catch {
-      statusView.stringValue = "The private command file could not be read."
+      reject("unknown", "commandFileUnavailable")
     }
   }
 
@@ -277,6 +283,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
 
   private func disconnect(shutdown: Bool = false) {
     if phase == .stopped { return }
+    if shutdown { shutdownRequested = true }
     if phase == .disconnecting {
       if shutdown { lastCommand = "quit" }
       return
@@ -290,7 +297,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
       await previous?.value
       linkedCamera = nil
       operation = nil
-      if lastCommand == "quit" {
+      if shutdownRequested {
         timer?.invalidate()
         finish("closed", phase: .stopped)
         NSApp.reply(toApplicationShouldTerminate: true)
@@ -321,7 +328,10 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
   }
 
   private func reject(_ command: String, _ reason: String) {
+    lastCommand = command
+    result = reason
     record("\(command) rejected: \(reason)")
+    publish()
   }
 
   private func publish() {
