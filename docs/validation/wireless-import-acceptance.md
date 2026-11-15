@@ -356,8 +356,37 @@ result is
 The Mac-only identity diagnostic at `2af22413` passed six hardware-free checks
 and source review. Its signed app completed normal saved Bluetooth reconnect
 on the 04.31 body using the production subscription sequence. Its WiFi
-preflight requested macOS Location authorization to read network identifiers;
-that approval and the subsequent network association and PTP trial remain
-pending. A separately verified wired route preserves control during that
-planned trial. The diagnostic is limited to PTP initialization, opening a
-session, DeviceInfo, and session cleanup; it does not enumerate or read photos.
+preflight requested macOS Location authorization to read network identifiers,
+which the user granted. The user then moved the Mac to WiFi without a wired
+uplink. The probe correctly stopped with `wiredRouteUnavailable` before network
+mutation. A WiFi-only trial requires a separately verified local recovery
+procedure before changing to the camera network. The diagnostic is limited to
+PTP initialization, opening a session, DeviceInfo, and session cleanup; it does
+not enumerate or read photos.
+
+The reviewed WiFi-only recovery implementation at `dfaba4a4` has not yet been
+exercised on the Mac. Read-only preflight passed the parent Location gate but
+failed to identify the current WiFi network in its helper. macOS Settings showed
+Location access enabled. The read-only inspection at `e44a4264`, deployed at a
+fixed app path, isolated that failure at 16:10:10 UTC: both processes saw one
+powered, service-active interface, but only the GUI parent could read its SSID.
+The helper could not. The first inspection in the new process reported
+`notDetermined`; the second reported `authorizedAlways` without another grant.
+Network association, recovery rehearsal, and PTP remain physically unverified.
+
+The follow-up at `0cabea86` waits for the initial Location authorization
+callback. On a fresh launch its first inspection recognized the existing grant
+without another prompt. At 16:16:57 UTC a separate diagnostic initialized
+Location in the worker: the worker reported `authorizedAlways`, but its SSID
+read was still unavailable while the parent's remained available. Initializing
+the worker's authorization alone did not resolve network visibility. No network
+mutation or camera action occurred in either inspection.
+
+The user subsequently returned testing to the available physical iPhone to
+keep the Mac on its internet WiFi network. The Mac probe was stopped. A fresh
+normal Release build from `0cabea86` failed provisioning; a second build with
+automatic profile updates enabled confirmed that Personal Team `AZH3P824F3`
+does not support Access WiFi Information or Hotspot. Both builds exited 65
+before producing an installable app. An eligible Apple Developer Program team
+and profile are still required for this iPhone WiFi trial. No replacement app
+was installed, and no iPhone camera connection was attempted in this retry.
