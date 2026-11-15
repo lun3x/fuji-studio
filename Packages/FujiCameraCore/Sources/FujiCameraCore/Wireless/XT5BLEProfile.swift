@@ -2,21 +2,13 @@ import Foundation
 
 /// Secure GATT handshake from Furble and Libfuji. The transport owns BLE encryption.
 public struct XT5BLEProfile: FujiBLEProfile, CustomReflectable {
-  public enum Intent: Sendable {
-    case pair
-    case reconnect
-  }
-
   private var handshake: FujiBLEHandshake
 
-  public init(intent: Intent) {
+  public init() {
     typealias GATT = FujiBLEGATT
-    // The camera's first registration requires configuration before the passive geotag
-    // subscription. This profile does not respond to geotag requests or send location data.
-    let configurationSubscriptions: [BLEGATTCharacteristic] = switch intent {
-    case .pair: [GATT.configurationNotification, GATT.geotagRequest]
-    case .reconnect: [GATT.configurationNotification]
-    }
+    // The camera needs the passive geotag subscription after NOT1 for registration and
+    // for Wi-Fi readiness after a saved reconnect.
+    let configurationSubscriptions = [GATT.configurationNotification, GATT.geotagRequest]
     handshake = FujiBLEHandshake(
       method: .secure(status: BLEGATTCharacteristic(
         service: GATT.securePair, characteristic: "f557d96b-8284-4667-8793-b971c1deca2a")),
@@ -34,7 +26,7 @@ public struct XT5BLEProfile: FujiBLEProfile, CustomReflectable {
           service: GATT.network, characteristic: "82a9f452-c5ce-4ef5-8203-3fc9a47f8171"),
         BLEGATTCharacteristic(
           service: GATT.network, characteristic: "deef7187-3f43-4364-9e22-11a8c8a15951"),
-      ], requiredSubscriptions: intent == .pair ? Set(configurationSubscriptions) : [])
+      ], requiredSubscriptions: Set(configurationSubscriptions))
   }
 
   public mutating func receive(_ event: BLEProtocolEvent) throws -> [BLEProtocolAction] {

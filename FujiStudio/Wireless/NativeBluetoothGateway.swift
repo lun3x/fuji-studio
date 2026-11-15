@@ -366,7 +366,7 @@ final class NativeBluetoothGateway: BluetoothGateway {
     switch model {
     case .xt5:
       guard token == nil else { throw WirelessFailure.peerMismatch }
-      session?.profile = XT5BLEProfile(intent: pairing ? .pair : .reconnect)
+      session?.profile = XT5BLEProfile()
     case .xe3:
       guard let token else { throw WirelessFailure.authentication }
       session?.profile = XE3BLEProfile(intent: pairing ? .pair(token) : .reconnect(token))
