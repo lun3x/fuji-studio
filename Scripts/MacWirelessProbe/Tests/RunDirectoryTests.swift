@@ -61,6 +61,8 @@ private struct RunDirectoryTests {
     expect(try self.run(CommandLine.arguments[1], [path, "discover"]) == 0, "controller could not queue command")
     expect(try self.run(CommandLine.arguments[1], [path, "pair"]) != 0, "controller overwrote queued command")
     expect(try directory.nextCommand() == "discover", "probe could not read controller command")
+    expect(try self.run(CommandLine.arguments[1], [path, "wifi"]) == 0, "controller could not queue Wi-Fi activation")
+    expect(try directory.nextCommand() == "wifi", "probe could not read the Wi-Fi activation command")
 
     let relocated = temporary.appending(path: "relocated")
     try files.moveItem(at: run, to: relocated)

@@ -28,7 +28,7 @@ struct MacWirelessProbe {
 @MainActor
 private final class WirelessProbe: NSObject, NSApplicationDelegate {
   private enum Phase: String {
-    case idle, discovering, pairing, reconnecting, linked, disconnecting, stopped
+    case idle, discovering, pairing, reconnecting, linked, activatingWiFi, disconnecting, stopped
   }
 
   private let directory: RunDirectory
@@ -50,6 +50,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
   private var verifiedPairingSession: UUID?
   private var linkedCamera: SavedCamera?
   private var savedModel: WirelessCameraModel?
+  private var cameraNetwork: CameraNetwork?
   private var messages: [String] = []
   private var previousStatus: String?
 
@@ -132,9 +133,20 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
           record("Bluetooth \(availability)")
           publish()
         case .disconnected(let id, let failure):
-          guard phase == .linked, linkedCamera?.id == id else { continue }
+          guard linkedCamera?.id == id, phase == .linked || phase == .activatingWiFi else {
+            continue
+          }
           linkedCamera = nil
-          finish(Self.failureLabel(failure), phase: .idle)
+          let label = Self.failureLabel(failure)
+          if phase == .activatingWiFi || cameraNetwork != nil {
+            // A body may close BLE while its access point starts. The
+            // gateway's activation result still determines Wi-Fi readiness.
+            if phase == .linked { phase = .idle }
+            record("BLE disconnected during Wi-Fi test: \(label)")
+            publish()
+          } else {
+            finish(label, phase: .idle)
+          }
         }
       }
     }
@@ -156,6 +168,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
       case ("pair", 1): pair()
       case ("disconnect", 1): disconnect()
       case ("reconnect", 1): reconnect()
+      case ("wifi", 1): activateWiFi()
       case ("quit", 1): NSApp.terminate(nil)
       default: reject("unknown", "invalidCommand")
       }
@@ -168,6 +181,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
 
   private func discover() {
     guard phase == .idle else { return reject("discover", "busy") }
+    cameraNetwork = nil
     begin("discover", phase: .discovering)
     scan = Task {
       record("Discovery task entered the gateway")
@@ -239,6 +253,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
 
   private func reconnect() {
     guard phase == .idle else { return reject("reconnect", "busy") }
+    cameraNetwork = nil
     begin("reconnect", phase: .reconnecting)
     operation = Task {
       do {
@@ -259,6 +274,28 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
       } catch {
         await linkFailed(error, expectedPhase: .reconnecting)
       }
+    }
+  }
+
+  private func activateWiFi() {
+    guard phase == .linked, let linkedCamera else { return reject("wifi", "connectCameraFirst") }
+    cameraNetwork = nil
+    begin("wifi", phase: .activatingWiFi)
+    operation = Task {
+      let label: String
+      do {
+        let selected = try await store.selected()
+        let network = try await ProbeWiFiActivation.activate(
+          camera: linkedCamera, selected: selected, gateway: gateway)
+        guard phase == .activatingWiFi else { return }
+        cameraNetwork = network
+        label = "wifiReady"
+      } catch {
+        label = Self.failureLabel(error)
+      }
+      guard phase == .activatingWiFi else { return }
+      operation = nil
+      finish(label, phase: self.linkedCamera == nil ? .idle : .linked)
     }
   }
 
@@ -288,6 +325,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
       if shutdown { lastCommand = "quit" }
       return
     }
+    cameraNetwork = nil
     begin(shutdown ? "quit" : "disconnect", phase: .disconnecting)
     clearDiscovery()
     let previous = operation
@@ -343,6 +381,9 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
       "saved_model=\(savedModel?.rawValue ?? "none")",
       "linked_model=\(linkedCamera?.model.rawValue ?? "none")",
       "selected=\(selectedHandle.map(String.init) ?? "none")",
+      "wifi_ready=\(cameraNetwork != nil)",
+      "wifi_security=\(cameraNetwork?.security == .wpaPersonal ? "wpaPersonal" : "none")",
+      "wifi_model=\(cameraNetwork == nil ? "none" : WirelessCameraModel.xt5.rawValue)",
     ]
     for handle in candidates.keys.sorted() {
       let model = candidates[handle]?.advertisedModelHint?.rawValue ?? "unresolved"
