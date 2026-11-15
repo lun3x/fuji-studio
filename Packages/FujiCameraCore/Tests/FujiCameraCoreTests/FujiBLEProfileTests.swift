@@ -22,6 +22,12 @@ final class FujiBLEProfileTests: XCTestCase {
   private let secondIndication = BLEGATTCharacteristic(
     service: "4c0020fe-f3b6-40de-acc9-77d129067b14",
     characteristic: "bd17ba04-b76b-4892-a545-b73ba1f74dae")
+  private let configurationNotification = BLEGATTCharacteristic(
+    service: "4c0020fe-f3b6-40de-acc9-77d129067b14",
+    characteristic: "f9150137-5d40-4801-a8dc-f7fc5b01da50")
+  private let geotagRequest = BLEGATTCharacteristic(
+    service: "4c0020fe-f3b6-40de-acc9-77d129067b14",
+    characteristic: "ad06c7b7-f41a-46f4-a29a-712055319122")
   private let firmware = BLEGATTCharacteristic(service: "180A", characteristic: "2A26")
   private let ssid = BLEGATTCharacteristic(
     service: "4e941240-d01d-46b9-a5ea-67636806830b",
@@ -33,10 +39,13 @@ final class FujiBLEProfileTests: XCTestCase {
     service: "6514eb81-4e8f-458d-aa2a-e691336cdfac",
     characteristic: "600655e6-3637-42f1-8fb2-44efc5c63b13")
 
-  func testSecureAuthenticationAcknowledgesFourByteStatusThenSubscribesInOrder() throws {
-    var profile = XT5BLEProfile()
+  func testSecurePairingWaitsForGeotagSubscriptionBetweenConfigurationAndSSID() throws {
+    var profile = XT5BLEProfile(intent: .pair)
     XCTAssertEqual(
-      try profile.receive(.services([secureStatus, secureName, readiness, secondIndication, firmware])),
+      try profile.receive(.services([
+        secureStatus, secureName, readiness, secondIndication, configurationNotification,
+        geotagRequest, ssid, firmware,
+      ])),
       [.read(secureStatus)])
     XCTAssertEqual(
       try profile.receive(.read(secureStatus, Data([0x07, 0x96, 0x00, 0x00]))),
@@ -44,12 +53,50 @@ final class FujiBLEProfileTests: XCTestCase {
     XCTAssertEqual(
       try profile.receive(.wrote(secureStatus)),
       [.write(secureName, Data("Fuji Studio".utf8), .identify)])
-    XCTAssertEqual(try profile.receive(.wrote(secureName)), [.subscribe(readiness)])
+    XCTAssertEqual(try profile.receive(.wrote(secureName)), [.read(ssid)])
+    XCTAssertEqual(
+      try profile.receive(.read(ssid, Data("test-network".utf8))), [.subscribe(readiness)])
     XCTAssertEqual(try profile.receive(.subscribed(readiness)), [.subscribe(secondIndication)])
-    XCTAssertEqual(try profile.receive(.subscribed(secondIndication)), [.read(firmware)])
+    XCTAssertEqual(
+      try profile.receive(.subscribed(secondIndication)), [.subscribe(configurationNotification)])
+    XCTAssertEqual(
+      try profile.receive(.subscribed(configurationNotification)), [.subscribe(geotagRequest)],
+      "The geotag request subscription must follow configuration and precede SSID")
+    XCTAssertEqual(try profile.receive(.notification(geotagRequest, Data([1, 0]))), [])
+    XCTAssertEqual(try profile.receive(.subscribed(ssid)), [])
+    XCTAssertEqual(try profile.receive(.read(firmware, Data("4.32".utf8))), [])
+    XCTAssertEqual(try profile.receive(.subscribed(geotagRequest)), [.subscribe(ssid)])
+    XCTAssertEqual(try profile.receive(.subscribed(ssid)), [.read(firmware)])
     XCTAssertEqual(
       try profile.receive(.read(firmware, Data("4.32".utf8))),
       [.authenticated(firmware: "4.32")])
+  }
+
+  func testSecurePairingRequiresGeotagRequestInConfigurationService() throws {
+    let misplacedRequest = BLEGATTCharacteristic(
+      service: ssid.service, characteristic: geotagRequest.characteristic)
+    var profile = XT5BLEProfile(intent: .pair)
+    XCTAssertThrowsError(try profile.receive(.services([
+      secureStatus, secureName, readiness, configurationNotification, misplacedRequest, ssid,
+    ]))) {
+      XCTAssertEqual($0 as? WirelessFailure, .unsupportedProtocol)
+    }
+  }
+
+  func testSecurePairingCannotSkipUnsupportedGeotagSubscription() throws {
+    var profile = XT5BLEProfile(intent: .pair)
+    _ = try profile.receive(.services([
+      secureStatus, secureName, readiness, configurationNotification, geotagRequest,
+    ]))
+    _ = try profile.receive(.read(secureStatus, Data([0, 0, 0, 0])))
+    _ = try profile.receive(.wrote(secureStatus))
+    _ = try profile.receive(.wrote(secureName))
+    _ = try profile.receive(.subscribed(readiness))
+    _ = try profile.receive(.subscribed(configurationNotification))
+    XCTAssertThrowsError(try profile.receive(.subscriptionUnavailable(geotagRequest))) {
+      XCTAssertEqual($0 as? WirelessFailure, .unsupportedProtocol)
+    }
+    XCTAssertEqual(try profile.receive(.subscribed(geotagRequest)), [])
   }
 
   func testLegacyTokenExchangeDistinguishesFirstPairFromSavedAuthentication() throws {
@@ -59,7 +106,7 @@ final class FujiBLEProfileTests: XCTestCase {
     ] {
       var profile = XE3BLEProfile(intent: intent)
       XCTAssertEqual(
-        try profile.receive(.services([legacyName, legacyToken, readiness])),
+        try profile.receive(.services([legacyName, legacyToken, readiness, geotagRequest])),
         [.write(legacyToken, token.bytes, purpose)])
       XCTAssertEqual(
         try profile.receive(.wrote(legacyToken)),
@@ -73,7 +120,7 @@ final class FujiBLEProfileTests: XCTestCase {
     let misplacedName = BLEGATTCharacteristic(
       service: "91f1de68-dff6-466e-8b65-ff13b0f16fb8",
       characteristic: secureName.characteristic)
-    var profile = XT5BLEProfile()
+    var profile = XT5BLEProfile(intent: .reconnect)
     XCTAssertThrowsError(try profile.receive(.services([secureStatus, misplacedName, readiness]))) {
       XCTAssertEqual($0 as? WirelessFailure, .unsupportedProtocol)
     }
@@ -81,7 +128,7 @@ final class FujiBLEProfileTests: XCTestCase {
 
   func testSecureRejectsMalformedStatusWithoutAnAcknowledgement() throws {
     for status in [Data(), Data([0, 1, 2]), Data([0, 1, 2, 3, 4])] {
-      var profile = XT5BLEProfile()
+      var profile = XT5BLEProfile(intent: .reconnect)
       _ = try profile.receive(.services([secureStatus, secureName, readiness]))
       XCTAssertThrowsError(try profile.receive(.read(secureStatus, status))) {
         XCTAssertEqual($0 as? WirelessFailure, .malformedData)
@@ -100,7 +147,7 @@ final class FujiBLEProfileTests: XCTestCase {
   }
 
   func testWiFiNeedsFreshRecognizedIndicationAndCredentials() throws {
-    var profile = XT5BLEProfile()
+    var profile = XT5BLEProfile(intent: .reconnect)
     _ = try profile.receive(.services([secureStatus, secureName, readiness, ssid, password, launch]))
     _ = try profile.receive(.read(secureStatus, Data([0, 0, 0, 0])))
     _ = try profile.receive(.wrote(secureStatus))
@@ -124,7 +171,7 @@ final class FujiBLEProfileTests: XCTestCase {
   }
 
   func testMissingPasswordCannotLaunchAnOpenNetwork() throws {
-    var profile = XT5BLEProfile()
+    var profile = XT5BLEProfile(intent: .reconnect)
     _ = try profile.receive(.services([secureStatus, secureName, readiness, ssid, launch]))
     _ = try profile.receive(.read(secureStatus, Data([0, 0, 0, 0])))
     _ = try profile.receive(.wrote(secureStatus))
@@ -138,7 +185,7 @@ final class FujiBLEProfileTests: XCTestCase {
   }
 
   func testOptionalSubscriptionWithoutNotifyPermissionCanBeSkipped() throws {
-    var profile = XT5BLEProfile()
+    var profile = XT5BLEProfile(intent: .reconnect)
     _ = try profile.receive(.services([secureStatus, secureName, readiness, secondIndication]))
     _ = try profile.receive(.read(secureStatus, Data([0, 0, 0, 0])))
     _ = try profile.receive(.wrote(secureStatus))
@@ -149,7 +196,7 @@ final class FujiBLEProfileTests: XCTestCase {
   }
 
   func testUnavailableReadinessSubscriptionFailsAuthenticationFlow() throws {
-    var profile = XT5BLEProfile()
+    var profile = XT5BLEProfile(intent: .reconnect)
     _ = try profile.receive(.services([secureStatus, secureName, readiness]))
     _ = try profile.receive(.read(secureStatus, Data([0, 0, 0, 0])))
     _ = try profile.receive(.wrote(secureStatus))

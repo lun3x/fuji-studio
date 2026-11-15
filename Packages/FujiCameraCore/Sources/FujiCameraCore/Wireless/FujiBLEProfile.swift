@@ -102,6 +102,8 @@ enum FujiBLEGATT {
     service: configuration, characteristic: "bd17ba04-b76b-4892-a545-b73ba1f74dae")
   static let configurationNotification = BLEGATTCharacteristic(
     service: configuration, characteristic: "f9150137-5d40-4801-a8dc-f7fc5b01da50")
+  static let geotagRequest = BLEGATTCharacteristic(
+    service: configuration, characteristic: "ad06c7b7-f41a-46f4-a29a-712055319122")
   static let ssid = BLEGATTCharacteristic(
     service: network, characteristic: "bf6dc9cf-3606-4ec9-a4c8-d77576e93ea4")
   static let password = BLEGATTCharacteristic(
@@ -142,6 +144,7 @@ struct FujiBLEHandshake: Sendable {
 
   let method: Method
   let subscriptions: [BLEGATTCharacteristic]
+  private let requiredSubscriptions: Set<BLEGATTCharacteristic>
   private var stage = Stage.waitingForServices
   private var characteristics: Set<BLEGATTCharacteristic> = []
   private var networkSSID: String?
@@ -151,9 +154,13 @@ struct FujiBLEHandshake: Sendable {
       service: method.characteristic.service, characteristic: FujiBLEGATT.identification)
   }
 
-  init(method: Method, subscriptions: [BLEGATTCharacteristic]) {
+  init(
+    method: Method, subscriptions: [BLEGATTCharacteristic],
+    requiredSubscriptions: Set<BLEGATTCharacteristic> = []
+  ) {
     self.method = method
     self.subscriptions = subscriptions
+    self.requiredSubscriptions = requiredSubscriptions.union([FujiBLEGATT.readiness])
   }
 
   mutating func receive(_ event: BLEProtocolEvent) throws -> [BLEProtocolAction] {
@@ -169,7 +176,7 @@ struct FujiBLEHandshake: Sendable {
     typealias GATT = FujiBLEGATT
     switch (stage, event) {
     case (.waitingForServices, .services(let discovered)):
-      let required: Set = [method.characteristic, identification, GATT.readiness]
+      let required = requiredSubscriptions.union([method.characteristic, identification])
       guard required.isSubset(of: discovered) else { throw WirelessFailure.unsupportedProtocol }
       characteristics = discovered
       switch method {
@@ -211,7 +218,9 @@ struct FujiBLEHandshake: Sendable {
 
     case (.subscribe(let remaining), .subscriptionUnavailable(let characteristic))
     where characteristic == remaining.first:
-      guard characteristic != GATT.readiness else { throw WirelessFailure.unsupportedProtocol }
+      guard !requiredSubscriptions.contains(characteristic) else {
+        throw WirelessFailure.unsupportedProtocol
+      }
       return subscribe(to: remaining.dropFirst())
 
     case (.readFirmware, .read(GATT.firmware, let bytes)):
