@@ -302,3 +302,26 @@ commands is libfuji at `3b9932a46d025405dae505ddb624733b6ea3edd1`.
 [Handshake notes](https://github.com/petabyt/libfuji/blob/3b9932a46d025405dae505ddb624733b6ea3edd1/docs/autosave.md),
 [Port handling](https://github.com/petabyt/libfuji/blob/3b9932a46d025405dae505ddb624733b6ea3edd1/lib/discovery.c),
 [PTP setup and streaming](https://github.com/petabyt/libfuji/blob/3b9932a46d025405dae505ddb624733b6ea3edd1/lib/fuji.c)
+
+### Integrated registration and firmware validation, 2026-11-15
+
+The integrated production source at `03c794f7` includes the required X-T5
+first-registration subscription and the user-approved firmware policy of
+X-T5 4.30 or later; X-E3 remains exactly 1.32. The complete
+`Scripts/test-ios.sh` run passed 977 tests with zero failures and six opt-in
+skips (two PhotoKit and four UI cases). Parameter expansion accounts for
+1,046 passing instances in the device summary. The Release simulator build
+also passed. The retained result is
+`/tmp/fuji-xt5-registration.1Lb6fz/.build/TestResults/20261115-144749-82380.xcresult`.
+
+On the available X-T5, the Mac probe read firmware `04.31` and completed
+normal saved reconnect. With the updated firmware policy, the explicit WiFi
+command passed admission, read the password and received a response to the
+standard `04 00` launch write. It received no qualifying readiness notification
+and timed out after 15 seconds. Camera wake state was not recorded for that
+attempt. This does not establish whether the camera started its access point.
+No network was joined, no PTP session was opened and no photo was transferred.
+The reviewed Mac-only diagnostics at `b1148b1c` separately test an additional
+reconnect subscription and the `03 00` image-viewing launch; their hardware
+outcomes remain pending. Neither the automated suite nor Bluetooth registration
+constitutes WiFi JPEG+RAW acceptance.
