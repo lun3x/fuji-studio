@@ -32,6 +32,10 @@ For a passive first-pair trace, leave the link open after `phase=linked` until t
 
 The production X-T5 pairing profile subscribes to geotag requests as part of registration. The buffered trace labels any matching callback `geotag-request`. The profile sends no location data.
 
+For a saved-link Wi-Fi experiment, send `reconnect-notifications` from idle. It adds one geotag-request subscription after the configuration notification acknowledgment and before the normal network-name subscription. `reconnect_geotag_subscription_ack=true` records the extra subscription callback. Then send the standard `wifi` command to keep the production launch value. This tests whether the additional subscription affects delivery of the readiness indication on the X-T5. Disconnect before setting up another trial. [Furble subscription order](https://github.com/gkoh/furble/blob/0cac22aacc3d9ef250be40849118af78a5f39f27/lib/furble/FujifilmSecure.cpp#L144-L161) · [Fuji Bridge subscription order](https://github.com/Th0rgal/fuji-bridge/blob/38fc4275574c2016a1f13ece13496b0ad1e9b452/FujiBridge/FujiBluetooth.swift#L73-L80)
+
+To test the launch function, reconnect with the same setup and send `wifi-image-viewing` once. It submits `03 00` in place of the normal `04 00` launch for the verified selected X-T5. `image_view_launch_used=true` records submission to the production driver. Both commands require the normal readiness indication. The X-T5 effect is unknown. Fuji Bridge identifies the functions from XApp and reports different PTP behavior on the X100VI. [Fuji Bridge function definitions](https://github.com/Th0rgal/fuji-bridge/blob/38fc4275574c2016a1f13ece13496b0ad1e9b452/FujiBridge/FujiBluetooth.swift#L46-L54)
+
 After a standard reconnect fails with `secure_status_compared=true` and `secure_status_prefix_equal=false`, `reconnect-registration` runs one additional hypothesis test. It requires the same selected X-T5 record and a verified status read in the new session. The test submits the in-memory registration value with the acknowledgment bit set. `registration_ack_used=true` records only that the probe submitted the substituted write to the production Bluetooth driver. Standard `reconnect` uses the production acknowledgment.
 
 On macOS the probe uses the file-based Keychain. It enumerates persistent references within the dedicated probe service before reading the individual records. The iOS app uses its platform Keychain path.
@@ -41,4 +45,4 @@ Run `Scripts/MacWirelessProbe/test-keychain.sh` to exercise enumeration and save
 Run `Scripts/MacWirelessProbe/test-wifi.sh` to check the activation boundary with a test gateway.
 Run `Scripts/MacWirelessProbe/test-saved-advertisement.sh` to check scan matching with synthetic reports.
 Run `Scripts/MacWirelessProbe/test-secure-status.sh` to check secure-status comparison with synthetic events.
-Run `Scripts/MacWirelessProbe/test-registration-reconnect.sh` to check production pairing and reconnect through a test driver, including the buffered notification trace and one-shot reconnect diagnostic.
+Run `Scripts/MacWirelessProbe/test-registration-reconnect.sh` to check production pairing, reconnect, and Wi-Fi actions through a test driver, including the diagnostics and buffered notification trace.

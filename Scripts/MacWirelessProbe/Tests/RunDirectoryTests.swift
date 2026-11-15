@@ -69,6 +69,12 @@ private struct RunDirectoryTests {
     expect(try self.run(CommandLine.arguments[1], [path, "reconnect-registration"]) == 0,
       "controller could not queue registration reconnect")
     expect(try directory.nextCommand() == "reconnect-registration", "probe could not read registration reconnect")
+    expect(try self.run(CommandLine.arguments[1], [path, "reconnect-notifications"]) == 0,
+      "controller could not queue the saved notification experiment")
+    expect(try directory.nextCommand() == "reconnect-notifications", "probe could not read notification reconnect")
+    expect(try self.run(CommandLine.arguments[1], [path, "wifi-image-viewing"]) == 0,
+      "controller could not queue the image-viewing launch")
+    expect(try directory.nextCommand() == "wifi-image-viewing", "probe could not read the image-viewing launch")
     expect(try self.run(CommandLine.arguments[1], [path, "pair"]) == 0, "controller could not queue standard pairing")
     expect(try directory.nextCommand() == "pair", "probe could not read standard pairing")
     expect(try self.run(CommandLine.arguments[1], [path, "pair-geotag-subscription"]) != 0,

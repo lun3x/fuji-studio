@@ -31,6 +31,12 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
     case idle, discovering, pairing, observingSaved, reconnecting, linked, activatingWiFi, disconnecting, stopped
   }
 
+  private enum ReconnectMode: String {
+    case standard = "reconnect"
+    case registration = "reconnect-registration"
+    case notifications = "reconnect-notifications"
+  }
+
   private let directory: RunDirectory
   private let probeDefaults: UserDefaults
   private let store: KeychainCameraStore
@@ -194,8 +200,10 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
       case ("disconnect", 1): disconnect()
       case ("observe-saved", 1): observeSavedAdvertisement()
       case ("reconnect", 1): reconnect()
-      case ("reconnect-registration", 1): reconnect(usingRegistration: true)
+      case ("reconnect-registration", 1): reconnect(.registration)
+      case ("reconnect-notifications", 1): reconnect(.notifications)
       case ("wifi", 1): activateWiFi()
+      case ("wifi-image-viewing", 1): activateWiFi(imageViewing: true)
       case ("quit", 1): NSApp.terminate(nil)
       default: reject("unknown", "invalidCommand")
       }
@@ -282,14 +290,14 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
     }
   }
 
-  private func reconnect(usingRegistration: Bool = false) {
-    let command = usingRegistration ? "reconnect-registration" : "reconnect"
+  private func reconnect(_ mode: ReconnectMode = .standard) {
+    let command = mode.rawValue
     guard phase == .idle else { return reject(command, "busy") }
     cameraNetwork = nil
     registrationDriver.resetObservation()
     secureStatus.resetObservation()
     let ticket = secureStatus.takeRegistrationTicket()
-    if usingRegistration, ticket == nil { return reject(command, "registrationEvidenceRequired") }
+    if mode == .registration, ticket == nil { return reject(command, "registrationEvidenceRequired") }
     begin(command, phase: .reconnecting)
     operation = Task { [self] in
       do {
@@ -302,30 +310,37 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
           return
         }
         try Task.checkCancellation()
-        if usingRegistration {
+        let selectionIsCurrent = { [weak self] in
+          self?.selectionMatches(camera.id, phase: .reconnecting) == true
+        }
+        if mode == .registration {
           guard let ticket, ticket.matches(peripheralID: camera.peripheralID, cameraID: camera.id)
           else {
             operation = nil
             finish("registrationEvidenceRequired", phase: .idle)
             return
           }
-          registrationDriver.beginExperiment(ticket) { [weak self] in
-            // Check the same selection the store validated, including if it
-            // changes before the protected write is issued.
-            guard let self, self.phase == .reconnecting else { return false }
-            let selected = self.probeDefaults.string(forKey: "wireless.selectedCameraID")
-            return selected.flatMap(UUID.init(uuidString:)) == camera.id.rawValue
+          guard registrationDriver.beginExperiment(ticket, selectionIsCurrent: selectionIsCurrent) else {
+            throw WirelessFailure.peerMismatch
           }
         }
-        secureStatus.begin(usingRegistration ? .registrationReconnect : .reconnect,
+        if mode == .notifications {
+          guard registrationDriver.beginReconnectNotifications(
+            peripheralID: camera.peripheralID, selectionIsCurrent: selectionIsCurrent)
+          else { throw WirelessFailure.peerMismatch }
+        }
+        secureStatus.begin(mode == .registration ? .registrationReconnect : .reconnect,
           peripheralID: camera.peripheralID, cameraID: camera.id)
         registrationDriver.beginRegistrationObservation(peripheralID: camera.peripheralID)
         savedModel = camera.model
         publish()
         try await gateway.reconnect(camera, allowPermissionPrompt: true)
+        if mode == .notifications, !registrationDriver.reconnectGeotagAcknowledged {
+          throw WirelessFailure.unsupportedProtocol
+        }
         try await completeLink(camera)
       } catch {
-        await linkFailed(error, expectedPhase: .reconnecting)
+        await linkFailed(error, expectedPhase: .reconnecting, allowsRegistrationTicket: mode == .standard)
       }
     }
   }
@@ -334,6 +349,12 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
     guard let selected = try await store.selected() else { return nil }
     try Task.checkCancellation()
     return try await store.cameras().first { $0.id == selected && $0.model == .xt5 }
+  }
+
+  private func selectionMatches(_ cameraID: WirelessCameraID, phase: Phase) -> Bool {
+    guard self.phase == phase else { return false }
+    let selected = probeDefaults.string(forKey: "wireless.selectedCameraID")
+    return selected.flatMap(UUID.init(uuidString:)) == cameraID.rawValue
   }
 
   private func observeSavedAdvertisement() {
@@ -366,16 +387,28 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
     }
   }
 
-  private func activateWiFi() {
-    guard phase == .linked, let linkedCamera else { return reject("wifi", "connectCameraFirst") }
+  private func activateWiFi(imageViewing: Bool = false) {
+    let command = imageViewing ? "wifi-image-viewing" : "wifi"
+    guard phase == .linked, let linkedCamera else { return reject(command, "connectCameraFirst") }
     cameraNetwork = nil
-    begin("wifi", phase: .activatingWiFi)
+    registrationDriver.resetImageViewingObservation()
+    begin(command, phase: .activatingWiFi)
     operation = Task {
+      defer { registrationDriver.endImageViewing() }
       let label: String
       do {
         let selected = try await store.selected()
         let network = try await ProbeWiFiActivation.activate(
-          camera: linkedCamera, selected: selected, gateway: gateway)
+          camera: linkedCamera, selected: selected, gateway: gateway
+        ) {
+          guard imageViewing else { return }
+          guard registrationDriver.beginImageViewing(peripheralID: linkedCamera.peripheralID,
+            selectionIsCurrent: { [weak self] in
+              self?.linkedCamera?.id == linkedCamera.id
+                && self?.selectionMatches(linkedCamera.id, phase: .activatingWiFi) == true
+            })
+          else { throw WirelessFailure.peerMismatch }
+        }
         guard phase == .activatingWiFi else { return }
         cameraNetwork = network
         label = "wifiReady"
@@ -402,6 +435,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
       secureStatus.endAttempt()
     }
     registrationDriver.endExperiment()
+    registrationDriver.endReconnectNotifications()
     linkedCamera = camera
     savedModel = camera.model
     operation = nil
@@ -409,18 +443,21 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
     finish("ready", phase: .linked)
   }
 
-  private func linkFailed(_ error: Error, expectedPhase: Phase) async {
+  private func linkFailed(
+    _ error: Error, expectedPhase: Phase, allowsRegistrationTicket: Bool = false
+  ) async {
     guard phase == expectedPhase else { return }
     registrationDriver.endRegistrationObservation()
     if expectedPhase == .pairing { secureStatus.endAttempt() }
     await gateway.disconnect()
     guard phase == expectedPhase else { return }
-    if expectedPhase == .reconnecting, !Task.isCancelled, !(error is CancellationError) {
+    if allowsRegistrationTicket, !Task.isCancelled, !(error is CancellationError) {
       secureStatus.finishFailedReconnect()
     } else {
       secureStatus.endAttempt()
     }
     registrationDriver.endExperiment()
+    registrationDriver.endReconnectNotifications()
     operation = nil
     finish(Self.failureLabel(error), phase: .idle)
   }
@@ -446,6 +483,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
       await gateway.disconnect()
       await previous?.value
       registrationDriver.endExperiment()
+      registrationDriver.endReconnectNotifications()
       linkedCamera = nil
       operation = nil
       if shutdownRequested {
@@ -503,6 +541,8 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
       "saved_advert_shape=\(savedAdvertisement.matchingShape)",
       "saved_advert_ready=\(savedAdvertisement.ready)",
       "registration_ack_used=\(registrationDriver.acknowledgementUsed)",
+      "reconnect_geotag_subscription_ack=\(registrationDriver.reconnectGeotagAcknowledged)",
+      "image_view_launch_used=\(registrationDriver.imageViewLaunchUsed)",
     ]
     lines.append(contentsOf: secureStatus.observation.statusLines)
     for handle in candidates.keys.sorted() {

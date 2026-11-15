@@ -14,6 +14,8 @@ private struct RegistrationReconnectTests {
     checkEligibility()
     checkNotificationObservation()
     checkProductionRegistration()
+    checkReconnectNotifications()
+    checkImageViewingLaunch()
 
     let normal = TestDriver()
     let normalAdapter = ProbeRegistrationBluetoothDriver(native: normal)
@@ -111,6 +113,137 @@ private struct RegistrationReconnectTests {
     print("Production X-T5 pairing and reconnect pass through the probe with deferred geotag observations.")
   }
 
+  static func checkReconnectNotifications() {
+    let baseline = ProfileTrial(intent: .reconnect)
+    baseline.reachConfigurationAcknowledgement()
+    baseline.finishLink()
+    precondition(baseline.ready)
+
+    let trial = ProfileTrial(intent: .reconnect, extraNotification: true)
+    trial.reachConfigurationAcknowledgement()
+    precondition(trial.native.actions.last == .subscribe(geotagRequest))
+    precondition(!trial.native.actions.contains(.subscribe(ProfileTrial.networkName)))
+    precondition(!trial.adapter.reconnectGeotagAcknowledged)
+    let ackTrial = Experiment(requestRead: false)
+    precondition(!ackTrial.adapter.beginReconnectNotifications(peripheralID: UUID()) { true })
+    precondition(!trial.adapter.beginExperiment(ackTrial.ticket) { true })
+    trial.emit(.subscribed(geotagRequest))
+    trial.finishLink()
+    precondition(trial.ready && trial.adapter.reconnectGeotagAcknowledged && trial.failures.isEmpty)
+    var expected = baseline.native.actions
+    expected.insert(.subscribe(geotagRequest), at: expected.firstIndex(of: .subscribe(ProfileTrial.networkName))!)
+    precondition(trial.native.actions == expected)
+
+    for event in [
+      BLEProtocolEvent.subscriptionUnavailable(geotagRequest),
+      .subscriptionUnavailable(ProfileTrial.networkName), .subscribed(ProfileTrial.networkName),
+      .failed(geotagRequest, .unsupportedProtocol),
+    ] {
+      let stopped = ProfileTrial(intent: .reconnect, extraNotification: true)
+      stopped.reachConfigurationAcknowledgement()
+      let actions = stopped.native.actions
+      stopped.emit(event)
+      stopped.emit(.subscribed(geotagRequest))
+      precondition(stopped.failures == [.unsupportedProtocol] && stopped.native.actions == actions)
+      precondition(!stopped.ready && !stopped.adapter.reconnectGeotagAcknowledged)
+    }
+
+    let missing = ProfileTrial(intent: .reconnect, extraNotification: true, includeGeotag: false)
+    precondition(missing.failures == [.unsupportedProtocol] && missing.native.actions.isEmpty)
+    let wrongModel = ProfileTrial(intent: .reconnect, extraNotification: true, model: "X-E3")
+    precondition(wrongModel.failures == [.peerMismatch] && wrongModel.native.actions.isEmpty)
+    for staleSession in [false, true] {
+      let rejected = ProfileTrial(intent: .reconnect, extraNotification: true)
+      rejected.reachConfigurationAcknowledgement()
+      let actions = rejected.native.actions
+      if !staleSession { rejected.selectionIsCurrent = false }
+      rejected.emit(.subscribed(geotagRequest), session: staleSession ? UUID() : rejected.session)
+      precondition(rejected.failures == [.peerMismatch] && rejected.native.actions == actions)
+    }
+    let cancelled = ProfileTrial(intent: .reconnect, extraNotification: true)
+    cancelled.reachConfigurationAcknowledgement()
+    let actions = cancelled.native.actions
+    cancelled.adapter.disconnect(session: cancelled.session)
+    cancelled.emit(.subscribed(geotagRequest))
+    precondition(cancelled.native.actions == actions && !cancelled.adapter.reconnectGeotagAcknowledged)
+    print("Saved reconnect notification scope, exact action order, and rejection checks passed.")
+  }
+
+  static func checkImageViewingLaunch() {
+    func activationTrial(extraNotification: Bool = false) -> ProfileTrial {
+      let trial = ProfileTrial(intent: .reconnect, extraNotification: extraNotification)
+      trial.reachConfigurationAcknowledgement()
+      if extraNotification { trial.emit(.subscribed(geotagRequest)) }
+      trial.finishLink()
+      return trial
+    }
+    let launch = ProbeImageViewingLaunch.launch
+    let password = ProbeImageViewingLaunch.password
+    let standard = BLEProtocolAction.write(launch, Data([0x04, 0x00]), .activateWiFi)
+    let alternative = BLEProtocolAction.write(launch, Data([0x03, 0x00]), .activateWiFi)
+    let baseline = activationTrial(extraNotification: true)
+    let trial = activationTrial(extraNotification: true)
+    precondition(baseline.adapter.reconnectGeotagAcknowledged && trial.adapter.reconnectGeotagAcknowledged)
+    precondition(!trial.adapter.beginImageViewing(peripheralID: UUID()) { true })
+    precondition(!trial.adapter.beginImageViewing(peripheralID: trial.peer) { false })
+    precondition(trial.beginImageViewing())
+    precondition(!trial.beginImageViewing())
+    let ackTrial = Experiment(requestRead: false)
+    precondition(!trial.adapter.beginExperiment(ackTrial.ticket) { true })
+
+    for (activated, expected) in [(baseline, standard), (trial, alternative)] {
+      let initialActionCount = activated.native.actions.count
+      activated.advance(.activateWiFi)
+      activated.emit(.read(password, Data("synthetic".utf8)))
+      precondition(Array(activated.native.actions.dropFirst(initialActionCount)) == [.read(password), expected])
+      activated.emit(.wrote(launch))
+      activated.emit(.notification(ProfileTrial.readiness, Data([0xff])))
+      precondition(!activated.wifiReady, "A launch callback or unknown status reported readiness")
+      activated.emit(.notification(ProfileTrial.readiness, Data([0x01])))
+      precondition(activated.wifiReady && activated.failures.isEmpty)
+    }
+    precondition(trial.adapter.imageViewLaunchUsed && !baseline.adapter.imageViewLaunchUsed)
+    trial.adapter.perform(standard, session: trial.session)
+    precondition(trial.failures == [.unsupportedProtocol] && trial.native.actions.last == alternative)
+
+    let invalidActions: [BLEProtocolAction] = [
+      .write(launch, Data([0x04]), .activateWiFi),
+      .write(launch, Data([0x04, 0x00]), .identify),
+      .write(password, Data([0x04, 0x00]), .activateWiFi),
+      .read(password),
+    ]
+    for action in invalidActions {
+      let rejected = activationTrial()
+      precondition(rejected.beginImageViewing())
+      rejected.advance(.activateWiFi)
+      rejected.adapter.eventHandler = { [weak rejected] event in
+        if case .linkFailed(_, let failure) = event { rejected?.failures.append(failure) }
+      }
+      rejected.emit(.read(password, Data("synthetic".utf8)))
+      rejected.adapter.perform(action, session: rejected.session)
+      precondition(rejected.failures == [.unsupportedProtocol])
+      precondition(!rejected.adapter.imageViewLaunchUsed && rejected.native.actions.last == .read(password))
+    }
+
+    for staleSession in [false, true] {
+      let rejected = activationTrial()
+      precondition(rejected.beginImageViewing())
+      rejected.advance(.activateWiFi)
+      if !staleSession { rejected.selectionIsCurrent = false }
+      rejected.emit(.read(password, Data("synthetic".utf8)), session: staleSession ? UUID() : rejected.session)
+      precondition(rejected.failures == [.peerMismatch] && !rejected.adapter.imageViewLaunchUsed)
+      precondition(rejected.native.actions.last == .read(password))
+    }
+    let cancelled = activationTrial()
+    precondition(cancelled.beginImageViewing())
+    cancelled.advance(.activateWiFi)
+    cancelled.adapter.disconnect(session: cancelled.session)
+    cancelled.emit(.read(password, Data("synthetic".utf8)))
+    precondition(!cancelled.adapter.imageViewLaunchUsed && cancelled.native.actions.last == .read(password))
+    precondition(!cancelled.beginImageViewing())
+    print("Image-viewing single launch, production readiness, and rejected action checks passed.")
+  }
+
   @MainActor
   final class ProfileTrial {
     private static let status = ProbeSecureStatusComparison.characteristic
@@ -129,27 +262,45 @@ private struct RegistrationReconnectTests {
     let native = TestDriver()
     let adapter: ProbeRegistrationBluetoothDriver
     let session = UUID()
-    private let peer = UUID()
+    let peer = UUID()
     private var profile: XT5BLEProfile
+    var selectionIsCurrent = true
+    var failures: [WirelessFailure] = []
     private(set) var ready = false
+    private(set) var wifiReady = false
     private(set) var flushed: [ProbeRegistrationNotificationEntry] = []
 
-    init(intent: XT5BLEProfile.Intent) {
+    init(
+      intent: XT5BLEProfile.Intent, extraNotification: Bool = false,
+      includeGeotag: Bool = true, model: String = "FF220001"
+    ) {
       profile = XT5BLEProfile(intent: intent)
       adapter = ProbeRegistrationBluetoothDriver(native: native)
       adapter.eventHandler = { [weak self] event in self?.receive(event) }
       adapter.flushRegistrationNotifications = { [weak self] entries in self?.flushed.append(contentsOf: entries) }
       adapter.beginRegistrationObservation(peripheralID: peer)
+      if extraNotification {
+        precondition(adapter.beginReconnectNotifications(peripheralID: peer) { [weak self] in
+          self?.selectionIsCurrent == true
+        })
+      }
       adapter.connect(peripheralID: peer, session: session)
-      native.eventHandler?(.peerModel(session, "FF220001"))
-      emit(.services([
+      native.eventHandler?(.peerModel(session, model))
+      var services: Set = [
         Self.status, Self.identify, Self.readiness, Self.secondIndication,
-        Self.configurationNotification, Self.networkName, Self.firmware, geotagRequest,
-      ]))
+        Self.configurationNotification, Self.networkName, Self.firmware,
+        ProbeImageViewingLaunch.password, ProbeImageViewingLaunch.launch,
+      ]
+      if includeGeotag { services.insert(geotagRequest) }
+      emit(.services(services))
     }
 
-    func emit(_ event: BLEProtocolEvent) {
-      native.eventHandler?(.protocolEvent(session, event))
+    func beginImageViewing() -> Bool {
+      adapter.beginImageViewing(peripheralID: peer) { [weak self] in self?.selectionIsCurrent == true }
+    }
+
+    func emit(_ event: BLEProtocolEvent, session: UUID? = nil) {
+      native.eventHandler?(.protocolEvent(session ?? self.session, event))
     }
 
     func reachConfigurationAcknowledgement() {
@@ -168,12 +319,23 @@ private struct RegistrationReconnectTests {
     }
 
     private func receive(_ event: BluetoothDriverEvent) {
+      if case .linkFailed(let session, let failure) = event {
+        precondition(self.session == session)
+        failures.append(failure)
+      }
       guard case .protocolEvent(let session, let event) = event else { return }
       precondition(self.session == session)
+      advance(event)
+    }
+
+    func advance(_ event: BLEProtocolEvent) {
       for action in try! profile.receive(event) {
         if case .authenticated = action {
           ready = true
+          adapter.endReconnectNotifications()
           adapter.markRegistrationObservationReady(peripheralID: peer)
+        } else if case .wifiReady = action {
+          wifiReady = true
         } else {
           adapter.perform(action, session: session)
         }

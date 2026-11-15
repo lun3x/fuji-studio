@@ -3,7 +3,8 @@ import FujiCameraCore
 @MainActor
 enum ProbeWiFiActivation {
   static func activate(
-    camera: SavedCamera, selected: WirelessCameraID?, gateway: any BluetoothGateway
+    camera: SavedCamera, selected: WirelessCameraID?, gateway: any BluetoothGateway,
+    beforeActivation: () throws -> Void = {}
   ) async throws -> CameraNetwork {
     try Task.checkCancellation()
     guard camera.model == .xt5 else { throw WirelessFailure.unsupportedProtocol }
@@ -17,6 +18,7 @@ enum ProbeWiFiActivation {
     else { throw WirelessFailure.unsupportedFirmware }
 
     try Task.checkCancellation()
+    try beforeActivation()
     let network = try await gateway.activateWiFi(for: camera.id)
     try Task.checkCancellation()
     guard network.credential.cameraID == camera.id else { throw WirelessFailure.peerMismatch }

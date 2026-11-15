@@ -8,8 +8,13 @@ private struct ProbeWiFiActivationTests {
     checkFirmwareObservation()
     let camera = SavedCamera(id: .init(), peripheralID: UUID(), model: .xt5, displayName: "Synthetic X-T5")
     let gateway = TestGateway(camera: camera)
+    var armCount = 0
+    var allowArm = true
     let activate = { (selected: WirelessCameraID?) in
-      try await ProbeWiFiActivation.activate(camera: camera, selected: selected, gateway: gateway)
+      try await ProbeWiFiActivation.activate(camera: camera, selected: selected, gateway: gateway) {
+        guard allowArm else { throw WirelessFailure.peerMismatch }
+        armCount += 1
+      }
     }
 
     guard await rejects(.peerMismatch, { try await activate(.init()) }) else { exit(1) }
@@ -23,7 +28,7 @@ private struct ProbeWiFiActivationTests {
     gateway.firmware = target
     gateway.model = .xe3
     guard await rejects(.peerMismatch, { try await activate(camera.id) }) else { exit(1) }
-    precondition(gateway.activations == 0, "An ineligible identity started activation")
+    precondition(gateway.activations == 0 && armCount == 0, "An ineligible identity started activation")
 
     let legacyCamera = SavedCamera(id: .init(), peripheralID: UUID(), model: .xe3, displayName: "Synthetic X-E3")
     let legacyGateway = TestGateway(camera: legacyCamera)
@@ -35,6 +40,10 @@ private struct ProbeWiFiActivationTests {
     precondition(legacyGateway.activations == 0, "X-E3 identity started X-T5 activation")
 
     gateway.model = camera.model
+    allowArm = false
+    guard await rejects(.peerMismatch, { try await activate(camera.id) }) else { exit(1) }
+    precondition(gateway.activations == 0 && armCount == 0, "A rejected arm started activation")
+    allowArm = true
     let supportedFirmware = [target, "04.31", "4.99"]
     for firmware in supportedFirmware {
       gateway.firmware = firmware
@@ -42,7 +51,7 @@ private struct ProbeWiFiActivationTests {
       precondition(network.credential.cameraID == camera.id)
       precondition(network.security == .wpaPersonal)
     }
-    precondition(gateway.activations == supportedFirmware.count)
+    precondition(gateway.activations == supportedFirmware.count && armCount == supportedFirmware.count)
 
     gateway.networkCameraID = .init()
     guard await rejects(.peerMismatch, { try await activate(camera.id) }) else { exit(1) }
