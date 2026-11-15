@@ -27,8 +27,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.lun3x.FujiStudio
         CODE_SIGN_ENTITLEMENTS: Config/FujiStudio.entitlements
         INFOPLIST_KEY_CFBundleDisplayName: Fuji Studio
-        INFOPLIST_KEY_NSPhotoLibraryUsageDescription: Fuji Studio reads original RAF and JPEG photos so you can view and convert them with your Fujifilm camera.
-        INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription: Fuji Studio saves the full-size JPEG photos you explicitly export to your photo library.
+        INFOPLIST_KEY_NSPhotoLibraryUsageDescription: Fuji Studio reads original RAF and JPEG photos you view or convert and verifies original RAW and JPEG photos you explicitly import from your Fujifilm camera.
+        INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription: Fuji Studio saves the full-size JPEG photos you explicitly export and the original RAW and JPEG photos you explicitly import from your Fujifilm camera.
         INFOPLIST_KEY_NSCameraUsageDescription: Fuji Studio controls your connected Fujifilm camera to read its recipes and convert original RAF photos.
         INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: Fuji Studio connects to your selected Fujifilm camera to prepare photo transfers.
         INFOPLIST_KEY_NSLocalNetworkUsageDescription: Fuji Studio uses your local network to retrieve original photos from your selected Fujifilm camera.
