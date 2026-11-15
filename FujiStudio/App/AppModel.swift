@@ -50,7 +50,12 @@ import Observation
     @ObservationIgnored private var retiringBrowserIntent: WirelessConnectionIntent?
     @ObservationIgnored private var browserFingerprints: [WirelessObjectDescriptor: ImportOriginalFingerprint] = [:]
     @ObservationIgnored private var browserBadgeTask: Task<Void, Never>?
-    private var bluetoothChoiceActive = false
+    private struct BluetoothChoice {
+        let id = UUID()
+        var isCancelling = false
+    }
+    private var bluetoothChoice: BluetoothChoice?
+    private var bluetoothChoiceActive: Bool { bluetoothChoice != nil }
     @ObservationIgnored private var wifiCommandActive = false
     @ObservationIgnored private var importCommand: (jobID: UUID?, task: Task<Void, Never>)?
     @ObservationIgnored private var importBinding: [UUID: ImportBinding] = [:]
@@ -120,6 +125,8 @@ import Observation
     #if DEBUG
     /// Read-only lifecycle continuity for opt-in acceptance instrumentation.
     var validationScene: (revision: UInt64, foreground: Bool) { (sceneRevision, foreground) }
+    @ObservationIgnored var validationDropDiscoveryUpdates = false
+    @ObservationIgnored var validationDiscoveryStateRead: FixtureBarrier?
     #endif
 
     init(environment: AppEnvironment, settings: AppSettings? = nil,
@@ -1181,6 +1188,9 @@ extension AppModel {
         streams.append(Task { [weak self] in
             for await snapshot in states {
                 guard !Task.isCancelled else { break }
+                #if DEBUG
+                if snapshot.bluetooth == .discovering, self?.validationDropDiscoveryUpdates == true { continue }
+                #endif
                 self?.adoptWirelessState(snapshot)
             }
         })
@@ -1205,7 +1215,7 @@ extension AppModel {
         if snapshot.bluetooth != previous.bluetooth,
            (previous.bluetooth == .pairing || previous.bluetooth == .discovering),
            snapshot.bluetooth != .pairing, snapshot.bluetooth != .discovering {
-            bluetoothChoiceActive = false
+            finishBluetoothChoice(bluetoothChoice?.id)
         }
         refreshUSBRestriction()
         if snapshot.selectedCameraID != nil || state.wirelessRestrictsUSB { stopAutomaticConnection() }
@@ -1291,7 +1301,7 @@ extension AppModel {
         if activity == .background {
             if previous == .background, let wirelessBackgroundTask { return wirelessBackgroundTask }
             wirelessEpoch &+= 1
-            bluetoothChoiceActive = false
+            if bluetoothChoice?.isCancelling != true { bluetoothChoice = nil }
             let precedingCleanup = wirelessBackgroundTask
             let loading = browserLoadTask
             let loanID = browserLoanID
@@ -1340,48 +1350,61 @@ extension AppModel {
         return jobs
     }
 
-    private func prepareBluetoothChoice() async -> Bool {
+    private func prepareBluetoothChoice() async -> UUID? {
         guard !Task.isCancelled, wirelessAvailable, wirelessActivity == .active, !isSuspended, !state.wirelessRestrictsUSB,
-              state.activeJobID == nil, !isSubmitting, !isRefreshing, !isResettingCamera else { return false }
-        bluetoothChoiceActive = true
+              !bluetoothChoiceActive, state.activeJobID == nil, !isSubmitting, !isRefreshing, !isResettingCamera else { return nil }
+        let choice = BluetoothChoice()
+        bluetoothChoice = choice
         stopAutomaticConnection()
         wirelessActionError = nil
         let epoch = wirelessEpoch
         do {
             try await environment.camera.disconnectConfirmed()
-            guard epoch == wirelessEpoch, wirelessActivity != .background, !Task.isCancelled else {
-                bluetoothChoiceActive = false
-                startAutomaticConnection()
-                return false
+            guard epoch == wirelessEpoch, wirelessActivity != .background, !Task.isCancelled,
+                  bluetoothChoice?.id == choice.id, bluetoothChoice?.isCancelling == false else {
+                finishBluetoothChoice(choice.id)
+                return nil
             }
-            return true
+            return choice.id
         } catch {
-            bluetoothChoiceActive = false
-            if !Task.isCancelled { wirelessActionError = Self.explain(error) }
-            startAutomaticConnection()
-            return false
+            if !Task.isCancelled, bluetoothChoice?.id == choice.id { wirelessActionError = Self.explain(error) }
+            finishBluetoothChoice(choice.id)
+            return nil
         }
     }
 
+    private func finishBluetoothChoice(_ id: UUID?) {
+        guard let id, bluetoothChoice?.id == id, bluetoothChoice?.isCancelling == false else { return }
+        bluetoothChoice = nil
+        if wirelessActivity == .active { startAutomaticConnection() }
+    }
+
     func discoverWirelessCameras() async {
-        guard await prepareBluetoothChoice() else { return }
+        guard let choiceID = await prepareBluetoothChoice() else { return }
         let connection = environment.wireless.connection
         await connection.startDiscovery()
-        if Task.isCancelled { bluetoothChoiceActive = false }
+        #if DEBUG
+        await validationDiscoveryStateRead?.wait()
+        #endif
         adoptWirelessState(await connection.currentState())
+        if wirelessState.bluetooth != .discovering && wirelessState.bluetooth != .pairing {
+            finishBluetoothChoice(choiceID)
+        }
     }
 
     func pairWirelessCamera(_ camera: DiscoveredCamera) async {
+        let choiceID = bluetoothChoice?.id
         let connection = environment.wireless.connection
         await connection.pair(camera)
-        let snapshot = await connection.currentState()
-        if snapshot.bluetooth != .pairing && snapshot.bluetooth != .discovering { bluetoothChoiceActive = false }
-        adoptWirelessState(snapshot)
+        adoptWirelessState(await connection.currentState())
+        if wirelessState.bluetooth != .pairing && wirelessState.bluetooth != .discovering {
+            finishBluetoothChoice(choiceID)
+        }
     }
 
     func selectWirelessCamera(_ id: WirelessCameraID) async {
-        guard await prepareBluetoothChoice() else { return }
-        defer { bluetoothChoiceActive = false }
+        guard let choiceID = await prepareBluetoothChoice() else { return }
+        defer { finishBluetoothChoice(choiceID) }
         do { try await environment.wireless.connection.select(id) }
         catch { if !Task.isCancelled { wirelessActionError = Self.explain(error) } }
         adoptWirelessState(await environment.wireless.connection.currentState())
@@ -1389,23 +1412,31 @@ extension AppModel {
 
     func forgetWirelessCamera(_ id: WirelessCameraID) async {
         guard wirelessAvailable, wirelessActivity == .active, !state.wirelessRestrictsUSB else { return }
+        let choiceID = bluetoothChoice?.id
         do { try await environment.wireless.connection.forget(id); wirelessActionError = nil }
         catch { wirelessActionError = Self.explain(error) }
-        bluetoothChoiceActive = false
         adoptWirelessState(await environment.wireless.connection.currentState())
+        finishBluetoothChoice(choiceID)
     }
 
     func retryCameraBluetooth() async {
-        guard await prepareBluetoothChoice() else { return }
-        defer { bluetoothChoiceActive = false }
+        guard let choiceID = await prepareBluetoothChoice() else { return }
+        defer { finishBluetoothChoice(choiceID) }
         await environment.wireless.connection.retryBluetooth()
         adoptWirelessState(await environment.wireless.connection.currentState())
     }
 
-    func cancelWirelessConnection() async {
+    func cancelWirelessConnection(draining pending: Task<Void, Never>?) async {
+        let choiceID = bluetoothChoice?.id
+        bluetoothChoice?.isCancelling = true
         let connection = environment.wireless.connection
         await connection.cancelConnection(preservingReadyTransfer: true)
+        await pending?.value
         adoptWirelessState(await connection.currentState())
+        if let choiceID, bluetoothChoice?.id == choiceID {
+            bluetoothChoice?.isCancelling = false
+            finishBluetoothChoice(choiceID)
+        }
     }
 
     func connectCameraWiFi() async {

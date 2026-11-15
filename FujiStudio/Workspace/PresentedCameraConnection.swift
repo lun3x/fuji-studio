@@ -23,15 +23,15 @@ final class PresentedCameraConnection {
         }
     }
 
-    func cancel(from requestedOwner: Owner? = nil, cleanup: @escaping @MainActor () async -> Void) {
+    /// Cleanup owns the pending command so it can keep admission fenced through the drain.
+    func cancel(from requestedOwner: Owner? = nil, cleanup: @escaping @MainActor (Task<Void, Never>?) async -> Void) {
         guard let owner, requestedOwner == nil || requestedOwner == owner else { return }
         self.owner = nil
         let pending = task
         pending?.cancel()
         isWorking = true
         task = Task { [weak self] in
-            await cleanup()
-            await pending?.value
+            await cleanup(pending)
             self?.task = nil
             self?.isWorking = false
         }

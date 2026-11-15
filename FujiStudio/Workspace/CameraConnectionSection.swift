@@ -151,7 +151,7 @@ struct CameraConnectionSection: View {
     private func cancel() {
         choosingCamera = false
         retryingBluetooth = false
-        connection.cancel { await model.cancelWirelessConnection() }
+        connection.cancel { pending in await model.cancelWirelessConnection(draining: pending) }
     }
 
     private var disconnectButton: some View {

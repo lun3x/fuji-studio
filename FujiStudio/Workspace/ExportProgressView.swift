@@ -225,7 +225,7 @@ struct AppWorkspaceView: View {
         if !statusPath.isEmpty { statusPath.removeLast() }
     }
     private func closeStatus() {
-        connection.cancel { await model.cancelWirelessConnection() }
+        connection.cancel { pending in await model.cancelWirelessConnection(draining: pending) }
         statusPresented = false
     }
     private func setUpAutoSaveFromBrowser() {

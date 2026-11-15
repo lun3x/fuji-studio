@@ -19,11 +19,46 @@ final class WirelessAppModelTests: XCTestCase {
         await model.start()
         let presentation = PresentedCameraConnection()
         presentation.start(from: .autoSave) { await model.setUpCameraAutoSave() }
-        presentation.cancel(from: .autoSave) { await model.cancelWirelessConnection() }
+        presentation.cancel(from: .autoSave) { pending in await model.cancelWirelessConnection(draining: pending) }
         try await waitUntil { !presentation.isWorking }
         XCTAssertNil(model.wirelessState.transferRoute)
         XCTAssertNil(model.wirelessState.verifiedAutoSaveCameraID)
         XCTAssertFalse(model.state.wirelessRestrictsUSB)
+    }
+
+    func testCancellingAdmittedDiscoveryWithoutObserverUpdateRestoresUSBOnlyAfterDrain() async throws {
+        let fixture = try await FixtureEnvironment.make(wireless: .unpaired)
+        let model = AppModel(environment: fixture.environment)
+        await model.start()
+        try await waitUntil { model.state.isCameraReady && model.canResetCameraConnection }
+        let initialConnects = await fixture.camera.connectCount
+        let pendingRead = FixtureBarrier()
+        defer { Task { await pendingRead.release() } }
+        model.validationDropDiscoveryUpdates = true
+        model.validationDiscoveryStateRead = pendingRead
+        let presentation = PresentedCameraConnection()
+        presentation.start(from: .status) { await model.discoverWirelessCameras() }
+        let coordinator = fixture.environment.wireless.connection
+        try await waitUntil { await coordinator.currentState().bluetooth == .discovering }
+        await pendingRead.entered()
+        let admitted = await coordinator.currentState()
+        XCTAssertEqual(admitted.bluetooth, .discovering)
+        XCTAssertEqual(model.wirelessState.bluetooth, .idle)
+        XCTAssertFalse(model.canResetCameraConnection)
+
+        presentation.cancel { pending in await model.cancelWirelessConnection(draining: pending) }
+        try await waitUntil { await coordinator.currentState().bluetooth == .idle }
+        XCTAssertTrue(presentation.isWorking)
+        XCTAssertFalse(model.canResetCameraConnection)
+        let connectsWhileDraining = await fixture.camera.connectCount
+        XCTAssertEqual(connectsWhileDraining, initialConnects)
+        await pendingRead.release()
+
+        try await waitUntil { !presentation.isWorking }
+        try await waitUntil { model.state.isCameraReady && model.canResetCameraConnection }
+        let finalConnects = await fixture.camera.connectCount
+        XCTAssertGreaterThan(finalConnects, initialConnects)
+        XCTAssertEqual(model.wirelessState.bluetooth, .idle)
     }
 
     func testCancellingPresentedConnectionKeepsAdmittedTransfer() async throws {
@@ -36,7 +71,7 @@ final class WirelessAppModelTests: XCTestCase {
         presentation.start(from: .status) { await model.connectCameraWiFi() }
         try await waitUntil { model.wirelessState.wifi == .ready && model.cameraBrowser.isLoading }
         XCTAssertTrue(presentation.isWorking)
-        presentation.cancel { await model.cancelWirelessConnection() }
+        presentation.cancel { pending in await model.cancelWirelessConnection(draining: pending) }
         await inventory.release()
         try await waitUntil { !presentation.isWorking }
         let closeCount = await fixture.wireless.session.closeCount

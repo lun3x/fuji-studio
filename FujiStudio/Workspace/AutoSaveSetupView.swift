@@ -138,6 +138,6 @@ struct AutoSaveSetupView: View {
     }
 
     private func cancel() {
-        connection.cancel(from: .autoSave) { await model.cancelWirelessConnection() }
+        connection.cancel(from: .autoSave) { pending in await model.cancelWirelessConnection(draining: pending) }
     }
 }
