@@ -137,6 +137,23 @@ readiness.
 Camera receipt of that write remains unobserved. Camera-side registration, WiFi
 activation and photo transfer remain unverified.
 
+The one-subscription diagnostic at `75d41a59` then added only the geotag-request
+subscription, after the configuration subscription and before the network-name
+subscription. CoreBluetooth reported it active at 13:21:41 UTC. The user observed
+“Pairing complete,” return to shooting, and the correct saved camera-side
+registration. Buffered geotag-request callbacks followed every ten seconds. After
+an explicit disconnect, the unchanged saved-reconnect path completed at 13:22:57;
+both the status prefix and full value matched the successful first-pair baseline.
+This run supports adding the missing subscription to first registration. It does
+not establish all power-cycle, multi-camera or phone acceptance cases.
+
+The diagnostic's WiFi activation command was rejected by its firmware admission
+check at 13:23:33, before activation. After restarting the probe, normal saved
+reconnect succeeded again at 13:30:01. The bounded firmware diagnostic reported
+`04.31`, which is below the bundled X-T5 target `4.32`. These hardware results
+therefore do not verify firmware 4.32. No WiFi network was activated or joined
+and no photo was transferred in this run.
+
 ### Follow-up automated verification
 
 The X-T5 model fix at `74eedf3c` passed the 12 Bluetooth gateway tests on a
