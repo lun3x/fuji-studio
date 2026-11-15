@@ -82,6 +82,21 @@ reported that pairing was canceled. The status read failed with ATT error 15
 (`insufficientEncryption`), and CoreBluetooth reported error 7. The probe
 did not reach the acknowledgement write or save a Mac pairing.
 
+A controlled second Mac attempt followed instructions to compare both codes,
+press camera MENU/OK, then confirm on the host. The button sequence was not
+independently observed. The probe completed secure
+status acknowledgement, client identification, subscriptions and firmware read,
+then saved its selected X-T5 record in the Mac Keychain. After an explicit
+disconnect, saved reconnect established an encrypted Bluetooth link and read
+secure status, but the camera disconnected during its acknowledgement write,
+before an acknowledgement arrived. This reproduces the iPhone's reconnect
+failure independently of iOS provisioning. The user reported “Connection lost”
+and an empty pairing list; the exact camera submenu is not confirmed. Camera-side
+registration and reliable saved reconnect therefore remain open. The manual
+distinguishes smartphone destinations from the separate Bluetooth device list.
+[Fujifilm code confirmation sequence](https://digitalcamera-support-en.fujifilm.com/digitalcameraengpcdetail?aid=000008450),
+[X-T5 pairing destination menus](https://fujifilm-dsc.com/en-int/manual/x-t5/connections/network_usb_menu/)
+
 ### Follow-up automated verification
 
 The X-T5 model fix at `74eedf3c` passed the 12 Bluetooth gateway tests on a
@@ -118,7 +133,9 @@ with the diagnostic launch flags and report strings present only in Debug.
 
 ## Evidence matrix
 
-The X-T5 device observation above covers discovery and model identification.
+The X-T5 observations above cover discovery, model identification and one
+completed application handshake on each host. They do not establish reliable
+saved reconnect or WiFi transfer.
 The other protocol observations below come from public sources. See the
 [wireless protocol research](wireless-protocol-research.md) for source details.
 
