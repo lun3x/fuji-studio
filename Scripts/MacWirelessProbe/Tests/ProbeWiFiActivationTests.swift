@@ -5,6 +5,7 @@ import FujiCameraCore
 @MainActor
 private struct ProbeWiFiActivationTests {
   static func main() async throws {
+    checkFirmwareObservation()
     let camera = SavedCamera(id: .init(), peripheralID: UUID(), model: .xt5, displayName: "Synthetic X-T5")
     let gateway = TestGateway(camera: camera)
     let activate = { (selected: WirelessCameraID?) in
@@ -13,12 +14,13 @@ private struct ProbeWiFiActivationTests {
 
     guard await rejects(.peerMismatch, { try await activate(.init()) }) else { exit(1) }
 
-    for firmware in [nil, "4.31", "4.99", "unreadable"] {
+    let target = WirelessSupportPolicy().record(for: camera.model).firmware
+    for firmware in [nil, "4.31", "4.99", "unreadable", "\(target).0"] {
       gateway.firmware = firmware
       guard await rejects(.unsupportedFirmware, { try await activate(camera.id) }) else { exit(1) }
     }
 
-    gateway.firmware = WirelessSupportPolicy().record(for: camera.model).firmware
+    gateway.firmware = target
     gateway.model = .xe3
     guard await rejects(.peerMismatch, { try await activate(camera.id) }) else { exit(1) }
     precondition(gateway.activations == 0, "An ineligible identity started activation")
@@ -55,6 +57,27 @@ private struct ProbeWiFiActivationTests {
     }.value
     precondition(cancelled, "Cancelled activation reported readiness")
     print("Probe Wi-Fi activation admission, identity, and cancellation checks passed.")
+  }
+
+  private static func checkFirmwareObservation() {
+    let cases: [(String?, String)] = [
+      (nil, "unavailable"),
+      ("", "invalidFormat"),
+      ("4.31", "4.31"),
+      (" Ver. 04.32 ", "04.32"),
+      ("4.32.0", "4.32.0"),
+      ("123.456.789", "123.456.789"),
+      ("4.32.0.1", "invalidFormat"),
+      ("4..32", "invalidFormat"),
+      ("9999.1", "invalidFormat"),
+      ("serial 4.32", "invalidFormat"),
+      ("4.32\nextra", "nonPrintableASCII"),
+      ("4.３２", "nonPrintableASCII"),
+      ("4.32\0", "nonPrintableASCII"),
+      (String(repeating: "9", count: 17), "tooLong"),
+    ]
+    precondition(cases.allSatisfy { ProbeFirmwareObservation.label($0.0) == $0.1 })
+    print("Probe firmware format, bound, and redaction checks passed.")
   }
 
   private static func rejects(

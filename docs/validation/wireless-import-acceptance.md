@@ -2,12 +2,12 @@
 
 ## Firmware targets
 
-Fujifilm’s official U.S. release pages were rechecked on 2026-11-15. The bundled policy still matches both latest releases and admits one version per model. Firmware admission and transfer capabilities are separate checks. Pairing and identity reads can precede admission. The owner reported that the two bodies are on the target versions. The app has yet to read the versions from those bodies.
+Fujifilm’s official U.S. release pages were rechecked on 2026-11-15. The X-T5 firmware requirement is 4.30 or later, the secure pairing series. The X-E3 firmware requirement remains exactly 1.32. Firmware admission and transfer capabilities are separate checks. Pairing and identity reads can precede admission. The Mac diagnostics read `04.31` over Bluetooth on the available X-T5. The X-E3 firmware has yet to be verified by a local protocol read.
 
-| Camera | Latest official release | Intended path | Physical acceptance |
-| --- | --- | --- | --- |
-| X-T5 | 4.32, published 2026-11-10. [Release and update instructions](https://www.fujifilm-x.com/en-us/support/download/firmware/cameras/x-t5/) | Secure BLE and XApp transfer | Pending |
-| X-E3 | 1.32, published 2026-06-23. [Release and update instructions](https://www.fujifilm-x.com/en-us/support/download/firmware/cameras/x-e3/) | Legacy BLE and phone transfer, with guided PC AutoSave for RAF if needed and verified | Pending |
+| Camera | Bundled admission | Latest official release | Intended path | Physical acceptance |
+| --- | --- | --- | --- | --- |
+| X-T5 | 4.30 or later | 4.32, published 2026-11-10. [Release and update instructions](https://www.fujifilm-x.com/en-us/support/download/firmware/cameras/x-t5/) | Secure BLE and XApp transfer | Transfer pending on the available 4.31 body |
+| X-E3 | 1.32 | 1.32, published 2026-06-23. [Release and update instructions](https://www.fujifilm-x.com/en-us/support/download/firmware/cameras/x-e3/) | Legacy BLE and phone transfer, with guided PC AutoSave for RAF if needed and verified | Pending |
 
 ## Integrated regression run
 
@@ -137,6 +137,24 @@ readiness.
 Camera receipt of that write remains unobserved. Camera-side registration, WiFi
 activation and photo transfer remain unverified.
 
+The one-subscription diagnostic at `75d41a59` then added only the geotag-request
+subscription, after the configuration subscription and before the network-name
+subscription. CoreBluetooth reported it active at 13:21:41 UTC. The user observed
+“Pairing complete,” return to shooting, and the correct saved camera-side
+registration. Buffered geotag-request callbacks followed every ten seconds. After
+an explicit disconnect, the unchanged saved-reconnect path completed at 13:22:57;
+both the status prefix and full value matched the successful first-pair baseline.
+This run supports adding the missing subscription to first registration. It does
+not establish all power-cycle, multi-camera or phone acceptance cases.
+
+The diagnostic's WiFi activation command was rejected by its firmware admission
+check at 13:23:33, before activation. After restarting the probe, normal saved
+reconnect succeeded again at 13:30:01. The bounded firmware diagnostic reported
+`04.31`, which the admission check at the time rejected because it required
+exactly `4.32`. These hardware results
+therefore do not verify firmware 4.32. No WiFi network was activated or joined
+and no photo was transferred in this run.
+
 ### Follow-up automated verification
 
 The X-T5 model fix at `74eedf3c` passed the 12 Bluetooth gateway tests on a
@@ -173,16 +191,16 @@ with the diagnostic launch flags and report strings present only in Debug.
 
 ## Evidence matrix
 
-The X-T5 observations above cover discovery, model identification and one
-completed application handshake on each host. They do not establish reliable
-saved reconnect or WiFi transfer.
+The X-T5 observations above cover discovery, model identification and pairing,
+including a successful Mac registration and saved reconnect on the 4.31 body.
+WiFi and original file transfer remain unverified.
 The other protocol observations below come from public sources. See the
 [wireless protocol research](wireless-protocol-research.md) for source details.
 
-| Check | X-T5 4.32, XApp | X-E3 1.32, phone or AutoSave |
+| Check | X-T5 4.30 or later, XApp | X-E3 1.32, phone or AutoSave |
 | --- | --- | --- |
-| BLE pairing and reconnect | Fujifilm documents its 4.30 pairing security change and the switch to XApp on iOS. Furble’s maintainer reported secure reconnect on an updated X-T5 without specifying its firmware. The iPhone probe reached Bluetooth Ready once and later disconnected during saved reconnect. The first Mac probe disconnected during encryption setup. [Firmware history](https://www.fujifilm-x.com/en-us/support/download/firmware/cameras/x-t5/), [Furble report](https://github.com/gkoh/furble/issues/208#issuecomment-3235389619) | Fujifilm reports a Camera Remote Bluetooth pairing fix for Android 16 in 1.32. Libfuji implements legacy pairing. The target’s service layout, iOS confirmation and saved reconnect are unknown. [Firmware history](https://www.fujifilm-x.com/en-us/support/download/firmware/cameras/x-e3/), [Libfuji BLE source](https://github.com/petabyt/libfuji/blob/3b9932a46d025405dae505ddb624733b6ea3edd1/lib/bluetooth.c) |
-| Peer identity and firmware | Unknown which authenticated values are stable across BLE and WiFi and which field carries the body firmware on this release. Capture pairing, reconnect and same-model peer rejection. | Unknown which values bind the saved BLE peer to phone and AutoSave sessions. Capture body firmware and cross-transport identity for the selected body. |
+| BLE pairing and reconnect | Fujifilm documents its 4.30 pairing security change and the switch to XApp on iOS. Furble’s maintainer reported secure reconnect on an updated X-T5 without specifying its firmware. The iPhone probe reached Bluetooth Ready once and later disconnected during saved reconnect. The first Mac probe disconnected during encryption setup; a later Mac diagnostic with the geotag subscription confirmed registration and saved reconnect on 4.31. [Firmware history](https://www.fujifilm-x.com/en-us/support/download/firmware/cameras/x-t5/), [Furble report](https://github.com/gkoh/furble/issues/208#issuecomment-3235389619) | Fujifilm reports a Camera Remote Bluetooth pairing fix for Android 16 in 1.32. Libfuji implements legacy pairing. The target’s service layout, iOS confirmation and saved reconnect are unknown. [Firmware history](https://www.fujifilm-x.com/en-us/support/download/firmware/cameras/x-e3/), [Libfuji BLE source](https://github.com/petabyt/libfuji/blob/3b9932a46d025405dae505ddb624733b6ea3edd1/lib/bluetooth.c) |
+| Peer identity and firmware | Bluetooth reported 04.31 on the available body. PTP firmware and cross-transport peer binding remain unverified. Capture same-model peer rejection. | Unknown which values bind the saved BLE peer to phone and AutoSave sessions. Capture body firmware and cross-transport identity for the selected body. |
 | WiFi readiness | Libfuji shows credential reads and a WiFi launch write. The positive readiness signal and usable TCP setup on this firmware are unknown. [Libfuji BLE source](https://github.com/petabyt/libfuji/blob/3b9932a46d025405dae505ddb624733b6ea3edd1/lib/bluetooth.c) | The manual documents wireless phone transfer and camera-initiated PC AutoSave on a shared network. Positive phone-mode readiness and signed-iPhone AutoSave discovery are unknown. [Wireless transfer manual](https://fujifilm-dsc.com/en-int/manual/x-e3/connections/wireless/index.html) |
 | Original-size control | Libfuji uses the XApp compression control (D226) before download. The target’s accepted control, response and original JPEG/RAF byte equality are unknown. [Libfuji PTP source](https://github.com/petabyt/libfuji/blob/3b9932a46d025405dae505ddb624733b6ea3edd1/lib/fuji.c) | Libfuji toggles the D227 file-size control in phone mode. Original-size behavior and byte equality are unknown for both target modes. [Libfuji PTP source](https://github.com/petabyt/libfuji/blob/3b9932a46d025405dae505ddb624733b6ea3edd1/lib/fuji.c) |
 | Card enumeration | The manual confirms two physical slots and separate RAW/JPEG recording. Wireless storage IDs, per-slot enumeration and split-card pairing are unknown. [Memory card manual](https://fujifilm-dsc.com/en-int/manual/x-t5/first_step/insert_card/) | The manual describes a single card slot. Its wireless storage ID and empty/absent-card behavior are unknown in both modes. [Memory card manual](https://fujifilm-dsc.com/en/manual/x-e3/first_step/insert_battery_card/index.html) |
@@ -233,7 +251,7 @@ and per-resource SHA-256 receipts under
 | Signed iPhone with native camera Wi-Fi | The configured personal development team cannot provision the Hotspot Configuration or Access Wi-Fi Information capabilities. Xcode denied the app development profile with and without automatic provisioning. Native Wi-Fi and PTP measurements remain pending on both target bodies. |
 | Signed iPhone Bluetooth-only diagnostic | A temporary project without Wi-Fi entitlements built, passed strict signature verification and installed on an iPhone 15 Pro running iOS 27.0.1. The device refused the explicit diagnostic launch with a profile trust or signature error. The app identifier, team, signer certificate and target device matched the embedded profile. Pairing, protected storage and reconnect remain pending. |
 | Wi-Fi network binding | The app resolves the authenticated BLE credential at the native join boundary. It checks the currently associated secured SSID through `NEHotspotNetwork.fetchCurrent` before opening PTP and again before browsing. This requires both the Wi-Fi Information entitlement and API eligibility for the current network. Unreadable or different associations fail the handoff. A previously configured network must already be associated before reuse. |
-| Peer binding | The PTP adapter checks the model and the exact firmware from DeviceInfo before transfer setup. An observed DeviceInfo serial can be retained as a redacted digest for protected comparison. Its stability and relationship to BLE or AutoSave remain unverified. A matching secured SSID and matching model and firmware cannot distinguish peers with those same values. |
+| Peer binding | The PTP adapter checks the model and applies that model’s firmware requirement to DeviceInfo before transfer setup. An observed DeviceInfo serial can be retained as a redacted digest for protected comparison. Its stability and relationship to BLE or AutoSave remain unverified. A matching secured SSID and matching model and firmware cannot distinguish peers with those same values. |
 | Original size | The XApp adapter reads D226 and allows original transfer only when it observes the reference value 2. Conflicting original-size observations block originals for the current session, and an eligible transfer rechecks its selected card immediately before reading bytes. The camera operator controls the resize setting. Libfuji and the GFX100 II capture use different write widths and do not establish persistence scope on the target. Legacy phone D227 obtains the actual byte length before freezing a descriptor. That control leaves the representation unverified. Only the debug probe can stream phone diagnostic candidates for independent hash comparison, and its receipts label them as such. |
 | RAW exposure | Replay observes XApp RAF files and a phone gallery with no declared or observed RAF support. The X-E3 1.32 card test and the separate signed AutoSave multicast gate remain pending. |
 

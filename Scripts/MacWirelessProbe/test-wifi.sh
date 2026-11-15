@@ -10,6 +10,7 @@ xcrun swift build --package-path "$package" --scratch-path "$build/core" >&2
 core="$(xcrun swift build --package-path "$package" --scratch-path "$build/core" --show-bin-path)"
 xcrun swiftc -swift-version 6 -target "$(uname -m)-apple-macosx27.0" -parse-as-library -I "$core" \
   "$source_dir/ProbeWiFiActivation.swift" "$source_dir/Tests/ProbeWiFiActivationTests.swift" \
+  "$source_dir/ProbeFirmwareObservation.swift" \
   "$wireless/AutoSaveGateway.swift" "$wireless/BluetoothGateway.swift" "$wireless/SavedCameraStore.swift" \
   "$core/libFujiCameraCore.a" -o "$build/ProbeWiFiActivationTests"
 "$build/ProbeWiFiActivationTests"

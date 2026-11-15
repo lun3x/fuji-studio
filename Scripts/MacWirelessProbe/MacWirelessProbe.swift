@@ -51,6 +51,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
   private var selectedHandle: Int?
   private var verifiedPairingSession: UUID?
   private var linkedCamera: SavedCamera?
+  private var bleFirmware = "unavailable"
   private var savedModel: WirelessCameraModel?
   private var cameraNetwork: CameraNetwork?
   private var savedAdvertisement = SavedAdvertisementObservation()
@@ -398,6 +399,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
     let identity = try await gateway.identity(for: camera.id)
     try Task.checkCancellation()
     guard identity.model == .xt5 else { throw WirelessFailure.peerMismatch }
+    bleFirmware = ProbeFirmwareObservation.label(identity.firmware)
     if phase == .pairing {
       if secureStatus.commitPairing(peripheralID: camera.peripheralID, cameraID: camera.id) {
         record("Secure status baseline committed: true")
@@ -500,6 +502,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
       "result=\(result)",
       "saved_model=\(savedModel?.rawValue ?? "none")",
       "linked_model=\(linkedCamera?.model.rawValue ?? "none")",
+      "ble_firmware=\(linkedCamera == nil ? "unavailable" : bleFirmware)",
       "selected=\(selectedHandle.map(String.init) ?? "none")",
       "wifi_ready=\(cameraNetwork != nil)",
       "wifi_security=\(cameraNetwork?.security == .wpaPersonal ? "wpaPersonal" : "none")",

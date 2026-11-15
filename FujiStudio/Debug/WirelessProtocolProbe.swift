@@ -238,10 +238,11 @@ private final class WirelessProbeModel {
           let session = try await coordinator.transferSession()
           let identity = try await session.open()
           let policy = WirelessSupportPolicy()
+          let requirement = policy.record(for: identity.model).firmwareRequirement
           let firmware = policy.assess(model: identity.model.rawValue, firmware: identity.firmware)
-            == .supported(identity.model) ? policy.record(for: identity.model).firmware : "unverified"
+            == .supported(identity.model) ? "Firmware requirement met (\(requirement))" : "Firmware unverified"
           let serial = identity.protocolPeerKey != nil ? "present" : "absent"
-          status = "\(identity.model.rawValue) \(firmware) ready. DeviceInfo serial field \(serial)."
+          status = "\(identity.model.rawValue) ready. \(firmware). DeviceInfo serial field \(serial)."
           capability = try await session.capabilities()
           record(status)
         } catch { status = Self.safeMessage(error) }

@@ -270,8 +270,8 @@ extension WirelessFailure {
 extension WirelessFirmwareRejection {
     var presentationGuidance: String {
         switch transferAdmission {
-        case .updateRequired(let version):
-            "Firmware update required. Update the \(cameraModel.rawValue) to firmware \(version) before transferring originals."
+        case .updateRequired:
+            "Firmware update required. Update the \(cameraModel.rawValue) to firmware \(WirelessSupportPolicy().record(for: cameraModel).firmwareRequirement) before transferring originals."
         case .unverified(.newer):
             "The \(cameraModel.rawValue) reported newer firmware. Check for a Fuji Studio update before transferring originals."
         case .unverified(.unreadable):
