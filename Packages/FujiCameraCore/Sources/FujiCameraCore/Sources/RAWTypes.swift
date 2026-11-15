@@ -100,12 +100,14 @@ public struct LibraryChange: Sendable, Equatable {
   public let insertedIDs: Set<SourceID>
   public let removedIDs: Set<SourceID>
   public let accessScopeChanged: Bool
+  public let authorizationChanged: Bool
   public init(changedIDs: Set<SourceID>, removedIDs: Set<SourceID>, accessScopeChanged: Bool,
-              insertedIDs: Set<SourceID> = []) {
+              insertedIDs: Set<SourceID> = [], authorizationChanged: Bool = false) {
     self.changedIDs = changedIDs
     self.insertedIDs = insertedIDs
     self.removedIDs = removedIDs
     self.accessScopeChanged = accessScopeChanged
+    self.authorizationChanged = authorizationChanged
   }
 
 }

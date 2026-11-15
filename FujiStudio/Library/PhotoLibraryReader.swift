@@ -339,6 +339,14 @@ actor PhotoLibraryReader: PhotoLibraryReading {
         @unknown default: .restricted
         }
     }
+
+    static func libraryChange(previousAccess: LibraryAccess, currentAccess: LibraryAccess,
+                              changed: Set<SourceID>, removed: Set<SourceID>, inserted: Set<SourceID>) -> LibraryChange {
+        let authorizationChanged = previousAccess != currentAccess
+        let scope = authorizationChanged || (currentAccess == .limited && (!changed.isEmpty || !removed.isEmpty))
+        return .init(changedIDs: changed, removedIDs: removed, accessScopeChanged: scope,
+                     insertedIDs: inserted, authorizationChanged: authorizationChanged)
+    }
 }
 
 extension ResourceToken {
@@ -387,9 +395,9 @@ private final class LibraryObserver: NSObject, PHPhotoLibraryChangeObserver, @un
                 else { changed.formUnion(afterIDs) }
                 self.fetch = after
             }
-            let scope = nextAccess != access || (nextAccess == .limited && (!changed.isEmpty || !removed.isEmpty))
+            let event = PhotoLibraryReader.libraryChange(previousAccess: access, currentAccess: nextAccess,
+                                                         changed: changed, removed: removed, inserted: inserted)
             access = nextAccess
-            let event = LibraryChange(changedIDs: changed, removedIDs: removed, accessScopeChanged: scope, insertedIDs: inserted)
             for subscriber in subscribers.values { subscriber.yield(event) }
         }
     }

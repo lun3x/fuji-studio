@@ -36,6 +36,7 @@ actor CameraImportCoordinator {
     }
 
     private struct Loan {
+        let id: UUID
         let jobID: UUID
         let session: any WirelessTransferSession
     }
@@ -52,6 +53,7 @@ actor CameraImportCoordinator {
 
     private var run: Run?
     private var loan: Loan?
+    private var retiredLoanIDs: Set<UUID> = []
     private var retiredSessions: Set<UUID> = []
     private var command: Command?
     private var reconcileRequested = false
@@ -95,12 +97,13 @@ actor CameraImportCoordinator {
 
     /// The session must already have completed browsing. A new job must use the same
     /// routes the user selected. A resumed job can rematch fresh session routes.
-    func start(_ selections: [ImportSelection], session: any WirelessTransferSession) async throws -> UUID {
+    func start(_ selections: [ImportSelection], session: any WirelessTransferSession, loanID: UUID = UUID()) async throws -> UUID {
         let jobID = UUID()
         try beginCommand(jobID: jobID)
         defer { endCommand() }
         guard let first = selections.first else { throw ImportJournalError.invalidJob }
         _ = try await recovery.removeInterruptedFiles()
+        guard !retiredLoanIDs.contains(loanID) else { throw CameraImportError.sessionRequired }
         let camera = try await session.open()
         try Self.requireSupported(camera)
         let capabilities = try await session.capabilities()
@@ -111,11 +114,11 @@ actor CameraImportCoordinator {
         let job = try ImportJob(id: jobID, selections: selections, importDate: Date(), mode: capabilities.mode)
         try Task.checkCancellation()
         let committed = try await journal.save(job)
-        try await admit(committed, session: session, requireOriginalRoutes: true)
+        try await admit(committed, loan: .init(id: loanID, jobID: jobID, session: session), requireOriginalRoutes: true)
         return committed.id
     }
 
-    func resume(jobID: UUID, session: any WirelessTransferSession) async throws {
+    func resume(jobID: UUID, session: any WirelessTransferSession, loanID: UUID = UUID()) async throws {
         try beginCommand(jobID: jobID)
         defer { endCommand() }
         let jobs = try await recovery.removeInterruptedFiles()
@@ -127,10 +130,10 @@ actor CameraImportCoordinator {
         }
         guard job.pauseReason != .freshSelectionRequired else { throw CameraImportError.freshSelectionRequired }
         job = try await clearPause(job)
-        try await admit(job, session: session)
+        try await admit(job, loan: .init(id: loanID, jobID: jobID, session: session))
     }
 
-    func retryCapture(jobID: UUID) async throws {
+    func retryCapture(jobID: UUID, usingLoanID loanID: UUID?) async throws {
         try beginCommand(jobID: jobID)
         defer { endCommand() }
         var job = try await recovery.load(jobID)
@@ -152,21 +155,21 @@ actor CameraImportCoordinator {
                 throw CameraImportError.unresolvedSave(retainedBytes: job.retainedBytes)
             }
         }
-        let session = session(for: jobID)
         guard let next = job.nextCaptureIndex else {
+            if loan?.jobID == jobID { loan = nil }
             job = try await clearPause(job)
             publish(job)
             return
         }
-        guard session != nil || job.captures[next].stage == .readyToSave else {
+        guard retainedLoan(for: jobID, matching: loanID) != nil || job.captures[next].stage == .readyToSave else {
             publish(job)
             throw CameraImportError.sessionRequired
         }
         job = try await clearPause(job)
-        try await admit(job, session: session, retryLocalFirst: true)
+        try await admit(job, loan: retainedLoan(for: jobID, matching: loanID), retryLocalFirst: true)
     }
 
-    func skipCapture(jobID: UUID) async throws {
+    func skipCapture(jobID: UUID, usingLoanID loanID: UUID?) async throws {
         try beginCommand(jobID: jobID)
         defer { endCommand() }
         var job = try await recovery.load(jobID)
@@ -176,9 +179,9 @@ actor CameraImportCoordinator {
         }
         job.captures[index].stage = .skipped
         job = try await recovery.releaseCompletedFiles(journal.save(job))
-        if let session = session(for: jobID), job.nextCaptureIndex != nil, job.pauseReason != .freshSelectionRequired {
+        if retainedLoan(for: jobID, matching: loanID) != nil, job.nextCaptureIndex != nil, job.pauseReason != .freshSelectionRequired {
             job = try await clearPause(job)
-            try await admit(job, session: session)
+            try await admit(job, loan: retainedLoan(for: jobID, matching: loanID))
         } else {
             loan = loan?.jobID == jobID ? nil : loan
             let remainingPause: ImportPauseReason = job.pauseReason == .freshSelectionRequired
@@ -217,6 +220,17 @@ actor CameraImportCoordinator {
 
     func cancelRemaining(jobID: UUID) async {
         await stop(jobID: jobID, reason: .cancelled)
+    }
+
+    /// A native close revokes the exact loan, including a healthy socket held by an idle job.
+    /// Remember retirement even if connection loss raced the initial admission.
+    @discardableResult
+    func retireLoan(_ id: UUID, reason: ImportPauseReason) async -> UUID? {
+        retiredLoanIDs.insert(id)
+        guard let loan, loan.id == id else { return nil }
+        if run == nil, command != nil { reconcileRequested = true }
+        await stop(jobID: loan.jobID, reason: reason)
+        return loan.jobID
     }
 
     private func stop(jobID: UUID, reason: ImportPauseReason) async {
@@ -280,6 +294,7 @@ actor CameraImportCoordinator {
                 if job.captures.contains(where: { $0.stage.mayHaveSubmitted }) {
                     job = try await setPause(.unresolvedSave, on: job)
                 } else if job.nextCaptureIndex == nil {
+                    if loan?.jobID == job.id { loan = nil }
                     job = try await clearPause(job)
                 } else if job.pauseReason == nil || job.pauseReason == .unresolvedSave {
                     job = try await setPause(.interrupted, on: job)
@@ -292,7 +307,7 @@ actor CameraImportCoordinator {
     }
 
     private func beginCommand(jobID: UUID) throws {
-        guard run == nil, command == nil else { throw CameraImportError.busy }
+        guard run == nil, command == nil, loan == nil || loan?.jobID == jobID else { throw CameraImportError.busy }
         command = .init(jobID: jobID)
     }
 
@@ -311,18 +326,24 @@ actor CameraImportCoordinator {
         loan?.jobID == jobID ? loan?.session : nil
     }
 
-    private func admit(_ job: ImportJob, session: (any WirelessTransferSession)?, requireOriginalRoutes: Bool = false,
+    private func retainedLoan(for jobID: UUID, matching id: UUID?) -> Loan? {
+        guard let loan, loan.jobID == jobID, loan.id == id, !retiredLoanIDs.contains(loan.id) else { return nil }
+        return loan
+    }
+
+    private func admit(_ job: ImportJob, loan: Loan?, requireOriginalRoutes: Bool = false,
                        retryLocalFirst: Bool = false) async throws {
-        if command?.requestedPause != nil || Task.isCancelled {
-            let paused = try await setPause(command?.requestedPause ?? .interrupted, on: job)
+        let lostLoan = loan.map { retiredLoanIDs.contains($0.id) } ?? false
+        if command?.requestedPause != nil || lostLoan || Task.isCancelled {
+            let paused = try await setPause(command?.requestedPause ?? (lostLoan ? .connectionLost : .interrupted), on: job)
             publish(paused)
             throw CancellationError()
         }
-        loan = session.map { .init(jobID: job.id, session: $0) }
+        self.loan = loan
         run = .init(job: job)
         if requireOriginalRoutes { run?.sessionID = job.frozenSelections.first?.descriptors.first?.sessionID }
         run?.worker = Task {
-            await self.process(job, session: session, requireOriginalRoutes: requireOriginalRoutes, retryLocalFirst: retryLocalFirst)
+            await self.process(job, session: loan?.session, requireOriginalRoutes: requireOriginalRoutes, retryLocalFirst: retryLocalFirst)
         }
         publish(job)
     }
@@ -483,6 +504,7 @@ actor CameraImportCoordinator {
 
     private func retireSession() {
         if let sessionID = run?.sessionID { retiredSessions.insert(sessionID) }
+        if let loan { retiredLoanIDs.insert(loan.id) }
         run?.invalidatedSession = true
         loan = nil
     }

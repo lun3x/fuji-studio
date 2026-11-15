@@ -135,8 +135,11 @@ actor FixtureWirelessSession: WirelessTransferSession {
     private var enumerations = 0
     private var inventoryBarrier: FixtureBarrier?
     private var inventoryHeld = false
+    private var closeBarrier: FixtureBarrier?
     private var downloadFailure: WirelessFailure?
     private(set) var closeCount = 0
+    private(set) var thumbnailCount = 0
+    private(set) var downloadCount = 0
     private(set) var commandsDuringInventory = 0
 
     init(identity: WirelessIdentity) throws {
@@ -154,7 +157,7 @@ actor FixtureWirelessSession: WirelessTransferSession {
                     format: format, byteLength: UInt64((format == .raf ? raf : jpeg).count),
                     captureDate: index == 0 ? "20200102T030405+0000" : "20200101T030405+0000",
                     dimensions: format == .raf ? .init(width: 7728, height: 5152) : .init(width: 6, height: 4),
-                    orientation: 1)
+                    orientation: 1, hasThumbnail: true)
             }
             return .init(captureID: .init(describing: objects), camera: identity, descriptors: objects,
                          policy: pair ? .pair : .rawOnly)
@@ -162,6 +165,7 @@ actor FixtureWirelessSession: WirelessTransferSession {
     }
     func begin() { sessionID = UUID(); closed = false; enumerations = 0 }
     func holdBrowserInventory(_ barrier: FixtureBarrier) { inventoryBarrier = barrier }
+    func holdClose(_ barrier: FixtureBarrier) { closeBarrier = barrier }
     func failNextDownload(_ failure: WirelessFailure) { downloadFailure = failure }
     func open() throws -> WirelessIdentity {
         guard !closed else { throw WirelessFailure.connectionLost }
@@ -192,18 +196,24 @@ actor FixtureWirelessSession: WirelessTransferSession {
         return stream
     }
     func thumbnail(_ object: WirelessObjectDescriptor) throws -> Data {
+        thumbnailCount += 1
         _ = try open()
         guard object.sessionID == sessionID else { throw WirelessFailure.objectChanged }
         return jpeg
     }
     func download(_ object: WirelessObjectDescriptor, to sink: @escaping @Sendable (Data) async throws -> Void) async throws {
+        downloadCount += 1
         _ = try open()
         if inventoryHeld { commandsDuringInventory += 1; throw WirelessFailure.cameraBusy }
         if let failure = downloadFailure { downloadFailure = nil; throw failure }
         guard selections.flatMap(\.descriptors).contains(object) else { throw WirelessFailure.objectChanged }
         try await sink(object.format == .raf ? raf : jpeg)
     }
-    func close() {
+    func close() async {
+        if let barrier = closeBarrier {
+            closeBarrier = nil
+            await barrier.wait()
+        }
         if !closed { closed = true; closeCount += 1 }
     }
 }
@@ -213,6 +223,8 @@ actor FixtureImportPhotos: PhotoImportGateway {
     private let verifySaves: Bool
     private let providesPlaceholder: Bool
     private var createBarrier: FixtureBarrier?
+    private var rejection: PhotoImportFailure?
+    private var notifyInsertions = true
     private var assets: [String: ImportedAssetInspection] = [:]
     private(set) var createCount = 0
 
@@ -220,15 +232,21 @@ actor FixtureImportPhotos: PhotoImportGateway {
         self.reader = reader; self.verifySaves = verifySaves; self.providesPlaceholder = providesPlaceholder
     }
     func holdCreate(_ barrier: FixtureBarrier) { createBarrier = barrier }
+    func rejectNextCreate(_ failure: PhotoImportFailure) { rejection = failure }
+    func suppressInsertionNotifications() { notifyInsertions = false }
 
     func create(_ capture: ValidatedCapture,
                 onPlaceholder: @escaping @Sendable (String) throws -> Void) async -> PhotoImportOutcome {
         createCount += 1
+        if let failure = rejection {
+            rejection = nil
+            return .rejected(failure)
+        }
         let id = "wireless-\(createCount)"
         if providesPlaceholder {
             do { try onPlaceholder(id) } catch { return .uncertain(assetID: id) }
         }
-        await reader?.addWirelessImport(id, capture: capture, notify: true)
+        await reader?.addWirelessImport(id, capture: capture, notify: notifyInsertions)
         if let barrier = createBarrier {
             createBarrier = nil
             await barrier.wait()

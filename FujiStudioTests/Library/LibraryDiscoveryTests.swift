@@ -5,6 +5,18 @@ import Photos
 @testable import FujiStudio
 
 struct LibraryDiscoveryTests {
+    @Test func photoKitChangeKeepsLimitedMembershipSeparateFromAuthorizationTransition() {
+        let insertion = PhotoLibraryReader.libraryChange(previousAccess: .limited, currentAccess: .limited,
+                                                         changed: ["added"], removed: [], inserted: ["added"])
+        #expect(insertion.accessScopeChanged)
+        #expect(!insertion.authorizationChanged)
+        #expect(insertion.insertedIDs == ["added"])
+        let authorization = PhotoLibraryReader.libraryChange(previousAccess: .full, currentAccess: .limited,
+                                                             changed: ["added"], removed: [], inserted: ["added"])
+        #expect(authorization.accessScopeChanged)
+        #expect(authorization.authorizationChanged)
+    }
+
     @Test func firstBatchDoesNotEnumerateTheEntireFetch() throws {
         let assets = [TestAsset("newest", 6), TestAsset("second", 5), TestAsset("third", 4),
                       TestAsset("fourth", 3), TestAsset("fifth", 2), TestAsset("oldest", 1)]

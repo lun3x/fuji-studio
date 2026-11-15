@@ -22,7 +22,7 @@ final class ImportRecoveryTests: XCTestCase {
         XCTAssertEqual(paused?.actions.contains(.discardRemaining), false)
         let session = harness.session([selection])
         await assertImportThrows { try await reopened.resume(jobID: job.id, session: session) }
-        await assertImportThrows { try await reopened.retryCapture(jobID: job.id) }
+        await assertImportThrows { try await reopened.retryCapture(jobID: job.id, usingLoanID: nil) }
         do {
             try await reopened.discardRemaining(jobID: job.id)
             XCTFail("Discard removed evidence of a possible Photos save")
@@ -90,7 +90,7 @@ final class ImportRecoveryTests: XCTestCase {
         XCTAssertEqual(priorCreates, 0)
         let eligible = await importEvent(reopened, jobID: job.id) { !$0.isRunning }
         XCTAssertEqual(eligible?.actions.contains(.retryCapture), true)
-        try await reopened.retryCapture(jobID: job.id)
+        try await reopened.retryCapture(jobID: job.id, usingLoanID: nil)
         _ = await importEvent(reopened, jobID: job.id) { $0.receipts.count == 1 && !$0.isRunning }
         let finished = try await harness.job(job.id)
         XCTAssertEqual(finished.captures[0].receipt?.assetID, "asset-1")
@@ -109,7 +109,7 @@ final class ImportRecoveryTests: XCTestCase {
         XCTAssertEqual(try harness.stagedFiles().count, 2)
         let reopened = try harness.reopened()
         await reopened.reconcile()
-        try await reopened.retryCapture(jobID: jobID)
+        try await reopened.retryCapture(jobID: jobID, usingLoanID: nil)
         _ = await importEvent(reopened, jobID: jobID) { $0.receipts.count == 1 && !$0.isRunning }
         let submitted = await harness.photos.submittedPaths
         XCTAssertEqual(submitted, Array(repeating: rejected.captures[0].originals.map(\.relativePath), count: 2))
@@ -142,7 +142,7 @@ final class ImportRecoveryTests: XCTestCase {
         let gate = ImportTestGate()
         await harness.photos.setSearch(.authoritative([]))
         await harness.photos.holdNextSearch(at: gate)
-        let retry = Task { try await harness.coordinator.retryCapture(jobID: job.id) }
+        let retry = Task { try await harness.coordinator.retryCapture(jobID: job.id, usingLoanID: nil) }
         await gate.waitUntilEntered()
         await harness.coordinator.pause(jobID: job.id, reason: .backgrounded)
         await gate.release()
@@ -211,7 +211,7 @@ final class ImportRecoveryTests: XCTestCase {
         let job = try await seed(.readyToSave, with: harness, selection: harness.selection(1))
         let reopened = try harness.reopened()
         await reopened.reconcile()
-        try await reopened.retryCapture(jobID: job.id)
+        try await reopened.retryCapture(jobID: job.id, usingLoanID: nil)
         let paused = await importEvent(reopened, jobID: job.id) { !$0.isRunning }
         XCTAssertEqual(paused?.pauseReason, .storage)
         XCTAssertEqual(paused?.stage, .readyToSave)

@@ -77,6 +77,42 @@ final class WirelessAppModelTests: XCTestCase {
         XCTAssertEqual(model.wirelessState.wifi, .idle)
     }
 
+    func testOverlappingBackgroundAndActiveRequestsKeepTheFirstNativeCloseFenced() async throws {
+        let fixture = try await FixtureEnvironment.make(wireless: .paired)
+        let model = AppModel(environment: fixture.environment)
+        await model.start()
+        try await browse(model)
+        let close = FixtureBarrier()
+        await fixture.wireless.session.holdClose(close)
+        let revision = model.validationScene.revision
+        let firstBackground = Task { await model.sceneChanged(.background) }
+        await close.entered()
+        let selections = await fixture.wireless.session.selections
+        let queued = try ImportJob(selections: selections, importDate: Date(), mode: .xApp)
+        try await fixture.environment.wireless.journal.save(queued)
+        let firstActive = Task { await model.sceneChanged(.active) }
+        try await waitUntil { model.validationScene.revision == revision + 2 }
+        let secondBackground = Task { await model.sceneChanged(.background) }
+        try await waitUntil { model.validationScene.revision == revision + 3 }
+        let secondActive = Task { await model.sceneChanged(.active) }
+        try await waitUntil { model.validationScene.revision == revision + 4 }
+        let clock = ContinuousClock()
+        let deadline = clock.now + .milliseconds(100)
+        while clock.now < deadline, model.wirelessState.activity == .background, model.importRecoveryEvents.isEmpty {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let held = await fixture.environment.wireless.connection.currentState()
+        XCTAssertEqual(held.activity, .background)
+        XCTAssertTrue(model.importRecoveryEvents.isEmpty)
+        await close.release()
+        await firstBackground.value
+        await firstActive.value
+        await secondBackground.value
+        await secondActive.value
+        XCTAssertEqual(model.wirelessState.activity, .active)
+        XCTAssertEqual(model.importRecoveryEvents.map(\.jobID), [queued.id])
+    }
+
     func testWirelessOwnershipBlocksManualUSBAndDoesNotMakeUSBCameraReady() async throws {
         let fixture = try await FixtureEnvironment.make(wireless: .paired)
         let model = AppModel(environment: fixture.environment)
@@ -174,6 +210,111 @@ final class WirelessAppModelTests: XCTestCase {
         XCTAssertEqual(model.wirelessState.wifi, .ready)
         let closeCount = await fixture.wireless.session.closeCount
         XCTAssertEqual(closeCount, 1)
+    }
+
+    func testPausedLoanBlocksThumbnailsAndNativeLossMakesRetryLocalOnly() async throws {
+        let fixture = try await FixtureEnvironment.make(wireless: .paired)
+        let model = AppModel(environment: fixture.environment)
+        await model.start()
+        try await browse(model)
+        let first = try XCTUnwrap(model.cameraBrowser.captures.first)
+        XCTAssertNotNil(first.thumbnailObject)
+        await fixture.wireless.photos.rejectNextCreate(.authorization)
+        await model.importSelectedCaptures()
+        try await waitUntil { model.importEvents.first?.pauseReason == .photosAccess && model.importEvents.first?.isRunning == false }
+        let paused = try XCTUnwrap(model.importEvents.first)
+        let jobID = try XCTUnwrap(paused.jobID)
+        XCTAssertFalse(paused.needsSession)
+        let preview = await model.cameraBrowser.thumbnail(for: first)
+        let previewAttempts = await fixture.wireless.session.thumbnailCount
+        XCTAssertNil(preview)
+        XCTAssertEqual(previewAttempts, 0)
+
+        // Simulate loss emitted by the connection owner independently of the app action.
+        await fixture.environment.wireless.connection.disconnectWiFi()
+        try await waitUntil {
+            let event = await fixture.environment.wireless.importer.latestEvent(jobID: jobID)
+            return model.wirelessState.wifi == .idle && event?.needsSession == true
+        }
+        let loanAfterLoss = await fixture.environment.wireless.importer.latestEvent(jobID: jobID)
+        XCTAssertEqual(loanAfterLoss?.needsSession, true)
+        await model.connectCameraWiFi()
+        let second = try XCTUnwrap(model.cameraBrowser.captures.first)
+        XCTAssertNotEqual(first.rowID.sessionID, second.rowID.sessionID)
+        let newPreview = await model.cameraBrowser.thumbnail(for: second)
+        XCTAssertNotNil(newPreview)
+        let beforeRetry = await fixture.wireless.session.downloadCount
+        await model.retryImportCapture(jobID: jobID)
+        try await waitUntil { model.importEvents.first?.isRunning == false && model.importEvents.first?.receipts.isEmpty == false }
+        let afterRetry = await fixture.wireless.session.downloadCount
+        XCTAssertEqual(afterRetry, beforeRetry)
+        XCTAssertEqual(model.importEvents.first?.receipts.count, 1)
+        XCTAssertEqual(model.importEvents.first?.captureIndex, 1)
+        XCTAssertEqual(model.wirelessState.wifi, .ready)
+    }
+
+    func testFastUnresolvedSaveCannotEnterAnyLibraryBatchOrBecomeCataloged() async throws {
+        for mode in [WirelessFixture.Mode.unverifiedSave, .unidentifiedSave] {
+            let fixture = try await FixtureEnvironment.make(wireless: mode)
+            let model = AppModel(environment: fixture.environment)
+            await model.start()
+            try await browse(model)
+            let beforeSnapshot = FixtureBarrier(), afterMarker = FixtureBarrier()
+            await fixture.reader.holdNextDiscovery(beforeSnapshot: beforeSnapshot, afterID: "scan-marker", afterYield: afterMarker)
+            await fixture.wireless.photos.suppressInsertionNotifications()
+            let firstScan = Task { await model.reloadLibrary() }
+            await beforeSnapshot.entered()
+            await model.importSelectedCaptures()
+            try await waitUntil { model.importEvents.first?.pauseReason == .unresolvedSave && model.importEvents.first?.isRunning == false }
+            await fixture.reader.insertExternalRAW("scan-marker", filename: "EXTERNAL.RAF", date: Date(), notify: false)
+            await beforeSnapshot.release()
+            try await waitUntil { model.sources.contains { $0.id == "scan-marker" } }
+            XCTAssertFalse(model.sources.contains { $0.id == "wireless-1" }, String(describing: mode))
+            await model.reloadLibrary()
+            await afterMarker.release()
+            await firstScan.value
+            XCTAssertFalse(model.sources.contains { $0.id == "wireless-1" }, String(describing: mode))
+            let root = fixture.wireless.journalRoot.deletingLastPathComponent()
+            let catalog = try SwiftDataCatalog(storeURL: root.appendingPathComponent("catalog.store"))
+            let persisted = try await catalog.knownSourceIDs()
+            XCTAssertFalse(persisted.contains("wireless-1"), String(describing: mode))
+            XCTAssertTrue(persisted.contains("scan-marker"))
+        }
+    }
+
+    func testLimitedKnownInsertionMergesIncrementallyAndRealScopeChangeReloads() async throws {
+        let fixture = try await FixtureEnvironment.make(access: .limited, wireless: .paired)
+        let model = AppModel(environment: fixture.environment)
+        await model.start()
+        model.send(.sourceTapped("source-0"))
+        model.send(.select)
+        try await browse(model)
+        let initial = await fixture.reader.discoveryRequests
+        await model.importSelectedCaptures()
+        try await waitUntil { model.sources.count == 5 && model.importEvents.first?.receipts.count == 2 }
+        let afterImport = await fixture.reader.discoveryRequests
+        XCTAssertEqual(afterImport, initial)
+        XCTAssertEqual(model.state.viewedSourceID, "source-0")
+        XCTAssertEqual(model.state.checkedSourceIDs, ["source-0"])
+        await fixture.reader.insertExternalRAW("newly-shared", filename: "EXTERNAL.RAF", date: Date())
+        try await waitUntil { model.sources.contains { $0.id == "newly-shared" } && !model.isLoadingLibrary }
+        let afterScopeChange = await fixture.reader.discoveryRequests
+        XCTAssertEqual(afterScopeChange, initial + 1)
+        XCTAssertEqual(model.state.libraryAccess, .limited)
+    }
+
+    func testLimitedGrantCanMakePreviouslyImportedPhotoVisibleAgain() async throws {
+        let fixture = try await FixtureEnvironment.make(access: .limited, wireless: .paired)
+        let model = AppModel(environment: fixture.environment)
+        await model.start()
+        try await browse(model)
+        await model.importSelectedCaptures()
+        try await waitUntil { model.sources.count == 5 }
+        let photo = try await fixture.reader.source(id: "wireless-1")
+        await fixture.reader.removeReplacedOriginals([photo.id])
+        try await waitUntil { model.sources.count == 4 && !model.isLoadingLibrary }
+        await fixture.reader.grantLimitedAccess(to: photo)
+        try await waitUntil { model.sources.contains { $0.id == photo.id } }
     }
 
     func testUnverifiedPlaceholderDoesNotBecomeAnImportedTraySourceOnLibraryChange() async throws {

@@ -6,6 +6,7 @@ typealias WirelessTransferSessionFactory = @Sendable (WirelessIdentity, JoinedCa
   async throws -> any WirelessTransferSession
 
 struct WirelessTransferAdmission: Sendable {
+  let loanID: UUID
   let intent: WirelessConnectionIntent
   let session: any WirelessTransferSession
 }
@@ -717,10 +718,10 @@ extension WirelessConnectionCoordinator {
 
   func admittedTransfer() throws -> WirelessTransferAdmission {
     guard snapshot.wifi == .ready, snapshot.activity != .background,
-      let session, let intent = wifiRequest?.intent else {
+      let session, let intent = wifiRequest?.intent, let loanID = wifiAttempt?.id else {
       throw WirelessFailure.connectionLost
     }
-    return .init(intent: intent, session: session)
+    return .init(loanID: loanID, intent: intent, session: session)
   }
 
   func retireTransfer(_ intent: WirelessConnectionIntent, failure: WirelessFailure?) async {

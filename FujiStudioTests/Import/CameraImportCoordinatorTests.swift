@@ -27,6 +27,37 @@ final class CameraImportCoordinatorTests: XCTestCase {
         XCTAssertEqual(submitted, [true, true, true])
     }
 
+    func testLateRetirementLeavesReplacementLoanAvailableForAuthorizedRetry() async throws {
+        let harness = try CameraImportHarness()
+        defer { harness.fixture.cleanUp() }
+        let initial = [harness.selection(1), harness.selection(2)]
+        let oldLoan = UUID(), replacementLoan = UUID()
+        await harness.photos.setNextOutcome(.rejected(.authorization))
+        let jobID = try await harness.coordinator.start(initial, session: harness.session(initial), loanID: oldLoan)
+        let paused = await importEvent(harness.coordinator, jobID: jobID) { $0.pauseReason == .photosAccess && !$0.isRunning }
+        XCTAssertEqual(paused?.needsSession, false)
+        await harness.coordinator.retireLoan(oldLoan, reason: .connectionLost)
+
+        let sessionID = UUID()
+        let fresh = [harness.selection(1, sessionID: sessionID, handleOffset: 100),
+                     harness.selection(2, sessionID: sessionID, handleOffset: 100)]
+        let replacement = harness.session(fresh)
+        await harness.photos.setNextOutcome(.rejected(.authorization))
+        try await harness.coordinator.resume(jobID: jobID, session: replacement, loanID: replacementLoan)
+        _ = await importEvent(harness.coordinator, jobID: jobID) {
+            $0.runID != paused?.runID && $0.pauseReason == .photosAccess && !$0.isRunning
+        }
+        let retired = await harness.coordinator.retireLoan(oldLoan, reason: .connectionLost)
+        XCTAssertNil(retired)
+        let current = await harness.coordinator.latestEvent(jobID: jobID)
+        XCTAssertEqual(current?.needsSession, false)
+        try await harness.coordinator.retryCapture(jobID: jobID, usingLoanID: replacementLoan)
+        let finished = await importEvent(harness.coordinator, jobID: jobID) { $0.receipts.count == 2 && !$0.isRunning }
+        XCTAssertEqual(finished?.receipts.count, 2)
+        let downloadedHandles = await replacement.handles
+        XCTAssertEqual(downloadedHandles, [102, 103, 104, 105])
+    }
+
     func testDisconnectDuringEitherComponentRestartsPartialAndRematchesFreshHandles() async throws {
         for failingFormat in [WirelessObjectFormat.raf, .jpeg] {
             let harness = try CameraImportHarness()
@@ -117,7 +148,7 @@ final class CameraImportCoordinatorTests: XCTestCase {
         XCTAssertEqual(admitted?.invalidatedSession, true)
 
         fail.withLock { $0 = false }
-        try await harness.coordinator.skipCapture(jobID: jobID)
+        try await harness.coordinator.skipCapture(jobID: jobID, usingLoanID: nil)
         let skipped = try await harness.job(jobID)
         XCTAssertEqual(skipped.captures.map(\.stage), [.skipped, .queued])
         let handles = await failedSession.handles

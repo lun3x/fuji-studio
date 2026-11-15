@@ -131,6 +131,7 @@ actor FixtureLibrary: PhotoLibraryReading, PhotoEditReading {
     private var edits: [String: PhotoEditAdjustment] = [:]
     private var resourcesBarrier: FixtureBarrier?
     private var discoveryBarrier: FixtureBarrier?
+    private var nextDiscovery: (beforeSnapshot: FixtureBarrier, afterID: SourceID, afterYield: FixtureBarrier)?
     private var materializeBarriers: [String: FixtureBarrier] = [:]
     private var materializeFailures: [String: ResourceError] = [:]
     private var discoveryLimit: Int?
@@ -150,6 +151,9 @@ actor FixtureLibrary: PhotoLibraryReading, PhotoEditReading {
     func setAccess(_ value: LibraryAccess) { access = value }
     func restrictTo(_ ids: Set<String>) { index = index.filter { ids.contains($0.id) }; access = .limited }
     func holdDiscovery(_ barrier: FixtureBarrier) { discoveryBarrier = barrier }
+    func holdNextDiscovery(beforeSnapshot: FixtureBarrier, afterID: SourceID, afterYield: FixtureBarrier) {
+        nextDiscovery = (beforeSnapshot, afterID, afterYield)
+    }
     func limitDiscovery(_ count: Int) { discoveryLimit = count }
     func holdMaterialize(_ id: String, barrier: FixtureBarrier) { materializeBarriers[id] = barrier }
     func failMaterialize(_ id: String, error: ResourceError?) { materializeFailures[id] = error }
@@ -166,14 +170,18 @@ actor FixtureLibrary: PhotoLibraryReading, PhotoEditReading {
         return bytes
     }
     func removeOutput(_ id: String, notify: Bool = true) { outputs[id] = nil; if notify { observers.forEach { $0.yield(LibraryChange(changedIDs: [], removedIDs: [id], accessScopeChanged: false)) } } }
-    func sources() -> AsyncThrowingStream<[PhotoSource], Error> {
+    func sources() async -> AsyncThrowingStream<[PhotoSource], Error> {
         discoveryRequests += 1
+        let gate = nextDiscovery
+        nextDiscovery = nil
+        await gate?.beforeSnapshot.wait()
         let values = Array(index.prefix(discoveryLimit ?? index.count)), barrier = discoveryBarrier
         return AsyncThrowingStream { c in
             let task = Task {
                 for (i, source) in values.enumerated() {
                     c.yield([source])
                     if i == 0, let barrier { await barrier.wait() }
+                    if let gate, source.id == gate.afterID { await gate.afterYield.wait() }
                 }
                 c.finish()
             }
@@ -271,15 +279,24 @@ actor FixtureLibrary: PhotoLibraryReading, PhotoEditReading {
                            captureDate: capture.metadata.creationDate, location: nil, resourceRevision: revision))
         if notify {
             wirelessInsertionNotificationCount += 1
-            observers.forEach { $0.yield(.init(changedIDs: [id], removedIDs: [], accessScopeChanged: false, insertedIDs: [id])) }
+            emitInsertion(id)
         }
     }
-    func insertExternalRAW(_ id: SourceID, filename: String, date: Date) {
+    func insertExternalRAW(_ id: SourceID, filename: String, date: Date, notify: Bool = true) {
         let raf = ResourceToken(assetID: id, role: .primaryOriginal, contentTypeIdentifier: "com.fuji.raw-image",
             format: .raf, originalFilename: filename, discriminator: "external-raw", sourceRevision: "external")
         index.append(.init(id: id, originalResources: .init(raf: raf), captureDate: date, location: nil,
                            resourceRevision: "external"))
-        observers.forEach { $0.yield(.init(changedIDs: [id], removedIDs: [], accessScopeChanged: false, insertedIDs: [id])) }
+        if notify { emitInsertion(id) }
+    }
+    private func emitInsertion(_ id: SourceID) {
+        let event = PhotoLibraryReader.libraryChange(previousAccess: access, currentAccess: access,
+                                                     changed: [id], removed: [], inserted: [id])
+        observers.forEach { $0.yield(event) }
+    }
+    func grantLimitedAccess(to source: PhotoSource) {
+        index.append(source)
+        emitInsertion(source.id)
     }
 }
 

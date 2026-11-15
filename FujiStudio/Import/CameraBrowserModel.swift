@@ -33,7 +33,7 @@ final class CameraBrowserModel {
     @ObservationIgnored private var generation = UUID()
     @ObservationIgnored private var thumbnailGeneration = UUID()
     @ObservationIgnored private var receiptGeneration = UUID()
-    @ObservationIgnored private var thumbnailsSuspended = false
+    private(set) var thumbnailsSuspended = false
     @ObservationIgnored private var operationTail: Task<Void, Never>?
     @ObservationIgnored private var thumbnailCache = ThumbnailCache()
 
