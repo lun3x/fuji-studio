@@ -2,9 +2,9 @@
 
 Date: 2026-11-14. Status: approved by the user; implementation planning authorized.
 Initial builder check completed: no important planning questions remained.
-Firmware scope subsequently narrowed by the user to latest releases only.
-Agreed approach: native Swift protocol adapters with capability detection,
-covering both cameras on their latest official stable firmware.
+Firmware scope updated on 2026-11-15 to admit the X-T5 secure pairing series
+beginning with 4.30. The X-E3 remains at 1.32.
+Agreed approach: native Swift protocol adapters with capability detection.
 Research: [wireless protocol evidence](../../validation/wireless-protocol-research.md).
 This is a substantial feature spanning connection, camera browsing, import and
 recovery. It requires physical camera and iPhone validation as well as tests.
@@ -21,16 +21,14 @@ connection ready while the app is open. Tapping the existing status control
 opens connection settings. Connect over WiFi starts the camera network and
 uses the native iPhone confirmation to join it, followed by camera browsing.
 
-Support both X-T5 and X-E3 on their latest official stable firmware only.
-Older firmware compatibility is outside scope, consistent with the project's
-default. Latest firmware does not imply that both camera models expose the
-same capabilities.
+Support X-T5 firmware 4.30 or later and X-E3 firmware 1.32. The firmware
+requirement is separate from the capabilities that each camera exposes.
 
 ## Scope and success
 
 - Pair and remember both supported camera models; connect to one selected
   wireless camera at a time.
-- Implement the pairing protocol required by each model's current firmware:
+- Implement the pairing protocol required by the admitted firmware:
   secure bonding for X-T5 and the X-E3's current protocol, expected to remain
   legacy token pairing and subject to hardware verification.
 - Reconnect automatically while foregrounded, with no repeated pairing or
@@ -71,8 +69,7 @@ merely because Bluetooth or WiFi is connected.
    that still require adaptation and hardware checks. It is a reference source
    for the chosen approach, not a new runtime dependency.
 3. **Manual WiFi or X-T5-only support.** Less connection work, but misses the
-   requested Bluetooth handoff or two-camera scope. Rejected. Latest-firmware
-   support for both models is the chosen scope.
+   requested Bluetooth handoff or two-camera scope. Rejected.
 
 The user agreed to the recommendation after reviewing the research. Exact UI
 details and defaults below are proposed design decisions, not additional user
@@ -85,38 +82,35 @@ official documentation, external hardware reports, source implementation and
 unverified assumptions. Use it for protocol details rather than copying a
 single model's full command sequence into every adapter.
 
-Current targets, checked against Fujifilm's official release pages on
-2026-11-14:
+Firmware requirements, checked against Fujifilm's official release pages on
+2026-11-15:
 
 | Target | Intended connection | RAW evidence / restriction |
 | --- | --- | --- |
-| [X-T5 4.32](https://www.fujifilm-x.com/en-us/support/download/firmware/cameras/x-t5/) | Secure BLE bonding plus current XApp transfer protocol | Official wireless RAW support; original paired import still needs local proof on this release. |
+| [X-T5 4.30 or later](https://www.fujifilm-x.com/en-us/support/download/firmware/cameras/x-t5/) | Secure BLE bonding plus current XApp transfer protocol | Official wireless RAW support; original paired import still needs local proof on the tested firmware. |
 | [X-E3 1.32](https://www.fujifilm-x.com/en-us/support/download/firmware/cameras/x-e3/) | Current X-E3 BLE/phone WiFi; guided PC AutoSave for RAW where verified | No inspected source proves original RAF retrieval through the normal phone-transfer path. AutoSave remains the candidate fallback. |
 
-Recheck these official pages before implementation and release validation.
-Target one latest stable firmware per model in each app release. If Fujifilm
-publishes a newer version, update the target and validate it; retaining the
-superseded version is not required. The app uses a bundled support table, so
-camera use does not require an Internet firmware lookup. Newer firmware is not
-automatically certified or admitted merely because its version is higher.
+Fujifilm introduced the X-T5 secure pairing procedure in 4.30 and documents
+4.31 and 4.32 as bug fix releases. The bundled X-T5 policy accepts a numeric
+major/minor version of 4.30 or later. The X-E3 policy accepts the exact
+1.32 release. Recheck official releases during release validation. The app
+does not require an Internet firmware lookup.
 
 Identify the model and firmware through the recognized connection protocol
-before enabling browsing/import. Older firmware gets a clear update-required
-message with the supported version and official instructions; newer or unreadable
-firmware gets an unsupported/unverified-version message with app-update or Retry
-guidance as appropriate. Initial pairing/identity reads may precede this gate,
+before enabling browsing/import. Firmware below the requirement gets a clear
+update-required message with the required version and official instructions.
+Newer X-E3 firmware and unreadable firmware on either model get an unverified
+message with app-update or Retry guidance as appropriate. Initial pairing/identity reads may precede this gate,
 but file transfer may not. The app does not update camera firmware itself.
 
-Within each supported version, discover GATT services, negotiate known protocol
-versions and inspect operations/file exposure. Capability checks remain necessary
-for camera mode, storage and RAW access; they do not waive the firmware gate.
-Do not retain an older X-T5 pairing path for backwards compatibility. X-E3 may
-still require a legacy protocol on its latest firmware; that is current-model
-support, not older-firmware support. Unknown protocol structures fail clearly
+For firmware that meets the requirement, discover GATT services, negotiate known
+protocol versions and inspect operations and file exposure. Camera identity, mode,
+storage, RAW access and original-size checks still apply. The X-T5 uses secure
+pairing. The X-E3 may still require legacy pairing on 1.32. Unknown protocol structures fail clearly
 without speculative writes. A supported camera refusing RAW shows the limitation
 before import and can offer its verified fallback.
 
-Maintain an evidence matrix for the two current targets by BLE family, transfer
+Maintain an evidence matrix by camera model, tested firmware, BLE family, transfer
 mode and tested feature, separating locally verified, externally reported and
 unverified behavior. Historical research remains useful reference material,
 but its original broad-firmware recommendation is superseded by this spec.
@@ -415,8 +409,8 @@ exact source revision and local protocol corrections.
 ## Validation and delivery gates
 
 1. **Protocol feasibility:** record BLE discovery, authentication, WiFi launch,
-   native join, PTP setup and both-original download separately on the latest
-   supported X-T5 and X-E3 firmware. Test X-E3 AutoSave on Mac as a diagnostic
+   native join, PTP setup and both-original download separately on the available
+   X-T5 4.31 and X-E3 1.32 bodies. Test X-E3 AutoSave on Mac as a diagnostic
    if useful, but only an iPhone success establishes the app fallback. If it cannot expose
    both originals, stop claiming that path and report the evidence.
 2. **Deterministic tests:** packet framing/fragmentation, bounds, transactions,
@@ -439,13 +433,11 @@ exact source revision and local protocol corrections.
    X-T5 cards, cancellation/background/relaunch and exact-byte Photos readback.
    Include a supported compressed RAF and an uncompressed RAF where the camera
    provides them. No camera/card file changes or unintended Photos duplicates.
-6. **Firmware coverage:** exercise the latest official stable release on each
-   model and replay fixtures for those target protocols. Test rejection of older,
-   newer/unvalidated and unreadable versions. No historical-firmware compatibility
-   matrix or downgrade testing is required. Camera firmware updates are a separate
-   user action. If the available hardware is on an older release, report the
-   physical acceptance gate as pending; do not substitute its results for the
-   target version. Replay/simulator evidence is not physical certification.
+6. **Firmware coverage:** exercise the available X-T5 4.31 and X-E3 1.32 in
+   physical testing. Replay admission at X-T5 4.30, 4.31, 4.32 and newer numeric
+   versions; reject older and unreadable versions. Replay X-E3 1.32 and rejection
+   of older, newer and unreadable versions. Record physical outcomes only for the
+   exact firmware tested. No downgrade or firmware installation is required.
 
 Use isolated Jujutsu workspaces under `/tmp/`, push each checkpoint to the active
 development bookmark, use the project's `.venv` for Python and task-owned
@@ -455,8 +447,7 @@ require an app build or establish any hardware support.
 
 ## Proposed defaults to review
 
-- Latest stable firmware only: currently X-T5 4.32 and X-E3 1.32, with the
-  targets rechecked before implementation and each release.
+- Wireless firmware requirement: X-T5 4.30 or later; X-E3 1.32.
 - Both cameras can be saved, with one explicitly selected reconnect target.
 - Initial pairing is explicit; reconnect happens while foregrounded; WiFi and
   imports always start from a user action.

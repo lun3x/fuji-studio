@@ -5,11 +5,12 @@ This document records the original research and a later X-T5 observation.
 See the [acceptance record](wireless-import-acceptance.md) for Fuji Studio’s
 implementation and physical test status.
 
-Scope update, 2026-11-14: the user subsequently chose **latest firmware only**
-for both cameras. The [current design](../superpowers/specs/2026-11-14-camera-wifi-import-design.md)
-supersedes the broad-firmware request and recommendations below. Current targets
-are X-T5 4.32 and X-E3 1.32. The historical protocol findings remain reference
-material, not requirements to support older releases.
+Scope update, 2026-11-15: the [current design](../superpowers/specs/2026-11-14-camera-wifi-import-design.md)
+admits **X-T5 firmware 4.30 or later** and **X-E3 firmware 1.32**. Fujifilm’s
+[X-T5 release notes](https://www.fujifilm-x.com/en-us/support/download/firmware/cameras/x-t5/)
+identify the security and pairing change in 4.30 and document 4.31 and 4.32 as
+bug fix releases. Firmware admission and protocol capability checks are separate.
+The original request and recommendations below are historical reference.
 
 X-T5 device observation, 2026-11-15. During Pairing Registration, CoreBluetooth
 discovered the secure pairing, configuration, network, Wi-Fi launch and
@@ -19,7 +20,7 @@ recognized only the retail model name and stopped before reading secure status.
 The fix adds that exact product number as an X-T5 Bluetooth model alias.
 [Fujifilm X-T5 declaration of conformity](https://dl.fujifilm-x.com/global/products/cameras/x-t5/pdf/x-t5_doc-ysk.pdf)
 
-## Requested behavior
+## Original requested behavior
 
 Support X-T5 and X-E3 across firmware versions wherever reasonably possible.
 Reconnect to the user's paired camera over Bluetooth while the app is open.
@@ -27,7 +28,7 @@ The existing status button opens connection settings; an explicit WiFi action
 asks the camera to start its network, then uses the iPhone's join confirmation.
 Import the original camera JPEG and RAF as one Photos asset when both exist.
 
-## Findings
+## Original findings
 
 There are public implementations and some hardware-confirmed protocol reports.
 They provide a credible starting point, but not proof of the entire requested

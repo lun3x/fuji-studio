@@ -268,12 +268,23 @@ final class WiFiHandoffTests: XCTestCase {
     }
   }
 
+  func testXT5FirmwareFromBothPeersAllowsInventoryOn431() async {
+    let fixture = Fixture(peerFirmware: "4.31", bluetoothFirmware: "04.31")
+    await fixture.start()
+    await fixture.coordinator.connectWiFi()
+    let state = await snapshot(fixture.coordinator)
+    XCTAssertEqual(state.wifi, .ready)
+    XCTAssertNil(state.firmwareRejection)
+    XCTAssertTrue(fixture.log.events.contains("inventory"))
+    await fixture.coordinator.disconnectWiFi()
+  }
+
   func testFirmwareFailureKeepsFreshTransferEvidenceForGuidance() async {
     for (peer, bluetooth, expected, bluetoothRejected) in [
-      ("4.31", "4.32", WirelessAdmission.updateRequired("4.32"), false),
-      ("4.33", "4.32", .unverified(.newer), false),
+      ("4.29", "4.32", WirelessAdmission.updateRequired("4.30"), false),
+      ("4.31.0", "4.32", .unverified(.unreadable), false),
       (nil, "4.32", .unverified(.unreadable), false),
-      ("4.32", "4.31", .supported(.xt5), true),
+      ("4.32", "4.29", .supported(.xt5), true),
     ] as [(String?, String?, WirelessAdmission, Bool)] {
       let fixture = Fixture(peerFirmware: peer, bluetoothFirmware: bluetooth)
       await fixture.start()
@@ -293,7 +304,7 @@ final class WiFiHandoffTests: XCTestCase {
     defer { try? FileManager.default.removeItem(at: folder) }
 
     let malformed = "peer-only\nprivate report"
-    for (transfer, bluetooth) in [(" Ver.4.31 ", "4.32"), ("4.32", malformed), (malformed, "4.32")] {
+    for (transfer, bluetooth) in [(" Ver.4.29 ", "4.32"), ("4.32", malformed), (malformed, "4.32")] {
       let fixture = Fixture(peerFirmware: transfer, bluetoothFirmware: bluetooth)
       await fixture.coordinator.observeProbeFirmware { evidence in
         try? WirelessProbeFirmwareEvidence.record(evidence, in: folder)
@@ -312,7 +323,7 @@ final class WiFiHandoffTests: XCTestCase {
     let reports = try files.map { try JSONDecoder().decode(WirelessProbeFirmwareEvidence.self, from: Data(contentsOf: $0)) }
     XCTAssertEqual(reports.count, 3)
     XCTAssertTrue(reports.allSatisfy { $0.model == .xt5 && $0.source == .cameraNetwork })
-    XCTAssertTrue(reports.contains { $0.transferFirmware == " Ver.4.31 " && $0.bluetoothFirmware == "4.32" })
+    XCTAssertTrue(reports.contains { $0.transferFirmware == " Ver.4.29 " && $0.bluetoothFirmware == "4.32" })
     XCTAssertTrue(reports.contains { $0.transferFirmware == "4.32" && $0.bluetoothFirmware == malformed })
     XCTAssertTrue(reports.contains { $0.transferFirmware == malformed && $0.bluetoothFirmware == "4.32" })
   }
@@ -719,7 +730,7 @@ private struct HandoffSession: WirelessTransferSession {
     if failure == .timeout(.tcpSetup) { throw WirelessFailure.timeout(.tcpSetup) }
     if failure == .peerMismatch { return .init(cameraID: .init(), model: .xt5, firmware: "4.32") }
     if failure == .unsupportedFirmware {
-      return .init(cameraID: identity.cameraID, model: .xt5, firmware: "4.31")
+      return .init(cameraID: identity.cameraID, model: .xt5, firmware: "4.29")
     }
     return identity
   }

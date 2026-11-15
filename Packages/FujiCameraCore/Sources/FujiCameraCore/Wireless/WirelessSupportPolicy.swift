@@ -3,8 +3,21 @@ import Foundation
 /// Bundled firmware admission for wireless import.
 public struct WirelessSupportPolicy: Sendable {
   public struct Record: Sendable {
+    public enum FirmwareRule: Sendable {
+      case minimum
+      case exact
+    }
+
     public let firmware: String
+    public let firmwareRule: FirmwareRule
     public let instructionsURL: URL
+
+    public var firmwareRequirement: String {
+      switch firmwareRule {
+      case .minimum: "\(firmware) or later"
+      case .exact: firmware
+      }
+    }
   }
 
   public init() {}
@@ -13,13 +26,15 @@ public struct WirelessSupportPolicy: Sendable {
     switch model {
     case .xt5:
       Record(
-        firmware: "4.32",
+        firmware: "4.30",
+        firmwareRule: .minimum,
         instructionsURL: URL(
           string: "https://www.fujifilm-x.com/en-us/support/download/firmware/cameras/x-t5/")!
       )
     case .xe3:
       Record(
         firmware: "1.32",
+        firmwareRule: .exact,
         instructionsURL: URL(
           string: "https://www.fujifilm-x.com/en-us/support/download/firmware/cameras/x-e3/")!
       )
@@ -35,15 +50,20 @@ public struct WirelessSupportPolicy: Sendable {
       normalized = normalized.dropFirst(4).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    let target = record(for: model).firmware
-    if normalized == target { return .supported(model) }
+    let record = record(for: model)
+    guard let observed = versionComponents(normalized),
+      let required = versionComponents(record.firmware)
+    else { return .unverified(.unreadable) }
 
-    guard let observed = versionComponents(normalized), let required = versionComponents(target) else {
+    if observed < required { return .updateRequired(record.firmware) }
+    switch record.firmwareRule {
+    case .minimum:
+      return .supported(model)
+    case .exact:
+      if normalized == record.firmware { return .supported(model) }
+      if observed > required { return .unverified(.newer) }
       return .unverified(.unreadable)
     }
-    if observed < required { return .updateRequired(target) }
-    if observed > required { return .unverified(.newer) }
-    return .unverified(.unreadable)
   }
 
   private func versionComponents(_ firmware: String) -> (major: UInt, minor: UInt)? {

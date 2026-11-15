@@ -162,7 +162,7 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
   func testXAppEnumeratesBothSlotsAndRefetchesInOriginalModeBeforeStreaming() async throws {
     let handle: UInt32 = 44
     let info = object("DSCF0044.RAF", format: 0xb103, bytes: 5)
-    let commands = start(.xt5, "4.32") + xappSetup + card([handle])
+    let commands = start(.xt5, "4.31") + xappSetup + card([handle])
       + [.property(0xd226, word(2, 2)), .read(0x1008, [handle], info),
          .read(0x1008, [handle], info), .read(0x100a, [handle], Data([0xff, 0xd8])),
          .write(0xd244, [2])] + card([], storage: 2)
@@ -172,14 +172,14 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
          .read(0x101b, [handle, 3, 2], Data([4, 5])),
          .read(0x1003)]
     let channel = Replay(commands)
-    let camera = identity(.xt5)
+    let camera = WirelessIdentity(cameraID: .init(), model: .xt5, firmware: "04.31")
     let session = XAppTransferAdapter.makeSession(
       transport: .init(channel: channel, maximumPartialObjectBytes: 3),
       expectedIdentity: camera, clientGUID: Data(repeating: 1, count: 16))
     let peer = try await session.open()
     XCTAssertEqual(peer.cameraID, camera.cameraID)
     XCTAssertEqual(peer.model, camera.model)
-    XCTAssertEqual(peer.firmware, camera.firmware)
+    XCTAssertEqual(peer.firmware, "4.31")
     XCTAssertNotNil(peer.protocolPeerKey)
 
     let inventory = try await session.enumerate()
@@ -316,7 +316,7 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
   }
 
   func testFirmwareMismatchPermitsIdentityReadsAndBlocksEveryObjectOperation() async throws {
-    for firmware in ["4.31", "4.33", ""] {
+    for firmware in ["4.29", "4.31.0", ""] {
       let channel = Replay(start(.xt5, firmware) + [.read(0x1003)])
       let session = XAppTransferAdapter.makeSession(
         transport: .init(channel: channel), expectedIdentity: identity(.xt5),

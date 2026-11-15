@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Import byte-identical JPEG+RAF pairs and standalone RAF files from an X-T5 or X-E3 on its latest firmware, using foreground Bluetooth readiness, explicit WiFi connection and recoverable Photos saves.
+**Goal:** Import byte-identical JPEG+RAF pairs and standalone RAF files from an X-T5 on firmware 4.30 or later or an X-E3 on 1.32, using foreground Bluetooth readiness, explicit WiFi connection and recoverable Photos saves.
 
 **Architecture:** Put portable Bluetooth protocol profiles, wireless PTP framing, firmware admission and camera capture descriptions in FujiCameraCore. Put CoreBluetooth, network joining, protected credentials, Photos creation, journals and observable UI coordinators in the iOS app. Keep one app-level camera-use arbiter above the existing USB service and the wireless session; import never enters USB conversion readiness or the existing Photos replacement workflow.
 
@@ -18,8 +18,7 @@ The physical feasibility work in Tasks 5 and 6 and the signed-device, connection
 
 ## Global Constraints
 
-- “Support both X-T5 and X-E3 on their latest official stable firmware only.” Targets checked again on 2026-11-14: X-T5 **4.32**, X-E3 **1.32**; recheck official releases at implementation start and release validation.
-- “Target one latest stable firmware per model in each app release.” Bundled exact admission table; reject older, newer/unvalidated and unreadable firmware before browsing or file transfer. Pairing and identity reads may precede admission.
+- Bundled firmware rules: X-T5 **4.30 or later**, X-E3 **1.32 exactly**. Reject older or unreadable firmware on either model and newer firmware on X-E3 before browsing or transfer. Pairing and identity reads may precede admission. Recheck official releases during release validation.
 - “Both X-T5 and X-E3 can be remembered. The last explicitly selected camera is the reconnect target.” Never automatically select another body.
 - Reconnect backoff: **3, 6, 12 and then 30 seconds** while foregrounded. Authentication failure requires explicit repair/retry. Preserve explicit intent during system-prompt inactivity; genuine background entry pauses work.
 - “The first version imports RAW+JPEG and standalone RAF.” JPEG-only, HEIF and movies are informational, not selectable. Never silently downgrade a selected pair.
@@ -79,7 +78,7 @@ Paths named in task Files blocks are exact. `Core/` below abbreviates `Packages/
 
 | Location | Responsibility |
 | --- | --- |
-| `Core/Wireless/` | Value types, exact firmware support, BLE profile reducers, bounded wire codec and transfer session/adapters. No Apple UI/framework objects. |
+| `Core/Wireless/` | Value types, model-specific firmware admission, BLE profile reducers, bounded wire codec and transfer session/adapters. No Apple UI/framework objects. |
 | `FujiStudio/Wireless/` | Native BLE/network/Keychain boundaries, connection coordinator and USB ownership. |
 | `FujiStudio/Import/` | Pair resolution, browser model, private staging, durable journal/receipts, Photos creation/readback and sequential import. |
 | `FujiStudio/Workspace/` | Status connection section, camera browser, transfer/recovery views. |
@@ -95,7 +94,7 @@ All cross-actor values are `Sendable`; durable values are `Codable`, with `Hasha
 
 **Interfaces:**
 - `WirelessCameraModel`: `.xt5`, `.xe3`; `WirelessMode`: `.xApp`, `.phone`, `.autoSave`.
-- `WirelessCameraID` wraps a UUID generated on explicit pairing; a display name/model is never identity. `WirelessIdentity` carries camera ID, model, firmware and optional protected protocol peer key. `WirelessSupportPolicy.assess(model: String, firmware: String?) -> WirelessAdmission` returns `.supported(WirelessCameraModel)`, `.updateRequired(String)`, `.unverified(String?)` or `.unsupportedModel`.
+- `WirelessCameraID` wraps a UUID generated on explicit pairing; a display name/model is never identity. `WirelessIdentity` carries camera ID, model, firmware and optional protected protocol peer key. `WirelessSupportPolicy.assess(model: String, firmware: String?) -> WirelessAdmission` returns `.supported(WirelessCameraModel)`, `.updateRequired(String)`, `.unverified(UnverifiedVersion)` or `.unsupportedModel`.
 - `WirelessCapabilities` has `mode`, `rawExposure` (`.available`, `.unavailable`, `.unknown`), `storageIDs: [UInt32]`, `originalSizeVerified: Bool` and `evidenceID: String`. Capability presence cannot bypass admission.
 - `WirelessFailure` distinguishes permission kind, authentication, unsupported firmware/protocol, timeout stage, peer mismatch, malformed data, unavailable storage and connection loss; do not embed secret payloads.
 - `WirelessLimits` centralizes the builder-chosen defaults: saved reconnect 30 s, explicit first pairing 90 s, WiFi readiness 15 s, join-result wait 120 s, TCP/setup 15 s, per-transaction inactivity 30 s, AutoSave registration wait 120 s; async clock injected by callers. Native prompt dismissal remains OS-owned after timeout.
@@ -103,19 +102,20 @@ All cross-actor values are `Sendable`; durable values are `Codable`, with `Hasha
 Representative named XCTest contract (fixture arrangement follows the test steps below):
 
 ```swift
-func testOnlyCurrentFirmwareIsAdmitted() {
-    XCTAssertEqual(policy.assess(model: "X-T5", firmware: "4.32"), .supported(.xt5))
-    XCTAssertEqual(policy.assess(model: "X-E3", firmware: "1.31"), .updateRequired("1.32"))
-    XCTAssertEqual(policy.assess(model: "X-T5", firmware: "4.33"), .unverified("4.33"))
+func testFirmwareRequirementsDifferByModel() {
+    XCTAssertEqual(policy.assess(model: "X-T5", firmware: "4.30"), .supported(.xt5))
+    XCTAssertEqual(policy.assess(model: "X-T5", firmware: "04.31"), .supported(.xt5))
+    XCTAssertEqual(policy.assess(model: "X-T5", firmware: "4.29"), .updateRequired("4.30"))
+    XCTAssertEqual(policy.assess(model: "X-E3", firmware: "1.33"), .unverified(.newer))
 }
 ```
 
-- [ ] **1. Write failing `WirelessSupportPolicyTests`.** Assert exact targets succeed; X-T5 4.31/X-E3 1.31 require update; 4.33/1.33 and nil/garbage are unverified; a different camera is unsupported. Parse version components numerically, not floating point. Accept only observed normalization (trim surrounding whitespace and a leading `Ver.`); preserve raw text in private evidence.
+- [ ] **1. Write failing `WirelessSupportPolicyTests`.** Assert X-T5 4.30, 4.31, 4.32 and later numeric versions and X-E3 1.32 succeed. X-T5 below 4.30 and X-E3 below 1.32 require updates; newer X-E3 and missing/malformed firmware are unverified. A different camera is unsupported. Compare two ASCII numeric components for the X-T5 minimum, including the observed `04.31`; keep the exact normalized X-E3 match. Preserve raw text in private evidence.
 - [ ] **2. Run** `swift test --package-path Packages/FujiCameraCore --filter WirelessSupportPolicyTests`; confirm the missing-policy failure.
 - [ ] **3. Implement the types, policy and limits.** Keep this separate from `FujiCameraRegistry` and USB support rules. Include official instructions URLs in support records; no network lookup during app use.
 - [ ] **4. Populate the evidence template.** Recheck [X-T5](https://www.fujifilm-x.com/en-us/support/download/firmware/cameras/x-t5/) and [X-E3](https://www.fujifilm-x.com/en-us/support/download/firmware/cameras/x-e3/) releases. Record target versions and unknowns for BLE, identity, WiFi readiness, original-size control, both cards, RAW exposure and AutoSave markers. Distinguish source observations from local captures; do not label targets verified yet. Before porting each protocol sequence, inspect its exact pinned source from the research, including its license.
 - [ ] **5. Re-run the policy suite**, expected all pass.
-- [ ] **6. Checkpoint:** `feat: define latest-firmware wireless admission`.
+- [ ] **6. Checkpoint:** `feat: define model-specific wireless firmware admission`.
 
 ## Task 2: Implement current-model BLE pairing and protected saved cameras
 
@@ -215,13 +215,13 @@ func testCancelledJoinCannotAdoptLateCompletion() {
 }
 ```
 
-- [ ] **1. Write setup/handoff tests:** BLE authenticated → credentials → confirmed readiness → native join → PTP identity → exact firmware admission → inventory. Denial, timeout, missing credentials and mismatched camera identity fail at their own stage. Empty valid storage becomes ready; joined-but-dead PTP does not. An old/native join completion after cancellation must clean up only its owned configuration and never open PTP.
+- [ ] **1. Write setup/handoff tests:** BLE authenticated → credentials → confirmed readiness → native join → PTP identity → model-specific firmware admission → inventory. Denial, timeout, missing credentials and mismatched camera identity fail at their own stage. Empty valid storage becomes ready; joined-but-dead PTP does not. An old/native join completion after cancellation must clean up only its owned configuration and never open PTP.
 - [ ] **2. Write adapter replay tests** for current XApp mode negotiation, current X-E3 phone mode, card enumeration, original-size control and RAW-unavailable reporting. Firmware rejection permits identity reads but zero enumeration, thumbnail or full-file commands. Unknown setup structures fail without speculative writes.
 - [ ] **3. Run** `swift test --package-path Packages/FujiCameraCore --filter WirelessTransferSessionTests` and `Scripts/test-ios.sh FujiStudioTests/WiFiHandoffTests`, expected failures.
 - [ ] **4. Implement the gateways/adapters.** Set `joinOnce = true`; Apple documents its [foreground lifetime and removal behavior](https://developer.apple.com/documentation/networkextension/nehotspotconfiguration/joinonce). Snapshot app-owned configurations before applying; do not remove a previously existing/user-managed network on cancellation. Treat “already associated” as requiring PTP peer validation, not success. Network information/peer binding remains protected; describe any lack of strong protocol identity in evidence.
 - [ ] **5. Add configuration and an explicit debug probe.** Set `CODE_SIGN_ENTITLEMENTS` through `project.yml`; enable `com.apple.developer.networking.HotspotConfiguration`. Add `NSLocalNetworkUsageDescription`: “Fuji Studio uses your local network to retrieve original photos from your selected Fujifilm camera.” The probe runs only with `--wireless-protocol-probe`, performs explicit selection and downloads to private staging; no Photos write or USB mutation. Route it to a separate debug composition before constructing AppModel or any USB discovery/service; disconnect the camera's USB cable for the experiment. Normal/fixture launch cannot run it. This makes early physical investigation safe before Task 8 supplies production ownership. Use current pinned reference sequences; record any corrections and required camera resize setting without changing that global setting.
-- [ ] **6. Re-run both suites and `Scripts/test-ios.sh --fast`**, expected all pass. Build/sign/install the physical probe using repository instructions. On each target firmware record first pairing, saved reconnect, WiFi readiness and native join. On X-T5, enumerate and download one original pair and a RAF-only capture; compare SHA-256 with independently obtained card originals. Record exact identity and original-size control evidence. X-E3 phone-mode RAF exposure is a measured result, not a prerequisite assumed true.
-- [ ] **7. Evaluate the physical gate.** If hardware/latest firmware is unavailable, record pending acceptance and continue only work that does not depend on guessed commands. If the target sequence fails, fix it against captures before certifying that adapter. Do not install camera firmware automatically.
+- [ ] **6. Re-run both suites and `Scripts/test-ios.sh --fast`**, expected all pass. Build/sign/install the physical probe using repository instructions. On the available X-T5 4.31 and X-E3 1.32 record first pairing, saved reconnect, WiFi readiness and native join. On X-T5, enumerate and download one original pair and a RAF-only capture; compare SHA-256 with independently obtained card originals. Record exact identity and original-size control evidence. X-E3 phone-mode RAF exposure is a measured result, not a prerequisite assumed true.
+- [ ] **7. Evaluate the physical gate.** If a body on admitted firmware is unavailable, record pending acceptance and continue only work that does not depend on guessed commands. If the target sequence fails, fix it against captures before certifying that adapter. Do not install camera firmware automatically.
 - [ ] **8. Checkpoint:** `feat: connect camera WiFi and negotiate original transfer`.
 
 ## Task 6: Establish X-E3 AutoSave on a signed iPhone
@@ -441,14 +441,14 @@ func testStatusSeparatesBluetoothFromUSBReadiness() {
 
 **Files:** Update `docs/validation/wireless-import-acceptance.md`, protocol fixtures with sanitized provenance manifests, and this plan's completed checkboxes. Fix code/tests only for observed failures, then re-run affected verification.
 
-**Interfaces:** The deliverable is the integrated app plus reproducible evidence for each target firmware/mode. Do not turn pending hardware checks into passing automated tests or claim the two-camera feature complete while X-E3 RAW remains unproved.
+**Interfaces:** The deliverable is the integrated app plus reproducible evidence for each tested firmware/mode. Do not turn pending hardware checks into passing automated tests or claim the two-camera feature complete while X-E3 RAW remains unproved.
 
-The [wireless import acceptance record](../../validation/wireless-import-acceptance.md) tracks the simulator evidence and the unresolved physical gates. The available iPhone development profile lacks Hotspot Configuration and Access Wi-Fi Information. X-E3 AutoSave also requires Apple's managed Multicast Networking grant and a verified selected-body identity. Physical acceptance remains open for both firmware targets.
+The [wireless import acceptance record](../../validation/wireless-import-acceptance.md) tracks the simulator evidence and the unresolved physical gates. The available iPhone development profile lacks Hotspot Configuration and Access Wi-Fi Information. X-E3 AutoSave also requires Apple's managed Multicast Networking grant and a verified selected-body identity. Physical acceptance remains open for both models.
 
 The complete regression and explicit native PhotoKit checks were repeated for the final fix wave at `835b675207d7fb25a7ae48615a8f8aaf08e29797`. The isolated simulator was shut down and deleted. The acceptance record preserves both xcresult paths, the affected checks and the tested source revision.
 
 - [x] **1. Run** `swift test --package-path Packages/FujiCameraCore` and the complete `Scripts/test-ios.sh` on the task simulator. Expected: all package, app unit and UI tests pass; retain xcresult paths and exact revision. A fast-only pass is insufficient.
-- [x] **2. Recheck current official firmware** and reconcile the bundled support table with it. If a new release appeared, validate that version before release; old firmware hardware tests cannot substitute. Replay rejection tests for old, higher/unvalidated and unreadable versions without installing/downgrading camera firmware.
+- [x] **2. Recheck current official firmware** and confirm the X-T5 4.30 security transition and X-E3 1.32 target. Replay admission of 4.30, 4.31, 4.32 and newer X-T5 releases, and rejection of older and unreadable X-T5 firmware and nonmatching X-E3 firmware. Record hardware results for the exact firmware tested without installing or downgrading firmware.
 - [ ] **3. Build the signed Release** with `xcodegen generate` and the repository's `xcodebuild` command, development team `AZH3P824F3`, `CODE_SIGN_IDENTITY='Apple Development'`, task-owned derived data and actual connected phone UDID. Run `codesign --verify --deep --strict`, inspect Hotspot/multicast grants, install that exact bundle, then launch `com.lun3x.FujiStudio` normally without fixture/probe arguments.
 - [ ] **4. Verify real connection behavior** for both targets: first pairing, remembered reconnect after camera power cycle, selected-camera-only reconnect with both nearby, denied/revoked Bluetooth and Local Network permission, native join accept/refuse, inactivity while prompt is open, connection loss, background and clean WiFi teardown. Confirm no automatic WiFi rejoin/transfer resume and no camera-ready USB claim from wireless state.
 - [ ] **5. Import at least 20 mixed captures per supported transfer path where available.** Include same-card pairs, X-T5 split cards, RAW-only, repeated filenames, missing mates, supported compressed/uncompressed RAF, disabled JPEG/HEIF/movie and large originals. Verify each imported Photos asset contains the expected roles and independently hash every resource against card originals. Record exact source acquisition and results; do not treat staged-to-Photos equality alone as proof of original-size transfer.

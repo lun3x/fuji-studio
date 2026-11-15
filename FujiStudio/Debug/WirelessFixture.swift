@@ -70,9 +70,9 @@ import FujiCameraCore
         let wifi = FixtureWiFi(joinFailure: mode == .joinDenied ? .permissionDenied(.wifiJoin) : nil,
                               verifyFailure: mode == .localNetworkDenied ? .permissionDenied(.localNetwork) : nil)
         let identity = store.identity
-        let transferFirmware = switch mode {
-        case .firmwareUpdate: "4.31"
-        case .firmwareUnverified: "4.33"
+        let transferFirmware: String? = switch mode {
+        case .firmwareUpdate: "4.29"
+        case .firmwareUnverified: nil
         default: identity.firmware
         }
         let session = try FixtureWirelessSession(identity: .init(cameraID: identity.cameraID, model: identity.model,
@@ -171,7 +171,7 @@ actor FixtureSavedCameras: SavedCameraStore {
     nonisolated var discoverable: [SavedCamera] { [camera] + (alternate.map { [$0] } ?? []) }
 
     nonisolated func identity(for camera: SavedCamera) -> WirelessIdentity {
-        .init(cameraID: camera.id, model: camera.model, firmware: camera.model == .xt5 ? "4.32" : "1.32",
+        .init(cameraID: camera.id, model: camera.model, firmware: camera.model == .xt5 ? "04.31" : "1.32",
               protocolPeerKey: .init(bytes: Data(camera.id.rawValue.uuidString.utf8)))
     }
 
