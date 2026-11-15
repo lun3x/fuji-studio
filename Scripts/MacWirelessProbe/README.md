@@ -46,6 +46,8 @@ For a Wi-Fi-only Mac, send `wifi-only-preflight` to check the remembered associa
 
 If preflight cannot read the current Wi-Fi, send `wifi-inspect` to compare the GUI and worker views. This command reports the GUI's Location authorization and whether each process can see one eligible interface and read its SSID. The status contains only categories and flags. The command uses existing authorization and performs no scan, connection change, or internet check.
 
+Send `wifi-inspect-location` to repeat the comparison with passive Location initialization in the diagnostic worker. A separate `wifi_inspect_worker_location` field reports its authorization callback or timeout. This trial neither requests a new permission nor starts location updates. The baseline `wifi-inspect` still runs the worker without a Location manager. Neither path changes the worker configuration used by regular preflight, restoration, or PTP.
+
 After a standard reconnect fails with `secure_status_compared=true` and `secure_status_prefix_equal=false`, `reconnect-registration` runs one additional hypothesis test. It requires the same selected X-T5 record and a verified status read in the new session. The test submits the in-memory registration value with the acknowledgment bit set. `registration_ack_used=true` records only that the probe submitted the substituted write to the production Bluetooth driver. Standard `reconnect` uses the production acknowledgment.
 
 On macOS the probe uses the file-based Keychain. It enumerates persistent references within the dedicated probe service before reading the individual records. The iOS app uses its platform Keychain path.

@@ -1,6 +1,5 @@
 import AppKit
 import CoreBluetooth
-import CoreLocation
 import Darwin
 import Foundation
 import FujiCameraCore
@@ -70,11 +69,12 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
   private var ptpReport = ProbePTPIdentityReport()
   private var restorationRehearsal = ProbeWiFiOnlyRehearsal()
   private let association = ProbeMacWiFiAssociation()
-  private lazy var location = CLLocationManager()
+  private lazy var location = ProbeWiFiLocationAuthorization()
   private let parentWiFiInspection = ProbeWiFiParentInspection()
   private var inspectedLocation = "notRun"
   private var inspectedParent = "notRun"
   private var inspectedWorker = "notRun"
+  private var inspectedWorkerLocation = "notRun"
   private var savedAdvertisement = SavedAdvertisementObservation()
   private var secureStatus = ProbeSecureStatusComparison()
   private var messages: [(timestamp: Date, line: String)] = []
@@ -232,6 +232,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
       case ("wifi-preflight", 1): preflightWiFi()
       case ("wifi-only-preflight", 1): preflightWiFi(wifiOnly: true)
       case ("wifi-inspect", 1): inspectWiFi()
+      case ("wifi-inspect-location", 1): inspectWiFi(initializeWorkerLocation: true)
       case ("wifi-restore-rehearsal", 1): rehearseWiFiRestore()
       case ("ptp-identity", 1): probePTPIdentity()
       case ("ptp-identity-wifi-only", 1): probePTPIdentity(wifiOnly: true)
@@ -449,34 +450,27 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
   }
 
   private var wifiLocationAllowed: Bool {
-    switch location.authorizationStatus {
-    case .authorizedAlways, .authorizedWhenInUse: true
-    default: false
-    }
+    location.readiness.current?.authorized == true
   }
 
-  private func inspectWiFi() {
-    let command = "wifi-inspect"
+  private func inspectWiFi(initializeWorkerLocation: Bool = false) {
+    let command = initializeWorkerLocation ? "wifi-inspect-location" : "wifi-inspect"
     guard phase == .idle || phase == .linked else { return reject(command, "busy") }
-    let authorization = location.authorizationStatus
-    inspectedLocation = switch authorization {
-    case .notDetermined: "notDetermined"
-    case .denied: "denied"
-    case .restricted: "restricted"
-    case .authorizedAlways: "authorizedAlways"
-    case .authorizedWhenInUse: "authorizedWhenInUse"
-    @unknown default: "unknown"
-    }
+    inspectedLocation = "notRun"
     inspectedParent = "notRun"
     inspectedWorker = "notRun"
-    switch authorization {
-    case .authorizedAlways, .authorizedWhenInUse:
-      break
-    default:
-      return reject(command, "locationPermissionRequired")
-    }
+    inspectedWorkerLocation = "notRun"
     begin(command, phase: .checkingWiFi)
     operation = Task {
+      let authorization = await location.readiness.waitForInitialCallback()
+      guard phase == .checkingWiFi, !Task.isCancelled else { return }
+      inspectedLocation = authorization.rawValue
+      guard authorization.authorized else {
+        operation = nil
+        finish(authorization == .initialCallbackTimedOut ? "locationAuthorizationPending" : "locationPermissionRequired",
+          phase: linkedCamera == nil ? .idle : .linked)
+        return
+      }
       let parent: String
       do {
         parent = try await parentWiFiInspection.inspect(read: ProbeMacWiFiWorker.inspectCurrentInterface).status
@@ -485,14 +479,24 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
       }
       guard phase == .checkingWiFi, !Task.isCancelled else { return }
       let worker: String
+      let workerLocation: String
       do {
-        worker = try await association.inspect().status
+        if initializeWorkerLocation {
+          let (observation, authorization) = try await association.inspectLocation()
+          worker = observation.status
+          workerLocation = authorization.rawValue
+        } else {
+          worker = try await association.inspect().status
+          workerLocation = "notInitialized"
+        }
       } catch {
         worker = ProbePTPIdentity.failureLabel(error)
+        workerLocation = "notRun"
       }
       guard phase == .checkingWiFi, !Task.isCancelled else { return }
       inspectedParent = parent
       inspectedWorker = worker
+      inspectedWorkerLocation = workerLocation
       operation = nil
       finish("wifiInspectionComplete", phase: linkedCamera == nil ? .idle : .linked)
     }
@@ -501,15 +505,20 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
   private func preflightWiFi(wifiOnly: Bool = false) {
     let command = wifiOnly ? "wifi-only-preflight" : "wifi-preflight"
     guard phase == .idle || phase == .linked else { return reject(command, "busy") }
-    guard wifiLocationAllowed else {
-      if location.authorizationStatus == .notDetermined {
-        NSApp.activate()
-        location.requestWhenInUseAuthorization()
-      }
-      return reject(command, "locationPermissionRequired")
-    }
     begin(command, phase: .checkingWiFi)
     operation = Task {
+      let authorization = await location.readiness.waitForInitialCallback()
+      guard phase == .checkingWiFi, !Task.isCancelled else { return }
+      guard authorization.authorized else {
+        if authorization == .notDetermined {
+          NSApp.activate()
+          location.requestFromExplicitPreflight()
+        }
+        operation = nil
+        finish(authorization == .initialCallbackTimedOut ? "locationAuthorizationPending" : "locationPermissionRequired",
+          phase: linkedCamera == nil ? .idle : .linked)
+        return
+      }
       let label: String
       do {
         if wifiOnly {
@@ -718,6 +727,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
       "wifi_inspect_parent_location=\(inspectedLocation)",
       "wifi_inspect_parent=\(inspectedParent)",
       "wifi_inspect_worker=\(inspectedWorker)",
+      "wifi_inspect_worker_location=\(inspectedWorkerLocation)",
       "ptp_launch=\(ptpReport.launch?.rawValue ?? "none")",
       "ptp_camera_associated=\(ptpReport.associated)",
       "ptp_identity_verified=\(ptpReport.verified)",

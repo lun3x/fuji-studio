@@ -141,7 +141,51 @@ private struct PTPIdentityTests {
 
     try await checkWiFiOnlyRecovery()
     try await checkWiFiInspection()
+    try await checkLocationReadiness()
     try await checkWorkerSupervision()
+  }
+
+  private static func checkLocationReadiness() async throws {
+    let pending = ProbeWiFiLocationReadiness()
+    let timeout = await pending.waitForInitialCallback(timeout: .milliseconds(25))
+    precondition(timeout == .initialCallbackTimedOut && !timeout.authorized)
+    pending.observe(.notDetermined)
+    let settledUnknown = await pending.waitForInitialCallback()
+    precondition(settledUnknown == .notDetermined && !settledUnknown.authorized)
+    pending.observe(.denied)
+    let denied = await pending.waitForInitialCallback()
+    precondition(denied == .denied && !denied.authorized)
+    pending.observe(.authorizedAlways)
+    let nowAuthorized = await pending.waitForInitialCallback()
+    precondition(nowAuthorized == .authorizedAlways && nowAuthorized.authorized)
+
+    let arriving = ProbeWiFiLocationReadiness()
+    let waiting = Task { await arriving.waitForInitialCallback(timeout: .seconds(1)) }
+    await Task.yield()
+    arriving.observe(.authorizedAlways)
+    let callback = await waiting.value
+    precondition(callback == .authorizedAlways)
+
+    let interrupted = ProbeWiFiLocationReadiness()
+    let cancelled = Task { await interrupted.waitForInitialCallback(timeout: .seconds(10)) }
+    await Task.yield()
+    cancelled.cancel()
+    let abandoned = await cancelled.value
+    precondition(!abandoned.authorized)
+    interrupted.observe(.restricted)
+    let late = await interrupted.waitForInitialCallback()
+    precondition(late == .restricted && !late.authorized)
+
+    let observation = ProbeWiFiInterfaceInspection(
+      interfaces: 1, eligible: 1, named: true, powered: true, serviceActive: true,
+      ssidChecked: true, ssid: nil)
+    let data = try JSONEncoder().encode(
+      ProbeWiFiWorkerReply.locationInspection(observation, authorization: .notDetermined))
+    let decoded = try JSONDecoder().decode(ProbeWiFiWorkerReply.self, from: data)
+    guard case .locationInspection(let worker, let authorization) = decoded
+    else { preconditionFailure("Unexpected Location diagnostic reply") }
+    precondition(worker == observation && authorization == .notDetermined)
+    print("Location initial callback, timeout, cancellation, later authorization, and diagnostic reply checks passed.")
   }
 
   private static func checkWiFiInspection() async throws {

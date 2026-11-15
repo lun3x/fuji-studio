@@ -63,6 +63,7 @@ enum ProbeCameraWiFiRoute: Codable {
 enum ProbeWiFiWorkerRequest: Codable {
   case snapshot
   case inspect
+  case inspectLocation
   case scan(ProbeWiFiSnapshot, cameraSSID: Data)
   case join(ProbeWiFiSnapshot, cameraSSID: Data, password: String, route: ProbeCameraWiFiRoute)
   case verify(ProbeWiFiSnapshot, cameraSSID: Data)
@@ -75,6 +76,7 @@ enum ProbeWiFiWorkerRequest: Codable {
 enum ProbeWiFiWorkerReply: Codable {
   case snapshot(ProbeWiFiSnapshot)
   case inspection(ProbeWiFiInterfaceInspection)
+  case locationInspection(ProbeWiFiInterfaceInspection, authorization: ProbeWiFiLocationStatus)
   case completed
   case failure(ProbeWiFiWorkerFailure)
 }
@@ -102,6 +104,13 @@ struct ProbeMacWiFiAssociation: ProbeWiFiOnlyAssociating {
     let reply = try await call(.inspect, timeout: .seconds(4))
     guard case .inspection(let observation) = reply else { throw ProbeWiFiWorkerFailure.invalidWorkerResponse }
     return observation
+  }
+
+  func inspectLocation() async throws -> (ProbeWiFiInterfaceInspection, ProbeWiFiLocationStatus) {
+    let reply = try await call(.inspectLocation, timeout: .seconds(4))
+    guard case .locationInspection(let observation, let authorization) = reply
+    else { throw ProbeWiFiWorkerFailure.invalidWorkerResponse }
+    return (observation, authorization)
   }
 
   func scan(from original: ProbeWiFiSnapshot, cameraSSID: Data) async throws {
@@ -271,6 +280,7 @@ enum ProbeMacWiFiWorker {
     return 2
   }
 
+  @MainActor
   static func main() -> Int32 {
     let reply: ProbeWiFiWorkerReply
     do {
@@ -294,10 +304,17 @@ enum ProbeMacWiFiWorker {
     }
   }
 
+  @MainActor
   private static func perform(_ request: ProbeWiFiWorkerRequest) throws -> ProbeWiFiWorkerReply {
     switch request {
     case .inspect:
       return .inspection(inspectCurrentInterface())
+    case .inspectLocation:
+      let location = ProbeWiFiLocationAuthorization()
+      let authorization = location.observeInWorker()
+      return withExtendedLifetime(location) {
+        .locationInspection(inspectCurrentInterface(), authorization: authorization)
+      }
     case .snapshot:
       let reading = readCurrentInterface()
       guard let interface = reading.interface, let name = reading.name,
