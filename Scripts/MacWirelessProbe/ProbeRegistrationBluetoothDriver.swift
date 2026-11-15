@@ -29,9 +29,11 @@ final class ProbeRegistrationBluetoothDriver: BluetoothPeripheralDriver {
 
   private let native: any BluetoothPeripheralDriver
   private var experiment: Experiment?
+  private var registrationNotifications = ProbeRegistrationNotifications()
   private(set) var acknowledgementUsed = false
   var eventHandler: ((BluetoothDriverEvent) -> Void)?
   var observeAcknowledgement: (() -> Void)?
+  var observeRegistrationNotification: ((String) -> Void)?
 
   init(native: any BluetoothPeripheralDriver) {
     self.native = native
@@ -47,6 +49,16 @@ final class ProbeRegistrationBluetoothDriver: BluetoothPeripheralDriver {
   func endExperiment() { experiment = nil }
   func resetObservation() { acknowledgementUsed = false }
 
+  func beginRegistrationObservation(peripheralID: UUID) {
+    registrationNotifications.begin(peripheralID: peripheralID)
+  }
+
+  func markRegistrationObservationReady(peripheralID: UUID) {
+    registrationNotifications.markReady(peripheralID: peripheralID)
+  }
+
+  func endRegistrationObservation() { registrationNotifications.end() }
+
   func start(allowPermissionPrompt: Bool) throws {
     if let experiment, !experiment.selectionIsCurrent() { throw WirelessFailure.peerMismatch }
     try native.start(allowPermissionPrompt: allowPermissionPrompt)
@@ -55,7 +67,10 @@ final class ProbeRegistrationBluetoothDriver: BluetoothPeripheralDriver {
   func scan() { native.scan() }
   func stopScan() { native.stopScan() }
   func discardDiscoveries() { native.discardDiscoveries() }
-  func disconnect(session: UUID) { native.disconnect(session: session) }
+  func disconnect(session: UUID) {
+    registrationNotifications.end(session: session)
+    native.disconnect(session: session)
+  }
 
   func connect(peripheralID: UUID, session: UUID) {
     if let experiment {
@@ -64,6 +79,7 @@ final class ProbeRegistrationBluetoothDriver: BluetoothPeripheralDriver {
       else { return reject(session: session) }
       self.experiment?.step = .awaitingModel(session)
     }
+    registrationNotifications.requestedLink(peripheralID: peripheralID, session: session)
     native.connect(peripheralID: peripheralID, session: session)
   }
 
@@ -123,6 +139,9 @@ final class ProbeRegistrationBluetoothDriver: BluetoothPeripheralDriver {
       }
     }
     eventHandler?(event)
+    if let observation = registrationNotifications.receive(event) {
+      observeRegistrationNotification?(observation)
+    }
   }
 
   private func reject(session: UUID) {

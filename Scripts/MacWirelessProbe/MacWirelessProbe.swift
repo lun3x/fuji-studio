@@ -78,6 +78,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
       self?.record("registration_ack_used=true")
       self?.publish()
     }
+    driver.observeRegistrationNotification = { [weak self] event in self?.record(event) }
 
     // Preserve the production link and profile. Only first pairing on this
     // test rig has a stricter admission rule: DIS must report X-T5.
@@ -263,6 +264,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
     verifiedPairingSession = nil
     savedAdvertisement = SavedAdvertisementObservation()
     registrationDriver.resetObservation()
+    registrationDriver.beginRegistrationObservation(peripheralID: candidate.peripheralID)
     secureStatus.begin(.pairing, peripheralID: candidate.peripheralID)
     begin("pair", phase: .pairing)
     operation = Task {
@@ -316,6 +318,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
         }
         secureStatus.begin(usingRegistration ? .registrationReconnect : .reconnect,
           peripheralID: camera.peripheralID, cameraID: camera.id)
+        registrationDriver.beginRegistrationObservation(peripheralID: camera.peripheralID)
         savedModel = camera.model
         publish()
         try await gateway.reconnect(camera, allowPermissionPrompt: true)
@@ -400,11 +403,13 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
     linkedCamera = camera
     savedModel = camera.model
     operation = nil
+    registrationDriver.markRegistrationObservationReady(peripheralID: camera.peripheralID)
     finish("ready", phase: .linked)
   }
 
   private func linkFailed(_ error: Error, expectedPhase: Phase) async {
     guard phase == expectedPhase else { return }
+    registrationDriver.endRegistrationObservation()
     if expectedPhase == .pairing { secureStatus.endAttempt() }
     await gateway.disconnect()
     guard phase == expectedPhase else { return }
@@ -429,6 +434,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
       return
     }
     secureStatus.endAttempt()
+    registrationDriver.endRegistrationObservation()
     cameraNetwork = nil
     begin(shutdown ? "quit" : "disconnect", phase: .disconnecting)
     clearDiscovery()
