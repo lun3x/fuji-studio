@@ -102,6 +102,50 @@ final class CameraUseArbiterTests: XCTestCase {
         XCTAssertEqual(transitions, ["suspended", "resumed"])
     }
 
+    func testCancelledProvisionalExportResumesBluetoothAfterNativeDrain() async throws {
+        let f = try await FixtureEnvironment.make()
+        let bluetooth = USBTestBluetooth()
+        try await f.environment.cameraUseArbiter.installBluetoothController(bluetooth)
+        let job = UUID()
+        let exporting = Task { try await f.scheduler.beginExport(jobID: job) }
+        await bluetooth.suspending.entered()
+        exporting.cancel()
+        await expectBusy { _ = try await f.environment.wirelessOwnership.acquireWireless() }
+        let beforeDrain = await bluetooth.transitions
+        XCTAssertEqual(beforeDrain, [])
+        await bluetooth.suspending.release()
+        do {
+            try await exporting.value
+            XCTFail("The export should not start")
+        } catch is CancellationError {}
+
+        let transitions = await bluetooth.transitions
+        XCTAssertEqual(transitions, ["suspended", "resumed"])
+        let closes = await f.camera.disconnectCount
+        XCTAssertEqual(closes, 0)
+    }
+
+    func testUnconfirmedFailedUSBDiscoveryKeepsBluetoothSuspendedUntilRecovery() async throws {
+        let f = try await FixtureEnvironment.make()
+        let bluetooth = USBTestBluetooth()
+        await bluetooth.suspending.release()
+        try await f.environment.cameraUseArbiter.installBluetoothController(bluetooth)
+        await f.camera.setConnectionFailure(.transport(.notConnected))
+        await f.camera.setConfirmedCloseFailure(.closeUnconfirmed)
+
+        do {
+            try await f.environment.camera.connect()
+            XCTFail("The native close was not confirmed")
+        } catch CameraServiceError.closeUnconfirmed {}
+        let quarantined = await bluetooth.transitions
+        XCTAssertEqual(quarantined, ["suspended"])
+
+        await f.camera.setConfirmedCloseFailure(nil)
+        try await f.environment.camera.disconnectConfirmed()
+        let recovered = await bluetooth.transitions
+        XCTAssertEqual(recovered, ["suspended", "resumed"])
+    }
+
     func testFailedUSBDiscoveryResumesBluetoothAfterConfirmedClose() async throws {
         let f = try await FixtureEnvironment.make()
         let bluetooth = USBTestBluetooth()

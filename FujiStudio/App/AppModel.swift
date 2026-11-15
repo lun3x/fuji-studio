@@ -48,6 +48,7 @@ import Observation
     @ObservationIgnored private var cameraResetCallActive = false
     @ObservationIgnored private var cameraResetReadyAdopted = false
     @ObservationIgnored private var cameraResetAwaitingTerminal = false
+    @ObservationIgnored private var cameraResetDeferredDisconnect = false
     @ObservationIgnored private var cameraResetRevision: UInt64 = 0
     @ObservationIgnored private var contextTask: Task<Void, Never>?
     @ObservationIgnored private var versionRefreshTask: Task<Void, Never>?
@@ -459,7 +460,9 @@ import Observation
         if isResettingCamera || cameraResetAwaitingTerminal {
             switch event {
             case .opening, .discovering, .sessionOpen: return
-            case .disconnected where cameraResetCallActive: return
+            case .disconnected where cameraResetCallActive:
+                cameraResetDeferredDisconnect = true
+                return
             default: break
             }
         }
@@ -480,6 +483,7 @@ import Observation
         case .ready, .attentionRequired, .disconnected, .authorizationDenied, .wrongMode, .recoverableError:
             awaitingImportTerminal = false
             cameraResetAwaitingTerminal = false
+            cameraResetDeferredDisconnect = false
         default: break
         }
         if isRefreshing {
@@ -578,6 +582,7 @@ import Observation
         let revision = cameraResetRevision
         cameraResetCallActive = true; cameraResetReadyAdopted = false
         cameraResetAwaitingTerminal = true
+        cameraResetDeferredDisconnect = false
         cameraResetError = nil
         reduce(.cameraResetChanged(true))
         await environment.preview.invalidate()
@@ -586,6 +591,7 @@ import Observation
             try await environment.camera.resetConnection()
             guard revision == cameraResetRevision, !isSuspended else { return }
             cameraResetCallActive = false
+            cameraResetDeferredDisconnect = false
             finishCameraResetIfReady()
             if !isResettingCamera, let context = state.currentCameraExecutionContext,
                state.cameraSupport?.capabilities.recipeImport == .supported,
@@ -595,6 +601,14 @@ import Observation
             guard revision == cameraResetRevision, !isSuspended else { return }
             cameraResetCallActive = false; isResettingCamera = false
             reduce(.cameraResetChanged(false))
+            let deferredDisconnect = cameraResetDeferredDisconnect
+            cameraResetDeferredDisconnect = false
+            if case WirelessFailure.cameraBusy = error {
+                // No native reset started. A concurrent handoff may already have closed USB.
+                cameraResetAwaitingTerminal = false
+                if deferredDisconnect { cameraChanged(.disconnected) }
+                return
+            }
             cameraResetError = "Reset failed: \(Self.explain(error))"
         }
     }
@@ -878,6 +892,7 @@ import Observation
             cameraEventGeneration &+= 1; contextTask?.cancel()
             isResettingCamera = false; cameraResetCallActive = false
             cameraResetReadyAdopted = false; cameraResetAwaitingTerminal = false
+            cameraResetDeferredDisconnect = false
             awaitingImportTerminal = false
             cameraError = nil; cameraResetError = nil
             reduce(.cameraResetChanged(false))

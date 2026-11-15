@@ -551,7 +551,7 @@ import Testing
         #expect(model.message != nil)
     }
 
-    @Test func wirelessOwnershipDefersAutomaticUSBDiscoveryUntilRelease() async throws {
+    @Test func resetRefusedByWirelessOwnershipLeavesAutomaticUSBDiscoveryEligibleAfterRelease() async throws {
         let f = try await FixtureEnvironment.make(), retry = ManualConnectionRetry()
         let ownership = f.environment.wirelessOwnership
         let lease = try await ownership.acquireWireless()
@@ -560,6 +560,11 @@ import Testing
         await eventually { await retry.isWaiting }
         #expect(await f.camera.connectCount == 0)
         #expect(model.connectionError == nil)
+        #expect(model.canResetCameraConnection)
+        await model.resetCameraConnection()
+        #expect(await f.camera.resetCount == 0)
+        #expect(!model.isResettingCamera)
+        #expect(model.cameraResetError == nil)
 
         await ownership.releaseWireless(lease)
         await retry.advance()

@@ -138,6 +138,34 @@ final class WiFiHandoffTests: XCTestCase {
     XCTAssertEqual(fixture.log.events.filter { $0 == "authenticated" }.count, 2)
   }
 
+  func testCancelledUSBDiscoveryRestoresBluetoothAfterNativeDrain() async throws {
+    let usb = try await FixtureEnvironment.make()
+    let fixture = Fixture(ownership: usb.environment.wirelessOwnership)
+    try await usb.environment.cameraUseArbiter.installBluetoothController(fixture.coordinator)
+    await fixture.start()
+    let close = FixtureBarrier()
+    fixture.bluetooth.disconnectBarrier = close
+    let connecting = Task { try await usb.environment.camera.connect() }
+    await close.entered()
+    connecting.cancel()
+
+    await fixture.coordinator.retryBluetooth()
+    let suspended = await snapshot(fixture.coordinator)
+    XCTAssertEqual(suspended.bluetooth, .idle)
+    XCTAssertEqual(fixture.log.events.filter { $0 == "authenticated" }.count, 1)
+    await close.release()
+    do {
+      try await connecting.value
+      XCTFail("The cancelled discovery should never enter USB")
+    } catch is CancellationError {}
+
+    let calls = (await usb.camera.connectCount, await usb.camera.disconnectCount)
+    XCTAssertEqual(calls.0, 0)
+    XCTAssertEqual(calls.1, 0)
+    let resumed = await snapshot(fixture.coordinator)
+    XCTAssertTrue(resumed.bluetooth == .connecting || resumed.bluetooth == .ready)
+  }
+
   private func waitUntilUSBReserved(_ arbiter: CameraUseArbiter) async throws {
     let deadline = ContinuousClock.now.advanced(by: .seconds(3))
     while ContinuousClock.now < deadline {

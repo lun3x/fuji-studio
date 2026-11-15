@@ -19,6 +19,7 @@ actor CameraUseArbiter {
     private var usbAdmission: UInt64 = 0
     private var usbDrain: CheckedContinuation<Void, Never>?
     private var usbExport: UUID?
+    private var usbMayNeedClose = false
 
     // App composition installs the live coordinator before either transport starts.
     // The coordinator already holds the ownership gateway, so this reference is weak.
@@ -55,6 +56,7 @@ actor CameraUseArbiter {
             try Task.checkCancellation()
             try checkUSBAdmission()
             didRun = true
+            usbMayNeedClose = true
             result = .success(try await operation())
         } catch {
             result = .failure(error)
@@ -69,6 +71,8 @@ actor CameraUseArbiter {
             ownership = .closingUSB
             try await confirmUSBClose(closeIfUnavailable)
             ownership = .usb
+        } else {
+            await retireProvisionalBluetoothSuspension()
         }
         return try result.get()
     }
@@ -80,19 +84,21 @@ actor CameraUseArbiter {
         usbAdmission &+= 1
         usbExport = jobID
         usbOperations += 1
-        defer { finishUSBOperation() }
         do {
             try await suspendBluetooth()
             try Task.checkCancellation()
             guard usbExport == jobID else { throw CancellationError() }
         } catch {
-            endUSBExport(jobID)
+            finishUSBOperation()
+            await endUSBExport(jobID)
             throw error
         }
+        finishUSBOperation()
     }
 
-    func endUSBExport(_ jobID: UUID) {
+    func endUSBExport(_ jobID: UUID) async {
         if usbExport == jobID { usbExport = nil }
+        await retireProvisionalBluetoothSuspension()
     }
 
     func acquireWireless(quiesceUSB: @escaping @Sendable () async throws -> Void) async throws -> CameraUseLease {
@@ -173,7 +179,17 @@ actor CameraUseArbiter {
             ownership = .unconfirmedUSB
             throw CameraServiceError.closeUnconfirmed
         }
+        usbMayNeedClose = false
         await resumeBluetooth()
+    }
+
+    private func retireProvisionalBluetoothSuspension() async {
+        guard !usbMayNeedClose, usbOperations == 0, usbExport == nil,
+              bluetoothSuspension != nil, case .usb = ownership else { return }
+        // Neither a native open nor an export can enter during BLE resumption.
+        ownership = .closingUSB
+        await resumeBluetooth()
+        ownership = .usb
     }
 
     private static func isUSBUnavailable(_ error: any Error) -> Bool {
