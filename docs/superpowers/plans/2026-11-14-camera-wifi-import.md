@@ -10,6 +10,12 @@
 
 **Spec:** [Approved camera WiFi import design](../specs/2026-11-14-camera-wifi-import-design.md), approved 2026-11-14. [Pinned protocol research](../../validation/wireless-protocol-research.md) supplies evidence, not an alternative compatibility policy.
 
+## Execution status
+
+Tasks 1–13 have implemented and reviewed code checkpoints. Task 14's complete regression and native Photos resource checks passed on `835b675207d7fb25a7ae48615a8f8aaf08e29797`. The Simulator Release checks passed with the same production and project inputs. The scoped review approved the software changes, confirmed all 14 original findings were addressed, and recorded one remaining Minor UI issue. The [wireless import acceptance record](../../validation/wireless-import-acceptance.md) gives the tested revision, exact runs and results.
+
+The physical feasibility work in Tasks 5 and 6 and the signed-device, connection, original-byte and interruption checks in Task 14 steps 3–6 remain open. The original steps below describe the implementation plan. The acceptance record tracks which current physical claims have evidence.
+
 ## Global Constraints
 
 - “Support both X-T5 and X-E3 on their latest official stable firmware only.” Targets checked again on 2026-11-14: X-T5 **4.32**, X-E3 **1.32**; recheck official releases at implementation start and release validation.
@@ -439,7 +445,7 @@ func testStatusSeparatesBluetoothFromUSBReadiness() {
 
 The [wireless import acceptance record](../../validation/wireless-import-acceptance.md) tracks the simulator evidence and the unresolved physical gates. The available iPhone development profile lacks Hotspot Configuration and Access Wi-Fi Information. X-E3 AutoSave also requires Apple's managed Multicast Networking grant and a verified selected-body identity. Physical acceptance remains open for both firmware targets.
 
-The regression run and native PhotoKit run used one isolated simulator, which was shut down and deleted. The acceptance record preserves both xcresult paths and the tested source revision.
+The complete regression and explicit native PhotoKit checks were repeated for the final fix wave at `835b675207d7fb25a7ae48615a8f8aaf08e29797`. The isolated simulator was shut down and deleted. The acceptance record preserves both xcresult paths, the affected checks and the tested source revision.
 
 - [x] **1. Run** `swift test --package-path Packages/FujiCameraCore` and the complete `Scripts/test-ios.sh` on the task simulator. Expected: all package, app unit and UI tests pass; retain xcresult paths and exact revision. A fast-only pass is insufficient.
 - [x] **2. Recheck current official firmware** and reconcile the bundled support table with it. If a new release appeared, validate that version before release; old firmware hardware tests cannot substitute. Replay rejection tests for old, higher/unvalidated and unreadable versions without installing/downgrading camera firmware.
@@ -448,7 +454,7 @@ The regression run and native PhotoKit run used one isolated simulator, which wa
 - [ ] **5. Import at least 20 mixed captures per supported transfer path where available.** Include same-card pairs, X-T5 split cards, RAW-only, repeated filenames, missing mates, supported compressed/uncompressed RAF, disabled JPEG/HEIF/movie and large originals. Verify each imported Photos asset contains the expected roles and independently hash every resource against card originals. Record exact source acquisition and results; do not treat staged-to-Photos equality alone as proof of original-size transfer.
 - [ ] **6. Exercise destructive-to-the-process recovery, not destructive media operations:** terminate during first/second file, between pair validation and save, during Photos submission and after save before receipt; cancel/background/relaunch; test limited/full/denied Photos access and storage exhaustion. Confirm explicit resume, no silent pair downgrade or duplicate save, no accidental camera/card changes, no deletion of existing Photos, and safe USB handoff including unresolved cleanup.
 - [x] **7. Record outcome per gate**, including X-E3 registration/marker behavior, signed entitlement evidence, protocol identity limitations and unresolved failures. If a required gate is blocked, report it and continue only independent work; release completion remains pending until passed or the user explicitly changes scope.
-- [ ] **8. Review the integrated diff against the spec and run the selected execution method's final review.** Address findings and rerun checks affected by fixes. Shut down/delete the task simulator; retain journals/media that protect unresolved real imports. Checkpoint: `test: validate latest-firmware wireless original import` only when evidence supports that claim.
+- [x] **8. Review the integrated diff against the spec and run the final scoped review.** The review confirmed the original findings were addressed and documented the remaining Minor UI issue in the acceptance record. The task simulator was removed after the checks. Signed-device validation remains open.
 
 ## Plan self-review and handoff
 
