@@ -10,7 +10,7 @@ xcrun swift build --package-path "$package" --scratch-path "$build/core" >&2
 core="$(xcrun swift build --package-path "$package" --scratch-path "$build/core" --show-bin-path)"
 xcrun swiftc -swift-version 6 -target "$(uname -m)-apple-macosx27.0" -parse-as-library -I "$core" \
   "$source_dir/ProbeRegistrationBluetoothDriver.swift" "$source_dir/ProbeSecureStatusComparison.swift" \
-  "$source_dir/ProbeRegistrationNotifications.swift" "$source_dir/ProbeGeotagSubscription.swift" \
+  "$source_dir/ProbeRegistrationNotifications.swift" \
   "$source_dir/Tests/RegistrationReconnectTests.swift" "$wireless/AutoSaveGateway.swift" \
   "$wireless/BluetoothGateway.swift" "$wireless/CoreBluetoothConnections.swift" \
   "$wireless/CoreBluetoothDriver.swift" "$wireless/NativeBluetoothGateway.swift" \

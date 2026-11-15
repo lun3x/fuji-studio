@@ -13,7 +13,7 @@ private struct RegistrationReconnectTests {
   static func main() {
     checkEligibility()
     checkNotificationObservation()
-    checkGeotagSubscription()
+    checkProductionRegistration()
 
     let normal = TestDriver()
     let normalAdapter = ProbeRegistrationBluetoothDriver(native: normal)
@@ -72,173 +72,108 @@ private struct RegistrationReconnectTests {
     print("Registration reconnect eligibility, scoped substitution, and rejection checks passed.")
   }
 
-  static func checkGeotagSubscription() {
-    let geo = ProbeGeotagSubscription.characteristic
-    let registration = Experiment(requestRead: false)
-    precondition(!registration.adapter.beginGeotagSubscription(peripheralID: UUID()))
-    let normal = GeotagTrial(extraSubscription: false)
-    normal.reachConfigurationAcknowledgement()
-    normal.finishPairing()
-    precondition(normal.ready && !normal.adapter.geotagSubscriptionAcknowledged)
+  static let geotagRequest = BLEGATTCharacteristic(
+    service: "4c0020fe-f3b6-40de-acc9-77d129067b14",
+    characteristic: "ad06c7b7-f41a-46f4-a29a-712055319122")
 
-    let included = GeotagTrial()
-    precondition(!included.adapter.beginExperiment(registration.ticket) { true })
-    included.reachConfigurationAcknowledgement()
-    precondition(included.native.actions.last == .subscribe(geo))
-    precondition(!included.native.actions.contains(.subscribe(ProbeGeotagSubscription.networkName)))
-    precondition(!included.adapter.geotagSubscriptionAcknowledged)
-    included.emit(.subscribed(geo))
-    precondition(included.adapter.geotagSubscriptionAcknowledged)
-    included.finishPairing()
-    var expected = normal.native.actions
-    let next = expected.firstIndex(of: .subscribe(ProbeGeotagSubscription.networkName))!
-    expected.insert(.subscribe(geo), at: next)
-    precondition(included.ready && included.native.actions == expected)
-    precondition(included.hasSameForwardedEvents(as: normal), "An original profile event changed")
-    precondition(normal.native.actions.filter {
+  static func checkProductionRegistration() {
+    let pairing = ProfileTrial(intent: .pair)
+    pairing.reachConfigurationAcknowledgement()
+    precondition(pairing.native.actions.last == .subscribe(geotagRequest))
+    precondition(!pairing.ready)
+    pairing.emit(.subscribed(geotagRequest))
+    pairing.finishLink()
+    precondition(pairing.ready)
+
+    let reconnect = ProfileTrial(intent: .reconnect)
+    reconnect.reachConfigurationAcknowledgement()
+    reconnect.finishLink()
+    precondition(reconnect.ready)
+
+    let subscriptions = pairing.native.actions.filter { if case .subscribe = $0 { true } else { false } }
+    precondition(subscriptions == [
+      .subscribe(ProfileTrial.readiness), .subscribe(ProfileTrial.secondIndication),
+      .subscribe(ProfileTrial.configurationNotification), .subscribe(geotagRequest),
+      .subscribe(ProfileTrial.networkName),
+    ])
+    precondition(pairing.native.actions.filter { $0 != .subscribe(geotagRequest) } == reconnect.native.actions)
+    precondition(pairing.native.actions.filter {
       if case .write = $0 { return true }
       return false
-    }.count == 2, "An extra value write reached the driver")
-    included.emit(.subscribed(geo))
-    precondition(included.native.actions == expected && included.failures == [included.session])
+    }.count == 2, "The probe submitted an extra characteristic value write")
 
-    let missing = GeotagTrial(includeCharacteristic: false)
-    missing.expectRejected(.geotagCharacteristicMissing, nativeActionCount: 0)
-    let wrongPeer = GeotagTrial(connectRequestedPeer: false)
-    wrongPeer.expectRejected(.geotagUnexpectedPeer, nativeActionCount: 0)
-    precondition(wrongPeer.native.connections == 0)
-    let wrongModel = GeotagTrial(model: "X-E3")
-    wrongModel.expectRejected(.geotagUnexpectedPeer, nativeActionCount: 0)
-
-    let unsupported = GeotagTrial()
-    unsupported.reachConfigurationAcknowledgement()
-    let heldCount = unsupported.native.actions.count
-    unsupported.emit(.subscriptionUnavailable(geo))
-    unsupported.expectRejected(.geotagSubscriptionUnsupported, nativeActionCount: heldCount)
-
-    let failure = GeotagTrial()
-    failure.reachConfigurationAcknowledgement()
-    failure.emit(.failed(geo, .authentication))
-    failure.expectRejected(.geotagSubscriptionFailed, nativeActionCount: heldCount)
-
-    let stale = GeotagTrial()
-    stale.reachConfigurationAcknowledgement()
-    stale.emit(.subscribed(geo), session: UUID())
-    stale.emit(.subscribed(geo))
-    stale.expectRejected(.geotagUnexpectedPeer, nativeActionCount: heldCount)
-
-    let unexpected = GeotagTrial()
-    unexpected.reachConfigurationAcknowledgement()
-    unexpected.emit(.subscribed(ProbeGeotagSubscription.networkName))
-    unexpected.expectRejected(.geotagUnexpectedSequence, nativeActionCount: heldCount)
-
-    let skipped = GeotagTrial(includeFirmware: false)
-    skipped.reachConfigurationAcknowledgement()
-    skipped.emit(.subscriptionUnavailable(ProbeGeotagSubscription.networkName))
-    guard !skipped.ready else {
-      print("FAIL: network-name skip completed the profile without a geotag acknowledgment")
-      exit(1)
-    }
-    skipped.expectRejected(.geotagUnexpectedSequence, nativeActionCount: heldCount)
-
-    let cancelled = GeotagTrial()
-    cancelled.reachConfigurationAcknowledgement()
-    cancelled.adapter.cancelGeotagSubscription()
-    cancelled.adapter.disconnect(session: cancelled.session)
-    cancelled.emit(.subscribed(geo))
-    precondition(cancelled.native.actions.count == heldCount)
-    precondition(!cancelled.adapter.geotagSubscriptionAcknowledged && cancelled.failures.isEmpty)
-    print("Geotag subscription order, unchanged standard path, and rejection checks passed.")
+    pairing.emit(.notification(geotagRequest, Data([0xde, 0xad])))
+    precondition(pairing.flushed.isEmpty)
+    pairing.native.eventHandler?(.disconnected(pairing.session, .connectionLost))
+    precondition(pairing.flushed.map(\.message) == [
+      "Registration notification: role=geotag-request length_class=1-2 timing=after-ready",
+    ])
+    print("Production X-T5 pairing and reconnect pass through the probe with deferred geotag observations.")
   }
 
   @MainActor
-  final class GeotagTrial {
-    private enum Forwarded: Equatable {
-      case services(Set<BLEGATTCharacteristic>)
-      case read(BLEGATTCharacteristic, Data)
-      case wrote(BLEGATTCharacteristic)
-      case subscribed(BLEGATTCharacteristic)
-      case subscriptionUnavailable(BLEGATTCharacteristic)
-    }
-
+  final class ProfileTrial {
     private static let status = ProbeSecureStatusComparison.characteristic
     private static let identify = BLEGATTCharacteristic(
       service: status.service, characteristic: "85b9163e-62d1-49ff-a6f5-054b4630d4a1")
-    private static let readiness = BLEGATTCharacteristic(
-      service: ProbeGeotagSubscription.configurationNotification.service,
-      characteristic: "a68e3f66-0fcc-4395-8d4c-aa980b5877fa")
-    private static let second = BLEGATTCharacteristic(
-      service: readiness.service, characteristic: "bd17ba04-b76b-4892-a545-b73ba1f74dae")
+    static let readiness = BLEGATTCharacteristic(
+      service: geotagRequest.service, characteristic: "a68e3f66-0fcc-4395-8d4c-aa980b5877fa")
+    static let secondIndication = BLEGATTCharacteristic(
+      service: geotagRequest.service, characteristic: "bd17ba04-b76b-4892-a545-b73ba1f74dae")
+    static let configurationNotification = BLEGATTCharacteristic(
+      service: geotagRequest.service, characteristic: "f9150137-5d40-4801-a8dc-f7fc5b01da50")
+    static let networkName = BLEGATTCharacteristic(
+      service: "4e941240-d01d-46b9-a5ea-67636806830b", characteristic: "bf6dc9cf-3606-4ec9-a4c8-d77576e93ea4")
     private static let firmware = BLEGATTCharacteristic(service: "180a", characteristic: "2a26")
 
     let native = TestDriver()
     let adapter: ProbeRegistrationBluetoothDriver
     let session = UUID()
-    private var profile = XT5BLEProfile()
-    private var events: [Forwarded] = []
+    private let peer = UUID()
+    private var profile: XT5BLEProfile
     private(set) var ready = false
-    private(set) var failures: [UUID] = []
+    private(set) var flushed: [ProbeRegistrationNotificationEntry] = []
 
-    init(
-      extraSubscription: Bool = true, includeCharacteristic: Bool = true,
-      connectRequestedPeer: Bool = true, model: String = "FF220001", includeFirmware: Bool = true
-    ) {
+    init(intent: XT5BLEProfile.Intent) {
+      profile = XT5BLEProfile(intent: intent)
       adapter = ProbeRegistrationBluetoothDriver(native: native)
       adapter.eventHandler = { [weak self] event in self?.receive(event) }
-      let peer = UUID()
-      if extraSubscription { precondition(adapter.beginGeotagSubscription(peripheralID: peer)) }
-      adapter.connect(peripheralID: connectRequestedPeer ? peer : UUID(), session: session)
-      native.eventHandler?(.peerModel(session, model))
-      var keys: Set = [
-        Self.status, Self.identify, Self.readiness, Self.second,
-        ProbeGeotagSubscription.configurationNotification, ProbeGeotagSubscription.networkName,
-      ]
-      if includeFirmware { keys.insert(Self.firmware) }
-      if includeCharacteristic { keys.insert(ProbeGeotagSubscription.characteristic) }
-      emit(.services(keys))
+      adapter.flushRegistrationNotifications = { [weak self] entries in self?.flushed.append(contentsOf: entries) }
+      adapter.beginRegistrationObservation(peripheralID: peer)
+      adapter.connect(peripheralID: peer, session: session)
+      native.eventHandler?(.peerModel(session, "FF220001"))
+      emit(.services([
+        Self.status, Self.identify, Self.readiness, Self.secondIndication,
+        Self.configurationNotification, Self.networkName, Self.firmware, geotagRequest,
+      ]))
     }
 
-    func emit(_ event: BLEProtocolEvent, session: UUID? = nil) {
-      native.eventHandler?(.protocolEvent(session ?? self.session, event))
+    func emit(_ event: BLEProtocolEvent) {
+      native.eventHandler?(.protocolEvent(session, event))
     }
 
     func reachConfigurationAcknowledgement() {
       emit(.read(Self.status, Data([1, 2, 3, 4])))
       emit(.wrote(Self.status))
       emit(.wrote(Self.identify))
-      emit(.read(ProbeGeotagSubscription.networkName, Data("synthetic".utf8)))
+      emit(.read(Self.networkName, Data("synthetic".utf8)))
       emit(.subscribed(Self.readiness))
-      emit(.subscribed(Self.second))
-      emit(.subscribed(ProbeGeotagSubscription.configurationNotification))
+      emit(.subscribed(Self.secondIndication))
+      emit(.subscribed(Self.configurationNotification))
     }
 
-    func finishPairing() {
-      emit(.subscribed(ProbeGeotagSubscription.networkName))
+    func finishLink() {
+      emit(.subscribed(Self.networkName))
       emit(.read(Self.firmware, Data("4.32".utf8)))
     }
 
-    func hasSameForwardedEvents(as other: GeotagTrial) -> Bool { events == other.events }
-
-    func expectRejected(_ reason: ProbeGeotagSubscription.Failure, nativeActionCount: Int) {
-      precondition(adapter.geotagSubscriptionFailure == reason && failures == [session])
-      precondition(native.actions.count == nativeActionCount && !adapter.geotagSubscriptionAcknowledged)
-    }
-
     private func receive(_ event: BluetoothDriverEvent) {
-      if case .linkFailed(let session, _) = event { failures.append(session) }
       guard case .protocolEvent(let session, let event) = event else { return }
       precondition(self.session == session)
-      switch event {
-      case .services(let keys): events.append(.services(keys))
-      case .read(let key, let data): events.append(.read(key, data))
-      case .wrote(let key): events.append(.wrote(key))
-      case .subscribed(let key): events.append(.subscribed(key))
-      case .subscriptionUnavailable(let key): events.append(.subscriptionUnavailable(key))
-      default: preconditionFailure("Unexpected event reached the production profile")
-      }
       for action in try! profile.receive(event) {
         if case .authenticated = action {
           ready = true
+          adapter.markRegistrationObservationReady(peripheralID: peer)
         } else {
           adapter.perform(action, session: session)
         }
@@ -332,7 +267,7 @@ private struct RegistrationReconnectTests {
     adapter.beginRegistrationObservation(peripheralID: peer)
     adapter.connect(peripheralID: peer, session: nextSession)
     native.eventHandler?(.peerModel(nextSession, "X-T5"))
-    emit(nextSession, key: ProbeGeotagSubscription.characteristic)
+    emit(nextSession, key: geotagRequest)
     for _ in 0..<80 { emit(nextSession) }
     precondition(flushed.count == 1, "Notification burst reached the sink before retirement")
     native.eventHandler?(.disconnected(nextSession, .connectionLost))

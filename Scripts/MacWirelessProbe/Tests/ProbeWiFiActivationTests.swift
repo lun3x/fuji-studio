@@ -15,7 +15,7 @@ private struct ProbeWiFiActivationTests {
     guard await rejects(.peerMismatch, { try await activate(.init()) }) else { exit(1) }
 
     let target = WirelessSupportPolicy().record(for: camera.model).firmware
-    for firmware in [nil, "4.31", "4.99", "unreadable", "\(target).0"] {
+    for firmware in [nil, "4.29", "unreadable", "\(target).0"] {
       gateway.firmware = firmware
       guard await rejects(.unsupportedFirmware, { try await activate(camera.id) }) else { exit(1) }
     }
@@ -35,10 +35,14 @@ private struct ProbeWiFiActivationTests {
     precondition(legacyGateway.activations == 0, "X-E3 identity started X-T5 activation")
 
     gateway.model = camera.model
-    let network = try await activate(camera.id)
-    precondition(network.credential.cameraID == camera.id)
-    precondition(network.security == .wpaPersonal)
-    precondition(gateway.activations == 1)
+    let supportedFirmware = [target, "04.31", "4.99"]
+    for firmware in supportedFirmware {
+      gateway.firmware = firmware
+      let network = try await activate(camera.id)
+      precondition(network.credential.cameraID == camera.id)
+      precondition(network.security == .wpaPersonal)
+    }
+    precondition(gateway.activations == supportedFirmware.count)
 
     gateway.networkCameraID = .init()
     guard await rejects(.peerMismatch, { try await activate(camera.id) }) else { exit(1) }
