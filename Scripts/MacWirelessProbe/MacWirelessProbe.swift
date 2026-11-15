@@ -1,4 +1,5 @@
 import AppKit
+import CoreBluetooth
 import Darwin
 import Foundation
 import FujiCameraCore
@@ -68,6 +69,8 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
     driver.eventHandler = { [weak self] event in
       guard let self else { return }
       switch event {
+      case .availability(let availability):
+        self.record("Driver reported Bluetooth \(availability)")
       case .peerModel(let session, let value) where self.phase == .pairing:
         if value.flatMap(WirelessCameraModel.init(bluetoothModelNumber:)) == .xt5 {
           self.verifiedPairingSession = session
@@ -117,6 +120,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
     self.timer = timer
 
     Task {
+      record("Gateway event observer started")
       for await event in await gateway.events() {
         switch event {
         case .availability(let state):
@@ -160,8 +164,12 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
     guard phase == .idle else { return reject("discover", "busy") }
     begin("discover", phase: .discovering)
     scan = Task {
+      record("Discovery task entered the gateway")
       do {
-        for try await cameras in try await gateway.discover() {
+        let updates = try await gateway.discover()
+        record("Discovery gateway returned a stream")
+        record("CoreBluetooth authorization: \(Self.authorizationLabel())")
+        for try await cameras in updates {
           guard phase == .discovering else { return }
           let handles = Dictionary(uniqueKeysWithValues: candidates.map { ($0.value.id, $0.key) })
           for camera in cameras {
@@ -176,6 +184,16 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
         clearDiscovery()
         finish(Self.failureLabel(error), phase: .idle)
       }
+    }
+  }
+
+  private static func authorizationLabel() -> String {
+    switch CBManager.authorization {
+    case .notDetermined: "notDetermined"
+    case .restricted: "restricted"
+    case .denied: "denied"
+    case .allowedAlways: "allowedAlways"
+    @unknown default: "unknown"
     }
   }
 
