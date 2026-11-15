@@ -153,6 +153,29 @@ private struct PTPIdentityTests {
     precondition(rehearsed.takeReceipt() == nil)
     try receipt.validate(normal.original)
 
+    let unavailableLinkStates: [Any?] = [true, nil, NSNumber(value: 0), "false"]
+    for activeValue in unavailableLinkStates {
+      let unresolvedLink = Scenario()
+      unresolvedLink.gapLinkActiveValue = activeValue
+      unresolvedLink.restoreLinkActiveValue = activeValue
+      let withheld = await ProbeWiFiOnlyRecovery.rehearse(unresolvedLink)
+      precondition(!withheld.gapObserved && withheld.receipt == nil, "An unreadable SSID alone qualified as a gap")
+      precondition(!unresolvedLink.steps.contains("saved rejoin"), "An unreadable SSID authorized networksetup")
+    }
+
+    let linkReturnedAfterGap = Scenario()
+    linkReturnedAfterGap.restoreLinkActiveValue = true
+    let lateLink = await ProbeWiFiOnlyRecovery.rehearse(linkReturnedAfterGap)
+    precondition(lateLink.gapObserved && lateLink.receipt == nil)
+    precondition(!linkReturnedAfterGap.steps.contains("saved rejoin"))
+
+    let newAssociation = Scenario()
+    let unrelatedSSID = Data("synthetic-unrelated".utf8)
+    newAssociation.restoreLinkSSID = unrelatedSSID
+    let untouched = await ProbeWiFiOnlyRecovery.rehearse(newAssociation)
+    precondition(untouched.gapObserved && untouched.receipt == nil)
+    precondition(!newAssociation.steps.contains("saved rejoin") && newAssociation.restoreLinkSSID == unrelatedSSID)
+
     let expired = Scenario()
     let expiredReceipt = ProbeWiFiOnlyReceipt(original: expired.original, expiresAt: .now - .seconds(1))
     let old = await expired.run(wifiOnly: expiredReceipt)
@@ -291,6 +314,9 @@ private final class Scenario: ProbeWiFiOnlyAssociating, CameraNetworkCredentialP
   var previousVerificationFails = false
   var releaseCameraFails = false
   var releaseCameraError: (any Error)?
+  var gapLinkActiveValue: Any? = false
+  var restoreLinkActiveValue: Any? = false
+  var restoreLinkSSID: Data?
 
   var identity: WirelessIdentity { .init(cameraID: camera, model: .xt5, firmware: "4.31") }
 
@@ -377,6 +403,8 @@ private final class Scenario: ProbeWiFiOnlyAssociating, CameraNetworkCredentialP
   func rehearsalGap(_ original: ProbeWiFiSnapshot) async throws {
     steps.append("gap")
     if let gapError { throw gapError }
+    guard ProbeWiFiLinkObservation.isExplicitlyUnassociated(ssid: nil, activeValue: gapLinkActiveValue)
+    else { throw ProbeWiFiWorkerFailure.associationGapUnobserved }
     if cancelAtGap { withUnsafeCurrentTask { $0?.cancel() } }
   }
 
@@ -388,6 +416,8 @@ private final class Scenario: ProbeWiFiOnlyAssociating, CameraNetworkCredentialP
 
   func reassociateSaved(_ original: ProbeWiFiSnapshot) async throws {
     precondition(!Task.isCancelled)
+    guard ProbeWiFiLinkObservation.isExplicitlyUnassociated(ssid: restoreLinkSSID, activeValue: restoreLinkActiveValue)
+    else { throw ProbeWiFiWorkerFailure.associationChanged }
     steps.append("saved rejoin")
     if savedRejoinFails { throw ProbeWiFiWorkerFailure.workerUnavailable }
   }

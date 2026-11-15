@@ -1,8 +1,22 @@
 import CoreWLAN
+import CoreFoundation
 import Darwin
 import Foundation
 import Network
 import SystemConfiguration
+
+enum ProbeWiFiLinkObservation {
+  static func active(_ value: Any?) -> Bool? {
+    guard let active = value as? NSNumber,
+      CFGetTypeID(active) == CFBooleanGetTypeID()
+    else { return nil }
+    return active.boolValue
+  }
+
+  static func isExplicitlyUnassociated(ssid: Data?, activeValue: Any?) -> Bool {
+    ssid == nil && active(activeValue) == false
+  }
+}
 
 struct ProbeWiFiSnapshot: Codable, Equatable, Sendable {
   let interface: String
@@ -207,13 +221,14 @@ enum ProbeMacWiFiWorker {
     guard let input = try? ProbeWiFiWorkerProcess.readBounded(from: .standardInput),
       let original = try? JSONDecoder().decode(ProbeWiFiSnapshot.self, from: input),
       let name = original.savedNetworkName,
-      let interface = try? originalInterface(original), interface.ssidData() == nil
+      let interface = try? originalInterface(original)
     else { return 2 }
     let executable = "/usr/sbin/networksetup"
     var arguments = [executable, "-setairportnetwork", original.interface, name].map { strdup($0) }
+    defer { for argument in arguments { free(argument) } }
     guard arguments.allSatisfy({ $0 != nil }) else { return 2 }
     arguments.append(nil)
-    defer { for argument in arguments { free(argument) } }
+    guard isExplicitlyUnassociated(interface) else { return 2 }
     _ = execv(executable, &arguments)
     return 2
   }
@@ -288,13 +303,14 @@ enum ProbeMacWiFiWorker {
       return .completed
     case .rehearsalGap(let original):
       let interface = try originalInterface(original)
-      guard interface.ssidData() == original.ssid else { throw ProbeWiFiWorkerFailure.associationChanged }
+      guard interface.ssidData() == original.ssid, ProbeWiFiLinkObservation.active(linkActiveValue(interface)) == true
+      else { throw ProbeWiFiWorkerFailure.associationChanged }
       guard ProbeWiredRoute.isPrimaryWiFi(original)
       else { throw ProbeWiFiWorkerFailure.wifiRouteUnavailable }
       interface.disassociate()
       let deadline = ContinuousClock.now + .seconds(2)
       repeat {
-        if interface.ssidData() == nil { return .completed }
+        if isExplicitlyUnassociated(interface) { return .completed }
         Thread.sleep(forTimeInterval: 0.05)
       } while ContinuousClock.now < deadline
       throw ProbeWiFiWorkerFailure.associationGapUnobserved
@@ -363,9 +379,22 @@ enum ProbeMacWiFiWorker {
 
   private static func originalInterface(_ original: ProbeWiFiSnapshot) throws -> CWInterface {
     guard let interface = CWWiFiClient.shared().interface(withName: original.interface),
-      interface.powerOn(), interface.serviceActive()
+      interface.interfaceName == original.interface, interface.powerOn(), interface.serviceActive()
     else { throw ProbeWiFiWorkerFailure.currentWiFiUnavailable }
     return interface
+  }
+
+  private static func isExplicitlyUnassociated(_ interface: CWInterface) -> Bool {
+    let ssid = interface.ssidData()
+    return ProbeWiFiLinkObservation.isExplicitlyUnassociated(ssid: ssid, activeValue: linkActiveValue(interface))
+  }
+
+  private static func linkActiveValue(_ interface: CWInterface) -> Any? {
+    guard let name = interface.interfaceName else { return nil }
+    let key = SCDynamicStoreKeyCreateNetworkInterfaceEntity(
+      nil, kSCDynamicStoreDomainState, name as CFString, kSCEntNetLink)
+    let link = SCDynamicStoreCopyValue(nil, key) as? [String: Any]
+    return link?[kSCPropNetLinkActive as String]
   }
 
   private static func cameraNetwork(_ interface: CWInterface, cameraSSID: Data) throws -> CWNetwork {
