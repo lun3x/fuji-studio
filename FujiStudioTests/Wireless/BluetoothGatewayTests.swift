@@ -256,7 +256,9 @@ final class BluetoothGatewayTests: XCTestCase {
       defaults: defaults, service: namespace, keychain: ReplayCameraKeychain(service: namespace))
     let driver = ReplayBluetoothDriver()
     driver.securePairing = true
-    driver.onGeotagSubscription = { _ in }
+    driver.handleSubscription = { characteristic, _ in
+      characteristic == ReplayBluetoothDriver.geotagRequest
+    }
     driver.pauseConnections = true
     let (links, linkSignal) = AsyncStream<UUID>.makeStream()
     defer { linkSignal.finish() }
@@ -302,8 +304,12 @@ final class BluetoothGatewayTests: XCTestCase {
     await gateway.disconnect()
   }
 
-  func testXT5PairingDoesNotSaveCameraWithoutSupportedGeotagSubscription() async throws {
-    for hasCharacteristic in [false, true] {
+  func testXT5PairingFailsWithoutBothRequiredConfigurationSubscriptions() async throws {
+    let configuration = ReplayBluetoothDriver.configurationNotification
+    let geotag = ReplayBluetoothDriver.geotagRequest
+    for (required, discovered) in [
+      (configuration, false), (configuration, true), (geotag, false), (geotag, true),
+    ] {
       let namespace = "FujiStudio.Tests.BluetoothRegistration.\(UUID())"
       let defaults = try XCTUnwrap(UserDefaults(suiteName: namespace))
       defer { defaults.removePersistentDomain(forName: namespace) }
@@ -311,10 +317,11 @@ final class BluetoothGatewayTests: XCTestCase {
         defaults: defaults, service: namespace, keychain: ReplayCameraKeychain(service: namespace))
       let driver = ReplayBluetoothDriver()
       driver.securePairing = true
-      driver.includeGeotagRequest = hasCharacteristic
-      driver.onGeotagSubscription = { [unowned driver] session in
-        driver.eventHandler?(.protocolEvent(
-          session, .subscriptionUnavailable(ReplayBluetoothDriver.geotagRequest)))
+      driver.omittedCharacteristic = discovered ? nil : required
+      driver.handleSubscription = { [unowned driver] characteristic, session in
+        guard characteristic == required else { return false }
+        driver.eventHandler?(.protocolEvent(session, .subscriptionUnavailable(characteristic)))
+        return true
       }
       let gateway = NativeBluetoothGateway(store: store, driver: driver)
       let discoveries = try await gateway.discover()
@@ -325,12 +332,16 @@ final class BluetoothGatewayTests: XCTestCase {
 
       do {
         _ = try await gateway.pair(candidate)
-        XCTFail("Pairing completed with \(hasCharacteristic ? "unsupported" : "missing") geotag subscription")
+        let role = required == configuration ? "configuration" : "geotag"
+        XCTFail("Pairing completed with \(discovered ? "unsupported" : "missing") \(role) subscription")
       } catch {
         XCTAssertEqual(error as? WirelessFailure, .unsupportedProtocol)
       }
       let saved = try await store.cameras()
       XCTAssertTrue(saved.isEmpty)
+      if required == configuration {
+        XCTAssertFalse(driver.actions.contains(.subscribe(geotag)))
+      }
       await gateway.disconnect()
     }
   }
@@ -345,6 +356,11 @@ final class BluetoothGatewayTests: XCTestCase {
       id: WirelessCameraID(), peripheralID: UUID(), model: .xt5, displayName: "X-T5"), peerKey: nil)
     let driver = ReplayBluetoothDriver()
     driver.securePairing = true
+    driver.handleSubscription = { [unowned driver] characteristic, session in
+      guard characteristic == ReplayBluetoothDriver.configurationNotification else { return false }
+      driver.eventHandler?(.protocolEvent(session, .subscriptionUnavailable(characteristic)))
+      return true
+    }
     let gateway = NativeBluetoothGateway(store: store, driver: driver)
 
     try await gateway.reconnect(camera)
@@ -668,8 +684,8 @@ private final class ReplayBluetoothDriver: BluetoothPeripheralDriver {
   var pauseDisconnects = false
   var peerModel: String?
   var securePairing = false
-  var includeGeotagRequest = true
-  var onGeotagSubscription: ((UUID) -> Void)?
+  var omittedCharacteristic: BLEGATTCharacteristic?
+  var handleSubscription: ((BLEGATTCharacteristic, UUID) -> Bool)?
   static let configurationNotification = BLEGATTCharacteristic(
     service: "4c0020fe-f3b6-40de-acc9-77d129067b14",
     characteristic: "f9150137-5d40-4801-a8dc-f7fc5b01da50")
@@ -716,13 +732,13 @@ private final class ReplayBluetoothDriver: BluetoothPeripheralDriver {
 
   func reportServices(for session: UUID) {
     eventHandler?(.peerModel(session, peerModel))
-    var pairing: [BLEGATTCharacteristic] = securePairing
+    let pairing: [BLEGATTCharacteristic] = securePairing
       ? [status, BLEGATTCharacteristic(service: status.service, characteristic: name.characteristic),
-        Self.configurationNotification]
+        Self.configurationNotification, Self.geotagRequest]
       : [token, name]
-    if securePairing && includeGeotagRequest { pairing.append(Self.geotagRequest) }
-    eventHandler?(.protocolEvent(
-      session, .services(Set(pairing + [readiness, ssid, password, launch]))))
+    var characteristics = Set(pairing + [readiness, ssid, password, launch])
+    if let omittedCharacteristic { characteristics.remove(omittedCharacteristic) }
+    eventHandler?(.protocolEvent(session, .services(characteristics)))
   }
 
   func perform(_ action: BLEProtocolAction, session: UUID) {
@@ -742,9 +758,7 @@ private final class ReplayBluetoothDriver: BluetoothPeripheralDriver {
         eventHandler?(.protocolEvent(session, .notification(readiness, Data([1, 0]))))
       }
     case .subscribe(let characteristic):
-      if characteristic == Self.geotagRequest, let onGeotagSubscription {
-        onGeotagSubscription(session)
-      } else {
+      if handleSubscription?(characteristic, session) != true {
         eventHandler?(.protocolEvent(session, .subscribed(characteristic)))
       }
     default:

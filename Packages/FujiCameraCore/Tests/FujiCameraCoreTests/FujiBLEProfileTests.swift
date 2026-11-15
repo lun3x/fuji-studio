@@ -99,6 +99,30 @@ final class FujiBLEProfileTests: XCTestCase {
     XCTAssertEqual(try profile.receive(.subscribed(geotagRequest)), [])
   }
 
+  func testSecurePairingRequiresConfigurationNotificationEvenWhenGeotagIsPresent() throws {
+    var profile = XT5BLEProfile(intent: .pair)
+    XCTAssertThrowsError(try profile.receive(.services([
+      secureStatus, secureName, readiness, geotagRequest, ssid,
+    ]))) {
+      XCTAssertEqual($0 as? WirelessFailure, .unsupportedProtocol)
+    }
+  }
+
+  func testSecurePairingCannotSubscribeToGeotagAfterUnsupportedConfiguration() throws {
+    var profile = XT5BLEProfile(intent: .pair)
+    _ = try profile.receive(.services([
+      secureStatus, secureName, readiness, configurationNotification, geotagRequest,
+    ]))
+    _ = try profile.receive(.read(secureStatus, Data([0, 0, 0, 0])))
+    _ = try profile.receive(.wrote(secureStatus))
+    _ = try profile.receive(.wrote(secureName))
+    XCTAssertEqual(try profile.receive(.subscribed(readiness)), [.subscribe(configurationNotification)])
+    XCTAssertThrowsError(try profile.receive(.subscriptionUnavailable(configurationNotification))) {
+      XCTAssertEqual($0 as? WirelessFailure, .unsupportedProtocol)
+    }
+    XCTAssertEqual(try profile.receive(.subscribed(geotagRequest)), [])
+  }
+
   func testLegacyTokenExchangeDistinguishesFirstPairFromSavedAuthentication() throws {
     let token = WirelessProtocolPeerKey(bytes: Data([0xfa, 0x26, 0x9e, 0x45]))
     for (intent, purpose): (XE3BLEProfile.Intent, BLEWritePurpose) in [
