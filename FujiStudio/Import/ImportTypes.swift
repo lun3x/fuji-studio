@@ -11,7 +11,7 @@ enum ImportStage: String, Codable, Sendable {
 
 enum ImportPauseReason: String, Codable, Sendable {
     case userRequested, backgrounded, connectionLost, storage, captureFailed, photosAccess, unresolvedSave
-    case cancelled, interrupted, freshSelectionRequired, journalUnavailable
+    case cancelled, interrupted, freshSelectionRequired, journalUnavailable, earlierSaveUnresolved
 }
 
 enum ImportOriginalRole: String, Codable, Hashable, Sendable {

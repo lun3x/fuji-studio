@@ -30,9 +30,20 @@ enum CameraIndicatorState: String {
 struct WirelessStatusSummary: Equatable {
     let label: String
     let symbol: String
+    let importCounts: String?
 
-    init?(state: WirelessConnectionState) {
-        if state.wifi != .idle {
+    init?(state: WirelessConnectionState, activeImport: ImportEvent? = nil, preparingImport: Bool = false) {
+        if let activeImport, let status = activeImport.activeStatusLabel {
+            label = status
+            symbol = "square.and.arrow.down"
+            importCounts = activeImport.captureCountLabel
+            return
+        }
+        importCounts = nil
+        if preparingImport {
+            label = "Preparing camera originals…"
+            symbol = "square.and.arrow.down"
+        } else if state.wifi != .idle {
             label = state.wifi.statusLabel
             symbol = "wifi"
         } else if state.bluetooth != .idle {
@@ -95,6 +106,7 @@ struct CameraStatusControl: View {
             case .error: "USB camera error"
             }
             parts.append(wireless.label)
+            if let counts = wireless.importCounts { parts.append(counts) }
         }
         if let exportProgress {
             parts.append("Exporting, \(exportProgress.processed) of \(exportProgress.total) processed")

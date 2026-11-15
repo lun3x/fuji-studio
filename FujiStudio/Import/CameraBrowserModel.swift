@@ -13,6 +13,8 @@ enum CameraBrowserSelectionError: Error, Equatable {
 @MainActor @Observable
 final class CameraBrowserModel {
     private(set) var captures: [CameraCapture] = []
+    private(set) var dayGroups: [CameraCaptureDayGroup] = []
+    private(set) var originalSizeFailure: WirelessFailure?
     private(set) var inventory = WirelessStorageInventory()
     private(set) var isLoading = false
     private(set) var failure: WirelessFailure?
@@ -86,6 +88,7 @@ final class CameraBrowserModel {
         guard descriptors.allSatisfy({ inventory.storage[$0.storageID] == .complete }) else {
             throw WirelessFailure.unavailableStorage
         }
+        if let originalSizeFailure { throw originalSizeFailure }
         guard canSelectOriginals, descriptors.allSatisfy({ $0.byteLength > 0 && $0.byteLength <= UInt32.max }) else {
             throw WirelessFailure.originalSizeUnavailable
         }
@@ -215,6 +218,7 @@ final class CameraBrowserModel {
         failure = nil
         requiresFreshSession = false
         canSelectOriginals = false
+        originalSizeFailure = nil
         inventory = .init()
         camera = nil
         session = nil
@@ -304,11 +308,15 @@ final class CameraBrowserModel {
         try checkCurrent(generation, cancellation)
         publish(resolved)
         canSelectOriginals = capabilities.originalSizeVerified
+        originalSizeFailure = capabilities.originalSizeFailure
         isLoading = false
     }
 
     private func publish(_ captures: [CameraCapture]) {
         self.captures = captures
+        let groups = Dictionary(grouping: captures) { $0.timestamp?.calendarDay }
+        dayGroups = groups.map { CameraCaptureDayGroup(day: $0.key, captures: $0.value) }
+            .sorted { ($0.day ?? "") > ($1.day ?? "") }
         capturesByID = Dictionary(grouping: captures, by: \.id)
         visibleRows = Dictionary(captures.map { ($0.rowID, $0) }, uniquingKeysWith: { first, _ in first })
     }

@@ -17,10 +17,12 @@ import FujiCameraCore
         case joinDenied = "--fixture-wireless-join-denied"
         case localNetworkDenied = "--fixture-wireless-local-network-denied"
         case formats = "--fixture-wireless-formats"
+        case dated = "--fixture-wireless-dated"
         case rawUnavailable = "--fixture-wireless-raw-unavailable"
         case slowImport = "--fixture-wireless-slow-import"
         case recoverable = "--fixture-wireless-recoverable"
         case retryable = "--fixture-wireless-retryable"
+        case heldLocalRetry = "--fixture-wireless-held-local-retry"
         case journalIssue = "--fixture-wireless-journal-issue"
         case autoSave = "--fixture-wireless-auto-save"
         case autoSaveOwnershipFailure = "--fixture-wireless-auto-save-ownership-failure"
@@ -86,7 +88,9 @@ import FujiCameraCore
         }
         let staging = try ImportStagingStore(root: root.appendingPathComponent("import-staging"))
         let photos = FixtureImportPhotos(reader: reader, verifySaves: mode != .unverifiedSave && mode != .unidentifiedSave,
-            providesPlaceholder: mode != .unidentifiedSave, rejection: mode == .retryable ? .storage : nil)
+            providesPlaceholder: mode != .unidentifiedSave,
+            rejection: mode == .retryable || mode == .heldLocalRetry ? .storage : nil,
+            retryDelay: mode == .heldLocalRetry ? .seconds(25) : nil)
         self.bluetooth = bluetooth; self.wifi = wifi; self.session = session; self.photos = photos
         let connection = WirelessConnectionCoordinator(bluetooth: bluetooth, store: store, authorization: { .allowed },
             wifi: wifi, ownership: FixtureWirelessOwnership(base: ownership, refuse: mode == .autoSaveOwnershipFailure), sessionFactory: { peer, _ in
@@ -306,7 +310,7 @@ actor FixtureWirelessSession: WirelessTransferSession {
         }
     }
 
-    private func descriptor(photo: Int, handle: UInt32, format: WirelessObjectFormat, date: String) -> WirelessObjectDescriptor {
+    private func descriptor(photo: Int, handle: UInt32, format: WirelessObjectFormat, date: String?) -> WirelessObjectDescriptor {
         let rawSize = identity.model == .xe3 ? PixelSize(width: 6000, height: 4000) : PixelSize(width: 7728, height: 5152)
         return .init(cameraID: identity.cameraID, sessionID: sessionID, storageID: 1,
             handle: handle, directory: "DCIM/100_FUJI",
@@ -318,6 +322,14 @@ actor FixtureWirelessSession: WirelessTransferSession {
     private var inventoryObjects: [WirelessObjectDescriptor] {
         if transport == .phone {
             return [descriptor(photo: 1, handle: 2, format: .jpeg, date: "20200102T030405+0000")]
+        }
+        if scenario == .dated {
+            return [
+                descriptor(photo: 12, handle: 1, format: .raf, date: "20200102T000100+1400"),
+                descriptor(photo: 12, handle: 3, format: .raf, date: "20200101T030405"),
+                descriptor(photo: 13, handle: 5, format: .raf, date: "20200230T030405"),
+                descriptor(photo: 14, handle: 7, format: .raf, date: nil)
+            ]
         }
         let originals = selections.flatMap(\.descriptors)
         if scenario == .formats {
@@ -399,7 +411,7 @@ actor FixtureWirelessSession: WirelessTransferSession {
         if scenario == .slowImport {
             let middle = original.count / 2
             try await sink(original.prefix(middle))
-            try await Task.sleep(for: .seconds(9))
+            try await Task.sleep(for: .seconds(18))
             try await sink(original.suffix(from: middle))
         } else {
             try await sink(original)
@@ -469,6 +481,7 @@ actor FixtureImportPhotos: PhotoImportGateway {
     private let reader: FixtureLibrary?
     private let verifySaves: Bool
     private let providesPlaceholder: Bool
+    private let retryDelay: Duration?
     private var createBarrier: FixtureBarrier?
     private var inspectionBarrier: FixtureBarrier?
     private var rejection: PhotoImportFailure?
@@ -478,9 +491,11 @@ actor FixtureImportPhotos: PhotoImportGateway {
     private var assets: [String: ImportedAssetInspection] = [:]
     private(set) var createCount = 0
 
-    init(reader: FixtureLibrary?, verifySaves: Bool, providesPlaceholder: Bool = true, rejection: PhotoImportFailure? = nil) {
+    init(reader: FixtureLibrary?, verifySaves: Bool, providesPlaceholder: Bool = true,
+         rejection: PhotoImportFailure? = nil, retryDelay: Duration? = nil) {
         self.reader = reader; self.verifySaves = verifySaves; self.providesPlaceholder = providesPlaceholder
         self.rejection = rejection
+        self.retryDelay = retryDelay
     }
     func holdCreate(_ barrier: FixtureBarrier) { createBarrier = barrier }
     func holdNextInspection(_ barrier: FixtureBarrier) { inspectionBarrier = barrier }
@@ -505,6 +520,7 @@ actor FixtureImportPhotos: PhotoImportGateway {
         if providesPlaceholder {
             do { try onPlaceholder(id) } catch { return .uncertain(assetID: id) }
         }
+        if createCount == 2, let retryDelay { try? await Task.sleep(for: retryDelay) }
         if hideNextAsset {
             hideNextAsset = false
             hiddenCaptures[id] = capture

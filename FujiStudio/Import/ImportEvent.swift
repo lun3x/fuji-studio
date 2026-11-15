@@ -58,6 +58,25 @@ struct ImportEvent: Equatable, Sendable {
     let routeEvidence: ImportRouteEvidence?
     let retainedBytes: UInt64
     let recoveryRequired: Bool
+
+    var captureCountLabel: String {
+        let total = captureCount == 1 ? "1 photo" : "\(captureCount) photos"
+        return "\(receipts.count) of \(total) imported"
+    }
+
+    var activeStatusLabel: String? {
+        guard isRunning else { return nil }
+        if pauseReason != nil { return "Stopping after the current operation…" }
+        if isVerifyingPhotos { return "Verifying originals in Photos…" }
+        guard let captureIndex else { return "Finishing import…" }
+        let photo = "photo \(captureIndex + 1) of \(captureCount)"
+        return switch stage {
+        case .downloading: "Downloading \(photo)"
+        case .validating: "Validating \(photo)"
+        case .submitting, .readyToSave: "Saving \(photo) to Photos"
+        default: "Preparing \(photo)"
+        }
+    }
 }
 
 enum CameraImportError: Error, Equatable, Sendable {

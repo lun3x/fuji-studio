@@ -327,6 +327,7 @@ final class WirelessPTPTransportTests: XCTestCase, @unchecked Sendable {
     }
     await gate.waitUntilBlocked()
     let readsAtSink = await channel.readCount
+    XCTAssertEqual(readsAtSink, 2)
     try await Task.sleep(for: .milliseconds(30))
     let readsWhileSinkBlocked = await channel.readCount - readsAtSink
     XCTAssertEqual(readsWhileSinkBlocked, 0)

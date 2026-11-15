@@ -5,6 +5,25 @@ import FujiCameraCore
 import Observation
 import SwiftUI
 
+struct WirelessProbeFirmwareEvidence: Codable, Sendable {
+  let model: WirelessCameraModel
+  let source: Source
+  let transferFirmware: String?
+  let bluetoothFirmware: String?
+  var observedAt = Date()
+
+  enum Source: String, Codable, Sendable { case cameraNetwork, autoSave }
+
+  private enum CodingKeys: String, CodingKey {
+    case model, source, transferFirmware, bluetoothFirmware, observedAt
+  }
+
+  static func record(_ observation: Self, in folder: URL) throws {
+    let file = folder.appending(path: "private-firmware-\(UUID().uuidString).json")
+    try JSONEncoder().encode(observation).write(to: file, options: [.atomic, .completeFileProtection])
+  }
+}
+
 /// This route constructs Bluetooth and Wi-Fi services only.
 struct WirelessProtocolProbe: View {
   @Environment(\.scenePhase) private var scenePhase
@@ -175,7 +194,13 @@ private final class WirelessProbeModel {
   }
 
   func observe() async {
+    let captureFirmware: @Sendable (WirelessProbeFirmwareEvidence) -> Void = { [runID] observation in
+      guard let folder = try? Self.runFolder(for: runID) else { return }
+      try? WirelessProbeFirmwareEvidence.record(observation, in: folder)
+    }
+    await coordinator.observeProbeFirmware(captureFirmware)
     if let autoSaveGateway {
+      await autoSaveGateway.observeProbeFirmware(captureFirmware)
       autoSaveAvailable = (try? await autoSaveGateway.checkAvailability()) != nil
     }
     for await update in await coordinator.states() {
@@ -292,7 +317,9 @@ private final class WirelessProbeModel {
     }
   }
 
-  private func runFolder() throws -> URL {
+  private func runFolder() throws -> URL { try Self.runFolder(for: runID) }
+
+  nonisolated private static func runFolder(for runID: UUID) throws -> URL {
     let support = try FileManager.default.url(
       for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
     var folder = support.appending(path: "WirelessProtocolProbe/\(runID.uuidString)", directoryHint: .isDirectory)

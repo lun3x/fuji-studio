@@ -70,15 +70,16 @@ extension CameraHostedTransferSession {
   ) async throws -> Value {
     guard mode != .xApp else { return try await operation() }
     try await readEvents()
-    try await setProperty(0xd227, 1, width: 2)
-    legacyAccurateLengthsEnabled = true
     let value: Value
     do {
+      try await setProperty(0xd227, 1, width: 2) { legacyAccurateLengthsEnabled = true }
       value = try await operation()
     } catch {
       // An interrupted wire transaction can already have retired the transport.
-      let cleanup = Task { try await resetLegacyLengthReporting() }
-      _ = try? await cleanup.value
+      if legacyAccurateLengthsEnabled {
+        let cleanup = Task { try await resetLegacyLengthReporting() }
+        _ = try? await cleanup.value
+      }
       throw error
     }
     // Restore even when cancellation arrives just after the final successful transaction.
@@ -89,7 +90,8 @@ extension CameraHostedTransferSession {
 
   func resetLegacyLengthReporting(whileClosing: Bool = false) async throws {
     try await readEvents(whileClosing: whileClosing)
-    try await setProperty(0xd227, 0, width: 2, whileClosing: whileClosing)
-    legacyAccurateLengthsEnabled = false
+    try await setProperty(0xd227, 0, width: 2, whileClosing: whileClosing) {
+      legacyAccurateLengthsEnabled = false
+    }
   }
 }

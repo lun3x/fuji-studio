@@ -1,5 +1,6 @@
 import Foundation
 import FujiCameraCore
+import UIKit
 import XCTest
 
 @testable import FujiStudio
@@ -163,6 +164,43 @@ final class CameraBrowserModelTests: XCTestCase {
             XCTAssertFalse(browser.canSelectOriginals)
             XCTAssertThrowsError(try browser.select(capture.id, policy: .rawOnly))
         }
+    }
+
+    func testConflictingCardObservationsKeepSplitPairVisibleAndDisableSelection() async throws {
+        let raw = CaptureFixture.object(1, .raf, dimensions: .init(width: 6000, height: 4000))
+        let jpeg = CaptureFixture.object(2, .jpeg, storage: 2, dimensions: .init(width: 6000, height: 4000))
+        let browser = CameraBrowserModel()
+        await browser.load(session: BrowserSessionFixture(objects: [raw, jpeg], originalSizeObservationsConflict: true))
+        let pair = try XCTUnwrap(browser.captures.first)
+        XCTAssertEqual(pair.availability, .pair)
+        XCTAssertFalse(browser.canSelectOriginals)
+        XCTAssertEqual(browser.originalSizeFailure, .inconsistentOriginalSizeObservations)
+        XCTAssertThrowsError(try browser.select(pair.id, policy: .pair)) {
+            XCTAssertEqual($0 as? WirelessFailure, .inconsistentOriginalSizeObservations)
+        }
+        XCTAssertEqual(browser.selectedCount, 0)
+    }
+
+    func testPreviewDecodeBoundsDimensionsAndRejectsUnsupportedOrOversizedInput() throws {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let jpeg = UIGraphicsImageRenderer(size: CGSize(width: 1024, height: 512), format: format)
+            .jpegData(withCompressionQuality: 0.8) { context in
+                UIColor.red.setFill()
+                context.fill(CGRect(x: 0, y: 0, width: 1024, height: 512))
+            }
+        let preview = try XCTUnwrap(CameraThumbnail.decode(jpeg))
+        XCTAssertEqual(preview.image.width, 288)
+        XCTAssertEqual(preview.image.height, 144)
+        XCTAssertNil(CameraThumbnail.decode(Data([0, 1, 2])))
+
+        var oversized = jpeg
+        let startOfFrame = try XCTUnwrap(oversized.range(of: Data([0xff, 0xc0]))).lowerBound
+        // The fixture's JPEG SOF records height followed by width. Advertise a
+        // 16,384-pixel height without allocating a huge source image in the test.
+        oversized[startOfFrame + 5] = 0x40
+        oversized[startOfFrame + 6] = 0
+        XCTAssertNil(CameraThumbnail.decode(oversized))
     }
 
     func testSelectionUsesTheSessionCapabilityAcrossModes() async throws {
@@ -463,6 +501,7 @@ private actor BrowserSessionFixture: WirelessTransferSession {
     private let batches: [WirelessInventoryBatch]
     private let mode: WirelessMode
     private let originalSizeVerified: Bool
+    private let originalSizeObservationsConflict: Bool
     private let thumbnailSizes: [UInt32: Int]
     private let thumbnailFailures: [UInt32: any Error]
     private var heldBatches: Set<Int>
@@ -478,6 +517,7 @@ private actor BrowserSessionFixture: WirelessTransferSession {
 
     init(
         batches: [WirelessInventoryBatch], mode: WirelessMode = .xApp, originalSizeVerified: Bool = true,
+        originalSizeObservationsConflict: Bool = false,
         heldBatches: Set<Int> = [], thumbnailSizes: [UInt32: Int] = [:], heldThumbnails: Set<UInt32> = [],
         thumbnailFailures: [UInt32: any Error] = [:]
     ) {
@@ -485,6 +525,7 @@ private actor BrowserSessionFixture: WirelessTransferSession {
         self.batches = batches
         self.mode = mode
         self.originalSizeVerified = originalSizeVerified
+        self.originalSizeObservationsConflict = originalSizeObservationsConflict
         self.heldBatches = heldBatches
         self.thumbnailSizes = thumbnailSizes
         self.heldThumbnails = heldThumbnails
@@ -493,11 +534,13 @@ private actor BrowserSessionFixture: WirelessTransferSession {
 
     init(
         objects: [WirelessObjectDescriptor], mode: WirelessMode = .xApp, originalSizeVerified: Bool = true,
+        originalSizeObservationsConflict: Bool = false,
         thumbnailSizes: [UInt32: Int] = [:], heldThumbnails: Set<UInt32> = [],
         thumbnailFailures: [UInt32: any Error] = [:]
     ) {
         self.init(batches: [.init(objects: objects, storageChanges: [1: .complete, 2: .complete],
                                   rawExposure: .available)], mode: mode, originalSizeVerified: originalSizeVerified,
+                  originalSizeObservationsConflict: originalSizeObservationsConflict,
                   thumbnailSizes: thumbnailSizes, heldThumbnails: heldThumbnails,
                   thumbnailFailures: thumbnailFailures)
     }
@@ -506,7 +549,8 @@ private actor BrowserSessionFixture: WirelessTransferSession {
 
     func capabilities() async throws -> WirelessCapabilities {
         .init(mode: mode, rawExposure: .available, storageIDs: [],
-              originalSizeVerified: originalSizeVerified, evidenceID: "fixture")
+              originalSizeVerified: originalSizeVerified, evidenceID: "fixture",
+              originalSizeObservationsConflict: originalSizeObservationsConflict)
     }
 
     func enumerate() async throws -> AsyncThrowingStream<WirelessInventoryBatch, Error> {

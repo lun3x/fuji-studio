@@ -16,8 +16,8 @@ struct CameraConnectionSection: View {
     private var connected: Bool { state.wifi == .ready && !model.isDisconnectingWireless }
     private var disconnecting: Bool { state.wifi == .disconnecting || model.isDisconnectingWireless }
     private var unconfirmedClose: Bool { state.wifi == .idle && state.hasTransferLease }
-    private var canChoose: Bool { !model.state.wirelessRestrictsUSB && !discovering && !connection.isWorking }
-    private var canOpenTransfer: Bool { canChoose && !model.isSuspended && !model.cameraImportActive }
+    private var canChoose: Bool { !model.state.wirelessRestrictsUSB && !discovering && !connection.isWorking && !model.cameraImportActive }
+    private var canOpenTransfer: Bool { canChoose && !model.isSuspended }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -45,7 +45,7 @@ struct CameraConnectionSection: View {
                         Button(camera.displayName) {
                             connection.start(from: .status) { await model.pairWirelessCamera(camera) }
                         }
-                            .disabled(connection.isWorking)
+                            .disabled(connection.isWorking || model.cameraImportActive)
                             .accessibilityIdentifier(camera.discoveryAccessibilityID)
                     }
                 }
@@ -62,9 +62,10 @@ struct CameraConnectionSection: View {
             Button("Forget camera", role: .destructive) {
                 Task { await model.forgetWirelessCamera(camera.id) }
             }
+            .disabled(model.cameraImportActive)
             Button("Cancel", role: .cancel) {}
         } message: { camera in
-            Text("Pair \(camera.displayName) again to reconnect over Bluetooth.")
+            Text("To pair \(camera.displayName) again, remove its pairing registration on the camera and forget it in iPhone Bluetooth settings if it still appears there.")
         }
         .onChange(of: state.bluetooth) { _, readiness in
             if readiness != .connecting { retryingBluetooth = false }
@@ -125,6 +126,11 @@ struct CameraConnectionSection: View {
     @ViewBuilder private var connectionMessages: some View {
         if let rejection = state.firmwareRejection {
             Text(rejection.presentationGuidance).accessibilityIdentifier("wireless.firmware")
+            if case .updateRequired = rejection.transferAdmission {
+                Link("Fujifilm firmware update instructions",
+                     destination: WirelessSupportPolicy().record(for: rejection.cameraModel).instructionsURL)
+                    .accessibilityIdentifier("wireless.firmwareInstructions")
+            }
         } else if let guidance = state.transferFailureGuidance {
             Text(guidance).accessibilityIdentifier("wireless.wifiFailure")
         }
@@ -241,12 +247,16 @@ extension WirelessFailure {
             "The camera connection was interrupted. Check that the camera is awake and reconnect."
         case .peerMismatch:
             "The transfer peer did not match the selected camera. Check which camera is connected."
+        case .savedSettingsUnavailable:
+            "Saved camera settings could not be read. Unlock your iPhone and reopen Fuji Studio to retry. For USB, use Reset camera connection in Status & settings."
         case .malformedData, .unavailableStorage:
             "Camera storage could not be read. Check the memory card and reconnect."
         case .objectChanged:
             "The card files changed. Reconnect and select photos again."
+        case .inconsistentOriginalSizeObservations:
+            "The camera reported conflicting original-size settings. On the camera, check that Resize Image for Smartphone is off, then reconnect."
         case .originalSizeUnavailable:
-            "The camera’s original-size transfer could not be verified. RAW import is unavailable in this session."
+            "Original-size transfer could not be verified. On the camera, check that Resize Image for Smartphone is off, then reconnect."
         case .autoSaveEntitlementUnavailable:
             "PC Auto Save RAW transfer is unavailable in this build. Local network discovery requires Apple’s Multicast Networking capability."
         case .autoSaveIdentityUnavailable:
@@ -262,12 +272,10 @@ extension WirelessFirmwareRejection {
         switch transferAdmission {
         case .updateRequired(let version):
             "Firmware update required. Update the \(cameraModel.rawValue) to firmware \(version) before transferring originals."
-        case .unverified(let version):
-            if let version {
-                "Firmware version \(version) on the \(cameraModel.rawValue) is unverified for this release. Original transfer is unavailable."
-            } else {
-                "The \(cameraModel.rawValue) firmware version could not be read. Original transfer is unavailable."
-            }
+        case .unverified(.newer):
+            "The \(cameraModel.rawValue) reported newer firmware. Check for a Fuji Studio update before transferring originals."
+        case .unverified(.unreadable):
+            "The \(cameraModel.rawValue) firmware version could not be verified. Reconnect over WiFi to try again."
         case .supported where bluetoothRejectedFirmware:
             "The \(cameraModel.rawValue) transfer firmware was verified, but Bluetooth reported an unverified version. Reconnect Bluetooth and try again."
         case .supported, .unsupportedModel:

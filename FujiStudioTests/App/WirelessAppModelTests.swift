@@ -185,7 +185,7 @@ final class WirelessAppModelTests: XCTestCase {
         let model = AppModel(environment: fixture.environment)
         await model.start()
 
-        XCTAssertEqual(model.wirelessState.failure, .unavailableStorage)
+        XCTAssertEqual(model.wirelessState.failure, .savedSettingsUnavailable)
         let automaticUSBConnects = await fixture.camera.connectCount
         XCTAssertEqual(automaticUSBConnects, 0)
 
@@ -193,6 +193,52 @@ final class WirelessAppModelTests: XCTestCase {
         try await waitUntil { model.state.isCameraReady }
         let manualUSBConnects = await fixture.camera.connectCount
         XCTAssertEqual(manualUSBConnects, 1)
+    }
+
+    func testLocalPhotosRetryKeepsScreenAwakeAndBlocksCameraChoiceUntilSettlement() async throws {
+        let fixture = try await FixtureEnvironment.make(wireless: .twoSaved)
+        let model = AppModel(environment: fixture.environment)
+        await model.start()
+        try await browse(model)
+        let first = try XCTUnwrap(model.cameraBrowser.captures.first { $0.availability == .pair })
+        for capture in model.cameraBrowser.captures where capture.id != first.id {
+            model.cameraBrowser.deselect(capture.id)
+        }
+        await fixture.wireless.photos.rejectNextCreate(.authorization)
+        await model.importSelectedCaptures()
+        try await waitUntil { model.importEvents.first?.pauseReason == .photosAccess && !model.cameraImportActive }
+        XCTAssertFalse(fixture.platform.idleTimerDisabled)
+        let jobID = try XCTUnwrap(model.importEvents.first?.jobID)
+        await model.disconnectCameraWiFi()
+        let selected = try XCTUnwrap(model.wirelessState.selectedCameraID)
+        let alternate = try XCTUnwrap(model.wirelessState.savedCameras.first { $0.id != selected }?.id)
+
+        let heldSave = FixtureBarrier()
+        await fixture.wireless.photos.holdCreate(heldSave)
+        defer { Task { await heldSave.release() } }
+        await model.retryImportCapture(jobID: jobID)
+        await heldSave.entered()
+        try await waitUntil { model.cameraImportActive }
+        XCTAssertTrue(fixture.platform.idleTimerDisabled)
+        XCTAssertFalse(model.wirelessState.hasTransferLease)
+        let status = WirelessStatusSummary(state: model.wirelessState, activeImport: model.activeCameraImport)
+        XCTAssertEqual(status?.label, "Saving photo 1 of 1 to Photos")
+        XCTAssertEqual(status?.importCounts, "0 of 1 photo imported")
+        await model.selectWirelessCamera(alternate)
+        await model.discoverWirelessCameras()
+        await model.forgetWirelessCamera(selected)
+        XCTAssertEqual(model.wirelessState.selectedCameraID, selected)
+        XCTAssertEqual(model.wirelessState.savedCameras.count, 2)
+        XCTAssertNotEqual(model.wirelessState.bluetooth, .discovering)
+
+        await heldSave.release()
+        try await waitUntil { !model.cameraImportActive && model.importEvents.first?.receipts.count == 1 }
+        XCTAssertFalse(fixture.platform.idleTimerDisabled)
+        let settledStatus = WirelessStatusSummary(state: model.wirelessState, activeImport: model.activeCameraImport)
+        XCTAssertNil(settledStatus?.importCounts)
+        XCTAssertNotEqual(settledStatus?.label, status?.label)
+        await model.selectWirelessCamera(alternate)
+        XCTAssertEqual(model.wirelessState.selectedCameraID, alternate)
     }
 
     func testBackgroundClosesNativeSessionBeforePendingPhotosCallbackSettles() async throws {
@@ -205,6 +251,8 @@ final class WirelessAppModelTests: XCTestCase {
         await model.importSelectedCaptures()
         try await waitUntil { await fixture.wireless.photos.createCount == 1 }
         await save.entered()
+        try await waitUntil { model.cameraImportActive }
+        XCTAssertTrue(fixture.platform.idleTimerDisabled)
         await model.reloadLibrary()
         XCTAssertFalse(model.sources.contains { $0.id == "wireless-1" })
         await model.sceneChanged(.inactive)
@@ -213,6 +261,7 @@ final class WirelessAppModelTests: XCTestCase {
         let background = Task { await model.sceneChanged(.background) }
         do {
             try await waitUntil { await fixture.wireless.session.closeCount == 1 }
+            XCTAssertFalse(fixture.platform.idleTimerDisabled)
         } catch {
             await save.release()
             await background.value

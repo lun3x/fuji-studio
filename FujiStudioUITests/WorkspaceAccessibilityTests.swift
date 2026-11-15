@@ -53,7 +53,8 @@ final class WorkspaceAccessibilityTests: WorkspaceTestCase {
                 XCTAssertTrue(app.buttons["cameraBrowser.done"].isHittable)
                 attachCameraScreen("\(name) \(accessibility ? "AX5" : "Standard") Camera Browser")
                 if accessibility {
-                    revealCameraControl(submit, in: browser, scrollDown: false)
+                    revealCameraControl(submit, in: browser, scrollDown: false,
+                                        below: app.navigationBars["Camera photos"].frame.maxY)
                     XCTAssertEqual(submit.label, "Import 1 photo")
                     submit.tap()
                     let recovery = app.scrollViews["cameraImport.scroll"]
@@ -75,12 +76,22 @@ final class WorkspaceAccessibilityTests: WorkspaceTestCase {
         }
     }
 
-    private func revealCameraControl(_ control: XCUIElement, in scroll: XCUIElement, scrollDown: Bool = true) {
-        XCTAssertTrue(scroll.waitForExistence(timeout: 5))
-        for _ in 0..<10 where !control.isHittable {
-            if scrollDown { scroll.swipeUp() } else { scroll.swipeDown() }
+    private func revealCameraControl(_ control: XCUIElement, in scroll: XCUIElement,
+                                     scrollDown: Bool = true, below topEdge: CGFloat? = nil) {
+        func hasVisibleHitPoint() -> Bool {
+            guard control.isHittable else { return false }
+            let viewport = scroll.frame
+            let midpoint = control.frame.midY
+            return midpoint > (topEdge ?? viewport.minY) && midpoint < viewport.maxY
         }
-        XCTAssertTrue(control.isHittable, "Could not reach \(control)")
+        XCTAssertTrue(scroll.waitForExistence(timeout: 5))
+        for _ in 0..<12 where !hasVisibleHitPoint() {
+            // A full swipe can skip a large row in the short landscape viewport.
+            let origin = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: scrollDown ? 0.75 : 0.35))
+            let target = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: scrollDown ? 0.35 : 0.75))
+            origin.press(forDuration: 0.05, thenDragTo: target)
+        }
+        XCTAssertTrue(hasVisibleHitPoint(), "Could not reach \(control)")
     }
 
     private func attachCameraScreen(_ name: String) {

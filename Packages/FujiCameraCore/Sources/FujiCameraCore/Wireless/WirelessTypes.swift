@@ -60,10 +60,14 @@ public struct WirelessIdentity: Equatable, Sendable {
 }
 
 public enum WirelessAdmission: Equatable, Sendable {
+  public enum UnverifiedVersion: Equatable, Sendable {
+    case newer
+    case unreadable
+  }
+
   case supported(WirelessCameraModel)
   case updateRequired(String)
-  /// The original input is available for protected evidence.
-  case unverified(String?)
+  case unverified(UnverifiedVersion)
   case unsupportedModel
 }
 
@@ -79,6 +83,11 @@ public struct WirelessCapabilities: Equatable, Sendable {
   public let rawExposure: WirelessRAWExposure
   public let storageIDs: [UInt32]
   public let originalSizeVerified: Bool
+  public let originalSizeObservationsConflict: Bool
+  public var originalSizeFailure: WirelessFailure? {
+    if originalSizeObservationsConflict { return .inconsistentOriginalSizeObservations }
+    return originalSizeVerified ? nil : .originalSizeUnavailable
+  }
   public let evidenceID: String
 
   public init(
@@ -86,12 +95,14 @@ public struct WirelessCapabilities: Equatable, Sendable {
     rawExposure: WirelessRAWExposure,
     storageIDs: [UInt32],
     originalSizeVerified: Bool,
-    evidenceID: String
+    evidenceID: String,
+    originalSizeObservationsConflict: Bool = false
   ) {
     self.mode = mode
     self.rawExposure = rawExposure
     self.storageIDs = storageIDs
-    self.originalSizeVerified = originalSizeVerified
+    self.originalSizeVerified = originalSizeVerified && !originalSizeObservationsConflict
+    self.originalSizeObservationsConflict = originalSizeObservationsConflict
     self.evidenceID = evidenceID
   }
 }
@@ -125,8 +136,10 @@ public enum WirelessFailure: Error, Equatable, Sendable {
   case peerMismatch
   case malformedData
   case unavailableStorage
+  case savedSettingsUnavailable
   case objectChanged
   case originalSizeUnavailable
+  case inconsistentOriginalSizeObservations
   case autoSaveEntitlementUnavailable
   case autoSaveIdentityUnavailable
   case autoSaveRegistrationRequired

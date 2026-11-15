@@ -47,6 +47,99 @@ import XCTest
         XCTAssertTrue(app.cells["grid.wireless-1"].waitForExistence(timeout: 8))
     }
 
+    func testBrowserGroupsReusedFilenamesByCameraCalendarDate() {
+        XCUIDevice.shared.orientation = .portrait
+        let app = launch(["--fixture-wireless-dated"])
+        wait { app.windows.firstMatch.frame.height > app.windows.firstMatch.frame.width }
+        browse(app)
+        let newest = app.staticTexts["cameraBrowser.day.2020-01-02"]
+        let older = app.staticTexts["cameraBrowser.day.2020-01-01"]
+        let unknown = app.staticTexts["cameraBrowser.day.unknown"]
+        XCTAssertTrue(newest.waitForExistence(timeout: 5))
+        XCTAssertTrue(older.exists)
+        XCTAssertLessThan(newest.frame.minY, older.frame.minY)
+        let first = app.descendants(matching: .any)["cameraBrowser.format.1.1"].firstMatch
+        let second = app.descendants(matching: .any)["cameraBrowser.format.1.3"].firstMatch
+        XCTAssertTrue(first.label.contains("DSCF0012.RAF"))
+        XCTAssertTrue(first.label.contains("2020-01-02"))
+        XCTAssertTrue(second.label.contains("DSCF0012.RAF"))
+        XCTAssertTrue(second.label.contains("2020-01-01"))
+        shot(app, "Wireless camera calendar groups")
+        let scroll = app.scrollViews["cameraBrowser.scroll"]
+        scroll.swipeUp()
+        XCTAssertEqual(unknown.label, "Capture date unknown")
+        let invalid = app.descendants(matching: .any)["cameraBrowser.format.1.5"].firstMatch
+        let missing = app.descendants(matching: .any)["cameraBrowser.format.1.7"].firstMatch
+        XCTAssertTrue(invalid.isHittable)
+        XCTAssertTrue(invalid.label.contains("Capture date unknown"))
+        XCTAssertTrue(missing.isHittable)
+        XCTAssertTrue(missing.label.contains("Capture date unknown"))
+        shot(app, "Wireless camera unknown date group")
+    }
+
+    func testCompactStatusAnnouncesHeldDownloadAndReturnsToConnectionSummary() {
+        let app = launch(["--fixture-wireless-slow-import"])
+        browse(app)
+        let pair = app.buttons["cameraBrowser.select.1.1"]
+        wait { pair.isEnabled }
+        pair.tap()
+        app.buttons["cameraBrowser.import"].tap()
+        wait { app.staticTexts["cameraImport.status"].label == "Downloading photo 1 of 1" }
+        app.buttons["cameraImport.done"].tap()
+        app.buttons["cameraBrowser.done"].tap()
+        app.buttons["Done"].tap()
+        let status = app.buttons["app.status"]
+        XCTAssertTrue(status.label.contains("Downloading photo 1 of 1"))
+        XCTAssertTrue((status.value as? String)?.contains("0 of 1 photo imported") == true)
+        shot(app, "Wireless active download status")
+        status.tap()
+        app.buttons["cameraImport.open"].tap()
+        app.buttons["cameraImport.pause"].tap()
+        wait { app.staticTexts["cameraImport.status"].label == "Import paused" }
+        app.buttons["cameraImport.done"].tap()
+        app.buttons["Done"].tap()
+        wait { status.label == "Bluetooth connected" }
+        XCTAssertFalse((status.value as? String)?.contains("photo imported") == true)
+    }
+
+    func testCompactStatusAnnouncesLocalPhotosRetryAndPreventsCameraChanges() {
+        let app = launch(["--fixture-wireless-held-local-retry"])
+        browse(app)
+        importPair(app)
+        let retry = app.buttons["cameraImport.retry"]
+        XCTAssertTrue(retry.waitForExistence(timeout: 10))
+        app.buttons["cameraImport.done"].tap()
+        app.buttons["cameraBrowser.done"].tap()
+        app.buttons["wireless.disconnect"].tap()
+        let connect = app.buttons["wireless.connect"]
+        wait { connect.isEnabled }
+        app.buttons["cameraImport.open"].tap()
+        wait { retry.isEnabled }
+        retry.tap()
+        wait { app.staticTexts["cameraImport.status"].label == "Saving photo 1 of 1 to Photos" }
+        app.buttons["cameraImport.done"].tap()
+        app.buttons["Done"].tap()
+        let status = app.buttons["app.status"]
+        XCTAssertTrue(status.label.contains("Saving photo 1 of 1 to Photos"))
+        XCTAssertTrue((status.value as? String)?.contains("0 of 1 photo imported") == true)
+        status.tap()
+        let change = app.buttons["wireless.change"]
+        let forget = app.buttons["wireless.forget"]
+        XCTAssertTrue(change.exists)
+        XCTAssertTrue(forget.exists)
+        XCTAssertFalse(change.isEnabled)
+        XCTAssertFalse(forget.isEnabled)
+        shot(app, "Wireless camera choices disabled during local Photos save")
+        app.buttons["Done"].tap()
+        let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            status.label != "Saving photo 1 of 1 to Photos" && status.label.hasPrefix("Bluetooth")
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 30), .completed)
+        app.buttons["app.status"].tap()
+        XCTAssertTrue(change.isEnabled)
+        XCTAssertTrue(forget.isEnabled)
+    }
+
     func testUnverifiedSaveRetainsOriginalsOutsideTray() {
         let app = launch(["--fixture-wireless-unverified-save"])
         browse(app)
@@ -127,6 +220,28 @@ import XCTest
         XCTAssertTrue(app.buttons["cameraImport.cancel"].isHittable)
         app.buttons["cameraImport.cancel"].tap()
         wait { app.staticTexts["cameraImport.status"].label == "Import cancelled" }
+    }
+
+    func testNativeHomePausesWirelessDownloadAndRequiresExplicitReconnect() throws {
+        guard ProcessInfo.processInfo.environment["FUJI_STUDIO_NATIVE_LIFECYCLE"] == "1" else {
+            throw XCTSkip("Enable native lifecycle testing on a suitable simulator.")
+        }
+        let app = launch(["--fixture-wireless-slow-import"])
+        browse(app)
+        importPair(app)
+        wait { app.staticTexts["cameraImport.status"].label == "Downloading photo 1 of 1" }
+        XCUIDevice.shared.press(.home)
+        XCTAssertTrue(app.wait(for: .runningBackground, timeout: 8))
+        app.activate()
+        wait { app.staticTexts["cameraImport.status"].label == "Import paused" }
+        XCTAssertFalse(app.buttons["cameraImport.resume"].isEnabled)
+        XCTAssertEqual(app.staticTexts["cameraImport.counts"].label, "0 of 1 photo imported")
+        shot(app, "Wireless import paused after Home")
+        app.buttons["cameraImport.done"].tap()
+        app.buttons["cameraBrowser.done"].tap()
+        XCTAssertTrue(app.buttons["wireless.connect"].isEnabled)
+        XCTAssertFalse(app.buttons["wireless.browse"].exists)
+        shot(app, "Wireless import requires explicit reconnect after Home")
     }
 
     func testConnectionLossCanResumeWithRetainedBytes() {

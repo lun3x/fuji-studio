@@ -50,7 +50,8 @@ actor CameraHostedTransferSession: WirelessTransferSession {
   private var rawExposure: WirelessRAWExposure = .unknown
   private var declaresJPEGOnly = false
   private var inventoryFailure: (any Error)?
-  private var xAppOriginalControlObserved = false
+  private var xAppOriginalControlObserved: Bool?
+  private var xAppOriginalControlConflict = false
   var legacyObjectCount: UInt32?
   var legacyAccurateLengthsEnabled = false
 
@@ -117,7 +118,8 @@ actor CameraHostedTransferSession: WirelessTransferSession {
     }
     return WirelessCapabilities(
       mode: mode, rawExposure: rawExposure, storageIDs: storageIDs ?? [],
-      originalSizeVerified: xAppOriginalControlObserved, evidenceID: evidenceID)
+      originalSizeVerified: xAppOriginalControlObserved == true, evidenceID: evidenceID,
+      originalSizeObservationsConflict: xAppOriginalControlConflict)
   }
 
   func enumerate() async throws -> AsyncThrowingStream<WirelessInventoryBatch, Error> {
@@ -172,7 +174,7 @@ actor CameraHostedTransferSession: WirelessTransferSession {
       let handles: [UInt32]?
       if mode == .xApp {
         handles = try await configureXAppCard(storage)
-        if let handles, !handles.isEmpty { xAppOriginalControlObserved = try await observesXAppOriginalSize() }
+        if let handles, !handles.isEmpty { try await recordXAppOriginalSize() }
       } else if let legacyObjectCount {
         // The legacy gallery exposes consecutive handles starting at 1.
         handles = (0..<legacyObjectCount).map { $0 + 1 }
@@ -234,12 +236,14 @@ actor CameraHostedTransferSession: WirelessTransferSession {
     try checkMember(object)
     // Legacy D227 verifies size reporting. The representation still needs target evidence.
     guard mode == .xApp else { throw WirelessFailure.originalSizeUnavailable }
+    let length = try originalLength(object)
+    guard !xAppOriginalControlConflict else { throw WirelessFailure.inconsistentOriginalSizeObservations }
     try begin()
     defer { busy = false }
     try await selectStorage(for: object.storageID)
-    xAppOriginalControlObserved = try await observesXAppOriginalSize()
-    guard xAppOriginalControlObserved else { throw WirelessFailure.originalSizeUnavailable }
-    try await streamMatchingObject(object, to: sink)
+    try await recordXAppOriginalSize()
+    if let failure = try capabilities().originalSizeFailure { throw failure }
+    try await streamMatchingObject(object, length: length, to: sink)
   }
 
   #if DEBUG
@@ -248,19 +252,35 @@ actor CameraHostedTransferSession: WirelessTransferSession {
   ) async throws {
     try checkMember(object)
     guard mode != .xApp else { throw WirelessFailure.unsupportedProtocol }
+    let length = try originalLength(object)
     try begin()
     defer { busy = false }
-    try await withAccurateLegacyLengths { try await streamMatchingObject(object, to: sink) }
+    try await withAccurateLegacyLengths { try await streamMatchingObject(object, length: length, to: sink) }
   }
   #endif
 
-  private func streamMatchingObject(
-    _ object: WirelessObjectDescriptor, to sink: @escaping @Sendable (Data) async throws -> Void
-  ) async throws {
+  private func recordXAppOriginalSize() async throws {
+    let observed = try await observesXAppOriginalSize()
+    // D226's scope across slots is unverified. Contradictory observations
+    // disqualify the current session until the user reconnects.
+    if let first = xAppOriginalControlObserved {
+      if first != observed { xAppOriginalControlConflict = true }
+    } else {
+      xAppOriginalControlObserved = observed
+    }
+  }
+
+  private func originalLength(_ object: WirelessObjectDescriptor) throws -> UInt32 {
     guard object.format == .raf || object.format == .jpeg,
       let length = UInt32(exactly: object.byteLength), length > 0,
       transport.partialObjectLimit > 0
     else { throw WirelessFailure.unsupportedProtocol }
+    return length
+  }
+
+  private func streamMatchingObject(
+    _ object: WirelessObjectDescriptor, length: UInt32, to sink: @escaping @Sendable (Data) async throws -> Void
+  ) async throws {
     try await verifyObject(object)
     var offset: UInt32 = 0
     while offset < length {
@@ -291,21 +311,25 @@ actor CameraHostedTransferSession: WirelessTransferSession {
 
   func execute(
     _ opcode: UInt16, _ parameters: [UInt32] = [], data: Data? = nil,
-    whileClosing: Bool = false
+    whileClosing: Bool = false, onAcknowledged: () -> Void = {}
   ) async throws -> PTPReply {
     let command = try commandFor(opcode, parameters, whileClosing: whileClosing)
     let response = try await transport.execute(command, data: data)
+    // A complete, successful response applied the command even if the caller
+    // was cancelled while waiting to resume on this session's executor.
+    onAcknowledged()
     if !whileClosing { try checkOpenOperation() }
     return response
   }
 
   func property(_ code: UInt32) async throws -> Data { try await execute(0x1015, [code]).data }
 
-  func setProperty(_ code: UInt32, _ scalar: UInt32, width: Int, whileClosing: Bool = false)
-    async throws
-  {
+  func setProperty(
+    _ code: UInt32, _ scalar: UInt32, width: Int, whileClosing: Bool = false,
+    onAcknowledged: () -> Void = {}
+  ) async throws {
     let bytes = Data((0..<width).map { UInt8(truncatingIfNeeded: scalar >> ($0 * 8)) })
-    _ = try await execute(0x1016, [code], data: bytes, whileClosing: whileClosing)
+    _ = try await execute(0x1016, [code], data: bytes, whileClosing: whileClosing, onAcknowledged: onAcknowledged)
   }
 
   func readScalar(_ code: UInt32, widths: Set<Int> = [4]) async throws -> UInt32 {

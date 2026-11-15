@@ -125,7 +125,7 @@ import XCTest
     func testFirmwareGuidanceComesFromAuthenticatedTransferFirmware() {
         for (fixture, guidance) in [
             ("--fixture-wireless-firmware-update", "Firmware update required. Update the X-T5 to firmware 4.32"),
-            ("--fixture-wireless-firmware-unverified", "Firmware version 4.33 on the X-T5 is unverified")
+            ("--fixture-wireless-firmware-unverified", "Check for a Fuji Studio update")
         ] {
             let app = launch([fixture])
             app.buttons["app.status"].tap()
@@ -133,6 +133,8 @@ import XCTest
             let message = app.staticTexts["wireless.firmware"]
             XCTAssertTrue(message.waitForExistence(timeout: 5))
             XCTAssertTrue(message.label.contains(guidance))
+            let instructions = app.descendants(matching: .any)["wireless.firmwareInstructions"].firstMatch
+            XCTAssertEqual(instructions.exists, fixture == "--fixture-wireless-firmware-update")
             XCTAssertFalse(app.buttons["wireless.browse"].exists)
             app.terminate()
         }

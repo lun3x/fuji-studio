@@ -39,6 +39,14 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
   private let autoSave: (any AutoSaveGateway)?
   private let sleep: @Sendable (Duration) async throws -> Void
 
+  #if DEBUG
+  private var probeFirmwareObserver: (@Sendable (WirelessProbeFirmwareEvidence) -> Void)?
+
+  func observeProbeFirmware(_ observer: @escaping @Sendable (WirelessProbeFirmwareEvidence) -> Void) {
+    probeFirmwareObserver = observer
+  }
+  #endif
+
   private var snapshot = WirelessConnectionState() {
     didSet {
       guard snapshot != oldValue else { return }
@@ -344,7 +352,7 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
       snapshot.hasLoadedSavedCameraPreference = true
     } catch {
       guard loading?.id == id, !isPairing, cleanup == nil else { return }
-      snapshot.failure = (error as? WirelessFailure) ?? .unavailableStorage
+      snapshot.failure = .savedSettingsUnavailable
     }
   }
 
@@ -411,7 +419,11 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
           await self?.finishReconnect(id: id)
         }
       } catch {
-        await self?.workFailed(error, id: id)
+        if case .pair = kind {
+          await self?.failPairing(error, id: id)
+        } else {
+          await self?.workFailed(error, id: id)
+        }
       }
     }
     work = (id, kind, task)
@@ -477,15 +489,16 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
       }
       guard work?.id == id else { return }
       try Task.checkCancellation()
+      if let failure = terminalDuringLink { throw failure }
     } catch {
-      await failPairSelection(error, id: id)
+      await failPairing(error, id: id)
       return
     }
     do {
       try await store.select(camera.id)
     } catch {
       if work?.id == id {
-        await failPairSelection(error, id: id)
+        await failPairing(error, id: id)
       } else {
         await store.restoreSelection(previousSelection, replacing: camera.id)
       }
@@ -495,18 +508,34 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
       await store.restoreSelection(previousSelection, replacing: camera.id)
       return
     }
+    blockedFailure = nil
     snapshot.savedCameras = savedCameras
     snapshot.selectedCameraID = camera.id
     snapshot.hasLoadedSavedCameraPreference = true
-    finishReconnect(id: id)
+    if let failure = terminalDuringLink {
+      await failPairing(failure, id: id)
+    } else {
+      finishReconnect(id: id)
+    }
   }
 
-  private func failPairSelection(_ error: Error, id: UUID) async {
+  private func failPairing(_ error: Error, id: UUID) async {
     guard work?.id == id else { return }
-    // Pair has already authenticated. Close that link if persistence failed.
+    // The finishing task cannot drain itself. Detach it before closing its
+    // native link, then reconnect only the preference that actually committed.
     work = nil
-    recordBluetoothFailure((error as? WirelessFailure) ?? .unavailableStorage)
-    await resetConnection()
+    snapshot.discoveredCameras = []
+    if let pairingFailure = error as? BluetoothPairingFailure {
+      snapshot.pairingFailure = pairingFailure
+      snapshot.bluetooth = .unavailable
+    } else {
+      recordBluetoothFailure((error as? WirelessFailure) ?? .savedSettingsUnavailable)
+    }
+    let wasWaiting = snapshot.bluetooth == .waitingForCamera
+    await stopBluetoothWork(preservingReadiness: true)
+    if wasWaiting, snapshot.bluetooth == .waitingForCamera, selectedCamera != nil {
+      scheduleRetry()
+    }
   }
 
   private func finishReconnect(id: UUID) {
@@ -527,11 +556,6 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
     guard let current = work, current.id == id else { return }
     work = nil
     snapshot.discoveredCameras = []
-    if let pairingFailure = error as? BluetoothPairingFailure {
-      snapshot.pairingFailure = pairingFailure
-      snapshot.bluetooth = .unavailable
-      return
-    }
     let failure = (error as? WirelessFailure) ?? .unavailableStorage
     recordBluetoothFailure(failure)
     if case .reconnect = current.kind { scheduleRetry() }
@@ -554,7 +578,8 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
   }
 
   private func scheduleRetry() {
-    guard snapshot.activity == .active, !bluetoothSuspendedForUSB, activeTransfer == nil, wifiLease == nil, blockedFailure == nil else { return }
+    guard snapshot.activity == .active, !bluetoothSuspendedForUSB, activeTransfer == nil, wifiLease == nil,
+      work == nil, cleanup == nil, retry == nil, blockedFailure == nil else { return }
     let id = UUID()
     let delay = Self.retryDelays[backoffIndex]
     backoffIndex = min(backoffIndex + 1, Self.retryDelays.count - 1)
@@ -612,7 +637,7 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
     await stopBluetoothWork()
   }
 
-  private func stopBluetoothWork() async {
+  private func stopBluetoothWork(preservingReadiness: Bool = false) async {
     cancelRetry()
     backoffIndex = 0
     let pending = work
@@ -625,8 +650,10 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
     eventListener?.task.cancel()
     eventListener = nil
     snapshot.discoveredCameras = []
-    snapshot.bluetooth = blockedFailure == nil ? .idle : .unavailable
-    snapshot.failure = blockedFailure
+    if !preservingReadiness {
+      snapshot.bluetooth = blockedFailure == nil ? .idle : .unavailable
+      snapshot.failure = blockedFailure
+    }
     if let cleanup {
       await cleanup.value
     } else if gatewayUsed || pending != nil {
@@ -786,6 +813,10 @@ extension WirelessConnectionCoordinator {
       }
       try await wifi.verify(joined)
       try checkWiFiAttempt(id, intent)
+      #if DEBUG
+      probeFirmwareObserver?(.init(model: peer.model, source: .cameraNetwork,
+        transferFirmware: peer.firmware, bluetoothFirmware: bleIdentity.firmware))
+      #endif
       try verifyFirmware(peer, bluetoothFirmware: bleIdentity.firmware)
       try await loadFirstInventory(opened, id: id, intent: intent)
     } catch {

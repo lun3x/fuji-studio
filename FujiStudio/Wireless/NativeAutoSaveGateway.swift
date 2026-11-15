@@ -23,6 +23,14 @@ actor NativeAutoSaveGateway: AutoSaveGateway {
   private var pendingSession: (any WirelessTransferSession)?
   private var cancellationWaiters: [CheckedContinuation<Void, Never>] = []
 
+  #if DEBUG
+  private var probeFirmwareObserver: (@Sendable (WirelessProbeFirmwareEvidence) -> Void)?
+
+  func observeProbeFirmware(_ observer: @escaping @Sendable (WirelessProbeFirmwareEvidence) -> Void) {
+    probeFirmwareObserver = observer
+  }
+  #endif
+
   /// The production route remains gated until the physical signing and evidence steps pass.
   init(store: any AutoSaveRegistrationStore, clientGUID: Data) {
     self.init(
@@ -127,6 +135,10 @@ actor NativeAutoSaveGateway: AutoSaveGateway {
     guard observed.cameraID == expected.cameraID, observed.model == expected.model,
       observed.protocolPeerKey == expected.protocolPeerKey
     else { throw WirelessFailure.peerMismatch }
+    #if DEBUG
+    probeFirmwareObserver?(.init(model: observed.model, source: .autoSave,
+      transferFirmware: observed.firmware, bluetoothFirmware: nil))
+    #endif
     let admission = WirelessSupportPolicy().assess(model: observed.model.rawValue, firmware: observed.firmware)
     guard admission == .supported(.xe3) else {
       throw WirelessFirmwareRejection(cameraModel: .xe3, transferAdmission: admission)

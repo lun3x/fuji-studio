@@ -39,7 +39,8 @@ import Observation
     var cameraBrowser: CameraBrowserModel { environment.wireless.browser }
     var importEvents: [ImportEvent] { importEventsByJob.values.sorted { $0.sequence < $1.sequence } }
     var importRecoveryEvents: [ImportEvent] { importEvents.filter { $0.captureIndex != nil || $0.recoveryRequired } }
-    var cameraImportActive: Bool { isPreparingImport || importEvents.contains(where: \.isRunning) }
+    var activeCameraImport: ImportEvent? { importEventsByJob.values.first(where: \.isRunning) }
+    var cameraImportActive: Bool { isPreparingImport || activeCameraImport != nil }
     var wirelessAvailable: Bool { environment.wireless.isEnabled }
     @ObservationIgnored private var wirelessActivity: WirelessActivity = .active
     @ObservationIgnored private var wirelessEpoch: UInt64 = 0
@@ -1051,7 +1052,7 @@ import Observation
     }
 
     private func updateIdle() {
-        if !isSuspended && state.activeJobID != nil {
+        if !isSuspended && (state.activeJobID != nil || cameraImportActive) {
             if previousIdle == nil { previousIdle = environment.platform.idleTimerDisabled }
             environment.platform.idleTimerDisabled = true
         } else { restoreIdle() }
@@ -1352,7 +1353,8 @@ extension AppModel {
     }
 
     private func prepareBluetoothChoice() async -> UUID? {
-        guard !Task.isCancelled, wirelessAvailable, wirelessActivity == .active, !isSuspended, !state.wirelessRestrictsUSB,
+        guard !Task.isCancelled, wirelessAvailable, wirelessActivity == .active, !isSuspended,
+              !state.wirelessRestrictsUSB, !cameraImportActive,
               !bluetoothChoiceActive, state.activeJobID == nil, !isSubmitting, !isRefreshing, !isResettingCamera else { return nil }
         let choice = BluetoothChoice()
         bluetoothChoice = choice
@@ -1394,6 +1396,7 @@ extension AppModel {
     }
 
     func pairWirelessCamera(_ camera: DiscoveredCamera) async {
+        guard !cameraImportActive else { return }
         let choiceID = bluetoothChoice?.id
         let connection = environment.wireless.connection
         await connection.pair(camera)
@@ -1412,12 +1415,14 @@ extension AppModel {
     }
 
     func forgetWirelessCamera(_ id: WirelessCameraID) async {
-        guard wirelessAvailable, wirelessActivity == .active, !state.wirelessRestrictsUSB else { return }
-        let choiceID = bluetoothChoice?.id
+        guard wirelessAvailable, wirelessActivity == .active, !state.wirelessRestrictsUSB,
+              !cameraImportActive, !bluetoothChoiceActive else { return }
+        let choice = BluetoothChoice()
+        bluetoothChoice = choice
+        defer { finishBluetoothChoice(choice.id) }
         do { try await environment.wireless.connection.forget(id); wirelessActionError = nil }
         catch { wirelessActionError = Self.explain(error) }
         adoptWirelessState(await environment.wireless.connection.currentState())
-        finishBluetoothChoice(choiceID)
     }
 
     func retryCameraBluetooth() async {
@@ -1541,15 +1546,17 @@ extension AppModel {
 
     private func runImportCommand(_ operation: ImportCommand) async {
         guard wirelessAvailable, wirelessActivity == .active, !isSuspended, !isDisconnectingWireless, importCommand == nil,
-              !importEvents.contains(where: \.isRunning) else { return }
+              !bluetoothChoiceActive, activeCameraImport == nil else { return }
         importActionError = nil
         isPreparingImport = true
+        updateIdle()
         let epoch = wirelessEpoch
         let task = Task { [weak self] in await self?.performImportCommand(operation, epoch: epoch) ?? () }
         importCommand = (operation.jobID, task)
         await task.value
         importCommand = nil
         isPreparingImport = false
+        updateIdle()
         releaseBrowserIfIdle()
         if importReconcilePending, wirelessActivity != .background { await reconcileImports() }
     }
@@ -1650,6 +1657,7 @@ extension AppModel {
         }
         if (importEventsByJob[jobID]?.sequence ?? 0) < event.sequence {
             importEventsByJob[jobID] = event
+            updateIdle()
             if !event.receipts.isEmpty, receiptTasks[jobID] == nil {
                 receiptTasks[jobID] = Task { [weak self] in await self?.mergeJobReceipts(jobID) }
             }
@@ -1860,6 +1868,7 @@ extension AppModel {
             "The selected card files changed. Select the originals again."
         case CameraBrowserSelectionError.inventoryNotReady: "Reconnect and wait for the camera card to finish loading."
         case CameraImportError.unresolvedSave: "Verify the previous Photos save before trying it again."
+        case let failure as WirelessFailure: failure.connectionGuidance
         case is ImportJournalError: "The import journal needs recovery. Retained originals are still on this device."
         default: Self.explain(error)
         }

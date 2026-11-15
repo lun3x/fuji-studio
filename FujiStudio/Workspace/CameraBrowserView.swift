@@ -1,4 +1,5 @@
 import FujiCameraCore
+import ImageIO
 import SwiftUI
 import UIKit
 
@@ -26,15 +27,10 @@ struct CameraBrowserView: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 0) {
                 if inlineActions { selectionActions }
                 browserStatus
-                ForEach(browser.captures, id: \.rowID) { capture in
-                    CameraCaptureRow(browser: browser, capture: capture, canSelect: canSelect) { policy in
-                        select(capture, policy: policy)
-                    }
-                    Divider().padding(.leading)
-                }
+                captureGroups
             }
         }
         .accessibilityIdentifier("cameraBrowser.scroll")
@@ -53,6 +49,28 @@ struct CameraBrowserView: View {
         }
     }
 
+    private var captureGroups: some View {
+        LazyVStack(alignment: .leading, spacing: 0) {
+            ForEach(browser.dayGroups) { group in
+                Section {
+                    ForEach(group.captures, id: \.rowID) { capture in
+                        CameraCaptureRow(browser: browser, capture: capture, canSelect: canSelect) { policy in
+                            select(capture, policy: policy)
+                        }
+                        Divider().padding(.leading)
+                    }
+                } header: {
+                    Text(group.label)
+                        .font(.headline)
+                        .padding(.horizontal)
+                        .padding(.top, 12)
+                        .accessibilityAddTraits(.isHeader)
+                        .accessibilityIdentifier("cameraBrowser.day.\(group.day ?? "unknown")")
+                }
+            }
+        }
+    }
+
     @ViewBuilder private var browserStatus: some View {
         if model.importJournalIssue != nil {
             CameraImportJournalIssue().padding()
@@ -67,7 +85,11 @@ struct CameraBrowserView: View {
         } else if browser.inventory.rawExposure == .unavailable || !browser.canSelectOriginals && !browser.captures.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 Text("RAW unavailable").font(.headline).accessibilityIdentifier("cameraBrowser.rawUnavailable")
-                Text("The current camera connection does not expose verified original RAW files.")
+                if isXE3 {
+                    Text("The current camera connection does not expose verified original RAW files.")
+                } else {
+                    Text((browser.originalSizeFailure ?? .originalSizeUnavailable).connectionGuidance)
+                }
                 if isXE3 {
                     Button("Set up RAW transfer", action: onSetUpAutoSave)
                         .disabled(model.cameraImportActive)
@@ -142,6 +164,7 @@ private struct CameraCaptureRow: View {
 
     private var policy: ImportPolicy? { browser.selectedPolicy(for: capture.id) }
     private var verified: Bool { browser.importReceiptStatus(for: capture) == .verified }
+    private var captureDay: String { capture.timestamp?.calendarDay ?? "Capture date unknown" }
     private var rowIdentifier: String { "\(capture.rowID.storageID).\(capture.rowID.handle)" }
 
     var body: some View {
@@ -169,7 +192,7 @@ private struct CameraCaptureRow: View {
                     .disabled(!canSelect || !browser.permitsSelection(for: capture.id, policy: .rawOnly))
                     .accessibilityLabel("Import RAW only")
                     .accessibilityValue(policy == .rawOnly ? "Selected" : "Not selected")
-                    .accessibilityHint(capture.rowID.filename)
+                    .accessibilityHint("\(capture.rowID.filename), \(captureDay)")
                     .accessibilityAddTraits(policy == .rawOnly ? .isSelected : [])
                     .accessibilityIdentifier("cameraBrowser.rawOnly.\(rowIdentifier)")
                 }
@@ -179,9 +202,10 @@ private struct CameraCaptureRow: View {
         .padding()
         .task(id: request) {
             guard !request.suspended, let object = request.object, thumbnail?.object != object,
-                  let data = await browser.thumbnail(for: capture), !Task.isCancelled,
-                  let image = UIImage(data: data) else { return }
-            thumbnail = Thumbnail(object: object, image: image)
+                  let data = await browser.thumbnail(for: capture), !Task.isCancelled else { return }
+            let preview = await Task.detached { CameraThumbnail.decode(data) }.value
+            guard !Task.isCancelled, let preview else { return }
+            thumbnail = Thumbnail(object: object, image: UIImage(cgImage: preview.image))
         }
     }
 
@@ -206,6 +230,10 @@ private struct CameraCaptureRow: View {
             if verified {
                 Label("Imported", systemImage: "checkmark.circle").font(.subheadline).foregroundStyle(.secondary)
             }
+            Text(captureDay).font(.subheadline).foregroundStyle(.secondary)
+            if capture.availability == .jpegOnly || capture.availability == .unsupported {
+                Text("Camera import requires an original RAF.").font(.footnote).foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -225,10 +253,33 @@ private struct CameraCaptureRow: View {
         }
         .buttonStyle(.plain)
         .disabled(!canSelect || (verified && policy == nil) || !browser.permitsSelection(for: capture.id, policy: .pair))
-        .accessibilityLabel("\(capture.rowID.filename), \(capture.availability.formatLabel)")
+        .accessibilityLabel("\(capture.rowID.filename), \(capture.availability.formatLabel), \(captureDay)")
         .accessibilityValue(verified ? "Imported" : policy == .pair ? "Selected" : "Not selected")
         .accessibilityAddTraits(policy == .pair ? .isSelected : [])
         .accessibilityIdentifier("cameraBrowser.select.\(rowIdentifier)")
+    }
+}
+
+// CGImage is immutable. Keep the decode off the main actor and create UIImage in the row.
+struct CameraThumbnail: @unchecked Sendable {
+    let image: CGImage
+
+    static func decode(_ data: Data) -> Self? {
+        autoreleasepool {
+            guard let source = CGImageSourceCreateWithData(data as CFData,
+                [kCGImageSourceShouldCache: false] as CFDictionary),
+                CGImageSourceGetCount(source) == 1,
+                let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+                let width = properties[kCGImagePropertyPixelWidth] as? Int, (1...4096).contains(width),
+                let height = properties[kCGImagePropertyPixelHeight] as? Int, (1...4096).contains(height),
+                let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceCreateThumbnailWithTransform: true,
+                    kCGImageSourceThumbnailMaxPixelSize: 288,
+                    kCGImageSourceShouldCacheImmediately: true
+                ] as CFDictionary) else { return nil }
+            return CameraThumbnail(image: image)
+        }
     }
 }
 

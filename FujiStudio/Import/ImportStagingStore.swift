@@ -52,7 +52,7 @@ struct ImportStagingStore: Sendable {
         guard object.byteLength > 0 else { throw ImportStagingError.unknownLength }
         guard object.byteLength <= UInt64(Int64.max) else { throw ImportStagingError.lengthOverflow }
         let capabilities = try await session.capabilities()
-        guard capabilities.originalSizeVerified else { throw WirelessFailure.originalSizeUnavailable }
+        if let failure = capabilities.originalSizeFailure { throw failure }
         try Task.checkCancellation()
 
         let id = UUID().uuidString
@@ -110,7 +110,8 @@ struct ImportStagingStore: Sendable {
     func rebind(_ original: StagedOriginal, to object: WirelessObjectDescriptor, session: any WirelessTransferSession,
                 progress: @escaping @Sendable (UInt64) async -> Void) async throws -> StagedOriginal {
         let capabilities = try await session.capabilities()
-        guard capabilities.originalSizeVerified, capabilities.mode == original.verifiedTransferMode else {
+        if let failure = capabilities.originalSizeFailure { throw failure }
+        guard capabilities.mode == original.verifiedTransferMode else {
             throw WirelessFailure.originalSizeUnavailable
         }
         guard original.describes(object) else { throw ImportStagingError.originalChanged }

@@ -109,6 +109,14 @@ struct CameraCapture: Equatable, Sendable {
     }
 }
 
+struct CameraCaptureDayGroup: Identifiable {
+    let day: String?
+    let captures: [CameraCapture]
+
+    var id: String? { day }
+    var label: String { day ?? "Capture date unknown" }
+}
+
 enum ImportPolicy: String, Codable, Equatable, Sendable {
     case pair
     case rawOnly
@@ -152,6 +160,10 @@ enum CameraCaptureEvidence {
 struct CameraCaptureTimestamp: Hashable, Sendable {
     let wallTime: String
     let offset: String?
+    /// This is the camera's calendar date, independent of the iPhone's timezone.
+    var calendarDay: String {
+        String(wallTime.prefix(4)) + "-" + wallTime.dropFirst(4).prefix(2) + "-" + wallTime.dropFirst(6).prefix(2)
+    }
 
     init?(_ value: String?) {
         guard let value,

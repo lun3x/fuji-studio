@@ -78,6 +78,76 @@ final class WirelessConnectionCoordinatorTests: XCTestCase {
     _ = try await state(&updates) { $0.bluetooth == .ready }
   }
 
+  func testTransientPairFailureReconnectsExplicitlySelectedBodyWithBackoff() async throws {
+    enum LinkLoss { case authenticationAttempt, authenticatedPairReturn, committedSelection }
+    for loss in [LinkLoss.authenticationAttempt, .authenticatedPairReturn, .committedSelection] {
+      let fixture = Fixture()
+      var calls = fixture.gateway.operations.makeAsyncIterator()
+      let states = await fixture.coordinator.states()
+      var updates = states.makeAsyncIterator()
+      await fixture.coordinator.setActivity(.active)
+      _ = await calls.next(isolation: #isolation)
+      fixture.gateway.completeLink()
+      _ = try await state(&updates) { $0.bluetooth == .ready }
+      await fixture.coordinator.startDiscovery()
+      _ = await calls.next(isolation: #isolation) // Disconnect the previous link.
+      _ = await calls.next(isolation: #isolation)
+      let candidate = DiscoveredCamera(
+        peripheralID: fixture.second.peripheralID, advertisedModelHint: .xe3, displayName: "X-E3")
+      fixture.gateway.discovered([candidate])
+      _ = try await state(&updates) { $0.discoveredCameras == [candidate] }
+      let heldPair = FixtureBarrier()
+      if loss == .authenticatedPairReturn { fixture.gateway.pairReturnBarrier = heldPair }
+      if loss == .committedSelection { await fixture.store.suspendSelection(afterCommit: true) }
+      await fixture.coordinator.pair(candidate)
+      _ = await calls.next(isolation: #isolation)
+      switch loss {
+      case .authenticationAttempt:
+        fixture.gateway.completeLink(throwing: .connectionLost)
+      case .authenticatedPairReturn:
+        fixture.gateway.completeLink()
+        await heldPair.entered()
+        fixture.gateway.dropLink(fixture.second.id)
+        await fixture.gateway.waitForDisconnectEventDelivery()
+        await heldPair.release()
+      case .committedSelection:
+        var selections = fixture.store.selectionRequests.makeAsyncIterator()
+        fixture.gateway.completeLink()
+        let committed = await selections.next()
+        XCTAssertEqual(committed, fixture.second.id)
+        fixture.gateway.dropLink(fixture.second.id)
+        await fixture.gateway.waitForDisconnectEventDelivery()
+        await fixture.store.resumeSelection()
+      }
+      let expected = loss == .committedSelection ? fixture.second.id : fixture.first.id
+      let scheduled = expectation(description: "selected-camera reconnect is scheduled")
+      let delay = Task {
+        var sleeps = fixture.clock.scheduled.makeAsyncIterator()
+        let delay = await sleeps.next()
+        if delay != nil { scheduled.fulfill() }
+        return delay
+      }
+      defer { delay.cancel() }
+      guard await XCTWaiter.fulfillment(of: [scheduled], timeout: 2) == .completed else {
+        XCTFail("Transient pair loss did not schedule a foreground reconnect")
+        continue
+      }
+      let firstDelay = await delay.value
+      XCTAssertEqual(firstDelay, .seconds(3))
+      let waiting = await fixture.coordinator.currentState()
+      XCTAssertEqual(waiting.bluetooth, .waitingForCamera)
+      XCTAssertEqual(waiting.selectedCameraID, expected)
+      let attempts = fixture.gateway.calls
+      await fixture.clock.advance(by: .milliseconds(2999))
+      XCTAssertEqual(fixture.gateway.calls, attempts)
+      await fixture.clock.advance(by: .milliseconds(1))
+      let next = await nextReconnect(&calls)
+      XCTAssertEqual(next, .reconnect(expected, prompt: false))
+      fixture.gateway.completeLink()
+      await fixture.coordinator.setActivity(.background)
+    }
+  }
+
   func testSuccessfulAutomaticRetryResetsBackoffWithoutBackgrounding() async throws {
     let fixture = Fixture()
     var calls = fixture.gateway.operations.makeAsyncIterator()
@@ -987,9 +1057,11 @@ private final class ControlledBluetoothGateway: BluetoothGateway {
   private(set) var reconnectCamera: SavedCamera?
   var pauseDisconnect = false
   var pairedCamera: SavedCamera?
+  var pairReturnBarrier: FixtureBarrier?
   private let store: any SavedCameraStore
   private let operation: AsyncStream<Call>.Continuation
   private var event: AsyncStream<BluetoothGatewayEvent>.Continuation?
+  private var eventCursor: BluetoothEventCursor?
   private var discovery: AsyncThrowingStream<[DiscoveredCamera], Error>.Continuation?
   private var link: CheckedContinuation<Void, Error>?
   private var disconnectWaiter: CheckedContinuation<Void, Never>?
@@ -1014,6 +1086,7 @@ private final class ControlledBluetoothGateway: BluetoothGateway {
     let saved = try XCTUnwrap(pairedCamera ?? cameras.first { $0.peripheralID == candidate.peripheralID })
     try await connect(saved, as: .pair(candidate.peripheralID))
     try await store.save(saved)
+    await pairReturnBarrier?.wait()
     return saved
   }
 
@@ -1035,7 +1108,9 @@ private final class ControlledBluetoothGateway: BluetoothGateway {
   func events() async -> AsyncStream<BluetoothGatewayEvent> {
     let (stream, continuation) = AsyncStream<BluetoothGatewayEvent>.makeStream()
     event = continuation
-    return stream
+    let cursor = BluetoothEventCursor(stream)
+    eventCursor = cursor
+    return AsyncStream(unfolding: { await cursor.next() })
   }
 
   func disconnect() async {
@@ -1068,6 +1143,11 @@ private final class ControlledBluetoothGateway: BluetoothGateway {
     event?.yield(.disconnected(id, .connectionLost))
   }
 
+  func waitForDisconnectEventDelivery() async {
+    guard let eventCursor else { XCTFail("There is no Bluetooth event subscription"); return }
+    await eventCursor.waitForConsumption()
+  }
+
   private func connect(_ saved: SavedCamera, as call: Call) async throws {
     precondition(link == nil, "Native link attempts overlapped")
     try await withCheckedThrowingContinuation { continuation in
@@ -1080,5 +1160,32 @@ private final class ControlledBluetoothGateway: BluetoothGateway {
   private func record(_ call: Call) {
     calls.append(call)
     operation.yield(call)
+  }
+}
+
+/// The coordinator's listener requests the next event only after processing the last one.
+@MainActor private final class BluetoothEventCursor {
+  private var iterator: AsyncStream<BluetoothGatewayEvent>.Iterator
+  private var returnedEvent = false
+  private let consumed: AsyncStream<Void>
+  private let consumption: AsyncStream<Void>.Continuation
+
+  init(_ source: AsyncStream<BluetoothGatewayEvent>) {
+    iterator = source.makeAsyncIterator()
+    (consumed, consumption) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
+  }
+
+  func next() async -> BluetoothGatewayEvent? {
+    if returnedEvent { consumption.yield() }
+    var iterator = self.iterator
+    let event = await iterator.next(isolation: #isolation)
+    self.iterator = iterator
+    returnedEvent = event != nil
+    return event
+  }
+
+  func waitForConsumption() async {
+    var iterator = consumed.makeAsyncIterator()
+    _ = await iterator.next(isolation: #isolation)
   }
 }

@@ -28,7 +28,7 @@ public struct WirelessSupportPolicy: Sendable {
 
   public func assess(model: String, firmware: String?) -> WirelessAdmission {
     guard let model = WirelessCameraModel(rawValue: model) else { return .unsupportedModel }
-    guard let firmware else { return .unverified(nil) }
+    guard let firmware else { return .unverified(.unreadable) }
 
     var normalized = firmware.trimmingCharacters(in: .whitespacesAndNewlines)
     if normalized.hasPrefix("Ver.") {
@@ -38,12 +38,12 @@ public struct WirelessSupportPolicy: Sendable {
     let target = record(for: model).firmware
     if normalized == target { return .supported(model) }
 
-    if let observed = versionComponents(normalized), let required = versionComponents(target),
-      observed < required
-    {
-      return .updateRequired(target)
+    guard let observed = versionComponents(normalized), let required = versionComponents(target) else {
+      return .unverified(.unreadable)
     }
-    return .unverified(firmware)
+    if observed < required { return .updateRequired(target) }
+    if observed > required { return .unverified(.newer) }
+    return .unverified(.unreadable)
   }
 
   private func versionComponents(_ firmware: String) -> (major: UInt, minor: UInt)? {

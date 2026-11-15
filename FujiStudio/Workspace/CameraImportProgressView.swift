@@ -102,7 +102,7 @@ private struct CameraImportJobView: View {
             }
             Text(status).font(.headline)
                 .accessibilityIdentifier("cameraImport.status")
-            Text(counts).accessibilityIdentifier("cameraImport.counts")
+            Text(event.captureCountLabel).accessibilityIdentifier("cameraImport.counts")
             if let component = event.component {
                 let componentLabel = component.role == .raf ? "RAW download" : "JPEG download"
                 let received = cameraImportByteCount(component.receivedBytes)
@@ -205,29 +205,15 @@ private struct CameraImportJobView: View {
         }
     }
 
-    private var counts: String {
-        let count = event.captureCount == 1 ? "1 photo" : "\(event.captureCount) photos"
-        return "\(event.receipts.count) of \(count) imported"
-    }
-
     private var status: String {
         if event.pauseReason == .journalUnavailable { return "Camera import recovery required" }
-        if event.isRunning && event.pauseReason != nil { return "Stopping after the current operation…" }
-        if event.isVerifyingPhotos { return "Verifying originals in Photos…" }
+        if let active = event.activeStatusLabel { return active }
         if event.stage == .savedUnverified && !event.isRunning { return "Photos save unverified" }
         if event.stage == .submitting && !event.isRunning { return "Photos save unconfirmed" }
         if event.pauseReason == .cancelled { return "Import cancelled" }
-        if let index = event.captureIndex {
-            if !event.isRunning { return event.pauseReason == .captureFailed ? "Photo import failed" : "Import paused" }
-            let photo = "photo \(index + 1) of \(event.captureCount)"
-            switch event.stage {
-            case .downloading: return "Downloading \(photo)"
-            case .validating: return "Validating \(photo)"
-            case .submitting, .readyToSave: return "Saving \(photo) to Photos"
-            default: return "Preparing \(photo)"
-            }
+        if event.captureIndex != nil {
+            return event.pauseReason == .captureFailed ? "Photo import failed" : "Import paused"
         }
-        if event.isRunning { return "Finishing import…" }
         if event.receipts.isEmpty { return "No photos imported" }
         return event.receipts.count == event.captureCount ? "Import complete" : "Import finished"
     }
@@ -236,6 +222,8 @@ private struct CameraImportJobView: View {
         switch event.pauseReason {
         case .unresolvedSave:
             "Fuji Studio could not verify this Photos save. Use Manage Photos or Settings to allow access to the originals so the app can check the same save. The staged files remain on this iPhone."
+        case .earlierSaveUnresolved:
+            "An earlier import of this RAW still has an unverified Photos save. Check that import in Camera imports before retrying. The staged originals remain on this iPhone."
         case .photosAccess:
             "Allow read and write Photos access before retrying the save."
         case .freshSelectionRequired:

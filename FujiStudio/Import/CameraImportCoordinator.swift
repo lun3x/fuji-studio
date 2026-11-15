@@ -109,8 +109,9 @@ actor CameraImportCoordinator {
         try Self.requireSupported(camera)
         let capabilities = try await session.capabilities()
         guard first.camera == camera else { throw WirelessFailure.peerMismatch }
-        guard capabilities.originalSizeVerified, selections.allSatisfy({ selection in
-            selection.descriptors.allSatisfy { $0.byteLength <= UInt32.max }
+        if let failure = capabilities.originalSizeFailure { throw failure }
+        guard selections.allSatisfy({ selection in
+            selection.descriptors.allSatisfy { $0.byteLength > 0 && $0.byteLength <= UInt32.max }
         }) else { throw WirelessFailure.originalSizeUnavailable }
         let job = try ImportJob(id: jobID, selections: selections, importDate: Date(), mode: capabilities.mode,
                                 cameraDisplayName: cameraDisplayName)
@@ -523,13 +524,13 @@ actor CameraImportCoordinator {
         let captureID = job.captures[index].id
         let fingerprints = capture.originals.map(\.fingerprint)
         let jobs = try await journal.loadJobs()
+        let raw = capture.originals.first { $0.role == .raf }?.fingerprint
+        let pending = jobs.lazy.flatMap(\.captures).filter { entry in
+            entry.stage.mayHaveSubmitted && entry.originals.contains { $0.fingerprint == raw }
+        }
         let expected = Set(fingerprints)
-        if jobs.contains(where: { candidate in
-            candidate.captures.contains { entry in
-                entry.stage.mayHaveSubmitted && Set(entry.originals.map(\.fingerprint)) == expected
-            }
-        }) {
-            return .init(job: job, pauseReason: .unresolvedSave)
+        if pending.contains(where: { Set($0.originals.map(\.fingerprint)) == expected }) {
+            return .init(job: job, pauseReason: .earlierSaveUnresolved)
         }
         let existing = await recovery.lookup(fingerprints, jobs: jobs)
         try checkRunning()
@@ -540,6 +541,10 @@ actor CameraImportCoordinator {
             return .init(job: try await recovery.releaseCompletedFiles(recovery.load(id)))
         }
         if existing.status == .inaccessible { return .init(job: job, pauseReason: .photosAccess) }
+
+        // Reusing an exact verified receipt above requires no Photos creation.
+        // Any unresolved save of this RAF still blocks creating a new asset.
+        if !pending.isEmpty { return .init(job: job, pauseReason: .earlierSaveUnresolved) }
 
         try staging.preflight(stagingByteLengths: [], photoCopyByteLengths: capture.originals.map(\.byteCount))
         job.captures[index].stage = .submitting
@@ -747,7 +752,8 @@ private struct ImportInventory {
             }
         }
         let updated = try await session.capabilities()
-        guard updated.originalSizeVerified, updated.mode == capabilities.mode else {
+        if let failure = updated.originalSizeFailure { throw failure }
+        guard updated.mode == capabilities.mode else {
             throw WirelessFailure.originalSizeUnavailable
         }
         let objects = cards.values.flatMap(\.values)

@@ -238,11 +238,13 @@ struct AppWorkspaceView: View {
     }
     private var wirelessStatus: WirelessStatusSummary? {
         guard model.wirelessAvailable else { return nil }
-        return WirelessStatusSummary(state: model.wirelessState)
+        return WirelessStatusSummary(state: model.wirelessState, activeImport: model.activeCameraImport,
+                                     preparingImport: model.isPreparingImport)
     }
     private var statusLabel: String {
         if model.isResettingCamera { return "Resetting camera connection…" }
         if model.cameraError != nil || model.cameraResetError != nil { return "Camera error" }
+        if model.cameraImportActive, let wirelessStatus { return wirelessStatus.label }
         if model.isLoadingLibrary { return "Reading Photos…" }
         if let event = model.exportEvent {
             let count = event.summary.replacementCleanup > 0 ? "\(event.summary.exported) exported" : "\(event.summary.completed) saved"
@@ -273,7 +275,9 @@ struct AppWorkspaceView: View {
         if model.state.wirelessRestrictsUSB {
             return "USB conversion is unavailable while WiFi import uses the camera."
         }
-        if model.wirelessState.selectedCameraID != nil, case .disconnected = model.state.cameraState {
+        let manualUSBConnection = model.wirelessAvailable
+            && (!model.wirelessState.hasLoadedSavedCameraPreference || model.wirelessState.selectedCameraID != nil)
+        if manualUSBConnection, case .disconnected = model.state.cameraState {
             return "For USB conversion, plug in a data cable, select USB RAW CONV./BACKUP RESTORE on the camera and tap Reset camera connection."
         }
         return switch model.state.cameraState {
@@ -281,9 +285,13 @@ struct AppWorkspaceView: View {
         case .busy: "The USB camera is processing the current operation."
         case .attentionRequired: "Camera connection needs attention. Reset the connection to try again."
         case .authorizationRequired: "Allow camera control to read recipes and convert RAWs over USB. This does not take new pictures."
-        case .authorizationDenied: "Camera control is denied. Allow it in Settings, then return to Fuji Studio to connect automatically."
+        case .authorizationDenied: manualUSBConnection
+            ? "Camera control is denied. Allow it in Settings, then tap Reset camera connection."
+            : "Camera control is denied. Allow it in Settings, then return to Fuji Studio to connect automatically."
         case .wrongMode: "Set the camera USB connection mode to USB RAW CONV./BACKUP RESTORE. Use a USB data cable."
-        case .recoverableError: "Camera connection interrupted. Check its USB mode and data cable. Fuji Studio reconnects automatically."
+        case .recoverableError: manualUSBConnection
+            ? "Camera connection interrupted. Check its USB mode and data cable, then tap Reset camera connection."
+            : "Camera connection interrupted. Check its USB mode and data cable. Fuji Studio reconnects automatically."
         case .opening, .discovering, .sessionOpen: "Connecting and verifying the USB camera…"
         case .disconnected: "Plug in a supported Fujifilm camera with a USB data cable in USB RAW CONV./BACKUP RESTORE mode. Fuji Studio connects automatically and retries every three seconds while active. Browsing originals and saved versions works without the camera."
         }

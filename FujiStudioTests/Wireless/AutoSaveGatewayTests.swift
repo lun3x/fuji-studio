@@ -103,7 +103,7 @@ final class AutoSaveGatewayTests: XCTestCase {
           _ = try await gateway.waitForSession(registration: receipt)
           XCTFail("Unvalidated AutoSave firmware was admitted")
         } catch let rejection as WirelessFirmwareRejection {
-          XCTAssertEqual(rejection.transferAdmission, .unverified("1.33"))
+          XCTAssertEqual(rejection.transferAdmission, .unverified(.newer))
           XCTAssertEqual(rejection.cameraModel, .xe3)
         } catch { XCTFail("Missing authenticated PTP firmware evidence: \(error)") }
       } else {

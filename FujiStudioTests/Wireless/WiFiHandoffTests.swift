@@ -271,8 +271,8 @@ final class WiFiHandoffTests: XCTestCase {
   func testFirmwareFailureKeepsFreshTransferEvidenceForGuidance() async {
     for (peer, bluetooth, expected, bluetoothRejected) in [
       ("4.31", "4.32", WirelessAdmission.updateRequired("4.32"), false),
-      ("4.33", "4.32", .unverified("4.33"), false),
-      (nil, "4.32", .unverified(nil), false),
+      ("4.33", "4.32", .unverified(.newer), false),
+      (nil, "4.32", .unverified(.unreadable), false),
       ("4.32", "4.31", .supported(.xt5), true),
     ] as [(String?, String?, WirelessAdmission, Bool)] {
       let fixture = Fixture(peerFirmware: peer, bluetoothFirmware: bluetooth)
@@ -285,6 +285,36 @@ final class WiFiHandoffTests: XCTestCase {
       XCTAssertEqual(state.firmwareRejection?.bluetoothRejectedFirmware, bluetoothRejected)
       XCTAssertFalse(fixture.log.events.contains("inventory"))
     }
+  }
+
+  func testExplicitProbeKeepsExactRejectedFirmwareOutOfSharedState() async throws {
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+    defer { try? FileManager.default.removeItem(at: folder) }
+
+    let malformed = "peer-only\nprivate report"
+    for (transfer, bluetooth) in [(" Ver.4.31 ", "4.32"), ("4.32", malformed), (malformed, "4.32")] {
+      let fixture = Fixture(peerFirmware: transfer, bluetoothFirmware: bluetooth)
+      await fixture.coordinator.observeProbeFirmware { evidence in
+        try? WirelessProbeFirmwareEvidence.record(evidence, in: folder)
+      }
+      await fixture.start()
+      await fixture.coordinator.connectWiFi()
+      let rejected = await snapshot(fixture.coordinator)
+      let message = try XCTUnwrap(rejected.firmwareRejection?.presentationGuidance)
+      XCTAssertEqual(rejected.wifiFailure, .unsupportedFirmware)
+      XCTAssertFalse(String(reflecting: rejected.firmwareRejection).contains(malformed))
+      XCTAssertFalse(message.contains(malformed))
+      XCTAssertFalse(fixture.log.events.contains("inventory"))
+    }
+
+    let files = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
+    let reports = try files.map { try JSONDecoder().decode(WirelessProbeFirmwareEvidence.self, from: Data(contentsOf: $0)) }
+    XCTAssertEqual(reports.count, 3)
+    XCTAssertTrue(reports.allSatisfy { $0.model == .xt5 && $0.source == .cameraNetwork })
+    XCTAssertTrue(reports.contains { $0.transferFirmware == " Ver.4.31 " && $0.bluetoothFirmware == "4.32" })
+    XCTAssertTrue(reports.contains { $0.transferFirmware == "4.32" && $0.bluetoothFirmware == malformed })
+    XCTAssertTrue(reports.contains { $0.transferFirmware == malformed && $0.bluetoothFirmware == "4.32" })
   }
 
   func testCancelledJoinCannotAdoptLateCompletion() async {

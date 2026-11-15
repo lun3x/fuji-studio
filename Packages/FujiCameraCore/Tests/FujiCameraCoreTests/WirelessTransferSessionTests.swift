@@ -42,6 +42,58 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
     XCTAssertEqual(leftover, 0)
   }
 
+  func testCancellationAfterLengthReportingAcknowledgementRestoresOnOpenSocket() async throws {
+    let channel = Replay(start(.xe3, "1.32") + autoSaveSetup(count: 1)
+      + beginLegacyLengths + endLegacyLengths + [.read(0x1003)])
+    let session = try XCTUnwrap(autoSaveSession(channel) as? CameraHostedTransferSession)
+    let transport = await session.transport
+    _ = try await session.open()
+    let stream = try await session.enumerate()
+    let (held, acknowledged) = AsyncStream<Void>.makeStream()
+    await channel.holdNextD227EnableReply(acknowledged)
+    let scan = Task {
+      var iterator = stream.makeAsyncIterator()
+      return try await iterator.next()
+    }
+    var replies = held.makeAsyncIterator()
+    _ = await replies.next()
+
+    let (occupancy, entered) = AsyncStream<Void>.makeStream()
+    let resumeSession = DispatchSemaphore(value: 0)
+    let blocker = Task { await occupySession(session, entered: entered, resume: resumeSession) }
+    var busy = occupancy.makeAsyncIterator()
+    _ = await busy.next()
+    await channel.resumeD227EnableReply()
+    // The command transport finishing while the session executor is occupied
+    // fixes the cancellation point after ACK and before session bookkeeping.
+    var consumedReply = false
+    for _ in 0..<200 {
+      do {
+        _ = try await transport.initialize(Data())
+        XCTFail("The transport was unexpectedly initialized a second time")
+        break
+      } catch PTPError.busy {
+        try await Task.sleep(for: .milliseconds(5))
+      } catch PTPError.invalidParameters {
+        consumedReply = true
+        break
+      }
+    }
+    XCTAssertTrue(consumedReply)
+    scan.cancel()
+    resumeSession.signal()
+    await blocker.value
+    do {
+      _ = try await scan.value
+      XCTFail("The cancelled scan returned inventory")
+    } catch is CancellationError {}
+    try await session.close()
+    let outstanding = await channel.remaining
+    XCTAssertEqual(outstanding, 0)
+    let operations = await channel.operations
+    XCTAssertEqual(operations.suffix(3), [0x1015, 0x1016, 0x1003])
+  }
+
   func testAutoSaveRejectsUnknownFirmwareBeforeModeSetup() async throws {
     for firmware in ["1.31", "1.33", ""] {
       let channel = Replay(start(.xe3, firmware) + [.read(0x1003)])
@@ -382,6 +434,59 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
     }
   }
 
+  func testConflictingXAppCardObservationsBlockBothCardOrdersAndSplitPairMembers() async throws {
+    let raf = object("DSCF0044.RAF", format: 0xb103, bytes: 5)
+    let jpeg = object("DSCF0044.JPG", format: 0x3801, bytes: 3)
+    for (first, second) in [(UInt32(2), UInt32(0)), (0, 2)] {
+      let channel = Replay(start(.xt5, "4.32") + xappSetup + card([44])
+        + [.property(0xd226, word(first, 2)), .read(0x1008, [44], raf), .write(0xd244, [2])]
+        + card([45], storage: 2)
+        + [.property(0xd226, word(second, 2)), .read(0x1008, [45], jpeg), .read(0x1003)],
+        optionalReads: [.property(0xd226, word(second, 2))])
+      let session = XAppTransferAdapter.makeSession(
+        transport: .init(channel: channel), expectedIdentity: identity(.xt5),
+        clientGUID: Data(repeating: 1, count: 16))
+      _ = try await session.open()
+      let stream = try await session.enumerate()
+      var files: [WirelessObjectDescriptor] = []
+      for try await batch in stream { files += batch.objects }
+      XCTAssertEqual(files.map(\.storageID), [1, 2])
+      let capabilities = try await session.capabilities()
+      XCTAssertFalse(capabilities.originalSizeVerified)
+      XCTAssertEqual(capabilities.originalSizeFailure, .inconsistentOriginalSizeObservations)
+      let writesBeforeDownload = await channel.operations
+      for file in files {
+        await expect(.inconsistentOriginalSizeObservations) {
+          try await session.download(file) { _ in XCTFail("Conflicting original evidence reached the sink") }
+        }
+      }
+      let writesAfterDownload = await channel.operations
+      XCTAssertEqual(writesAfterDownload, writesBeforeDownload)
+      try await session.close()
+    }
+  }
+
+  func testInvalidXAppOriginalRequestDoesNotReadControlOrObject() async throws {
+    for (format, bytes, limit) in [(UInt32(0xb981), UInt32(3), UInt32(5)), (0xb103, 0, 5), (0xb103, 3, 0)] {
+      let channel = Replay(start(.xt5, "4.32") + xappSetup + card([44])
+        + [.property(0xd226, word(2, 2)),
+           .read(0x1008, [44], object("DSCF0044.RAF", format: format, bytes: bytes)), .read(0x1003)],
+        optionalReads: [.property(0xd226, word(2, 2))])
+      let session = XAppTransferAdapter.makeSession(
+        transport: .init(channel: channel, maximumPartialObjectBytes: limit),
+        expectedIdentity: identity(.xt5), clientGUID: Data(repeating: 1, count: 16))
+      _ = try await session.open()
+      let file = try await firstFile(session)
+      let before = await channel.operations
+      await expect(.unsupportedProtocol) {
+        try await session.download(file) { _ in XCTFail("Invalid original request reached the sink") }
+      }
+      let after = await channel.operations
+      XCTAssertEqual(after, before)
+      try await session.close()
+    }
+  }
+
   private func identity(_ model: WirelessCameraModel) -> WirelessIdentity {
     .init(cameraID: WirelessCameraID(), model: model, firmware: model == .xt5 ? "4.32" : "1.32")
   }
@@ -476,6 +581,16 @@ private actor Replay: WirelessByteChannel {
   private var transaction: UInt32 = 1
   private var waitingForData = false
   private var waitingForSizeControl = false
+  private var d227EnableReply: AsyncStream<Void>.Continuation?
+  private var holdD227EnableRead = false
+  private var resumeD227Read: CheckedContinuation<Void, Never>?
+
+  func holdNextD227EnableReply(_ reply: AsyncStream<Void>.Continuation) { d227EnableReply = reply }
+
+  func resumeD227EnableReply() {
+    resumeD227Read?.resume()
+    resumeD227Read = nil
+  }
   private var objectReads = 0
   private(set) var sizeControls: [UInt8] = []
   private(set) var operations: [UInt16] = []
@@ -555,6 +670,9 @@ private actor Replay: WirelessByteChannel {
       respond(.read(0x1008, step.parameters, info))
       return
     }
+    if d227EnableReply != nil, step.parameters == [0xd227], step.outbound == Data([1, 0]) {
+      holdD227EnableRead = true
+    }
     respond(step)
   }
 
@@ -566,6 +684,15 @@ private actor Replay: WirelessByteChannel {
   }
 
   func read(maximumBytes: Int) async throws -> Data {
+    if holdD227EnableRead, let d227EnableReply {
+      holdD227EnableRead = false
+      self.d227EnableReply = nil
+      await withCheckedContinuation { continuation in
+        resumeD227Read = continuation
+        d227EnableReply.yield()
+        d227EnableReply.finish()
+      }
+    }
     let result = Data(buffer.prefix(maximumBytes))
     buffer.removeFirst(result.count)
     return result
@@ -591,4 +718,13 @@ private func string(_ value: String) -> Data {
   guard !value.isEmpty else { return Data([0]) }
   return Data([UInt8(value.utf16.count + 1)])
     + value.utf16.reduce(into: Data()) { $0 += word(UInt32($1), 2) } + Data([0, 0])
+}
+
+private func occupySession(
+  _ session: isolated CameraHostedTransferSession,
+  entered: AsyncStream<Void>.Continuation, resume: DispatchSemaphore
+) {
+  entered.yield()
+  entered.finish()
+  XCTAssertEqual(resume.wait(timeout: .now() + 5), .success)
 }

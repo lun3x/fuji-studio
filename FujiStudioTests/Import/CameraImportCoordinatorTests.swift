@@ -243,6 +243,85 @@ final class CameraImportCoordinatorTests: XCTestCase {
         XCTAssertEqual(discarded.captures.map(\.stage), [.imported, .skipped, .skipped])
     }
 
+    func testUnresolvedSaveBlocksAlternatePolicyForTheSameVerifiedRAW() async throws {
+        for initialPair in [true, false] {
+            for changedRAW in [false, true] {
+                let harness = try CameraImportHarness()
+                defer { harness.fixture.cleanUp() }
+                let initial = harness.selection(1, pair: initialPair)
+                await harness.photos.setNextOutcome(.uncertain(assetID: "possible-save"))
+                let oldLoan = UUID()
+                let pendingID = try await harness.coordinator.start(
+                    [initial], session: harness.session([initial]), loanID: oldLoan)
+                let pending = await importEvent(harness.coordinator, jobID: pendingID) { !$0.isRunning }
+                XCTAssertEqual(pending?.pauseReason, .unresolvedSave)
+                await harness.coordinator.retireLoan(oldLoan, reason: .connectionLost)
+
+                let alternate = harness.selection(1, pair: !initialPair, sessionID: UUID(), handleOffset: 100)
+                let session = harness.session([alternate], changedRAW: changedRAW)
+                let alternateID = try await harness.coordinator.start([alternate], session: session)
+                let settled = await importEvent(harness.coordinator, jobID: alternateID) { !$0.isRunning }
+                let handles = await session.handles
+                let creates = await harness.photos.submittedPaths.count
+                let preserved = try await harness.job(pendingID)
+                XCTAssertEqual(handles, alternate.descriptors.map(\.handle))
+                XCTAssertEqual(creates, changedRAW ? 2 : 1)
+                XCTAssertEqual(settled?.receipts.count, changedRAW ? 1 : 0)
+                XCTAssertEqual(settled?.pauseReason, changedRAW ? nil : .earlierSaveUnresolved)
+                XCTAssertTrue(preserved.captures[0].stage.mayHaveSubmitted)
+                XCTAssertEqual(preserved.captures[0].originals.count, initial.descriptors.count)
+                if !changedRAW {
+                    let verifiedEarlierResources = preserved.captures[0].originals.map { original in
+                        ImportedResourceFingerprint(role: initialPair && original.role == .raf ? .alternate : .primary,
+                            format: original.role, originalFilename: original.originalFilename,
+                            byteCount: original.byteCount, sha256: original.sha256)
+                    }
+                    await harness.photos.setInspection(
+                        .found(.init(assetID: "possible-save", originals: verifiedEarlierResources)), for: "possible-save")
+                    await harness.coordinator.reconcile()
+                    let verified = try await harness.job(pendingID)
+                    XCTAssertEqual(verified.captures[0].receipt?.assetID, "possible-save")
+
+                    try await harness.coordinator.retryCapture(jobID: alternateID, usingLoanID: nil)
+                    let retried = await importEvent(harness.coordinator, jobID: alternateID) {
+                        !$0.isRunning && $0.runID != settled?.runID
+                    }
+                    let submissions = await harness.photos.submittedPaths.count
+                    XCTAssertEqual(submissions, 2)
+                    XCTAssertEqual(retried?.receipts.first?.assetID, "asset-2")
+                }
+            }
+        }
+    }
+
+    func testUnresolvedPairStillAllowsReuseOfAnExactVerifiedRAWOnlyReceipt() async throws {
+        let harness = try CameraImportHarness()
+        defer { harness.fixture.cleanUp() }
+
+        let original = harness.selection(1, pair: false)
+        let originalID = try await harness.coordinator.start([original], session: harness.session([original]))
+        let imported = await importEvent(harness.coordinator, jobID: originalID) { !$0.isRunning }
+        XCTAssertEqual(imported?.receipts.first?.assetID, "asset-1")
+
+        let pair = harness.selection(1, sessionID: UUID(), handleOffset: 100)
+        let loan = UUID()
+        await harness.photos.setNextOutcome(.uncertain(assetID: "uncertain-pair"))
+        let pendingID = try await harness.coordinator.start([pair], session: harness.session([pair]), loanID: loan)
+        let pending = await importEvent(harness.coordinator, jobID: pendingID) { !$0.isRunning }
+        XCTAssertEqual(pending?.pauseReason, .unresolvedSave)
+        await harness.coordinator.retireLoan(loan, reason: .connectionLost)
+
+        let repeated = harness.selection(1, pair: false, sessionID: UUID(), handleOffset: 200)
+        let repeatedID = try await harness.coordinator.start([repeated], session: harness.session([repeated]))
+        let reused = await importEvent(harness.coordinator, jobID: repeatedID) { !$0.isRunning }
+        XCTAssertEqual(reused?.receipts.first?.assetID, "asset-1")
+        let submissions = await harness.photos.submittedPaths.count
+        XCTAssertEqual(submissions, 2)
+        let retained = try await harness.job(pendingID)
+        XCTAssertTrue(retained.captures[0].stage.mayHaveSubmitted)
+        XCTAssertEqual(retained.captures[0].originals.count, 2)
+    }
+
     func testCancelWaitsForAlreadySubmittedSaveAndAcceptsVerifiedResult() async throws {
         let harness = try CameraImportHarness()
         defer { harness.fixture.cleanUp() }
