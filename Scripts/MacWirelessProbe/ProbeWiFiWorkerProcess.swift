@@ -13,7 +13,9 @@ final class ProbeWiFiWorkerProcess {
   private var deadline: Task<Void, Never>?
   private var interruption: (any Error)?
 
-  func run(executable: URL, arguments: [String], input: Data, timeout: Duration) async throws -> Data {
+  func run(
+    executable: URL, arguments: [String], input: Data, timeout: Duration, discardOutput: Bool = false
+  ) async throws -> Data {
     guard process == nil, input.count <= Self.maximumBytes else {
       throw ProbeWiFiWorkerFailure.invalidWorkerRequest
     }
@@ -22,7 +24,7 @@ final class ProbeWiFiWorkerProcess {
       try Task.checkCancellation()
       return try await withCheckedThrowingContinuation { continuation in
         start(id: id, executable: executable, arguments: arguments, input: input,
-          timeout: timeout, continuation: continuation)
+          timeout: timeout, discardOutput: discardOutput, continuation: continuation)
       }
     } onCancel: {
       Task { @MainActor in self.interrupt(id, CancellationError()) }
@@ -30,7 +32,7 @@ final class ProbeWiFiWorkerProcess {
   }
 
   private func start(
-    id: UUID, executable: URL, arguments: [String], input: Data, timeout: Duration,
+    id: UUID, executable: URL, arguments: [String], input: Data, timeout: Duration, discardOutput: Bool,
     continuation: CheckedContinuation<Data, any Error>
   ) {
     let inputPipe = Pipe()
@@ -38,8 +40,9 @@ final class ProbeWiFiWorkerProcess {
     let child = Process()
     child.executableURL = executable
     child.arguments = arguments
+    child.environment = [:]
     child.standardInput = inputPipe
-    child.standardOutput = outputPipe
+    child.standardOutput = discardOutput ? FileHandle.nullDevice : outputPipe
     child.standardError = FileHandle.nullDevice
     child.terminationHandler = { [weak self] process in
       let status = process.terminationStatus
@@ -60,7 +63,7 @@ final class ProbeWiFiWorkerProcess {
     process = child
     operationID = id
     self.continuation = continuation
-    output = outputPipe.fileHandleForReading
+    output = discardOutput ? nil : outputPipe.fileHandleForReading
     try? inputPipe.fileHandleForReading.close()
     try? outputPipe.fileHandleForWriting.close()
     deadline = Task { [weak self] in
@@ -76,9 +79,9 @@ final class ProbeWiFiWorkerProcess {
   }
 
   private func receiveExit(_ id: UUID, status: Int32) {
-    guard operationID == id, let continuation, let output else { return }
+    guard operationID == id, let continuation else { return }
     defer {
-      try? output.close()
+      try? output?.close()
       self.continuation = nil
       self.output = nil
       deadline?.cancel()
@@ -89,8 +92,13 @@ final class ProbeWiFiWorkerProcess {
     }
     if let interruption {
       continuation.resume(throwing: interruption)
-    } else if status == 0, let response = try? Self.readBounded(from: output) {
-      continuation.resume(returning: response)
+    } else if status == 0 {
+      if let output {
+        do { continuation.resume(returning: try Self.readBounded(from: output)) }
+        catch { continuation.resume(throwing: ProbeWiFiWorkerFailure.invalidWorkerResponse) }
+      } else {
+        continuation.resume(returning: Data())
+      }
     } else {
       continuation.resume(throwing: ProbeWiFiWorkerFailure.invalidWorkerResponse)
     }

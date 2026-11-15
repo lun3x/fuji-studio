@@ -4,21 +4,36 @@ import Foundation
 import Network
 import SystemConfiguration
 
-struct ProbeWiFiSnapshot: Codable, Sendable {
+struct ProbeWiFiSnapshot: Codable, Equatable, Sendable {
   let interface: String
   let ssid: Data
+  let primaryRouter: String?
+
+  init(interface: String, ssid: Data, primaryRouter: String? = nil) {
+    self.interface = interface
+    self.ssid = ssid
+    self.primaryRouter = primaryRouter
+  }
+
+  var savedNetworkName: String? {
+    guard (1...32).contains(ssid.count), let name = String(data: ssid, encoding: .utf8),
+      !name.utf8.contains(0)
+    else { return nil }
+    return name
+  }
 }
 
 enum ProbeWiFiWorkerFailure: String, Codable, Error {
   case invalidWorkerRequest, workerUnavailable, workerTimedOut, invalidWorkerResponse
   case currentWiFiUnavailable, currentWiFiNotRemembered, wiredRouteUnavailable
   case associationChanged, cameraNetworkUnavailable, cameraAssociationFailed, restoreUnverified
+  case wifiRouteUnavailable, internetCheckFailed, restoreRehearsalRequired, associationGapUnobserved
 
   /// These join-worker results arise before calling the native association API.
   var stoppedBeforeAssociation: Bool {
     switch self {
     case .invalidWorkerRequest, .workerUnavailable, .currentWiFiUnavailable,
-      .wiredRouteUnavailable, .associationChanged, .cameraNetworkUnavailable:
+      .wiredRouteUnavailable, .wifiRouteUnavailable, .associationChanged, .cameraNetworkUnavailable:
       true
     default:
       false
@@ -26,12 +41,19 @@ enum ProbeWiFiWorkerFailure: String, Codable, Error {
   }
 }
 
+enum ProbeCameraWiFiRoute: Codable {
+  case wired(String), wifiOnly
+}
+
 enum ProbeWiFiWorkerRequest: Codable {
   case snapshot
   case scan(ProbeWiFiSnapshot, cameraSSID: Data)
-  case join(ProbeWiFiSnapshot, cameraSSID: Data, password: String, wiredInterface: String)
+  case join(ProbeWiFiSnapshot, cameraSSID: Data, password: String, route: ProbeCameraWiFiRoute)
   case verify(ProbeWiFiSnapshot, cameraSSID: Data)
   case restore(ProbeWiFiSnapshot, cameraSSID: Data)
+  case rehearsalGap(ProbeWiFiSnapshot)
+  case releaseCameraForRestore(ProbeWiFiSnapshot, cameraSSID: Data)
+  case verifyPrevious(ProbeWiFiSnapshot)
 }
 
 enum ProbeWiFiWorkerReply: Codable {
@@ -45,14 +67,14 @@ protocol ProbeWiFiAssociating {
   func snapshot() async throws -> ProbeWiFiSnapshot
   func scan(from original: ProbeWiFiSnapshot, cameraSSID: Data) async throws
   func join(
-    from original: ProbeWiFiSnapshot, cameraSSID: Data, password: String, wiredInterface: String
+    from original: ProbeWiFiSnapshot, cameraSSID: Data, password: String, route: ProbeCameraWiFiRoute
   ) async throws
   func verify(_ original: ProbeWiFiSnapshot, cameraSSID: Data) async throws
   func restore(_ original: ProbeWiFiSnapshot, cameraSSID: Data) async throws
 }
 
 @MainActor
-struct ProbeMacWiFiAssociation: ProbeWiFiAssociating {
+struct ProbeMacWiFiAssociation: ProbeWiFiOnlyAssociating {
   func snapshot() async throws -> ProbeWiFiSnapshot {
     let reply = try await call(.snapshot, timeout: .seconds(4))
     guard case .snapshot(let original) = reply else { throw ProbeWiFiWorkerFailure.invalidWorkerResponse }
@@ -64,10 +86,10 @@ struct ProbeMacWiFiAssociation: ProbeWiFiAssociating {
   }
 
   func join(
-    from original: ProbeWiFiSnapshot, cameraSSID: Data, password: String, wiredInterface: String
+    from original: ProbeWiFiSnapshot, cameraSSID: Data, password: String, route: ProbeCameraWiFiRoute
   ) async throws {
     try await complete(.join(original, cameraSSID: cameraSSID, password: password,
-      wiredInterface: wiredInterface), timeout: .seconds(15))
+      route: route), timeout: .seconds(15))
   }
 
   func verify(_ original: ProbeWiFiSnapshot, cameraSSID: Data) async throws {
@@ -76,6 +98,44 @@ struct ProbeMacWiFiAssociation: ProbeWiFiAssociating {
 
   func restore(_ original: ProbeWiFiSnapshot, cameraSSID: Data) async throws {
     try await complete(.restore(original, cameraSSID: cameraSSID), timeout: .seconds(12))
+  }
+
+  func checkInternet(_ original: ProbeWiFiSnapshot) async throws {
+    guard ProbeWiredRoute.isPrimaryWiFi(original) else {
+      throw ProbeWiFiWorkerFailure.wifiRouteUnavailable
+    }
+    let output = try await ProbeWiFiWorkerProcess().run(
+      executable: URL(filePath: "/usr/bin/curl"), arguments: [
+        "-q", "--noproxy", "*", "--proto", "=https", "--ipv4", "--interface", original.interface,
+        "--connect-timeout", "2", "--max-time", "4", "--retry", "0", "--fail", "--silent",
+        "--output", "/dev/null", "--write-out", "%{http_code}", "https://www.apple.com/",
+      ], input: Data(), timeout: .seconds(5))
+    guard output.count == 3, let status = Int(String(decoding: output, as: UTF8.self)),
+      (200..<300).contains(status)
+    else { throw ProbeWiFiWorkerFailure.internetCheckFailed }
+    guard ProbeWiredRoute.isPrimaryWiFi(original) else {
+      throw ProbeWiFiWorkerFailure.wifiRouteUnavailable
+    }
+  }
+
+  func rehearsalGap(_ original: ProbeWiFiSnapshot) async throws {
+    try await complete(.rehearsalGap(original), timeout: .seconds(5))
+  }
+
+  func releaseCameraForRestore(_ original: ProbeWiFiSnapshot, cameraSSID: Data) async throws {
+    try await complete(.releaseCameraForRestore(original, cameraSSID: cameraSSID), timeout: .seconds(5))
+  }
+
+  func reassociateSaved(_ original: ProbeWiFiSnapshot) async throws {
+    guard let executable = Bundle.main.executableURL, let input = try? JSONEncoder().encode(original)
+    else { throw ProbeWiFiWorkerFailure.workerUnavailable }
+    _ = try await ProbeWiFiWorkerProcess().run(
+      executable: executable, arguments: ["--wifi-reassociate"], input: input,
+      timeout: .seconds(10), discardOutput: true)
+  }
+
+  func verifyPrevious(_ original: ProbeWiFiSnapshot) async throws {
+    try await complete(.verifyPrevious(original), timeout: .seconds(12))
   }
 
   private func complete(_ request: ProbeWiFiWorkerRequest, timeout: Duration) async throws {
@@ -98,12 +158,20 @@ struct ProbeMacWiFiAssociation: ProbeWiFiAssociating {
 }
 
 enum ProbeWiredRoute {
-  static func primaryIPv4Interface() -> String? {
+  static func primaryIPv4() -> (interface: String, router: String)? {
     guard let route = SCDynamicStoreCopyValue(nil, "State:/Network/Global/IPv4" as CFString)
       as? [String: Any],
-      let router = route[kSCPropNetIPv4Router as String] as? String, IPv4Address(router) != nil
+      let router = route[kSCPropNetIPv4Router as String] as? String, IPv4Address(router) != nil,
+      let interface = route[kSCDynamicStorePropNetPrimaryInterface as String] as? String
     else { return nil }
-    return route[kSCDynamicStorePropNetPrimaryInterface as String] as? String
+    return (interface, router)
+  }
+
+  static func primaryIPv4Interface() -> String? { primaryIPv4()?.interface }
+
+  static func isPrimaryWiFi(_ original: ProbeWiFiSnapshot) -> Bool {
+    guard let route = primaryIPv4(), let expectedRouter = original.primaryRouter else { return false }
+    return route.interface == original.interface && route.router == expectedRouter
   }
 
   static func detect() async -> String? {
@@ -133,6 +201,23 @@ enum ProbeWiredRoute {
 }
 
 enum ProbeMacWiFiWorker {
+  // The parent supervises this same PID after exec. The saved SSID is the only
+  // private argument passed to Apple's utility, and no password is supplied.
+  static func reassociate() -> Int32 {
+    guard let input = try? ProbeWiFiWorkerProcess.readBounded(from: .standardInput),
+      let original = try? JSONDecoder().decode(ProbeWiFiSnapshot.self, from: input),
+      let name = original.savedNetworkName,
+      let interface = try? originalInterface(original), interface.ssidData() == nil
+    else { return 2 }
+    let executable = "/usr/sbin/networksetup"
+    var arguments = [executable, "-setairportnetwork", original.interface, name].map { strdup($0) }
+    guard arguments.allSatisfy({ $0 != nil }) else { return 2 }
+    arguments.append(nil)
+    defer { for argument in arguments { free(argument) } }
+    _ = execv(executable, &arguments)
+    return 2
+  }
+
   static func main() -> Int32 {
     let reply: ProbeWiFiWorkerReply
     do {
@@ -166,21 +251,28 @@ enum ProbeMacWiFiWorker {
       guard let profiles = interface.configuration()?.networkProfiles,
         profiles.contains(where: { ($0 as? CWNetworkProfile)?.ssidData == ssid })
       else { throw ProbeWiFiWorkerFailure.currentWiFiNotRemembered }
-      return .snapshot(ProbeWiFiSnapshot(interface: name, ssid: ssid))
+      let route = ProbeWiredRoute.primaryIPv4()
+      let router = route?.interface == name ? route?.router : nil
+      return .snapshot(ProbeWiFiSnapshot(interface: name, ssid: ssid, primaryRouter: router))
     case .scan(let original, let cameraSSID):
       let interface = try scopedInterface(original, cameraSSID: cameraSSID)
       guard interface.ssidData() == original.ssid else { throw ProbeWiFiWorkerFailure.associationChanged }
       _ = try cameraNetwork(interface, cameraSSID: cameraSSID)
       return .completed
-    case .join(let original, let cameraSSID, let password, let wiredInterface):
+    case .join(let original, let cameraSSID, let password, let route):
       let interface = try scopedInterface(original, cameraSSID: cameraSSID)
-      guard (8...63).contains(password.utf8.count), original.interface != wiredInterface else {
+      guard (8...63).contains(password.utf8.count) else {
         throw ProbeWiFiWorkerFailure.invalidWorkerRequest
       }
       guard interface.ssidData() == original.ssid else { throw ProbeWiFiWorkerFailure.associationChanged }
       let camera = try cameraNetwork(interface, cameraSSID: cameraSSID)
-      guard ProbeWiredRoute.primaryIPv4Interface() == wiredInterface else {
-        throw ProbeWiFiWorkerFailure.wiredRouteUnavailable
+      switch route {
+      case .wired(let wiredInterface):
+        guard wiredInterface != original.interface, ProbeWiredRoute.primaryIPv4Interface() == wiredInterface
+        else { throw ProbeWiFiWorkerFailure.wiredRouteUnavailable }
+      case .wifiOnly:
+        guard ProbeWiredRoute.isPrimaryWiFi(original)
+        else { throw ProbeWiFiWorkerFailure.wifiRouteUnavailable }
       }
       guard interface.ssidData() == original.ssid else { throw ProbeWiFiWorkerFailure.associationChanged }
       do {
@@ -194,6 +286,46 @@ enum ProbeMacWiFiWorker {
       let interface = try scopedInterface(original, cameraSSID: cameraSSID)
       guard interface.ssidData() == cameraSSID else { throw ProbeWiFiWorkerFailure.associationChanged }
       return .completed
+    case .rehearsalGap(let original):
+      let interface = try originalInterface(original)
+      guard interface.ssidData() == original.ssid else { throw ProbeWiFiWorkerFailure.associationChanged }
+      guard ProbeWiredRoute.isPrimaryWiFi(original)
+      else { throw ProbeWiFiWorkerFailure.wifiRouteUnavailable }
+      interface.disassociate()
+      let deadline = ContinuousClock.now + .seconds(2)
+      repeat {
+        if interface.ssidData() == nil { return .completed }
+        Thread.sleep(forTimeInterval: 0.05)
+      } while ContinuousClock.now < deadline
+      throw ProbeWiFiWorkerFailure.associationGapUnobserved
+    case .releaseCameraForRestore(let original, let cameraSSID):
+      let interface = try scopedInterface(original, cameraSSID: cameraSSID)
+      let current = interface.ssidData()
+      if current == cameraSSID {
+        interface.disassociate()
+        let deadline = ContinuousClock.now + .seconds(2)
+        while interface.ssidData() == cameraSSID {
+          guard ContinuousClock.now < deadline else { throw ProbeWiFiWorkerFailure.restoreUnverified }
+          Thread.sleep(forTimeInterval: 0.05)
+        }
+      }
+      else if current != nil && current != original.ssid { throw ProbeWiFiWorkerFailure.restoreUnverified }
+      return .completed
+    case .verifyPrevious(let original):
+      let interface = try originalInterface(original)
+      let deadline = ContinuousClock.now + .seconds(8)
+      var firstMatch: ContinuousClock.Instant?
+      repeat {
+        let current = interface.ssidData()
+        if current == original.ssid {
+          if let firstMatch, ContinuousClock.now - firstMatch >= .seconds(1) { return .completed }
+          if firstMatch == nil { firstMatch = .now }
+        } else {
+          firstMatch = nil
+        }
+        Thread.sleep(forTimeInterval: 0.2)
+      } while ContinuousClock.now < deadline
+      throw ProbeWiFiWorkerFailure.restoreUnverified
     case .restore(let original, let cameraSSID):
       let interface = try scopedInterface(original, cameraSSID: cameraSSID)
       let deadline = ContinuousClock.now + .seconds(8)
@@ -224,8 +356,13 @@ enum ProbeMacWiFiWorker {
 
   private static func scopedInterface(_ original: ProbeWiFiSnapshot, cameraSSID: Data) throws -> CWInterface {
     guard (1...32).contains(original.ssid.count), (1...32).contains(cameraSSID.count),
-      cameraSSID != original.ssid,
-      let interface = CWWiFiClient.shared().interface(withName: original.interface),
+      cameraSSID != original.ssid
+    else { throw ProbeWiFiWorkerFailure.currentWiFiUnavailable }
+    return try originalInterface(original)
+  }
+
+  private static func originalInterface(_ original: ProbeWiFiSnapshot) throws -> CWInterface {
+    guard let interface = CWWiFiClient.shared().interface(withName: original.interface),
       interface.powerOn(), interface.serviceActive()
     else { throw ProbeWiFiWorkerFailure.currentWiFiUnavailable }
     return interface

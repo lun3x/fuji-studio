@@ -30,6 +30,7 @@ enum ProbePTPIdentity {
     credentials: any CameraNetworkCredentialProvider,
     association: any ProbeWiFiAssociating,
     wiredRoute: () async -> String?,
+    wifiOnly: (receipt: ProbeWiFiOnlyReceipt, association: any ProbeWiFiOnlyAssociating)? = nil,
     isCurrent: () -> Bool,
     ptpTimeout: Duration = .seconds(20),
     makeSession: @escaping @Sendable (WirelessIdentity) async throws -> any WirelessTransferSession
@@ -46,19 +47,33 @@ enum ProbePTPIdentity {
       else { throw WirelessFailure.peerMismatch }
       try checkFirmware(currentIdentity)
 
-      guard await wiredRoute() != nil else { throw ProbeWiFiWorkerFailure.wiredRouteUnavailable }
-      let original = try await association.snapshot()
+      let original: ProbeWiFiSnapshot
+      if let wifiOnly {
+        original = try await ProbeWiFiOnlyRecovery.preflight(wifiOnly.association)
+        try wifiOnly.receipt.validate(original)
+      } else {
+        guard await wiredRoute() != nil else { throw ProbeWiFiWorkerFailure.wiredRouteUnavailable }
+        original = try await association.snapshot()
+      }
       try checkAttempt(isCurrent)
       guard original.ssid != cameraSSID else { throw ProbeWiFiWorkerFailure.associationChanged }
       try await association.scan(from: original, cameraSSID: cameraSSID)
       try checkAttempt(isCurrent)
       let password = try await credentials.password(for: receipt.network.credential)
-      guard let wiredInterface = await wiredRoute() else { throw ProbeWiFiWorkerFailure.wiredRouteUnavailable }
+      let route: ProbeCameraWiFiRoute
+      if let wifiOnly {
+        try await wifiOnly.association.checkInternet(original)
+        try wifiOnly.receipt.validate(try await wifiOnly.association.snapshot())
+        route = .wifiOnly
+      } else {
+        guard let wiredInterface = await wiredRoute() else { throw ProbeWiFiWorkerFailure.wiredRouteUnavailable }
+        route = .wired(wiredInterface)
+      }
       try checkAttempt(isCurrent)
 
       recovery = original
       do {
-        try await association.join(from: original, cameraSSID: cameraSSID, password: password, wiredInterface: wiredInterface)
+        try await association.join(from: original, cameraSSID: cameraSSID, password: password, route: route)
       } catch let failure as ProbeWiFiWorkerFailure where failure.stoppedBeforeAssociation {
         recovery = nil
         throw failure
@@ -86,7 +101,15 @@ enum ProbePTPIdentity {
     if let recovery {
       // The enclosing task may have been cancelled after association changed.
       // The independent cleanup must still run after the failed operation retired.
-      let restore = Task { try await association.restore(recovery, cameraSSID: cameraSSID) }
+      let restore = Task {
+        if let wifiOnly {
+          let restored = await ProbeWiFiOnlyRecovery.restore(
+            wifiOnly.association, original: recovery, cameraSSID: cameraSSID)
+          guard restored.verified else { throw ProbeWiFiWorkerFailure.restoreUnverified }
+        } else {
+          try await association.restore(recovery, cameraSSID: cameraSSID)
+        }
+      }
       do {
         try await restore.value
         report.restoration = .previousAssociationObserved

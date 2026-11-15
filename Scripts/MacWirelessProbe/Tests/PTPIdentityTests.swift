@@ -139,7 +139,84 @@ private struct PTPIdentityTests {
     precondition(stalledPTP.steps.suffix(3) == ["open", "close", "restore"])
     print("PTP identity admission, selected-link loss, timeout, socket close, and restoration checks passed.")
 
+    try await checkWiFiOnlyRecovery()
     try await checkWorkerSupervision()
+  }
+
+  private static func checkWiFiOnlyRecovery() async throws {
+    let normal = Scenario()
+    var rehearsed = await ProbeWiFiOnlyRecovery.rehearse(normal)
+    precondition(rehearsed.outcome == "restoreRehearsalVerified" && rehearsed.gapObserved)
+    precondition(rehearsed.exactRestoreCommandCompleted && rehearsed.restorationVerified)
+    precondition(normal.steps == ["capture", "internet", "capture", "gap", "saved rejoin", "verify previous", "internet", "capture"])
+    let receipt = rehearsed.takeReceipt()!
+    precondition(rehearsed.takeReceipt() == nil)
+    try receipt.validate(normal.original)
+
+    let expired = Scenario()
+    let expiredReceipt = ProbeWiFiOnlyReceipt(original: expired.original, expiresAt: .now - .seconds(1))
+    let old = await expired.run(wifiOnly: expiredReceipt)
+    precondition(old.outcome == "restoreRehearsalRequired" && !expired.steps.contains("join"))
+
+    let changed = Scenario()
+    let unrelated = ProbeWiFiSnapshot(interface: changed.original.interface, ssid: changed.original.ssid, primaryRouter: "changed")
+    changed.snapshotOverride = unrelated
+    let replaced = await changed.run(wifiOnly: receipt)
+    precondition(replaced.outcome == "restoreRehearsalRequired" && !changed.steps.contains("join"))
+
+    let noGap = Scenario()
+    noGap.gapError = ProbeWiFiWorkerFailure.associationGapUnobserved
+    let noOp = await ProbeWiFiOnlyRecovery.rehearse(noGap)
+    precondition(noOp.outcome == "associationGapUnobserved" && !noOp.gapObserved && noOp.receipt == nil)
+    precondition(noOp.restorationVerified)
+
+    let autoJoin = Scenario()
+    autoJoin.savedRejoinFails = true
+    let unproven = await ProbeWiFiOnlyRecovery.rehearse(autoJoin)
+    precondition(unproven.outcome == "exactRestoreUnproven" && unproven.restorationVerified && unproven.receipt == nil)
+
+    let late = Scenario()
+    late.cancelAtGap = true
+    let cancelled = await Task { await ProbeWiFiOnlyRecovery.rehearse(late) }.value
+    precondition(cancelled.outcome == "cancelled" && cancelled.restorationVerified && cancelled.receipt == nil)
+    precondition(late.steps.contains("saved rejoin"))
+
+    let timedOut = Scenario()
+    timedOut.gapError = ProbeWiFiWorkerFailure.workerTimedOut
+    let recovered = await ProbeWiFiOnlyRecovery.rehearse(timedOut)
+    precondition(recovered.outcome == "workerTimedOut" && recovered.restorationVerified && recovered.receipt == nil)
+
+    let restoreFails = Scenario()
+    restoreFails.previousVerificationFails = true
+    let failed = await ProbeWiFiOnlyRecovery.rehearse(restoreFails)
+    precondition(failed.outcome == "restoreUnverified" && failed.receipt == nil)
+
+    let unrelatedAssociation = Scenario()
+    unrelatedAssociation.releaseCameraFails = true
+    unrelatedAssociation.previousVerificationFails = true
+    let unrelatedResult = await unrelatedAssociation.run(wifiOnly: receipt)
+    precondition(unrelatedResult.restoration == .unverified && !unrelatedAssociation.steps.contains("saved rejoin"))
+
+    let interruptedRelease = Scenario()
+    interruptedRelease.releaseCameraError = ProbeWiFiWorkerFailure.workerTimedOut
+    let afterReleaseTimeOut = await interruptedRelease.run(wifiOnly: receipt)
+    precondition(afterReleaseTimeOut.restoration == .previousAssociationObserved)
+    precondition(interruptedRelease.steps.contains("saved rejoin"))
+
+    let offline = Scenario()
+    let result = await offline.run(wifiOnly: receipt)
+    precondition(result.verified && result.restoration == .previousAssociationObserved)
+    precondition(!offline.steps.contains("wired") && offline.steps.contains("wifi-only join"))
+    precondition(offline.steps.suffix(6) == ["verify target", "release camera", "saved rejoin", "verify previous", "internet", "capture"])
+
+    let redacted = Scenario()
+    redacted.gapError = NSError(domain: "synthetic-private", code: 1,
+      userInfo: [NSLocalizedDescriptionKey: "synthetic-private-SSID"])
+    let safe = await ProbeWiFiOnlyRecovery.rehearse(redacted)
+    precondition(safe.outcome == "unclassifiedError" && safe.receipt == nil)
+    precondition(ProbeWiFiSnapshot(interface: "wireless", ssid: Data([0x41, 0])).savedNetworkName == nil)
+    precondition(ProbeWiFiSnapshot(interface: "wireless", ssid: Data([0xff])).savedNetworkName == nil)
+    print("Wi-Fi-only rehearsal, one-use restore admission, cancellation, and redaction checks passed.")
   }
 
   private static func checkWorkerSupervision() async throws {
@@ -180,12 +257,14 @@ private struct PTPIdentityTests {
     } catch is CancellationError {}
     let afterReap = try await worker.run(executable: cat, arguments: [], input: data, timeout: .seconds(2))
     precondition(afterReap == data)
+    let discarded = try await worker.run(executable: cat, arguments: [], input: data, timeout: .seconds(2), discardOutput: true)
+    precondition(discarded.isEmpty)
     print("Private worker pipe bounds, parent deadline, cancellation, and reap checks passed.")
   }
 }
 
 @MainActor
-private final class Scenario: ProbeWiFiAssociating, CameraNetworkCredentialProvider, WirelessTransferSession {
+private final class Scenario: ProbeWiFiOnlyAssociating, CameraNetworkCredentialProvider, WirelessTransferSession {
   let camera = WirelessCameraID()
   let original = ProbeWiFiSnapshot(interface: "wireless", ssid: Data("original".utf8))
   let target = Data("synthetic-camera".utf8)
@@ -205,6 +284,13 @@ private final class Scenario: ProbeWiFiAssociating, CameraNetworkCredentialProvi
   var verifyCount = 0
   var observedFirmware = "04.31"
   var observedModel = WirelessCameraModel.xt5
+  var snapshotOverride: ProbeWiFiSnapshot?
+  var gapError: (any Error)?
+  var cancelAtGap = false
+  var savedRejoinFails = false
+  var previousVerificationFails = false
+  var releaseCameraFails = false
+  var releaseCameraError: (any Error)?
 
   var identity: WirelessIdentity { .init(cameraID: camera, model: .xt5, firmware: "4.31") }
 
@@ -212,7 +298,9 @@ private final class Scenario: ProbeWiFiAssociating, CameraNetworkCredentialProvi
     try await ProbePTPIdentity.preflight(association: self, wiredRoute: wiredRoute)
   }
 
-  func run(currentIdentity: WirelessIdentity? = nil, ptpTimeout: Duration = .seconds(20)) async -> ProbePTPIdentityReport {
+  func run(
+    currentIdentity: WirelessIdentity? = nil, ptpTimeout: Duration = .seconds(20), wifiOnly: ProbeWiFiOnlyReceipt? = nil
+  ) async -> ProbePTPIdentityReport {
     let receipt = ProbeReadyCameraNetwork(
       network: CameraNetwork(ssid: String(decoding: target, as: UTF8.self), security: .wpaPersonal,
         credential: CameraCredentialReference(cameraID: camera, version: UUID()), isHidden: true),
@@ -220,6 +308,7 @@ private final class Scenario: ProbeWiFiAssociating, CameraNetworkCredentialProvi
     return await ProbePTPIdentity.run(
       receipt, currentIdentity: currentIdentity ?? identity, credentials: self, association: self,
       wiredRoute: wiredRoute,
+      wifiOnly: wifiOnly.map { (receipt: $0, association: self) },
       isCurrent: { self.isCurrent }, ptpTimeout: ptpTimeout,
       makeSession: { identity in
         await self.makeSession(identity)
@@ -229,7 +318,7 @@ private final class Scenario: ProbeWiFiAssociating, CameraNetworkCredentialProvi
   func snapshot() async throws -> ProbeWiFiSnapshot {
     steps.append("capture")
     if cancelAtSnapshot { withUnsafeCurrentTask { $0?.cancel() } }
-    return original
+    return snapshotOverride ?? original
   }
 
   private func wiredRoute() async -> String? {
@@ -250,11 +339,15 @@ private final class Scenario: ProbeWiFiAssociating, CameraNetworkCredentialProvi
   }
 
   func join(
-    from original: ProbeWiFiSnapshot, cameraSSID: Data, password: String, wiredInterface: String
+    from original: ProbeWiFiSnapshot, cameraSSID: Data, password: String, route: ProbeCameraWiFiRoute
   ) async throws {
     precondition(original.ssid == self.original.ssid && cameraSSID == target)
-    precondition(password == "synthetic-password" && wiredInterface == "wired")
-    steps.append("join")
+    precondition(password == "synthetic-password")
+    switch route {
+    case .wired("wired"): steps.append("join")
+    case .wifiOnly: steps.append("wifi-only join")
+    default: preconditionFailure("Unexpected route")
+    }
     if let joinError { throw joinError }
     if cancelAtJoin {
       withUnsafeCurrentTask { $0?.cancel() }
@@ -275,6 +368,33 @@ private final class Scenario: ProbeWiFiAssociating, CameraNetworkCredentialProvi
     steps.append("restore")
     if revokeAtRestore { isCurrent = false }
     if restoreFails { throw ProbeWiFiWorkerFailure.restoreUnverified }
+  }
+
+  func checkInternet(_ original: ProbeWiFiSnapshot) async throws {
+    steps.append("internet")
+  }
+
+  func rehearsalGap(_ original: ProbeWiFiSnapshot) async throws {
+    steps.append("gap")
+    if let gapError { throw gapError }
+    if cancelAtGap { withUnsafeCurrentTask { $0?.cancel() } }
+  }
+
+  func releaseCameraForRestore(_ original: ProbeWiFiSnapshot, cameraSSID: Data) async throws {
+    steps.append("release camera")
+    if releaseCameraFails { throw ProbeWiFiWorkerFailure.restoreUnverified }
+    if let releaseCameraError { throw releaseCameraError }
+  }
+
+  func reassociateSaved(_ original: ProbeWiFiSnapshot) async throws {
+    precondition(!Task.isCancelled)
+    steps.append("saved rejoin")
+    if savedRejoinFails { throw ProbeWiFiWorkerFailure.workerUnavailable }
+  }
+
+  func verifyPrevious(_ original: ProbeWiFiSnapshot) async throws {
+    steps.append("verify previous")
+    if previousVerificationFails { throw ProbeWiFiWorkerFailure.restoreUnverified }
   }
 
   private func makeSession(_ expected: WirelessIdentity) -> any WirelessTransferSession {

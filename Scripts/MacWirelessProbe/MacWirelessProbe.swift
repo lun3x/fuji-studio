@@ -11,11 +11,11 @@ struct MacWirelessProbe {
   static func main() {
     umask(0o077)
     let arguments = CommandLine.arguments
-    if arguments == [arguments[0], "--wifi-worker"] {
+    if arguments.count == 2, ["--wifi-worker", "--wifi-reassociate"].contains(arguments[1]) {
       guard NSRunningApplication(processIdentifier: getppid())?.bundleURL?.resolvingSymlinksInPath()
         == Bundle.main.bundleURL.resolvingSymlinksInPath()
       else { exit(2) }
-      exit(ProbeMacWiFiWorker.main())
+      exit(arguments[1] == "--wifi-worker" ? ProbeMacWiFiWorker.main() : ProbeMacWiFiWorker.reassociate())
     }
     guard arguments.count == 3, arguments[1] == "--run-dir",
       let directory = try? RunDirectory(path: arguments[2])
@@ -36,7 +36,7 @@ struct MacWirelessProbe {
 private final class WirelessProbe: NSObject, NSApplicationDelegate {
   private enum Phase: String {
     case idle, discovering, pairing, observingSaved, reconnecting, linked, activatingWiFi, disconnecting, stopped
-    case checkingWiFi, probingPTP
+    case checkingWiFi, rehearsingRestore, probingPTP
   }
 
   private enum ReconnectMode: String {
@@ -68,6 +68,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
   private var savedModel: WirelessCameraModel?
   private var cameraNetwork: ProbeReadyCameraNetwork?
   private var ptpReport = ProbePTPIdentityReport()
+  private var restorationRehearsal = ProbeWiFiOnlyRehearsal()
   private let association = ProbeMacWiFiAssociation()
   private lazy var location = CLLocationManager()
   private var savedAdvertisement = SavedAdvertisementObservation()
@@ -225,7 +226,10 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
       case ("wifi", 1): activateWiFi()
       case ("wifi-image-viewing", 1): activateWiFi(imageViewing: true)
       case ("wifi-preflight", 1): preflightWiFi()
+      case ("wifi-only-preflight", 1): preflightWiFi(wifiOnly: true)
+      case ("wifi-restore-rehearsal", 1): rehearseWiFiRestore()
       case ("ptp-identity", 1): probePTPIdentity()
+      case ("ptp-identity-wifi-only", 1): probePTPIdentity(wifiOnly: true)
       case ("quit", 1): NSApp.terminate(nil)
       default: reject("unknown", "invalidCommand")
       }
@@ -446,8 +450,8 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
     }
   }
 
-  private func preflightWiFi() {
-    let command = "wifi-preflight"
+  private func preflightWiFi(wifiOnly: Bool = false) {
+    let command = wifiOnly ? "wifi-only-preflight" : "wifi-preflight"
     guard phase == .idle || phase == .linked else { return reject(command, "busy") }
     guard wifiLocationAllowed else {
       if location.authorizationStatus == .notDetermined {
@@ -460,7 +464,11 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
     operation = Task {
       let label: String
       do {
-        try await ProbePTPIdentity.preflight(association: association, wiredRoute: ProbeWiredRoute.detect)
+        if wifiOnly {
+          _ = try await ProbeWiFiOnlyRecovery.preflight(association)
+        } else {
+          try await ProbePTPIdentity.preflight(association: association, wiredRoute: ProbeWiredRoute.detect)
+        }
         label = "wifiPreflightReady"
       } catch {
         label = ProbePTPIdentity.failureLabel(error)
@@ -471,13 +479,37 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
     }
   }
 
-  private func probePTPIdentity() {
-    let command = "ptp-identity"
+  private func rehearseWiFiRestore() {
+    let command = "wifi-restore-rehearsal"
+    guard phase == .idle else { return reject(command, "disconnectCameraFirst") }
+    guard wifiLocationAllowed else { return reject(command, "locationPermissionRequired") }
+    restorationRehearsal = ProbeWiFiOnlyRehearsal()
+    begin(command, phase: .rehearsingRestore)
+    operation = Task {
+      restorationRehearsal = await ProbeWiFiOnlyRecovery.rehearse(association)
+      record("Wi-Fi restoration rehearsal outcome=\(restorationRehearsal.outcome)")
+      guard phase == .rehearsingRestore else { publish(); return }
+      operation = nil
+      finish(restorationRehearsal.outcome, phase: .idle)
+    }
+  }
+
+  private func probePTPIdentity(wifiOnly: Bool = false) {
+    let command = wifiOnly ? "ptp-identity-wifi-only" : "ptp-identity"
     guard phase == .linked, let camera = linkedCamera, let receipt = cameraNetwork,
       let session = registrationDriver.verifiedReadySession(for: camera.peripheralID),
       receipt.identity.cameraID == camera.id
     else { return reject(command, "connectCameraAndActivateWiFi") }
     guard wifiLocationAllowed else { return reject(command, "locationPermissionRequired") }
+    let restoreReceipt: ProbeWiFiOnlyReceipt?
+    if wifiOnly {
+      guard let recent = restorationRehearsal.takeReceipt() else {
+        return reject(command, "restoreRehearsalRequired")
+      }
+      restoreReceipt = recent
+    } else {
+      restoreReceipt = nil
+    }
     let guid = ptpClientGUID()
     cameraNetwork = nil
     ptpReport = ProbePTPIdentityReport(launch: receipt.launch)
@@ -490,6 +522,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
         report = await ProbePTPIdentity.run(
           receipt, currentIdentity: currentIdentity, credentials: store, association: association,
           wiredRoute: ProbeWiredRoute.detect,
+          wifiOnly: restoreReceipt.map { (receipt: $0, association: association) },
           isCurrent: { [self] in
             linkedCamera?.id == camera.id && selectionMatches(camera.id, phase: .probingPTP)
               && registrationDriver.verifiedReadySession(for: camera.peripheralID) == session
@@ -572,7 +605,7 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
     secureStatus.endAttempt()
     registrationDriver.endRegistrationObservation()
     cameraNetwork = nil
-    let restoringWiFi = phase == .probingPTP
+    let restoringWiFi = phase == .probingPTP || phase == .rehearsingRestore
     begin(shutdown ? "quit" : "disconnect", phase: .disconnecting)
     clearDiscovery()
     let previous = operation
@@ -639,6 +672,9 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
       "ptp_identity_verified=\(ptpReport.verified)",
       "ptp_firmware=\(ptpReport.firmware)",
       "wifi_restore=\(ptpReport.restoration.rawValue)",
+      "wifi_rehearsal_gap_observed=\(restorationRehearsal.gapObserved)",
+      "wifi_rehearsal_exact_restore_completed=\(restorationRehearsal.exactRestoreCommandCompleted)",
+      "wifi_rehearsal_restoration_verified=\(restorationRehearsal.restorationVerified)",
       "saved_advert_identity=\(savedAdvertisement.matchingIdentity)",
       "saved_advert_service=\(savedAdvertisement.matchingService)",
       "saved_advert_shape=\(savedAdvertisement.matchingShape)",
