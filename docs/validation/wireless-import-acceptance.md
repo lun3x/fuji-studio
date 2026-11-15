@@ -345,3 +345,19 @@ native connection was established. After the user selected BACK to return to
 shooting, saved reconnect succeeded without re-pairing. No PTP session or photo
 transfer was attempted. Subsequent tests will retain Bluetooth through WiFi
 session establishment. The `03 00` image-viewing launch remains untested.
+
+The production reconnect fix and Mac integration at `459fc731` subsequently
+passed the complete `Scripts/test-ios.sh` suite: 978 tests (866 unit and 112 UI),
+zero failures, and six opt-in skips. The expanded device summary counts 1,047
+passing instances. The Release simulator build also passed. The retained
+result is
+`/tmp/fuji-xt5-wifi-subscription.w6QW0c/.build/TestResults/20261115-153431-91003.xcresult`.
+
+The Mac-only identity diagnostic at `2af22413` passed six hardware-free checks
+and source review. Its signed app completed normal saved Bluetooth reconnect
+on the 04.31 body using the production subscription sequence. Its WiFi
+preflight requested macOS Location authorization to read network identifiers;
+that approval and the subsequent network association and PTP trial remain
+pending. A separately verified wired route preserves control during that
+planned trial. The diagnostic is limited to PTP initialization, opening a
+session, DeviceInfo, and session cleanup; it does not enumerate or read photos.
