@@ -390,3 +390,46 @@ does not support Access WiFi Information or Hotspot. Both builds exited 65
 before producing an installable app. An eligible Apple Developer Program team
 and profile are still required for this iPhone WiFi trial. No replacement app
 was installed, and no iPhone camera connection was attempted in this retry.
+
+### Manual iPhone diagnostic, 2026-11-15
+
+The user approved a temporary manual-join test with the Personal Team. The
+separate Debug build opens directly as Fuji Manual WiFi and omits the product's
+Hotspot and Access WiFi Information capabilities. Its network exchange is
+limited to WiFi-bound XApp initialization, OpenSession, DeviceInfo and cleanup.
+The user confirms the network in Settings; this diagnostic cannot independently
+verify the current SSID. The normal product entitlements and association gates
+are unchanged.
+
+The signed diagnostic at `32672108` installed and launched on the physical
+iPhone after strict signature verification. The first attempt read X-T5
+firmware `04.31`, then activation using `03 00` failed with the profile's
+`cameraBusy` result. Reading firmware and reaching the local authenticated
+state did not establish that the camera had saved a phone registration. The
+user subsequently completed phone pairing and explicitly confirmed successful
+registration on the camera. That attempt also returned `cameraBusy` during
+WiFi activation. No phone WiFi association, PTP identity or photo transfer was
+verified.
+
+The user observed two same-name saved app records and two camera destinations
+named Fuji Studio. Neither list's names establish which entry is current.
+The reviewed diagnostic at `73a40f69` uses the distinct Bluetooth identification
+name Fuji iPhone, separates Bluetooth setup from WiFi startup, and requires
+explicit user confirmation of the named camera destination. It labels local
+records separately and offers nearby reconnect only for one exact saved
+peripheral/model match, without deleting or merging records. Fourteen focused
+unit tests and the manual-flow UI test passed. Its signed bundle was verified,
+installed and launched. The user then removed both old camera destinations,
+forgot the camera on the phone, and completed a fresh pairing. The camera
+displayed Fuji iPhone, which the user confirmed in the diagnostic. The subsequent
+`03 00` activation still returned `cameraBusy` before any WiFi-ready result.
+The earlier Mac registration is no longer present after that user-initiated
+reset. The duplicate app records were not deleted by the diagnostic.
+
+The diagnostic at `407d9d03` uses the guarded standard `04 00` activation for
+the next controlled trial, retaining the named-registration and manual-join
+checks. Its 16 focused unit tests and UI test passed, and the signed build was
+verified, installed and launched. The standard command's iPhone hardware
+outcome is pending. The full simulator suite at the earlier `32672108` passed
+989 tests with zero failures and six skips (1,058 expanded passing instances).
+The task simulator and its test clones were removed after validation.
