@@ -46,6 +46,19 @@ final class ImportPhotoVerifierTests: XCTestCase {
         XCTAssertEqual(receipt.assetID, "saved")
     }
 
+    func testLocatedPlaceholderWithUnreadableOriginalsKeepsItsIdentity() async throws {
+        let fixture = try ImportFileFixture()
+        defer { fixture.cleanUp() }
+        let (_, capture) = try await fixture.validatedForPhotos()
+        let photos = ImportReadback(assets: ["placeholder": .foundUnreadable,
+                                           "older-identical": pair(capture, id: "older-identical")],
+                                   search: .narrow(["placeholder", "older-identical"]))
+
+        let result = await ImportPhotoVerifier(gateway: photos).reconcile(capture: capture, placeholder: "placeholder")
+
+        XCTAssertEqual(result, .savedUnverified("placeholder"))
+    }
+
     func testLimitedVisibilityKeepsAPlaceholderUnverified() async throws {
         let fixture = try ImportFileFixture()
         defer { fixture.cleanUp() }

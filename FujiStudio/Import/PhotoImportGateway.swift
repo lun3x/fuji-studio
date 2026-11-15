@@ -5,6 +5,7 @@ protocol PhotoImportGateway: Sendable {
     /// entering this operation. The synchronous callback runs inside the Photos change block.
     func create(_ capture: ValidatedCapture,
                 onPlaceholder: @escaping @Sendable (String) throws -> Void) async -> PhotoImportOutcome
+    /// Preserve a located asset as `.foundUnreadable` if its originals cannot be read.
     func inspect(assetID: String) async throws -> ImportedAssetInspection
     func candidates(for capture: ValidatedCapture) async throws -> [String]
     func candidateSearch(for capture: ValidatedCapture) async throws -> ImportCandidateSearch
@@ -30,6 +31,9 @@ enum PhotoImportFailure: Error, Equatable, Sendable {
 
 enum ImportedAssetInspection: Equatable, Sendable {
     case found(ImportedAssetSnapshot)
+    /// The requested asset was located, and its complete original bytes are unavailable.
+    case foundUnreadable
+    /// No usable lookup result for the requested identifier.
     case unavailable
     /// An exact identifier miss with full access to the available library.
     case absent

@@ -16,10 +16,15 @@ struct ImportPhotoVerifier: Sendable {
         if let placeholder {
             let inspection = await inspect(placeholder)
             inspectedPlaceholder = inspection
-            if case .found(let snapshot) = inspection {
+            switch inspection {
+            case .found(let snapshot):
                 return snapshot.matches(expected)
                     ? receipt(assetID: placeholder, capture: capture, originals: expected)
                     : .savedUnverified(placeholder)
+            case .foundUnreadable:
+                return .savedUnverified(placeholder)
+            case .absent, .unavailable:
+                break
             }
         }
 
@@ -42,7 +47,7 @@ struct ImportPhotoVerifier: Sendable {
                 }
             case .absent:
                 break
-            case .unavailable:
+            case .foundUnreadable, .unavailable:
                 hasUnreadableCandidate = true
             }
         }

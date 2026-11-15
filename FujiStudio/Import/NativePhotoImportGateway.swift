@@ -65,15 +65,16 @@ struct NativePhotoImportGateway: PhotoImportGateway {
             return access == .full && Self.readableAccess() == .full ? .absent : .unavailable
         }
         let originals = Self.originalResources(for: asset)
-        guard !originals.isEmpty else { return .unavailable }
+        guard !originals.isEmpty else { return .foundUnreadable }
 
         var fingerprints: [ImportedResourceFingerprint] = []
         for resource in originals {
-            try Task.checkCancellation()
-            fingerprints.append(try await Self.read(resource))
+            guard !Task.isCancelled, let fingerprint = try? await Self.read(resource) else {
+                return .foundUnreadable
+            }
+            fingerprints.append(fingerprint)
         }
-        try Task.checkCancellation()
-        guard Self.readableAccess() == access else { return .unavailable }
+        guard !Task.isCancelled, Self.readableAccess() == access else { return .foundUnreadable }
         return .found(.init(assetID: asset.localIdentifier, originals: fingerprints))
     }
 
