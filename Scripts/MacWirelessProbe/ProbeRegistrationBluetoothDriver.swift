@@ -29,11 +29,9 @@ final class ProbeRegistrationBluetoothDriver: BluetoothPeripheralDriver {
 
   private let native: any BluetoothPeripheralDriver
   private var experiment: Experiment?
-  private var reconnectNotifications: ProbeReconnectNotifications?
   private var imageViewing: ProbeImageViewingLaunch?
   private var registrationNotifications = ProbeRegistrationNotifications()
   private(set) var acknowledgementUsed = false
-  private(set) var reconnectGeotagAcknowledged = false
   private(set) var imageViewLaunchUsed = false
   var eventHandler: ((BluetoothDriverEvent) -> Void)?
   var observeAcknowledgement: (() -> Void)?
@@ -48,26 +46,15 @@ final class ProbeRegistrationBluetoothDriver: BluetoothPeripheralDriver {
   func beginExperiment(
     _ ticket: ProbeSecureStatusComparison.RegistrationTicket, selectionIsCurrent: @escaping () -> Bool
   ) -> Bool {
-    guard experiment == nil, reconnectNotifications == nil, imageViewing == nil else { return false }
+    guard experiment == nil, imageViewing == nil else { return false }
     experiment = Experiment(ticket: ticket, selectionIsCurrent: selectionIsCurrent)
     return true
   }
 
   func endExperiment() { experiment = nil }
 
-  func beginReconnectNotifications(peripheralID: UUID, selectionIsCurrent: @escaping () -> Bool) -> Bool {
-    guard experiment == nil, reconnectNotifications == nil, imageViewing == nil, selectionIsCurrent() else {
-      return false
-    }
-    reconnectNotifications = ProbeReconnectNotifications(
-      peripheralID: peripheralID, selectionIsCurrent: selectionIsCurrent)
-    return true
-  }
-
-  func endReconnectNotifications() { reconnectNotifications = nil }
-
   func beginImageViewing(peripheralID: UUID, selectionIsCurrent: @escaping () -> Bool) -> Bool {
-    guard experiment == nil, reconnectNotifications == nil, imageViewing == nil,
+    guard experiment == nil, imageViewing == nil,
       !acknowledgementUsed, selectionIsCurrent(),
       let session = registrationNotifications.verifiedReadySession(for: peripheralID)
     else { return false }
@@ -80,7 +67,6 @@ final class ProbeRegistrationBluetoothDriver: BluetoothPeripheralDriver {
 
   func resetObservation() {
     acknowledgementUsed = false
-    reconnectGeotagAcknowledged = false
     resetImageViewingObservation()
   }
 
@@ -96,9 +82,6 @@ final class ProbeRegistrationBluetoothDriver: BluetoothPeripheralDriver {
 
   func start(allowPermissionPrompt: Bool) throws {
     if let experiment, !experiment.selectionIsCurrent() { throw WirelessFailure.peerMismatch }
-    if let reconnectNotifications, !reconnectNotifications.selectionIsCurrent() {
-      throw WirelessFailure.peerMismatch
-    }
     try native.start(allowPermissionPrompt: allowPermissionPrompt)
   }
 
@@ -107,16 +90,11 @@ final class ProbeRegistrationBluetoothDriver: BluetoothPeripheralDriver {
   func discardDiscoveries() { native.discardDiscoveries() }
   func disconnect(session: UUID) {
     registrationNotifications.pause(session: session)
-    cancelWiFiDiagnostics(session: session)
+    cancelImageViewing(session: session)
     native.disconnect(session: session)
   }
 
   func connect(peripheralID: UUID, session: UUID) {
-    if var notifications = reconnectNotifications {
-      let decision = notifications.connect(peripheralID: peripheralID, session: session)
-      reconnectNotifications = notifications
-      guard handleNotifications(decision, session: notifications.session ?? session) else { return }
-    }
     if let experiment {
       guard case .awaitingConnection = experiment.step, experiment.selectionIsCurrent(),
         experiment.ticket.authorizes(peripheralID: peripheralID, session: session)
@@ -128,11 +106,6 @@ final class ProbeRegistrationBluetoothDriver: BluetoothPeripheralDriver {
   }
 
   func perform(_ action: BLEProtocolAction, session: UUID) {
-    if var notifications = reconnectNotifications {
-      let decision = notifications.perform(action, session: session)
-      reconnectNotifications = notifications
-      guard handleNotifications(decision, session: notifications.session ?? session) else { return }
-    }
     if var viewing = imageViewing {
       let decision = viewing.perform(action, session: session)
       imageViewing = viewing
@@ -166,17 +139,11 @@ final class ProbeRegistrationBluetoothDriver: BluetoothPeripheralDriver {
 
   private func receive(_ event: BluetoothDriverEvent) {
     let occurredAt = Date()
-    if case .linkFailed(let session, _) = event { cancelWiFiDiagnostics(session: session) }
-    if case .disconnected(let session, _) = event { cancelWiFiDiagnostics(session: session) }
-    if var notifications = reconnectNotifications {
-      let decision = notifications.receive(event)
-      reconnectNotifications = notifications
-      let session: UUID?
-      switch event {
-      case .peerModel(let id, _), .protocolEvent(let id, _): session = notifications.session ?? id
-      default: session = notifications.session
-      }
-      if let session, !handleNotifications(decision, session: session) { return }
+    switch event {
+    case .linkFailed(let session, _), .disconnected(let session, _):
+      cancelImageViewing(session: session)
+    default:
+      break
     }
     if var viewing = imageViewing {
       let decision = viewing.receive(event)
@@ -217,27 +184,8 @@ final class ProbeRegistrationBluetoothDriver: BluetoothPeripheralDriver {
     }
   }
 
-  private func cancelWiFiDiagnostics(session: UUID) {
-    if reconnectNotifications?.session == session { reconnectNotifications?.cancel() }
+  private func cancelImageViewing(session: UUID) {
     if imageViewing?.session == session { imageViewing?.cancel() }
-  }
-
-  private func handleNotifications(_ decision: ProbeReconnectNotifications.Decision, session: UUID) -> Bool {
-    switch decision {
-    case .forward:
-      return true
-    case .ignore:
-      break
-    case .submitGeotag:
-      native.perform(.subscribe(ProbeReconnectNotifications.geotagRequest), session: session)
-    case .releaseNetworkName:
-      reconnectGeotagAcknowledged = true
-      native.perform(.subscribe(ProbeReconnectNotifications.networkName), session: session)
-    case .reject(let failure):
-      reconnectNotifications?.cancel()
-      eventHandler?(.linkFailed(session, failure))
-    }
-    return false
   }
 
   private func handleImageViewing(_ decision: ProbeImageViewingLaunch.Decision, session: UUID) -> Bool {

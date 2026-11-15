@@ -34,7 +34,6 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
   private enum ReconnectMode: String {
     case standard = "reconnect"
     case registration = "reconnect-registration"
-    case notifications = "reconnect-notifications"
   }
 
   private let directory: RunDirectory
@@ -201,7 +200,6 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
       case ("observe-saved", 1): observeSavedAdvertisement()
       case ("reconnect", 1): reconnect()
       case ("reconnect-registration", 1): reconnect(.registration)
-      case ("reconnect-notifications", 1): reconnect(.notifications)
       case ("wifi", 1): activateWiFi()
       case ("wifi-image-viewing", 1): activateWiFi(imageViewing: true)
       case ("quit", 1): NSApp.terminate(nil)
@@ -324,20 +322,12 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
             throw WirelessFailure.peerMismatch
           }
         }
-        if mode == .notifications {
-          guard registrationDriver.beginReconnectNotifications(
-            peripheralID: camera.peripheralID, selectionIsCurrent: selectionIsCurrent)
-          else { throw WirelessFailure.peerMismatch }
-        }
         secureStatus.begin(mode == .registration ? .registrationReconnect : .reconnect,
           peripheralID: camera.peripheralID, cameraID: camera.id)
         registrationDriver.beginRegistrationObservation(peripheralID: camera.peripheralID)
         savedModel = camera.model
         publish()
         try await gateway.reconnect(camera, allowPermissionPrompt: true)
-        if mode == .notifications, !registrationDriver.reconnectGeotagAcknowledged {
-          throw WirelessFailure.unsupportedProtocol
-        }
         try await completeLink(camera)
       } catch {
         await linkFailed(error, expectedPhase: .reconnecting, allowsRegistrationTicket: mode == .standard)
@@ -435,7 +425,6 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
       secureStatus.endAttempt()
     }
     registrationDriver.endExperiment()
-    registrationDriver.endReconnectNotifications()
     linkedCamera = camera
     savedModel = camera.model
     operation = nil
@@ -457,7 +446,6 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
       secureStatus.endAttempt()
     }
     registrationDriver.endExperiment()
-    registrationDriver.endReconnectNotifications()
     operation = nil
     finish(Self.failureLabel(error), phase: .idle)
   }
@@ -483,7 +471,6 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
       await gateway.disconnect()
       await previous?.value
       registrationDriver.endExperiment()
-      registrationDriver.endReconnectNotifications()
       linkedCamera = nil
       operation = nil
       if shutdownRequested {
@@ -541,7 +528,6 @@ private final class WirelessProbe: NSObject, NSApplicationDelegate {
       "saved_advert_shape=\(savedAdvertisement.matchingShape)",
       "saved_advert_ready=\(savedAdvertisement.ready)",
       "registration_ack_used=\(registrationDriver.acknowledgementUsed)",
-      "reconnect_geotag_subscription_ack=\(registrationDriver.reconnectGeotagAcknowledged)",
       "image_view_launch_used=\(registrationDriver.imageViewLaunchUsed)",
     ]
     lines.append(contentsOf: secureStatus.observation.statusLines)
