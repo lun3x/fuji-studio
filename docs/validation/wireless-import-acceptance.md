@@ -325,3 +325,23 @@ The reviewed Mac-only diagnostics at `b1148b1c` separately test an additional
 reconnect subscription and the `03 00` image-viewing launch; their hardware
 outcomes remain pending. Neither the automated suite nor Bluetooth registration
 constitutes WiFi JPEG+RAW acceptance.
+
+### X-T5 access-point readiness, 2026-11-15
+
+The user awakened the 04.31 body to its shooting screen before a repeat of the
+unchanged saved-reconnect flow. The `04 00` launch write was acknowledged at
+14:23:24 UTC; the recognized readiness indication did not arrive before the
+15-second deadline. The reviewed Mac diagnostic then added only the passive
+geotag-request subscription after configuration NOT1 and before SSID. With
+the same launch bytes, the camera returned the recognized readiness indication
+at 14:24:36 UTC, five seconds after the write acknowledgment. The probe reported
+WiFi ready and WPA Personal. macOS WiFi settings independently showed the
+camera's secured access point. This comparison supports the missing reconnect
+subscription as the cause of the observed readiness failure on this body.
+
+The Mac did not join the network during this trial. The camera later displayed
+a connection-wait timeout. One saved Bluetooth reconnect timed out before a
+native connection was established. After the user selected BACK to return to
+shooting, saved reconnect succeeded without re-pairing. No PTP session or photo
+transfer was attempted. Subsequent tests will retain Bluetooth through WiFi
+session establishment. The `03 00` image-viewing launch remains untested.
