@@ -21,4 +21,7 @@ Each launch takes an empty owner-only directory with no ACL entries. The initial
 
 Status and events omit peripheral identifiers, names, credentials, and raw firmware. An unrecognized Device Information model is recorded only in the separate owner-only `private-bluetooth-model.json` file. The probe exercises Bluetooth through authenticated readiness.
 
+On macOS the probe uses the file-based Keychain. It enumerates persistent references within the dedicated probe service before reading the individual records. The iOS app uses its platform Keychain path.
+
 Run `Scripts/MacWirelessProbe/test.sh` to check the command and file permissions without starting Bluetooth.
+Run `Scripts/MacWirelessProbe/test-keychain.sh` to exercise enumeration and saved selection using synthetic records in unique temporary Keychain services.
