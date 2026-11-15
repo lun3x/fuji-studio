@@ -196,7 +196,9 @@ actor PhotoLibraryReader: PhotoLibraryReading {
     deinit { library.unregisterChangeObserver(observer) }
 
     func requestAccess() async -> LibraryAccess {
-        Self.access(await PHPhotoLibrary.requestAuthorization(for: .readWrite))
+        let current = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        if current != .notDetermined { return Self.access(current) }
+        return Self.access(await PHPhotoLibrary.requestAuthorization(for: .readWrite))
     }
 
     func sources() async -> AsyncThrowingStream<[PhotoSource], Error> {
@@ -373,20 +375,21 @@ private final class LibraryObserver: NSObject, PHPhotoLibraryChangeObserver, @un
         lock.withLock {
             guard let fetch else { return }
             let nextAccess = PhotoLibraryReader.access(PHPhotoLibrary.authorizationStatus(for: .readWrite))
-            var changed = Set<SourceID>(), removed = Set<SourceID>()
+            var changed = Set<SourceID>(), removed = Set<SourceID>(), inserted = Set<SourceID>()
             if let details = changeInstance.changeDetails(for: fetch) {
                 let after = details.fetchResultAfterChanges
                 let beforeIDs = Set((0..<fetch.count).map { fetch.object(at: $0).localIdentifier })
                 let afterIDs = Set((0..<after.count).map { after.object(at: $0).localIdentifier })
                 removed = beforeIDs.subtracting(afterIDs)
-                changed.formUnion(afterIDs.subtracting(beforeIDs))
+                inserted = afterIDs.subtracting(beforeIDs)
+                changed.formUnion(inserted)
                 if details.hasIncrementalChanges { changed.formUnion(details.changedObjects.map(\.localIdentifier)) }
                 else { changed.formUnion(afterIDs) }
                 self.fetch = after
             }
             let scope = nextAccess != access || (nextAccess == .limited && (!changed.isEmpty || !removed.isEmpty))
             access = nextAccess
-            let event = LibraryChange(changedIDs: changed, removedIDs: removed, accessScopeChanged: scope)
+            let event = LibraryChange(changedIDs: changed, removedIDs: removed, accessScopeChanged: scope, insertedIDs: inserted)
             for subscriber in subscribers.values { subscriber.yield(event) }
         }
     }

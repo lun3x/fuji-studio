@@ -29,6 +29,40 @@ import Observation
     private(set) var isSuspended = false
     let environment: AppEnvironment
     let settings: AppSettings
+    private(set) var wirelessState = WirelessConnectionState()
+    private(set) var wirelessActionError: String?
+    private(set) var importActionError: String?
+    private(set) var importJournalIssue: ImportEvent?
+    private var importEventsByJob: [UUID: ImportEvent] = [:]
+    private(set) var isPreparingImport = false
+    private(set) var isDisconnectingWireless = false
+    var cameraBrowser: CameraBrowserModel { environment.wireless.browser }
+    var importEvents: [ImportEvent] { importEventsByJob.values.sorted { $0.sequence < $1.sequence } }
+    var importRecoveryEvents: [ImportEvent] { importEvents.filter { $0.captureIndex != nil || $0.recoveryRequired } }
+    var wirelessAvailable: Bool { environment.wireless.isEnabled }
+    @ObservationIgnored private var wirelessActivity: WirelessActivity = .active
+    @ObservationIgnored private var wirelessEpoch: UInt64 = 0
+    @ObservationIgnored private var wirelessBackgroundTask: Task<Void, Never>?
+    @ObservationIgnored private var browserLoadTask: Task<Void, Never>?
+    @ObservationIgnored private var browserIntent: WirelessConnectionIntent?
+    @ObservationIgnored private var retiringBrowserIntent: WirelessConnectionIntent?
+    @ObservationIgnored private var browserFingerprints: [WirelessObjectDescriptor: ImportOriginalFingerprint] = [:]
+    @ObservationIgnored private var browserBadgeTask: Task<Void, Never>?
+    private var bluetoothChoiceActive = false
+    @ObservationIgnored private var wifiCommandActive = false
+    @ObservationIgnored private var importCommand: (jobID: UUID?, task: Task<Void, Never>)?
+    @ObservationIgnored private var importBinding: [UUID: ImportBinding] = [:]
+    @ObservationIgnored private var importReconciliation: Task<Void, Never>?
+    @ObservationIgnored private var importReconcilePending = false
+    @ObservationIgnored private var receiptTasks: [UUID: Task<Void, Never>] = [:]
+    @ObservationIgnored private var recentImportMerges: [SourceID: UInt64] = [:]
+    @ObservationIgnored private var importMergeRevision: UInt64 = 0
+    @ObservationIgnored private var importJournalSequence: UInt64 = 0
+    private struct ImportBinding {
+        let runID: UUID
+        let intent: WirelessConnectionIntent?
+        var lastEvent: UInt64 = 0
+    }
     @ObservationIgnored private var started = false
     @ObservationIgnored private var streams: [Task<Void, Never>] = []
     @ObservationIgnored private var displayTask: Task<Void, Never>?
@@ -92,7 +126,8 @@ import Observation
     var imageStatusIsFailure: Bool { displayFailure != nil }
     var canResetCameraConnection: Bool {
         guard !isResettingCamera, !isConnecting, !isRefreshing, !isSubmitting,
-              !isLoadingPreview, state.activeJobID == nil, foreground, !isSuspended else { return false }
+              !isLoadingPreview, !state.wirelessRestrictsUSB, !bluetoothChoiceActive,
+              state.activeJobID == nil, foreground, !isSuspended else { return false }
         if case .busy = state.cameraState { return false }
         return true
     }
@@ -109,6 +144,11 @@ import Observation
         streams.forEach { $0.cancel() }; displayTask?.cancel(); contextTask?.cancel(); versionRefreshTask?.cancel()
         automaticConnectionTask?.cancel()
         photoFilterTask?.cancel()
+        browserLoadTask?.cancel()
+        browserBadgeTask?.cancel()
+        importCommand?.task.cancel()
+        importReconciliation?.cancel()
+        receiptTasks.values.forEach { $0.cancel() }
     }
 
     var progressEvents: [ExportEvent] {
@@ -132,6 +172,7 @@ import Observation
             Task { [weak self] in for await event in previews { guard !Task.isCancelled else { break }; self?.previewChanged(event) } },
             Task { [weak self] in for await event in exports { guard !Task.isCancelled else { break }; await self?.exportChanged(event) } }
         ]
+        if wirelessAvailable { await observeWireless() }
         startAutomaticConnection()
         do {
             let recipes = try await environment.catalog.latestRecipes()
@@ -142,6 +183,7 @@ import Observation
         catch { message = Self.explain(error) }
         await reloadLibrary()
         await recoverWhenIdle()
+        if wirelessAvailable, wirelessActivity == .active { await reconcileImports() }
     }
 
     func send(_ action: WorkspaceAction) {
@@ -162,7 +204,7 @@ import Observation
             if case .requestPreview(let request) = effect { return request }; return nil
         }.first
         let explicitDisplay: Bool = switch action {
-        case .sourceTapped, .versionSelected, .recipeSelected, .phoneRecipeSelected: true
+        case .sourceTapped, .versionSelected, .recipeSelected, .phoneRecipeSelected, .viewImported: true
         case .phoneRecipeDeleted: previousRecipe != nil && state.selectedRecipe == nil
         case .phoneRecipeUpdated: previousRecipe != state.selectedRecipe
         case .cameraChanged: displayRequest != nil && previousRecipe != nil && state.selectedRecipe == nil
@@ -358,6 +400,17 @@ import Observation
 
     func reloadLibrary() async {
         libraryGeneration &+= 1; let generation = libraryGeneration
+        let importsAtStart = importMergeRevision
+        var establishedIDs = Set(sources.map(\.id))
+        var readCatalogIDs = false
+        func visibility() async -> ImportPhotoVisibility {
+            let eligibility = await importPhotoVisibility()
+            if eligibility.needsEstablishedIDs && !readCatalogIDs {
+                if let known = try? await environment.catalog.knownSourceIDs() { establishedIDs.formUnion(known) }
+                readCatalogIDs = true
+            }
+            return eligibility
+        }
         isLoadingLibrary = true
         defer { if libraryGeneration == generation { isLoadingLibrary = false } }
         let access = await environment.reader.requestAccess()
@@ -371,16 +424,28 @@ import Observation
         guard generation == libraryGeneration else { return }
         var discovered: [SourceID: PhotoSource] = [:]
         do {
+            var importPhotos = await visibility()
             for try await batch in await environment.reader.sources() {
+                if importCommand != nil || importEvents.contains(where: \.isRunning) {
+                    importPhotos = await visibility()
+                }
                 guard generation == libraryGeneration else { return }
-                for source in batch where sourceReplacements[source.id] == nil { discovered[source.id] = knownCompatibility(source) }
+                for source in batch where sourceReplacements[source.id] == nil
+                    && importPhotos.allows(source, establishedIDs: establishedIDs) {
+                    discovered[source.id] = knownCompatibility(source)
+                }
                 // Batches are additions. Keep the existing permitted index until the full pass ends.
                 var merged = Dictionary(uniqueKeysWithValues: sources.map { ($0.id, $0) })
                 merged.merge(discovered, uniquingKeysWith: { _, new in new })
                 sources = Self.sorted(Array(merged.values))
                 reduce(.libraryUpdated(sources: sources, access: access))
             }
+            importPhotos = await visibility()
             guard generation == libraryGeneration else { return }
+            for source in sources where (recentImportMerges[source.id] ?? 0) > importsAtStart {
+                discovered[source.id] = source
+            }
+            discovered = discovered.filter { importPhotos.allows($0.value, establishedIDs: establishedIDs) }
             let removed = Set(sources.map(\.id)).subtracting(discovered.keys)
             sources = Self.sorted(discovered.values.map(knownCompatibility))
             reduce(.libraryUpdated(sources: sources, access: access))
@@ -402,6 +467,13 @@ import Observation
     }
 
     private func libraryChanged(_ event: LibraryChange) async {
+        if wirelessAvailable, !event.accessScopeChanged, event.removedIDs.isEmpty,
+           !event.insertedIDs.isEmpty, event.changedIDs == event.insertedIDs {
+            let importPhotos = await importPhotoVisibility()
+            // The receipt observer owns new camera assets. Photos edits, removals and
+            // access changes still flow through the ordinary library observer.
+            if event.insertedIDs.isSubset(of: importPhotos.importAssetIDs) { return }
+        }
         await adoptVerifiedReplacements()
         var thumbnailIDs = event.changedIDs.union(event.removedIDs)
         if event.accessScopeChanged { thumbnailIDs.formUnion(sources.map(\.id)) }
@@ -418,7 +490,9 @@ import Observation
         }
         reduce(.libraryUpdated(sources: sources, access: state.libraryAccess))
         await reloadLibrary()
+        refreshBrowserBadges()
         recoveryNeeded = true; await recoverWhenIdle()
+        if wirelessAvailable, wirelessActivity == .active, event.accessScopeChanged { await reconcileImports() }
     }
 
     private func adoptVerifiedReplacements() async {
@@ -552,6 +626,7 @@ import Observation
 
     func connect() async {
         guard !Task.isCancelled, !isConnecting, foreground, !isSuspended,
+              !state.wirelessRestrictsUSB, !bluetoothChoiceActive,
               !cameraAuthorizationDenied, !isRefreshing, !isResettingCamera,
               !awaitingImportTerminal,
               cameraError == nil, cameraResetError == nil, state.currentCameraExecutionContext == nil else { return }
@@ -620,7 +695,8 @@ import Observation
     }
 
     private func startAutomaticConnection() {
-        guard started, automaticConnectionEnabled, foreground, !isSuspended, automaticConnectionTask == nil else { return }
+        guard started, automaticConnectionEnabled, foreground, !isSuspended, automaticConnectionTask == nil,
+              wirelessState.selectedCameraID == nil, !bluetoothChoiceActive, !state.wirelessRestrictsUSB else { return }
         let wait = connectionRetryWait
         automaticConnectionTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -645,7 +721,8 @@ import Observation
     }
 
     func refreshRecipes() async {
-        guard !isSuspended, !isResettingCamera, state.activeJobID == nil, !isSubmitting, cameraError == nil, cameraResetError == nil else { return }
+        guard !isSuspended, !isResettingCamera, !state.wirelessRestrictsUSB, !bluetoothChoiceActive,
+              state.activeJobID == nil, !isSubmitting, cameraError == nil, cameraResetError == nil else { return }
         let operation:Task<ImportedRecipeCollection,Error>
         if let active=recipeImportTask { operation=active }
         else {
@@ -772,7 +849,7 @@ import Observation
     }
 
     func export() async {
-        guard state.canExport, !isResettingCamera, cameraError == nil, cameraResetError == nil,
+        guard state.canExport, !bluetoothChoiceActive, !isResettingCamera, cameraError == nil, cameraResetError == nil,
               !isSubmitting, !recovering, !isSuspended, let recipe = state.selectedRecipe else { return }
         isSubmitting = true
         let sources = state.effectiveSources, engine = environment.exports
@@ -832,7 +909,8 @@ import Observation
     }
     func resumeExport(jobID: UUID? = nil, retry: Bool = false) async {
         let target = jobID.flatMap { unfinishedEvents[$0] } ?? exportEvent
-        guard !isSuspended, !isResettingCamera, cameraError == nil, cameraResetError == nil, !isSubmitting, !recovering, state.activeJobID == nil,
+        guard !isSuspended, !isResettingCamera, !state.wirelessRestrictsUSB, !bluetoothChoiceActive,
+              cameraError == nil, cameraResetError == nil, !isSubmitting, !recovering, state.activeJobID == nil,
               case .ready = state.cameraState, let event = target, event.terminal,
               event.summary.unresolved == event.summary.replacementCleanup else { return }
         isSubmitting = true
@@ -884,7 +962,12 @@ import Observation
 
     func sceneChanged(_ phase: ScenePhase) async {
         sceneRevision &+= 1
-        if phase == .inactive { foreground = false; cancelPhotoFilterChecks(); stopAutomaticConnection(); updateIdle(); return }
+        let wirelessTransition = forwardWirelessActivity(phase)
+        if phase == .inactive {
+            foreground = false; cancelPhotoFilterChecks(); stopAutomaticConnection(); updateIdle()
+            await wirelessTransition?.value
+            return
+        }
         let revision = sceneRevision
         if phase == .background {
             recipeLifecycleRevision &+= 1
@@ -915,9 +998,11 @@ import Observation
                 let submitted = try? await self.submissionTask?.value
                 if let id = self.state.activeJobID ?? submitted { await self.environment.exports.pause(jobID: id) }
                 await self.environment.camera.disconnect()
+                await wirelessTransition?.value
                 self.reduce(.activeJobChanged(nil))
                 self.reduce(.cameraChanged(.disconnected, context: nil))
             } else if phase == .active {
+                await wirelessTransition?.value
                 guard self.sceneRevision == revision else { return }
                 let wasSuspended = self.isSuspended
                 self.foreground = true
@@ -1068,5 +1153,607 @@ import Observation
             return "Downloading image… \(Int((max(0, min(1, value)) * 100).rounded()))%"
         }
         return "Loading image…"
+    }
+}
+
+extension AppModel {
+    private func observeWireless() async {
+        let services = environment.wireless
+        let states = await services.connection.states()
+        let events = await services.importer.events()
+        streams.append(Task { [weak self] in
+            for await snapshot in states {
+                guard !Task.isCancelled else { break }
+                self?.adoptWirelessState(snapshot)
+            }
+        })
+        streams.append(Task { [weak self] in
+            for await event in events {
+                guard !Task.isCancelled else { break }
+                self?.adoptImportEvent(event)
+            }
+        })
+        cameraBrowser.onSessionInvalidated = { [weak self] failure in
+            guard let self, let intent = self.browserIntent else { return }
+            self.retireWirelessTransfer(intent, failure: failure)
+        }
+        await services.connection.setActivity(wirelessActivity)
+        adoptWirelessState(await services.connection.currentState())
+    }
+
+    private func adoptWirelessState(_ snapshot: WirelessConnectionState) {
+        guard snapshot.sequence >= wirelessState.sequence else { return }
+        let previous = wirelessState
+        wirelessState = snapshot
+        if snapshot.bluetooth != previous.bluetooth,
+           (previous.bluetooth == .pairing || previous.bluetooth == .discovering),
+           snapshot.bluetooth != .pairing, snapshot.bluetooth != .discovering {
+            bluetoothChoiceActive = false
+        }
+        refreshUSBRestriction()
+        if snapshot.selectedCameraID != nil || state.wirelessRestrictsUSB { stopAutomaticConnection() }
+        else if snapshot.activity == .active { startAutomaticConnection() }
+
+        if snapshot.wifi != .ready || snapshot.activity == .background
+            || previous.connectionGeneration != snapshot.connectionGeneration {
+            if browserIntent != nil || browserLoadTask != nil {
+                let intent = browserIntent
+                clearCameraBrowser()
+                if let intent, wirelessActivity != .background, !isDisconnectingWireless {
+                    pauseImportsForLostTransfer(intent)
+                }
+            }
+        }
+        if snapshot.wifi == .ready, snapshot.activity != .background,
+           wirelessActivity != .background, !isDisconnectingWireless, retiringBrowserIntent == nil,
+           browserIntent == nil, browserLoadTask == nil {
+            loadCurrentCameraBrowser()
+        }
+    }
+
+    private func refreshUSBRestriction() {
+        let restricted = wifiCommandActive || isDisconnectingWireless || wirelessState.restrictsUSB
+        if state.wirelessRestrictsUSB != restricted { reduce(.wirelessOwnershipChanged(restricted)) }
+    }
+
+    private func loadCurrentCameraBrowser() {
+        let connection = environment.wireless.connection
+        let browser = cameraBrowser
+        let epoch = wirelessEpoch
+        browserLoadTask = Task { [weak self] in
+            guard let transfer = try? await connection.admittedTransfer(),
+                  !Task.isCancelled, self?.wirelessEpoch == epoch,
+                  self?.wirelessState.connectionGeneration == transfer.intent.connectionGeneration else { return }
+            self?.browserIntent = transfer.intent
+            await browser.load(session: transfer.session)
+        }
+    }
+
+    private func clearCameraBrowser() {
+        browserLoadTask?.cancel()
+        browserLoadTask = nil
+        browserIntent = nil
+        browserBadgeTask?.cancel()
+        browserBadgeTask = nil
+        browserFingerprints.removeAll()
+        cameraBrowser.cancel()
+    }
+
+    private func retireWirelessTransfer(_ intent: WirelessConnectionIntent, failure: WirelessFailure?) {
+        guard retiringBrowserIntent != intent else { return }
+        if browserIntent == intent {
+            retiringBrowserIntent = intent
+            clearCameraBrowser()
+        }
+        let connection = environment.wireless.connection
+        Task { [weak self] in
+            await connection.retireTransfer(intent, failure: failure)
+            let snapshot = await connection.currentState()
+            if self?.retiringBrowserIntent == intent { self?.retiringBrowserIntent = nil }
+            self?.adoptWirelessState(snapshot)
+        }
+    }
+
+    private func pauseImportsForLostTransfer(_ intent: WirelessConnectionIntent) {
+        let importer = environment.wireless.importer
+        let affected = importBinding.filter { $0.value.intent == intent }.map(\.key)
+        for jobID in affected where importEventsByJob[jobID]?.isRunning == true {
+            Task { await importer.pause(jobID: jobID, reason: .connectionLost) }
+        }
+    }
+
+    private func forwardWirelessActivity(_ phase: ScenePhase) -> Task<Void, Never>? {
+        let activity: WirelessActivity = switch phase {
+        case .active: .active
+        case .inactive: .inactive
+        case .background: .background
+        @unknown default: .inactive
+        }
+        let previous = wirelessActivity
+        wirelessActivity = activity
+        guard started, wirelessAvailable else { return nil }
+        let connection = environment.wireless.connection
+        if activity == .background {
+            if previous == .background, let wirelessBackgroundTask { return wirelessBackgroundTask }
+            wirelessEpoch &+= 1
+            bluetoothChoiceActive = false
+            let loading = browserLoadTask
+            clearCameraBrowser()
+            let pending = importCommand
+            pending?.task.cancel()
+            let jobIDs = importJobsToPause(including: pending?.jobID)
+            let services = environment.wireless
+            let cleanup = Task { [weak self] in
+                async let close: Void = connection.setActivity(.background)
+                for jobID in jobIDs { await services.importer.pause(jobID: jobID, reason: .backgrounded) }
+                await pending?.task.value
+                await loading?.value
+                await services.browser.suspendThumbnails()
+                await close
+                self?.adoptWirelessState(await connection.currentState())
+            }
+            wirelessBackgroundTask = cleanup
+            return cleanup
+        }
+        let cleanup = wirelessBackgroundTask
+        let epoch = wirelessEpoch
+        return Task { [weak self] in
+            await cleanup?.value
+            guard let self, self.wirelessEpoch == epoch, self.wirelessActivity == activity else { return }
+            self.wirelessBackgroundTask = nil
+            await connection.setActivity(activity)
+            self.adoptWirelessState(await connection.currentState())
+            if activity == .active { await self.reconcileImports() }
+        }
+    }
+
+    private func importJobsToPause(including pending: UUID?) -> Set<UUID> {
+        var jobs = Set(importEvents.compactMap { event in
+            event.isRunning || (!event.needsSession && event.captureIndex != nil) ? event.jobID : nil
+        })
+        if let pending { jobs.insert(pending) }
+        return jobs
+    }
+
+    private func prepareBluetoothChoice() async -> Bool {
+        guard wirelessAvailable, wirelessActivity == .active, !isSuspended, !state.wirelessRestrictsUSB,
+              state.activeJobID == nil, !isSubmitting, !isRefreshing, !isResettingCamera else { return false }
+        bluetoothChoiceActive = true
+        stopAutomaticConnection()
+        wirelessActionError = nil
+        let epoch = wirelessEpoch
+        do {
+            try await environment.camera.disconnectConfirmed()
+            guard epoch == wirelessEpoch, wirelessActivity != .background, !Task.isCancelled else {
+                bluetoothChoiceActive = false
+                startAutomaticConnection()
+                return false
+            }
+            return true
+        } catch {
+            bluetoothChoiceActive = false
+            wirelessActionError = Self.explain(error)
+            startAutomaticConnection()
+            return false
+        }
+    }
+
+    func discoverWirelessCameras() async {
+        guard await prepareBluetoothChoice() else { return }
+        let connection = environment.wireless.connection
+        await connection.startDiscovery()
+        if Task.isCancelled { bluetoothChoiceActive = false }
+        adoptWirelessState(await connection.currentState())
+    }
+
+    func pairWirelessCamera(_ camera: DiscoveredCamera) async {
+        let connection = environment.wireless.connection
+        await connection.pair(camera)
+        let snapshot = await connection.currentState()
+        if snapshot.bluetooth != .pairing && snapshot.bluetooth != .discovering { bluetoothChoiceActive = false }
+        adoptWirelessState(snapshot)
+    }
+
+    func selectWirelessCamera(_ id: WirelessCameraID) async {
+        guard await prepareBluetoothChoice() else { return }
+        defer { bluetoothChoiceActive = false }
+        do { try await environment.wireless.connection.select(id) }
+        catch { wirelessActionError = Self.explain(error) }
+        adoptWirelessState(await environment.wireless.connection.currentState())
+    }
+
+    func forgetWirelessCamera(_ id: WirelessCameraID) async {
+        guard wirelessAvailable, wirelessActivity == .active, !state.wirelessRestrictsUSB else { return }
+        do { try await environment.wireless.connection.forget(id); wirelessActionError = nil }
+        catch { wirelessActionError = Self.explain(error) }
+        bluetoothChoiceActive = false
+        adoptWirelessState(await environment.wireless.connection.currentState())
+    }
+
+    func retryCameraBluetooth() async {
+        guard await prepareBluetoothChoice() else { return }
+        defer { bluetoothChoiceActive = false }
+        await environment.wireless.connection.retryBluetooth()
+        adoptWirelessState(await environment.wireless.connection.currentState())
+    }
+
+    func cancelWirelessConnection() async {
+        if state.wirelessRestrictsUSB { await disconnectCameraWiFi(); return }
+        await environment.wireless.connection.cancelConnection()
+        bluetoothChoiceActive = false
+        adoptWirelessState(await environment.wireless.connection.currentState())
+    }
+
+    func connectCameraWiFi() async {
+        await runWiFiCommand { await $0.connectWiFi() }
+    }
+
+    func setUpCameraAutoSave() async {
+        await runWiFiCommand { await $0.setUpAutoSave() }
+    }
+
+    func waitForCameraAutoSave() async {
+        await runWiFiCommand { await $0.waitForAutoSave() }
+    }
+
+    func checkCameraAutoSaveAvailability() async throws {
+        try await environment.wireless.connection.checkAutoSaveAvailability()
+    }
+
+    private func runWiFiCommand(_ operation: (WirelessConnectionCoordinator) async -> Void) async {
+        guard wirelessAvailable, wirelessActivity == .active, !isSuspended, wirelessState.wifi == .idle,
+              !wifiCommandActive, importCommand == nil, !importEvents.contains(where: \.isRunning) else { return }
+        wirelessActionError = nil
+        wifiCommandActive = true
+        refreshUSBRestriction()
+        stopAutomaticConnection()
+        let connection = environment.wireless.connection
+        await operation(connection)
+        wifiCommandActive = false
+        adoptWirelessState(await connection.currentState())
+        await browserLoadTask?.value
+    }
+
+    func disconnectCameraWiFi() async {
+        guard wirelessAvailable, !isDisconnectingWireless else { return }
+        isDisconnectingWireless = true
+        refreshUSBRestriction()
+        let services = environment.wireless
+        let loading = browserLoadTask
+        clearCameraBrowser()
+        let pending = importCommand
+        pending?.task.cancel()
+        let jobIDs = importJobsToPause(including: pending?.jobID)
+        async let close: Void = services.connection.disconnectWiFi()
+        for jobID in jobIDs where wirelessActivity != .background {
+            await services.importer.pause(jobID: jobID, reason: .connectionLost)
+        }
+        await pending?.task.value
+        await loading?.value
+        await cameraBrowser.suspendThumbnails()
+        await close
+        isDisconnectingWireless = false
+        adoptWirelessState(await services.connection.currentState())
+    }
+
+    func importSelectedCaptures() async { await runImportCommand(.start) }
+    func resumeImport(jobID: UUID) async { await runImportCommand(.resume(jobID)) }
+    func retryImportCapture(jobID: UUID) async { await runImportCommand(.retry(jobID)) }
+    func skipImportCapture(jobID: UUID) async { await runImportCommand(.skip(jobID)) }
+
+    func pauseImport(jobID: UUID) async {
+        await environment.wireless.importer.pause(jobID: jobID)
+    }
+
+    func cancelImport(jobID: UUID) async {
+        await environment.wireless.importer.cancelRemaining(jobID: jobID)
+    }
+
+    func discardImport(jobID: UUID) async {
+        guard wirelessAvailable, wirelessActivity == .active else { return }
+        do { try await environment.wireless.importer.discardRemaining(jobID: jobID); importActionError = nil }
+        catch { importActionError = Self.explainImport(error) }
+    }
+
+    func manageImportPhotos() async {
+        guard wirelessAvailable, wirelessActivity == .active else { return }
+        let access = await environment.wireless.requestPhotosAccess()
+        guard wirelessActivity != .background else { return }
+        if access == .limited { environment.platform.managePhotos() }
+        importActionError = access == .full || access == .limited ? nil : Self.explainImport(PhotoImportFailure.authorization)
+        await reconcileImports()
+    }
+
+    private enum ImportCommand {
+        case start, resume(UUID), retry(UUID), skip(UUID)
+
+        var jobID: UUID? {
+            switch self {
+            case .start: nil
+            case .resume(let id), .retry(let id), .skip(let id): id
+            }
+        }
+        var requiresSession: Bool {
+            switch self {
+            case .start, .resume: true
+            case .retry, .skip: false
+            }
+        }
+    }
+
+    private func runImportCommand(_ operation: ImportCommand) async {
+        guard wirelessAvailable, wirelessActivity == .active, !isSuspended, !isDisconnectingWireless, importCommand == nil,
+              !importEvents.contains(where: \.isRunning) else { return }
+        importActionError = nil
+        isPreparingImport = true
+        let epoch = wirelessEpoch
+        let task = Task { [weak self] in await self?.performImportCommand(operation, epoch: epoch) ?? () }
+        importCommand = (operation.jobID, task)
+        await task.value
+        importCommand = nil
+        isPreparingImport = false
+        releaseBrowserIfIdle()
+        if importReconcilePending, wirelessActivity == .active { await reconcileImports() }
+    }
+
+    private func performImportCommand(_ operation: ImportCommand, epoch: UInt64) async {
+        let services = environment.wireless
+        do {
+            await importReconciliation?.value
+            try checkImportEpoch(epoch)
+            let previous = if let jobID = operation.jobID { await services.importer.latestRunEvent(jobID: jobID) } else { nil as ImportEvent? }
+            let transfer = try? await services.connection.admittedTransfer()
+            if operation.requiresSession && transfer == nil { throw CameraImportError.sessionRequired }
+            if let transfer {
+                // The first usable native inventory batch may precede the full browser index.
+                // Finish browser inventory, then fence queued previews before freezing routes.
+                await browserLoadTask?.value
+                await cameraBrowser.suspendThumbnails()
+                try checkImportEpoch(epoch)
+                guard browserIntent == transfer.intent, !cameraBrowser.isLoading, !cameraBrowser.requiresFreshSession,
+                      try await services.connection.admittedTransfer().intent == transfer.intent else {
+                    throw CameraBrowserSelectionError.inventoryNotReady
+                }
+            }
+            try checkImportEpoch(epoch)
+            let jobID: UUID
+            let intent: WirelessConnectionIntent?
+            switch operation {
+            case .start:
+                guard let transfer else { throw CameraImportError.sessionRequired }
+                let selections = try cameraBrowser.selectionForImport()
+                guard !selections.isEmpty else { return }
+                let access = await services.requestPhotosAccess()
+                try checkImportEpoch(epoch)
+                guard access == .full || access == .limited else { throw PhotoImportFailure.authorization }
+                guard try await services.connection.admittedTransfer().intent == transfer.intent else {
+                    throw CameraImportError.sessionRequired
+                }
+                jobID = try await services.importer.start(selections, session: transfer.session)
+                intent = transfer.intent
+            case .resume(let id):
+                guard let transfer else { throw CameraImportError.sessionRequired }
+                jobID = id
+                try await services.importer.resume(jobID: id, session: transfer.session)
+                intent = transfer.intent
+            case .retry(let id), .skip(let id):
+                jobID = id
+                let retained = importBinding[id]?.intent
+                let latest = await services.importer.latestEvent(jobID: id)
+                intent = latest?.needsSession == false && retained == transfer?.intent ? retained : nil
+                try checkImportEpoch(epoch)
+                switch operation {
+                case .retry: try await services.importer.retryCapture(jobID: id)
+                default: try await services.importer.skipCapture(jobID: id)
+                }
+            }
+            if let event = await services.importer.latestRunEvent(jobID: jobID),
+               let runID = event.runID, runID != previous?.runID {
+                if wirelessEpoch == epoch && !Task.isCancelled {
+                    let hasNativeEvidence = operation.requiresSession || !event.needsSession
+                        || event.invalidatedSession || event.routeEvidence != nil
+                    importBinding[jobID] = .init(runID: runID, intent: hasNativeEvidence ? intent : nil)
+                    adoptImportEvent(event)
+                } else {
+                    await services.importer.pause(jobID: jobID, reason: wirelessActivity == .background ? .backgrounded : .connectionLost)
+                }
+            }
+        } catch is CancellationError { }
+        catch {
+            if wirelessEpoch == epoch && !Task.isCancelled { importActionError = Self.explainImport(error) }
+        }
+    }
+
+    private func checkImportEpoch(_ epoch: UInt64) throws {
+        try Task.checkCancellation()
+        guard wirelessEpoch == epoch, wirelessActivity != .background else { throw CancellationError() }
+    }
+
+    private func releaseBrowserIfIdle() {
+        if importCommand == nil, !importEvents.contains(where: \.isRunning) { cameraBrowser.resumeThumbnails() }
+    }
+
+    private func adoptImportEvent(_ event: ImportEvent) {
+        guard let jobID = event.jobID else {
+            if importJournalSequence < event.sequence {
+                importJournalSequence = event.sequence
+                importJournalIssue = event
+            }
+            return
+        }
+        if (importEventsByJob[jobID]?.sequence ?? 0) < event.sequence {
+            importEventsByJob[jobID] = event
+            if !event.receipts.isEmpty, receiptTasks[jobID] == nil {
+                receiptTasks[jobID] = Task { [weak self] in await self?.mergeJobReceipts(jobID) }
+            }
+        }
+        if let runID = event.runID, var binding = importBinding[jobID], binding.runID == runID,
+           binding.lastEvent < event.sequence {
+            binding.lastEvent = event.sequence
+            importBinding[jobID] = binding
+            if let intent = binding.intent {
+                if event.invalidatedSession {
+                    retireWirelessTransfer(intent, failure: event.wirelessFailure ?? .connectionLost)
+                } else if !event.isRunning, let evidence = event.routeEvidence, evidence.runID == runID,
+                          browserIntent == intent, cameraBrowser.inventorySessionID == evidence.sessionID {
+                    browserFingerprints.merge(evidence.fingerprints, uniquingKeysWith: { _, observed in observed })
+                    refreshBrowserBadges()
+                }
+            }
+        }
+        releaseBrowserIfIdle()
+    }
+
+    private func reconcileImports() async {
+        guard importCommand == nil else { importReconcilePending = true; return }
+        if let importReconciliation { await importReconciliation.value; return }
+        importReconcilePending = false
+        let task = Task { [weak self] in await self?.reconcileImportSnapshot() ?? () }
+        importReconciliation = task
+        await task.value
+        importReconciliation = nil
+    }
+
+    private func reconcileImportSnapshot() async {
+        let importer = environment.wireless.importer
+        let previouslyUnfinished = Set(importRecoveryEvents.compactMap(\.jobID))
+        await importer.reconcile()
+        let journal = await importer.recoveryIssue()
+        if importJournalSequence <= journal.sequence {
+            importJournalSequence = journal.sequence
+            importJournalIssue = journal.event
+        }
+        let recovery = await importer.recoverySnapshot()
+        for event in recovery { adoptImportEvent(event) }
+        for id in previouslyUnfinished.subtracting(recovery.compactMap(\.jobID)) {
+            if let latest = await importer.latestEvent(jobID: id) { adoptImportEvent(latest) }
+        }
+        refreshBrowserBadges()
+    }
+
+    private func refreshBrowserBadges() {
+        guard !browserFingerprints.isEmpty, browserIntent != nil else { return }
+        browserBadgeTask?.cancel()
+        let browser = cameraBrowser, recovery = environment.wireless.importer.recovery
+        let fingerprints = browserFingerprints
+        browserBadgeTask = Task {
+            guard !Task.isCancelled else { return }
+            try? await browser.refreshImportReceipts(using: recovery, originalFingerprints: fingerprints)
+        }
+    }
+
+    private struct ImportPhotoVisibility {
+        struct Candidate {
+            let rawFilename: String
+            let creationDate: Date
+
+            func matches(_ source: PhotoSource) -> Bool {
+                guard source.originalResources.raf.originalFilename.caseInsensitiveCompare(rawFilename) == .orderedSame else { return false }
+                return source.captureDate.map { abs($0.timeIntervalSince(creationDate)) <= 1 } ?? true
+            }
+        }
+
+        var journalReadable = true
+        var verified: Set<SourceID> = []
+        var pending: Set<SourceID> = []
+        var unidentified: [Candidate] = []
+        var importAssetIDs: Set<SourceID> { verified.union(pending) }
+        var needsEstablishedIDs: Bool { !journalReadable || !unidentified.isEmpty }
+
+        func allows(_ source: PhotoSource, establishedIDs: Set<SourceID>) -> Bool {
+            if !journalReadable { return establishedIDs.contains(source.id) }
+            if verified.contains(source.id) { return true }
+            if pending.contains(source.id) { return false }
+            if establishedIDs.contains(source.id) { return true }
+            return !unidentified.contains { $0.matches(source) }
+        }
+    }
+
+    private func importPhotoVisibility() async -> ImportPhotoVisibility {
+        guard wirelessAvailable else { return .init() }
+        do {
+            let jobs = try await environment.wireless.journal.loadJobs()
+            var visibility = ImportPhotoVisibility()
+            for job in jobs {
+                for capture in job.captures {
+                    if let receipt = capture.receipt { visibility.verified.insert(receipt.assetID) }
+                    if capture.stage.mayHaveSubmitted {
+                        if let id = capture.placeholderAssetID {
+                            visibility.pending.insert(id)
+                        } else if let raw = capture.originals.first(where: { $0.role == .raf }) {
+                            let metadata = OriginalImportValidator.photoMetadata(
+                                capture.selection, originals: capture.originals, importDate: job.importDate)
+                            visibility.unidentified.append(.init(rawFilename: raw.originalFilename, creationDate: metadata.creationDate))
+                        }
+                    }
+                }
+            }
+            return visibility
+        } catch {
+            importActionError = "The import journal could not be read. Reopen Fuji Studio or check available storage."
+            return .init(journalReadable: false)
+        }
+    }
+
+    private func mergeJobReceipts(_ jobID: UUID) async {
+        defer { receiptTasks[jobID] = nil }
+        var sequence: UInt64 = 0
+        while let event = importEventsByJob[jobID], event.sequence > sequence, !Task.isCancelled {
+            sequence = event.sequence
+            let known = Set(sources.map(\.id))
+            let receipts = event.receipts.filter { !known.contains($0.assetID) }
+            _ = await mergeVerifiedPhotos(receipts)
+        }
+    }
+
+    @discardableResult
+    private func mergeVerifiedPhotos(_ receipts: [ImportReceipt]) async -> [PhotoSource] {
+        var added: [SourceID: PhotoSource] = [:]
+        let generation = libraryGeneration
+        for id in Set(receipts.map(\.assetID)) {
+            do { added[id] = knownCompatibility(try await environment.reader.source(id: id)) }
+            catch ResourceError.inaccessibleAsset { continue }
+            catch ResourceError.authorization { continue }
+            catch { importActionError = Self.explain(error) }
+        }
+        guard !added.isEmpty, !Task.isCancelled, generation == libraryGeneration,
+              state.libraryAccess == .full || state.libraryAccess == .limited else { return [] }
+        do { try await environment.catalog.upsertSources(Array(added.values)) }
+        catch { importActionError = Self.explain(error); return [] }
+        guard !Task.isCancelled, generation == libraryGeneration else { return [] }
+        var merged = Dictionary(uniqueKeysWithValues: sources.map { ($0.id, $0) })
+        merged.merge(added, uniquingKeysWith: { _, new in new })
+        sources = Self.sorted(Array(merged.values))
+        importMergeRevision &+= 1
+        for id in added.keys { recentImportMerges[id] = importMergeRevision }
+        reduce(.libraryUpdated(sources: sources, access: state.libraryAccess))
+        return Self.sorted(Array(added.values))
+    }
+
+    func viewImported(jobID: UUID) async {
+        guard wirelessAvailable else { return }
+        do {
+            let job = try await environment.wireless.importer.recovery.load(jobID)
+            let receipts = job.captures.compactMap(\.receipt)
+            let imported = await mergeVerifiedPhotos(receipts)
+            if let newest = imported.first {
+                reduce(.viewImported(ids: Set(imported.map(\.id)), newest: newest.id))
+            } else if !receipts.isEmpty {
+                importActionError = "Imported photos are unavailable. Check Photos access."
+            }
+        } catch { importActionError = Self.explainImport(error) }
+    }
+
+    private static func explainImport(_ error: Error) -> String {
+        switch error {
+        case PhotoImportFailure.authorization: "Allow read and write Photos access to import camera originals."
+        case CameraImportError.sessionRequired: "Connect to camera Wi-Fi before resuming downloads."
+        case CameraImportError.freshSelectionRequired, CameraBrowserSelectionError.captureChanged:
+            "The selected card files changed. Select the originals again."
+        case CameraBrowserSelectionError.inventoryNotReady: "Reconnect and wait for the camera card to finish loading."
+        case CameraImportError.unresolvedSave: "Verify the previous Photos save before trying it again."
+        case is ImportJournalError: "The import journal needs recovery. Retained originals are still on this device."
+        default: Self.explain(error)
+        }
     }
 }

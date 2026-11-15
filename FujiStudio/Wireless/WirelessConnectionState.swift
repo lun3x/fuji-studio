@@ -45,7 +45,22 @@ struct WirelessConnectionIntent: Equatable, Sendable {
   let connectionGeneration: UInt64
 }
 
+struct WirelessFirmwareRejection: Error, Equatable, Sendable {
+  let cameraModel: WirelessCameraModel
+  /// The policy result from fresh PTP DeviceInfo for the authenticated transfer peer.
+  let transferAdmission: WirelessAdmission
+  let bluetoothRejectedFirmware: Bool
+
+  init(cameraModel: WirelessCameraModel, transferAdmission: WirelessAdmission,
+       bluetoothRejectedFirmware: Bool = false) {
+    self.cameraModel = cameraModel
+    self.transferAdmission = transferAdmission
+    self.bluetoothRejectedFirmware = bluetoothRejectedFirmware
+  }
+}
+
 struct WirelessConnectionState: Equatable, Sendable {
+  var sequence: UInt64 = 0
   var activity: WirelessActivity = .background
   var savedCameras: [SavedCamera] = []
   var selectedCameraID: WirelessCameraID?
@@ -55,7 +70,11 @@ struct WirelessConnectionState: Equatable, Sendable {
   var failure: WirelessFailure?
   var wifiFailure: WirelessFailure?
   var wifiFailurePhase: WirelessWiFiPhase?
+  var firmwareRejection: WirelessFirmwareRejection?
   var verifiedAutoSaveCameraID: WirelessCameraID?
   var pairingFailure: BluetoothPairingFailure?
   var connectionGeneration: UInt64 = 0
+  var hasTransferLease = false
+
+  var restrictsUSB: Bool { hasTransferLease || wifi != .idle }
 }

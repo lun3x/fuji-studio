@@ -268,6 +268,25 @@ final class WiFiHandoffTests: XCTestCase {
     }
   }
 
+  func testFirmwareFailureKeepsFreshTransferEvidenceForGuidance() async {
+    for (peer, bluetooth, expected, bluetoothRejected) in [
+      ("4.31", "4.32", WirelessAdmission.updateRequired("4.32"), false),
+      ("4.33", "4.32", .unverified("4.33"), false),
+      (nil, "4.32", .unverified(nil), false),
+      ("4.32", "4.31", .supported(.xt5), true),
+    ] as [(String?, String?, WirelessAdmission, Bool)] {
+      let fixture = Fixture(peerFirmware: peer, bluetoothFirmware: bluetooth)
+      await fixture.start()
+      await fixture.coordinator.connectWiFi()
+      let state = await snapshot(fixture.coordinator)
+      XCTAssertEqual(state.wifiFailure, .unsupportedFirmware)
+      XCTAssertEqual(state.firmwareRejection?.cameraModel, .xt5)
+      XCTAssertEqual(state.firmwareRejection?.transferAdmission, expected)
+      XCTAssertEqual(state.firmwareRejection?.bluetoothRejectedFirmware, bluetoothRejected)
+      XCTAssertFalse(fixture.log.events.contains("inventory"))
+    }
+  }
+
   func testCancelledJoinCannotAdoptLateCompletion() async {
     for owned in [true, false] {
       let fixture = Fixture()
@@ -448,10 +467,11 @@ private final class Fixture {
 
   init(
     failure: WirelessFailure? = nil, model: WirelessCameraModel = .xt5, autoSave: HandoffAutoSave? = nil,
-    ownership: (any WirelessCameraOwnershipGateway)? = nil, close: WirelessCloseFixture? = nil
+    ownership: (any WirelessCameraOwnershipGateway)? = nil, close: WirelessCloseFixture? = nil,
+    peerFirmware: String? = "4.32", bluetoothFirmware: String? = "4.32"
   ) {
     let camera = SavedCamera(id: id, peripheralID: UUID(), model: model, displayName: "Fixture")
-    let bluetooth = HandoffBluetooth(id: id, log: log, failure: failure)
+    let bluetooth = HandoffBluetooth(id: id, log: log, failure: failure, firmware: bluetoothFirmware)
     let gateway = HandoffWiFi(log: log, failure: failure)
     let log = self.log
     self.bluetooth = bluetooth
@@ -461,7 +481,9 @@ private final class Fixture {
       authorization: { .allowed }, wifi: gateway, ownership: ownership ?? HandoffOwner(log: log),
       sessionFactory: { identity, _ in
         await log.record("allocate socket")
-        return HandoffSession(identity: identity, log: log, failure: failure, closeFixture: close)
+        let peer = WirelessIdentity(cameraID: identity.cameraID, model: identity.model, firmware: peerFirmware,
+                                    protocolPeerKey: identity.protocolPeerKey)
+        return HandoffSession(identity: peer, log: log, failure: failure, closeFixture: close)
       }, autoSave: autoSave)
     autoSave?.use(log: log)
   }
@@ -534,16 +556,18 @@ private final class HandoffBluetooth: BluetoothGateway {
   let id: WirelessCameraID
   let log: HandoffLog
   let failure: WirelessFailure?
+  let firmware: String?
   let notifications = AsyncStream<BluetoothGatewayEvent>.makeStream()
   var reconnectBarrier: HandoffBarrier?
   var reconnectFailure: WirelessFailure?
   var identityBarrier: HandoffBarrier?
   var disconnectBarrier: FixtureBarrier?
 
-  init(id: WirelessCameraID, log: HandoffLog, failure: WirelessFailure?) {
+  init(id: WirelessCameraID, log: HandoffLog, failure: WirelessFailure?, firmware: String?) {
     self.id = id
     self.log = log
     self.failure = failure
+    self.firmware = firmware
   }
 
   func discover() async throws -> AsyncThrowingStream<[DiscoveredCamera], any Error> {
@@ -560,7 +584,7 @@ private final class HandoffBluetooth: BluetoothGateway {
   func identity(for id: WirelessCameraID) async throws -> WirelessIdentity {
     log.record("BLE identity")
     if let identityBarrier { await identityBarrier.wait() }
-    return .init(cameraID: id, model: .xt5, firmware: "4.32")
+    return .init(cameraID: id, model: .xt5, firmware: firmware)
   }
   func activateWiFi(for id: WirelessCameraID) async throws -> CameraNetwork {
     log.record("credentials")

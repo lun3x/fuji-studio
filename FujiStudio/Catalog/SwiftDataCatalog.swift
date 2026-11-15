@@ -28,6 +28,13 @@ actor SwiftDataCatalog: ModelActor, CatalogStoring {
             for source in sources { try upsert(source) }
         }
     }
+
+    func knownSourceIDs() throws -> Set<SourceID> {
+        var request = FetchDescriptor<CatalogSourceRecord>()
+        request.propertiesToFetch = [\.sourceID]
+        return Set(try modelContext.fetch(request).map(\.sourceID))
+    }
+
     func replaceSource(_ sourceID: SourceID, with replacement: PhotoSource) throws {
         try write {
             guard sourceID != replacement.id, let original = try sourceRecord(sourceID),

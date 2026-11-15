@@ -358,6 +358,26 @@ final class WirelessConnectionCoordinatorTests: XCTestCase {
     try await verifyPendingDiscoveryIsDiscarded(background: true)
   }
 
+  func testCancellingDiscoveryTaskDuringBluetoothDrainRestoresSavedCameraReconnect() async throws {
+    let fixture = Fixture()
+    var calls = fixture.gateway.operations.makeAsyncIterator()
+    var updates = await fixture.coordinator.states().makeAsyncIterator()
+    await fixture.coordinator.setActivity(.active)
+    _ = await calls.next(isolation: #isolation)
+    fixture.gateway.completeLink()
+    _ = try await state(&updates) { $0.bluetooth == .ready }
+    fixture.gateway.pauseDisconnect = true
+    let discovery = Task { await fixture.coordinator.startDiscovery() }
+    let disconnect = await calls.next(isolation: #isolation)
+    XCTAssertEqual(disconnect, .disconnect)
+    discovery.cancel()
+    fixture.gateway.finishDisconnect()
+    await discovery.value
+    let current = await fixture.coordinator.currentState()
+    XCTAssertEqual(current.bluetooth, .connecting)
+    XCTAssertFalse(fixture.gateway.calls.contains(.discover))
+  }
+
   private func verifyPendingDiscoveryIsDiscarded(background: Bool) async throws {
     let fixture = Fixture()
     var calls = fixture.gateway.operations.makeAsyncIterator()

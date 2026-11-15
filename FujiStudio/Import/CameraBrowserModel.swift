@@ -20,7 +20,9 @@ final class CameraBrowserModel {
     private(set) var canSelectOriginals = false
     private(set) var selectedCount = 0
     private(set) var knownByteEstimate: UInt64 = 0
+    @ObservationIgnored var onSessionInvalidated: ((WirelessFailure) -> Void)?
     private var receiptStatuses: [WirelessObjectDescriptor: ImportReceiptStatus] = [:]
+    var inventorySessionID: UUID? { captures.first?.rowID.sessionID }
 
     private var selected: [CameraCaptureID: ImportSelection] = [:]
     @ObservationIgnored private var capturesByID: [CameraCaptureID: [CameraCapture]] = [:]
@@ -52,7 +54,10 @@ final class CameraBrowserModel {
                     cancel()
                 } else {
                     isLoading = false
-                    failure = error as? WirelessFailure ?? .connectionLost
+                    let failure = error as? WirelessFailure ?? .connectionLost
+                    self.failure = failure
+                    requiresFreshSession = true
+                    onSessionInvalidated?(failure)
                 }
             }
         } onCancel: {
@@ -304,6 +309,7 @@ final class CameraBrowserModel {
         self.failure = failure
         clearReceiptStatuses()
         thumbnailCache = .init()
+        onSessionInvalidated?(failure)
     }
 
     private static func invalidatingPreviewFailure(_ error: any Error) -> WirelessFailure? {

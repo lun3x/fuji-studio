@@ -329,6 +329,7 @@ extension ExportCoordinatorTests {
 enum CrashBoundary: Sendable { case beforeIntent, afterIntent, afterPlaceholder, afterSuccess, afterConfirmation, enumerationFailure, readsUnavailable }
 
 private actor FaultCatalog: CatalogStoring {
+    func knownSourceIDs() async throws -> Set<SourceID> { try await base.knownSourceIDs() }
     func replaceSource(_ sourceID: SourceID, with replacement: PhotoSource) async throws { try await base.replaceSource(sourceID, with: replacement) }
     let base: SwiftDataCatalog, boundary: CrashBoundary
     var fired = false

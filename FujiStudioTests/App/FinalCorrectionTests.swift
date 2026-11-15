@@ -86,7 +86,7 @@ import Testing
         let model = AppModel(environment: AppEnvironment(reader: f.reader, camera: camera, catalog: reopened,
             originals: pool,
             preview: f.environment.preview, resolver: f.environment.resolver, exports: exports,
-            cache: f.environment.cache, thumbnails: f.environment.thumbnails, platform: f.platform))
+            cache: f.environment.cache, thumbnails: f.environment.thumbnails, platform: f.platform, wireless: f.environment.wireless))
         await model.start(); await model.connect()
         #expect(model.progressEvents.map(\.jobID) == [job.id])
         let recovered = try #require(model.progressEvents.first)
@@ -335,7 +335,8 @@ import Testing
         let exports = ExportCoordinator(reader: reader, camera: camera, catalog: f.environment.catalog, writer: f.writer,
             pool: pool, cache: f.environment.cache, scheduler: scheduler)
         return AppEnvironment(reader: reader, camera: camera, catalog: f.environment.catalog, originals: pool, preview: preview, resolver: resolver,
-            exports: exports, cache: f.environment.cache, thumbnails: f.environment.thumbnails, platform: f.platform)
+            exports: exports, cache: f.environment.cache, thumbnails: f.environment.thumbnails, platform: f.platform,
+            wireless: f.environment.wireless)
     }
 
     nonisolated static func prepare(_ local: LocalResource) throws -> PreparedRAW {

@@ -1306,7 +1306,8 @@ import Testing
         AppModel(environment: AppEnvironment(reader: environment.reader, camera: environment.camera, catalog: catalog,
             originals: environment.originals,
             preview: environment.preview, resolver: environment.resolver, exports: environment.exports,
-            cache: environment.cache, thumbnails: environment.thumbnails, platform: environment.platform))
+            cache: environment.cache, thumbnails: environment.thumbnails, platform: environment.platform,
+            wireless: environment.wireless))
     }
 
     private func eventually(_ condition: () async -> Bool) async {
@@ -1322,6 +1323,7 @@ import Testing
 
 /// Delegates to the same actual disk catalog; only the captured version-list return is delayed.
 private actor HeldVersionCatalog: CatalogStoring {
+    func knownSourceIDs() async throws -> Set<SourceID> { try await base.knownSourceIDs() }
     func replaceSource(_ sourceID: SourceID, with replacement: PhotoSource) async throws { try await base.replaceSource(sourceID, with: replacement) }
     let base: any CatalogStoring
     private var recipeSavesToFail = 0

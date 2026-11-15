@@ -30,7 +30,15 @@ struct OriginalImportValidator: Sendable {
             try Self.checkPair(ordered[0].metadata, ordered[1].metadata)
         }
 
-        let embedded = ordered.compactMap { Self.embeddedTimestamp($0.metadata) }
+        return .init(selection: selection, originals: ordered,
+                     metadata: Self.photoMetadata(selection, originals: ordered, importDate: importDate))
+    }
+
+    /// Recovery can compare the metadata originally assigned to Photos without reading
+    /// or hashing the retained files again. This does not establish a verified receipt.
+    static func photoMetadata(_ selection: ImportSelection, originals: [StagedOriginal],
+                              importDate: Date) -> ImportCaptureMetadata {
+        let embedded = originals.compactMap { Self.embeddedTimestamp($0.metadata) }
         let reported = selection.descriptors.compactMap { CameraCaptureTimestamp($0.captureDate) }
         let resolvedDate: Date
         let source: ImportCaptureMetadata.DateSource
@@ -42,9 +50,8 @@ struct OriginalImportValidator: Sendable {
             (resolvedDate, source) = (importDate, embedded.isEmpty && reported.isEmpty
                                       ? .importTimeMissingDate : .importTimeMissingOffset)
         }
-        return .init(selection: selection, originals: ordered,
-                     metadata: .init(creationDate: resolvedDate, dateSource: source,
-                                     location: ordered.compactMap { $0.metadata.location }.first))
+        return .init(creationDate: resolvedDate, dateSource: source,
+                     location: originals.compactMap { $0.metadata.location }.first)
     }
 
     /// Reads only headers/metadata; never decodes raw pixels or rewrites camera bytes.

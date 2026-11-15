@@ -5,6 +5,11 @@ import FujiCameraCore
 typealias WirelessTransferSessionFactory = @Sendable (WirelessIdentity, JoinedCameraNetwork)
   async throws -> any WirelessTransferSession
 
+struct WirelessTransferAdmission: Sendable {
+  let intent: WirelessConnectionIntent
+  let session: any WirelessTransferSession
+}
+
 actor WirelessConnectionCoordinator: USBBluetoothControlling {
   private enum Work {
     case discovery
@@ -36,6 +41,7 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
   private var snapshot = WirelessConnectionState() {
     didSet {
       guard snapshot != oldValue else { return }
+      snapshot.sequence &+= 1
       for observer in observers.values { observer.yield(snapshot) }
     }
   }
@@ -98,6 +104,8 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
     observer.yield(snapshot)
     return stream
   }
+
+  func currentState() -> WirelessConnectionState { snapshot }
 
   func setActivity(_ activity: WirelessActivity) async {
     guard snapshot.activity != activity else { return }
@@ -172,7 +180,10 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
     let id = UUID()
     pendingDiscovery = id
     defer {
-      if pendingDiscovery == id { pendingDiscovery = nil }
+      if pendingDiscovery == id {
+        pendingDiscovery = nil
+        if Task.isCancelled { startAutomaticReconnect() }
+      }
     }
     await loadSavedCameras()
     guard pendingDiscovery == id, !Task.isCancelled else { return }
@@ -592,6 +603,7 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
     if wifiLease == nil {
       snapshot.wifiFailure = nil
       snapshot.wifiFailurePhase = nil
+      snapshot.firmwareRejection = nil
     }
     await stopBluetoothWork()
   }
@@ -630,6 +642,7 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
     snapshot.failure = nil
     snapshot.wifiFailure = nil
     snapshot.wifiFailurePhase = nil
+    snapshot.firmwareRejection = nil
     snapshot.pairingFailure = nil
   }
 
@@ -651,6 +664,11 @@ extension WirelessConnectionCoordinator {
 
   func waitForAutoSave() async { await startAutoSave(register: false) }
 
+  func checkAutoSaveAvailability() async throws {
+    guard let autoSave else { throw WirelessFailure.autoSaveEntitlementUnavailable }
+    try await autoSave.checkAvailability()
+  }
+
   private func startAutoSave(register: Bool) async {
     guard let autoSave, let ownership else {
       snapshot.wifiFailure = .autoSaveEntitlementUnavailable
@@ -671,6 +689,7 @@ extension WirelessConnectionCoordinator {
     else { return }
     snapshot.wifiFailure = nil
     snapshot.wifiFailurePhase = nil
+    snapshot.firmwareRejection = nil
     snapshot.wifi = .acquiringOwnership
     let id = UUID()
     let attempt = Task { await run(id) }
@@ -693,10 +712,26 @@ extension WirelessConnectionCoordinator {
   }
 
   func transferSession() async throws -> any WirelessTransferSession {
-    guard snapshot.wifi == .ready, snapshot.activity != .background, let session else {
+    try admittedTransfer().session
+  }
+
+  func admittedTransfer() throws -> WirelessTransferAdmission {
+    guard snapshot.wifi == .ready, snapshot.activity != .background,
+      let session, let intent = wifiRequest?.intent else {
       throw WirelessFailure.connectionLost
     }
-    return session
+    return .init(intent: intent, session: session)
+  }
+
+  func retireTransfer(_ intent: WirelessConnectionIntent, failure: WirelessFailure?) async {
+    guard wifiRequest?.intent == intent, snapshot.wifi == .ready else { return }
+    let retirement = snapshot.connectionGeneration &+ 1
+    await disconnectWiFi()
+    if let failure, snapshot.connectionGeneration == retirement, snapshot.activity != .background,
+      snapshot.wifiFailure == nil, wifiAttempt == nil {
+      snapshot.wifiFailure = failure
+      snapshot.wifiFailurePhase = .ready
+    }
   }
 
   private func cancelWiFi(_ id: UUID) async {
@@ -710,6 +745,7 @@ extension WirelessConnectionCoordinator {
   ) async {
     do {
       wifiLease = try await ownership.acquireWireless()
+      snapshot.hasTransferLease = true
       try checkWiFiAttempt(id)
       let intent = try await prepareWiFiConnection()
       try checkWiFiAttempt(id, intent)
@@ -743,12 +779,7 @@ extension WirelessConnectionCoordinator {
       }
       try await wifi.verify(joined)
       try checkWiFiAttempt(id, intent)
-      let policy = WirelessSupportPolicy()
-      guard policy.assess(model: peer.model.rawValue, firmware: peer.firmware) == .supported(peer.model),
-        bleIdentity.firmware == nil
-          || policy.assess(model: peer.model.rawValue, firmware: bleIdentity.firmware)
-            == .supported(peer.model)
-      else { throw WirelessFailure.unsupportedFirmware }
+      try verifyFirmware(peer, bluetoothFirmware: bleIdentity.firmware)
       try await loadFirstInventory(opened, id: id, intent: intent)
     } catch {
       await failWiFi(id, error: error)
@@ -771,6 +802,7 @@ extension WirelessConnectionCoordinator {
       try checkWiFiAttempt(id)
       snapshot.wifi = .acquiringOwnership
       wifiLease = try await ownership.acquireWireless()
+      snapshot.hasTransferLease = true
       try checkWiFiAttempt(id)
       snapshot.connectionGeneration &+= 1
       let intent = WirelessConnectionIntent(cameraID: camera.id, connectionGeneration: snapshot.connectionGeneration)
@@ -805,8 +837,7 @@ extension WirelessConnectionCoordinator {
       guard peer.cameraID == camera.id, peer.model == .xe3,
         peer.protocolPeerKey == registration.peerKey
       else { throw WirelessFailure.peerMismatch }
-      guard WirelessSupportPolicy().assess(model: peer.model.rawValue, firmware: peer.firmware) == .supported(.xe3)
-      else { throw WirelessFailure.unsupportedFirmware }
+      try verifyFirmware(peer)
       try await loadFirstInventory(opened, id: id, intent: intent)
     } catch {
       await failWiFi(id, error: error)
@@ -816,6 +847,18 @@ extension WirelessConnectionCoordinator {
   private func verifyAutoSaveRegistration(_ id: UUID, intent: WirelessConnectionIntent) throws {
     try checkWiFiAttempt(id, intent)
     snapshot.wifi = .verifyingAutoSave
+  }
+
+  private func verifyFirmware(_ peer: WirelessIdentity, bluetoothFirmware: String? = nil) throws {
+    let policy = WirelessSupportPolicy()
+    let transfer = policy.assess(model: peer.model.rawValue, firmware: peer.firmware)
+    let bluetoothRejected = bluetoothFirmware.map {
+      policy.assess(model: peer.model.rawValue, firmware: $0) != .supported(peer.model)
+    } ?? false
+    guard transfer == .supported(peer.model), !bluetoothRejected else {
+      throw WirelessFirmwareRejection(cameraModel: peer.model, transferAdmission: transfer,
+                                      bluetoothRejectedFirmware: bluetoothRejected)
+    }
   }
 
   private func loadFirstInventory(
@@ -839,9 +882,12 @@ extension WirelessConnectionCoordinator {
     let interruptedByBluetooth = Task.isCancelled ? nil : attempt.bluetoothFailure
     let cancellation = Task.isCancelled || error is CancellationError
     let phase = interruptedByBluetooth?.phase ?? snapshot.wifi
+    let firmware = error as? WirelessFirmwareRejection
+    let technicalFailure: WirelessFailure = firmware == nil ? (error as? WirelessFailure ?? .connectionLost) : .unsupportedFirmware
     let failure = interruptedByBluetooth?.reason
-      ?? (cancellation ? nil : (error as? WirelessFailure) ?? .connectionLost)
+      ?? (cancellation ? nil : technicalFailure)
     endWiFiRequest(failure: failure)
+    snapshot.firmwareRejection = failure == .unsupportedFirmware ? firmware : nil
     snapshot.wifiFailure = failure
     snapshot.wifiFailurePhase = failure == nil ? nil : phase
     snapshot.wifi = .disconnecting
@@ -872,6 +918,7 @@ extension WirelessConnectionCoordinator {
       if confirmed, let wifiLease {
         await ownership?.releaseWireless(wifiLease)
         self.wifiLease = nil
+        snapshot.hasTransferLease = false
       }
       wifiAttempt = nil
       wifiTeardown = nil

@@ -24,6 +24,7 @@ enum WorkspaceEffect: Sendable, Equatable {
 enum WorkspaceAction: Sendable {
     case sourceTapped(SourceID)
     case sourceReplaced(SourceID, with: PhotoSource)
+    case viewImported(ids: Set<SourceID>, newest: SourceID)
     case select, done
     /// Range sweep membership only; never changes viewed source or preview intent.
     case checkedSourcesReplaced(Set<SourceID>)
@@ -46,6 +47,7 @@ enum WorkspaceAction: Sendable {
     /// Complete accessible metadata index after removals or an authorization change.
     case libraryUpdated(sources: [PhotoSource], access: LibraryAccess)
     case cameraChanged(CameraState, context: CameraExecutionContext?)
+    case wirelessOwnershipChanged(Bool)
     case activeJobChanged(UUID?)
     case drawerMoved(DrawerDetent)
     case previewInterrupted
@@ -55,7 +57,7 @@ enum WorkspaceAction: Sendable {
 }
 
 enum WorkspaceExportDisabledReason: Sendable, Equatable {
-    case noSources, noRecipe, activeJob, cameraNotReady, cameraAttention, cameraResetting, cameraContextUnavailable, recipeCameraMismatch
+    case noSources, noRecipe, activeJob, cameraNotReady, cameraAttention, cameraResetting, cameraContextUnavailable, recipeCameraMismatch, wirelessCameraInUse
     case incompatibleSource(sourceID: SourceID, model: String)
     case unsupportedRecipe([RecipeRenderingIssue])
 
@@ -67,6 +69,7 @@ enum WorkspaceExportDisabledReason: Sendable, Equatable {
         case .cameraNotReady: "Connect a supported Fujifilm camera and wait for it to be ready."
         case .cameraAttention: "Resolve the camera error before exporting."
         case .cameraResetting: "Wait for the camera connection reset to finish."
+        case .wirelessCameraInUse: "Disconnect camera Wi-Fi to use USB conversion."
         case .cameraContextUnavailable: "Verify the connected camera before exporting."
         case .recipeCameraMismatch: "Refresh recipes from the connected camera."
         case .incompatibleSource(_, let model): "This RAW was captured by \(model) and cannot be converted by the connected camera."
@@ -92,6 +95,7 @@ struct WorkspaceState: Sendable {
     private(set) var currentCameraExecutionContext: CameraExecutionContext?
     private(set) var cameraState: CameraState = .disconnected
     private(set) var isCameraResetting = false
+    private(set) var wirelessRestrictsUSB = false
     private(set) var activeJobID: UUID?
     private(set) var libraryAccess: LibraryAccess
     private var sources: [SourceID: PhotoSource]
@@ -174,6 +178,7 @@ struct WorkspaceState: Sendable {
     }
 
     var exportDisabledReason: WorkspaceExportDisabledReason? {
+        if wirelessRestrictsUSB { return .wirelessCameraInUse }
         if isCameraResetting { return .cameraResetting }
         let effective = effectiveSources
         guard !effective.isEmpty else { return .noSources }
@@ -191,7 +196,7 @@ struct WorkspaceState: Sendable {
     }
     var canExport: Bool { exportDisabledReason == nil }
     var isCameraReady: Bool {
-        guard !isCameraResetting, case .ready = cameraState else { return false }
+        guard !wirelessRestrictsUSB, !isCameraResetting, case .ready = cameraState else { return false }
         return true
     }
     var canImportRecipes: Bool { isCameraReady && cameraSupport?.capabilities.recipeImport == .supported }
@@ -217,6 +222,20 @@ struct WorkspaceState: Sendable {
         case .cameraResetChanged(let resetting):
             isCameraResetting = resetting
             return reduce(.previewInterrupted)
+        case .wirelessOwnershipChanged(let restricted):
+            guard wirelessRestrictsUSB != restricted else { return [] }
+            wirelessRestrictsUSB = restricted
+            if restricted { return reduce(.previewInterrupted) }
+        case .viewImported(let ids, let newest):
+            guard ids.contains(newest), sources[newest] != nil else { return [] }
+            photoFilter = .allPhotos
+            isSelecting = true
+            checkedSourceIDs = ids.intersection(Set(sources.keys))
+            viewedSourceID = newest
+            displayedVersion = originalVersion
+            wantsRecipePreview = false
+            previewRequiresUserIntent = true
+            invalidatePreview()
         case .sourceTapped(let id):
             guard sourceIsVisible(id) else { return [] }
             if isSelecting {
@@ -453,7 +472,7 @@ struct WorkspaceState: Sendable {
 
     /// The selected recipe is still pending while an earlier camera operation drains.
     var isAwaitingRecipePreview: Bool {
-        guard !isCameraResetting, !previewSatisfied, wantsRecipePreview,
+        guard !wirelessRestrictsUSB, !isCameraResetting, !previewSatisfied, wantsRecipePreview,
               let id = viewedSourceID, let source = sources[id], incompatibleModel(source) == nil,
               let recipe = selectedRecipe,
               case .supported = recipe.renderingSupport(using: RecipeCodecRegistry()),

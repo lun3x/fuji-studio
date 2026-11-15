@@ -97,10 +97,13 @@ public struct LocalResource: Sendable, Equatable {
 
 public struct LibraryChange: Sendable, Equatable {
   public let changedIDs: Set<SourceID>
+  public let insertedIDs: Set<SourceID>
   public let removedIDs: Set<SourceID>
   public let accessScopeChanged: Bool
-  public init(changedIDs: Set<SourceID>, removedIDs: Set<SourceID>, accessScopeChanged: Bool) {
+  public init(changedIDs: Set<SourceID>, removedIDs: Set<SourceID>, accessScopeChanged: Bool,
+              insertedIDs: Set<SourceID> = []) {
     self.changedIDs = changedIDs
+    self.insertedIDs = insertedIDs
     self.removedIDs = removedIDs
     self.accessScopeChanged = accessScopeChanged
   }

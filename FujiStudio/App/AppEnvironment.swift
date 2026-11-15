@@ -40,6 +40,7 @@ import UIKit
     let cache: FileRenderCache
     let thumbnails: any GridThumbnailProviding
     let platform: any AppPlatform
+    let wireless: WirelessServices
     let jpegDetail = JPEGDetailRenderer()
     var cameraUseArbiter: CameraUseArbiter { camera.arbiter }
     var wirelessOwnership: some WirelessCameraOwnershipGateway {
@@ -47,7 +48,7 @@ import UIKit
         return camera.wirelessOwnership { await preview.invalidate() }
     }
 
-    static func live() async throws -> AppEnvironment {
+    static func live(includeWireless: Bool = true) async throws -> AppEnvironment {
         // SwiftData's executor must be created away from the UI actor; cache scans and journal
         // initialization also stay here. Only native ImageCapture and thumbnail UI belong on main.
         let storage = try await Task.detached(priority: .userInitiated) {
@@ -58,13 +59,15 @@ import UIKit
             let catalog = try SwiftDataCatalog(storeURL: support.appendingPathComponent("catalog.store"))
             let cache = try FileRenderCache(directory: caches.appendingPathComponent("renders"), pinnedDirectory: support.appendingPathComponent("export-pins"))
             let journal = try CameraOperationJournal(directory: support.appendingPathComponent("camera-journal"), filePolicy: IOSCameraJournalFilePolicy())
+            let importJournal = try ImportJournal()
+            let staging = try ImportStagingStore()
             try ResourceFileTransfer.prepareDirectory()
             let display = caches.appendingPathComponent("raw-display", isDirectory: true)
             // Dedicated disposable fit/detail output, before constructing the sole renderer.
             // Current viewer leases live in a different transient root; durable pins are untouched.
             try? fm.removeItem(at: display)
             let renderer = try RawDisplayRenderer(directory: display)
-            return (catalog, cache, journal, renderer, caches.appendingPathComponent("raw-metadata", isDirectory: true))
+            return (catalog, cache, journal, renderer, caches.appendingPathComponent("raw-metadata", isDirectory: true), importJournal, staging)
         }.value
         let reader = PhotoLibraryReader()
         let arbiter = CameraUseArbiter()
@@ -77,7 +80,67 @@ import UIKit
             storedDisplay: { source, version, progress in try await resolver.resolve(source: source, version: version, progress: progress).lease })
         let exports = ExportCoordinator(reader: reader, camera: camera, catalog: storage.0,
             writer: PhotoLibraryWriter(pairer: PhotoLibraryPairer(reader: reader)), pool: pool, cache: storage.1, scheduler: scheduler)
+        let ownership = camera.wirelessOwnership { await preview.invalidate() }
+        let wireless: WirelessServices
+        #if DEBUG
+        if includeWireless {
+            wireless = .live(journal: storage.5, staging: storage.6, ownership: ownership)
+        } else {
+            wireless = WirelessFixture.inactiveServices(journal: storage.5, staging: storage.6)
+        }
+        #else
+        wireless = .live(journal: storage.5, staging: storage.6, ownership: ownership)
+        #endif
+        if wireless.isEnabled { try await arbiter.installBluetoothController(wireless.connection) }
         return AppEnvironment(reader: reader, camera: camera, catalog: storage.0, originals: pool, preview: preview, resolver: resolver,
-            exports: exports, cache: storage.1, thumbnails: ThumbnailProvider(), platform: NativeAppPlatform())
+            exports: exports, cache: storage.1, thumbnails: ThumbnailProvider(), platform: NativeAppPlatform(), wireless: wireless)
+    }
+}
+
+@MainActor struct WirelessServices {
+    let connection: WirelessConnectionCoordinator
+    let browser: CameraBrowserModel
+    let importer: CameraImportCoordinator
+    let journal: ImportJournal
+    let requestPhotosAccess: @MainActor () async -> LibraryAccess
+    let isEnabled: Bool
+
+    init(connection: WirelessConnectionCoordinator, journal: ImportJournal, staging: ImportStagingStore,
+         photoGateway: any PhotoImportGateway, isEnabled: Bool = true,
+         requestPhotosAccess: @escaping @MainActor () async -> LibraryAccess) {
+        self.connection = connection
+        self.browser = CameraBrowserModel()
+        self.importer = CameraImportCoordinator(journal: journal, staging: staging, gateway: photoGateway)
+        self.journal = journal
+        self.requestPhotosAccess = requestPhotosAccess
+        self.isEnabled = isEnabled
+    }
+
+    static func live(journal: ImportJournal, staging: ImportStagingStore,
+                     ownership: some WirelessCameraOwnershipGateway) -> Self {
+        let defaults = UserDefaults.standard
+        let clientKey = "wireless.clientID"
+        let clientID = defaults.string(forKey: clientKey).flatMap(UUID.init(uuidString:)) ?? UUID()
+        defaults.set(clientID.uuidString, forKey: clientKey)
+        let guid = withUnsafeBytes(of: clientID.uuid) { Data($0) }
+        let store = KeychainCameraStore(defaults: defaults)
+        let connection = WirelessConnectionCoordinator(
+            bluetooth: NativeBluetoothGateway(store: store), store: store,
+            wifi: NativeWiFiJoinGateway(credentials: store), ownership: ownership,
+            sessionFactory: { identity, _ in
+                let mode: WirelessMode = identity.model == .xt5 ? .xApp : .phone
+                let channel = try await NetworkByteChannel.connect(to: .cameraHosted(mode: mode))
+                let transport = WirelessPTPTransport(channel: channel)
+                switch identity.model {
+                case .xt5:
+                    return XAppTransferAdapter.makeSession(transport: transport, expectedIdentity: identity, clientGUID: guid)
+                case .xe3:
+                    return PhoneTransferAdapter.makeSession(transport: transport, expectedIdentity: identity, clientGUID: guid)
+                }
+            },
+            autoSave: NativeAutoSaveGateway(store: store, clientGUID: guid))
+        return Self(connection: connection, journal: journal, staging: staging,
+                    photoGateway: NativePhotoImportGateway(staging: staging),
+                    requestPhotosAccess: NativePhotoImportGateway.requestReadWriteAccess)
     }
 }

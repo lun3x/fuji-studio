@@ -28,6 +28,10 @@ import Observation
         }
         let fixtures = arguments.filter { ["--ui-fixtures", "--workspace-fixture", "--grid-fixture", "--viewer-fixture"].contains($0) }
         let probe = arguments.contains { $0.hasPrefix("--") && $0.hasSuffix("-probe") }
+        let wireless = WirelessFixture.Mode.launchModes(in: arguments)
+        let wirelessFlags = arguments.filter { $0.hasPrefix("--fixture-wireless-") }
+        guard wirelessFlags.isEmpty || (wirelessFlags.count == 1 && wireless.count == 1 && fixtures == ["--ui-fixtures"])
+        else { return .invalid }
         guard fixtures.count <= 1, !(probe && !fixtures.isEmpty) else { return .invalid }
         switch fixtures.first {
         case "--ui-fixtures": return .flow
@@ -44,8 +48,9 @@ import Observation
         let writer: FixtureWriter
         let platform: FixturePlatform
         let scheduler: CameraWorkScheduler
+        let wireless: WirelessFixture
     }
-    static func make(access: LibraryAccess = .full, uncertain: Bool = false, cameraOverride: (any CameraServing)? = nil,cameraModel:String="X-T5",slotCount:Int=7,mixedModels:Bool=false,undecodableRAW:Bool=false,filterSources:Bool=false,pairCleanupPending:Bool=false,rawOnlyBatch:Bool=false) async throws -> Bundle {
+    static func make(access: LibraryAccess = .full, uncertain: Bool = false, cameraOverride: (any CameraServing)? = nil,cameraModel:String="X-T5",slotCount:Int=7,mixedModels:Bool=false,undecodableRAW:Bool=false,filterSources:Bool=false,pairCleanupPending:Bool=false,rawOnlyBatch:Bool=false, wireless mode: WirelessFixture.Mode = .disabled) async throws -> Bundle {
         let images = try WorkspaceFixture()
         let allRecipes=cameraModel == "X-E3" ? try fixtureXE3Snapshots() : images.state.recipes
         let cachedRecipes=Array(allRecipes.prefix(slotCount))
@@ -81,12 +86,16 @@ import Observation
             storedDisplay: { source, version, progress in try await resolver.resolve(source: source, version: version, progress: progress).lease })
         let exports = ExportCoordinator(reader: reader, camera: selectedCamera, catalog: storage.0, writer: writer, pool: pool, cache: storage.1, scheduler: scheduler)
         let platform = FixturePlatform()
+        let wireless = try WirelessFixture(mode: mode, root: root, reader: reader,
+            ownership: selectedCamera.wirelessOwnership { await preview.invalidate() })
+        if wireless.services.isEnabled { try await arbiter.installBluetoothController(wireless.services.connection) }
         // Cached recipes exercise useful disconnected browsing, without selecting a recipe.
         try await storage.0.replaceRecipes(try await camera.cachedRecipeCollection())
         if mixedModels,let other=images.state.recipes.first { _ = try await storage.0.copyRecipeToPhone(other) }
         return Bundle(environment: AppEnvironment(reader: reader, camera: selectedCamera, catalog: storage.0, originals: pool, preview: preview,
-            resolver: resolver, exports: exports, cache: storage.1, thumbnails: images.thumbnails, platform: platform),
-            reader: reader, camera: camera, writer: writer, platform: platform, scheduler: scheduler)
+            resolver: resolver, exports: exports, cache: storage.1, thumbnails: images.thumbnails, platform: platform,
+            wireless: wireless.services),
+            reader: reader, camera: camera, writer: writer, platform: platform, scheduler: scheduler, wireless: wireless)
     }
 }
 
@@ -130,6 +139,7 @@ actor FixtureLibrary: PhotoLibraryReading, PhotoEditReading {
     private(set) var materializations = 0
     private var observers: [AsyncStream<LibraryChange>.Continuation] = []
     private(set) var rawReads = 0, changeSubscriptions = 0, discoveryRequests = 0
+    private(set) var wirelessInsertionNotificationCount = 0
     private let metadata: @Sendable (ResourceToken) -> RAWMetadata
     private(set) var metadataReads = 0
     init(sources: [PhotoSource], image: DisplayFileLease, root: URL, access: LibraryAccess,undecodableRAW:Bool=false, metadata: @escaping @Sendable (ResourceToken) -> RAWMetadata) {
@@ -246,6 +256,30 @@ actor FixtureLibrary: PhotoLibraryReading, PhotoEditReading {
     }
     func addOutput(_ id: String) {
         outputs[id] = ResourceToken(assetID: id, role: .primaryOriginal, contentTypeIdentifier: "public.jpeg", format: .jpeg, originalFilename: "generated.JPG", discriminator: "jpeg", sourceRevision: "generated")
+    }
+    func addWirelessImport(_ id: SourceID, capture: ValidatedCapture, notify: Bool) {
+        guard let raw = capture.originals.first(where: { $0.role == .raf }) else { return }
+        let revision = "verified-import-\(id)"
+        let jpeg = capture.originals.first(where: { $0.role == .jpeg }).map {
+            ResourceToken(assetID: id, role: .primaryOriginal, contentTypeIdentifier: "public.jpeg", format: .jpeg,
+                originalFilename: $0.originalFilename, discriminator: "wireless-jpeg", sourceRevision: revision)
+        }
+        let raf = ResourceToken(assetID: id, role: jpeg == nil ? .primaryOriginal : .alternateOriginal,
+            contentTypeIdentifier: "com.fuji.raw-image", format: .raf, originalFilename: raw.originalFilename,
+            discriminator: "wireless-raw", sourceRevision: revision)
+        index.append(.init(id: id, originalResources: .init(raf: raf, jpeg: jpeg),
+                           captureDate: capture.metadata.creationDate, location: nil, resourceRevision: revision))
+        if notify {
+            wirelessInsertionNotificationCount += 1
+            observers.forEach { $0.yield(.init(changedIDs: [id], removedIDs: [], accessScopeChanged: false, insertedIDs: [id])) }
+        }
+    }
+    func insertExternalRAW(_ id: SourceID, filename: String, date: Date) {
+        let raf = ResourceToken(assetID: id, role: .primaryOriginal, contentTypeIdentifier: "com.fuji.raw-image",
+            format: .raf, originalFilename: filename, discriminator: "external-raw", sourceRevision: "external")
+        index.append(.init(id: id, originalResources: .init(raf: raf), captureDate: date, location: nil,
+                           resourceRevision: "external"))
+        observers.forEach { $0.yield(.init(changedIDs: [id], removedIDs: [], accessScopeChanged: false, insertedIDs: [id])) }
     }
 }
 

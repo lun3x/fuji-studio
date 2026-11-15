@@ -127,9 +127,10 @@ actor NativeAutoSaveGateway: AutoSaveGateway {
     guard observed.cameraID == expected.cameraID, observed.model == expected.model,
       observed.protocolPeerKey == expected.protocolPeerKey
     else { throw WirelessFailure.peerMismatch }
-    guard WirelessSupportPolicy().assess(model: observed.model.rawValue, firmware: observed.firmware)
-      == .supported(.xe3)
-    else { throw WirelessFailure.unsupportedFirmware }
+    let admission = WirelessSupportPolicy().assess(model: observed.model.rawValue, firmware: observed.firmware)
+    guard admission == .supported(.xe3) else {
+      throw WirelessFirmwareRejection(cameraModel: .xe3, transferAdmission: admission)
+    }
     return session
   }
 

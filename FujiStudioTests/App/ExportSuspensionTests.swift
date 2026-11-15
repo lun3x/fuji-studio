@@ -4,6 +4,32 @@ import Testing
 @testable import FujiStudio
 
 struct ExportSuspensionTests {
+    @Test func refusedUSBReservationKeepsDurableExportPausedForExplicitResume() async throws {
+        let f = try ExportBatchFixture(), barrier = RenderLatch()
+        let catalog = SaveBoundaryCatalog(base: f.catalog, barrier: barrier)
+        let arbiter = CameraUseArbiter()
+        let writer = ExportWriter()
+        let engine = ExportCoordinator(reader: f.reader, camera: f.camera, catalog: catalog, writer: writer,
+            pool: f.reader.pool(), cache: f.cache, scheduler: CameraWorkScheduler(arbiter: arbiter))
+        var events = await engine.events().makeAsyncIterator()
+        let start = Task { try await engine.start(sources: f.sources, recipe: f.render.recipe) }
+        await barrier.entered()
+        let lease = try await arbiter.acquireWireless(quiesceUSB: {})
+        await barrier.release()
+        let id = try await start.value
+        var refused: ExportEvent?
+        while let event = await events.next() {
+            if event.jobID == id, event.terminal { refused = event; break }
+        }
+        #expect(refused?.pauseReason == .camera(.transport(String(describing: WirelessFailure.cameraBusy))))
+        #expect(try await f.catalog.job(id: id).state == .paused)
+        await arbiter.releaseWireless(lease)
+        #expect(await writer.requests.isEmpty)
+        try await engine.resume(jobID: id)
+        while let event = await events.next() { if event.jobID == id && event.terminal { break } }
+        #expect(await writer.requests.count == f.sources.count)
+    }
+
     @Test func progressCarriesActualStorageFailureFromFrozenItems() async throws {
         let f = try ExportBatchFixture(), writer = ExportWriter(), engine = f.engine(writer: writer)
         await writer.rejectStorage()
@@ -101,6 +127,7 @@ struct ExportSuspensionTests {
 }
 
 actor SaveBoundaryCatalog: CatalogStoring {
+    func knownSourceIDs() async throws -> Set<SourceID> { try await base.knownSourceIDs() }
     func replaceSource(_ sourceID: SourceID, with replacement: PhotoSource) async throws { try await base.replaceSource(sourceID, with: replacement) }
     let base: any CatalogStoring
     let barrier: RenderLatch

@@ -98,7 +98,17 @@ final class AutoSaveGatewayTests: XCTestCase {
       (wrong, WirelessFailure.peerMismatch), (newer, .unsupportedFirmware), (absent, .peerMismatch),
     ] {
       let gateway = makeGateway(store: store, makeSession: { _, _, _ in session })
-      await expect(expected) { _ = try await gateway.waitForSession(registration: receipt) }
+      if expected == .unsupportedFirmware {
+        do {
+          _ = try await gateway.waitForSession(registration: receipt)
+          XCTFail("Unvalidated AutoSave firmware was admitted")
+        } catch let rejection as WirelessFirmwareRejection {
+          XCTAssertEqual(rejection.transferAdmission, .unverified("1.33"))
+          XCTAssertEqual(rejection.cameraModel, .xe3)
+        } catch { XCTFail("Missing authenticated PTP firmware evidence: \(error)") }
+      } else {
+        await expect(expected) { _ = try await gateway.waitForSession(registration: receipt) }
+      }
       let closes = await session.closes
       XCTAssertEqual(closes, 1)
     }

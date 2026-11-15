@@ -81,6 +81,8 @@ actor CameraImportCoordinator {
     /// Read after start/resume to bind the run to the caller's connection generation.
     /// This includes an already-settled run, even after foreground reconciliation.
     func latestRunEvent(jobID: UUID) -> ImportEvent? { latestRunEvents[jobID] }
+    func latestEvent(jobID: UUID) -> ImportEvent? { latest[jobID] }
+    func recoveryIssue() -> (sequence: UInt64, event: ImportEvent?) { (sequence, journalIssue) }
 
     /// Read after reconciliation for every unfinished job, independent of the live event buffer.
     func recoverySnapshot() -> [ImportEvent] {

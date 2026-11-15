@@ -60,7 +60,8 @@ import Testing
         let loader = RefreshThumbnailLoader(), provider = ThumbnailProvider(loader: loader)
         let environment = AppEnvironment(reader: original.reader, camera: original.camera, catalog: original.catalog,
             originals: original.originals, preview: original.preview, resolver: original.resolver,
-            exports: original.exports, cache: original.cache, thumbnails: provider, platform: original.platform)
+            exports: original.exports, cache: original.cache, thumbnails: provider, platform: original.platform,
+            wireless: original.wireless)
         let model = AppModel(environment: environment)
         await model.start(automaticallyConnect: false)
         model.send(.sourceTapped("source-0"))

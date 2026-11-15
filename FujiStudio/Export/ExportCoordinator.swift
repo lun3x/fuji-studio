@@ -293,7 +293,12 @@ actor ExportCoordinator {
                 try await catalog.saveJob(final)
             }
         } catch {
-            reason = .persistence(String(describing: error))
+            switch error {
+            case WirelessFailure.cameraBusy, WirelessFailure.usbCloseUnconfirmed, CameraServiceError.closeUnconfirmed:
+                reason = .camera(.transport(String(describing: error)))
+            default:
+                reason = .persistence(String(describing: error))
+            }
             // Keep the durable attempt even when updating progress also fails.
             if var job = try? await catalog.job(id: id) {
                 job.state = Self.hasUnresolved(job) ? .unresolved : Self.allSaved(job) ? .saved : .paused
