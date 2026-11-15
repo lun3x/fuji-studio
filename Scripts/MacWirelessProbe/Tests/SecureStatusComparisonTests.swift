@@ -5,6 +5,7 @@ import FujiCameraCore
 private struct SecureStatusComparisonTests {
   static func main() {
     let peer = UUID()
+    let cameraID = WirelessCameraID()
     let otherPeer = UUID()
     let session = UUID()
     let otherSession = UUID()
@@ -19,7 +20,7 @@ private struct SecureStatusComparisonTests {
     precondition(comparison.receive(read, session: session))
     precondition(!comparison.observation.baselineAvailable, "Unfinished pair committed a baseline")
     comparison.endAttempt()
-    precondition(!comparison.commitPairing(peripheralID: peer), "Failed pair committed a baseline")
+    precondition(!comparison.commitPairing(peripheralID: peer, cameraID: cameraID), "Failed pair committed a baseline")
 
     comparison.begin(.reconnect, peripheralID: peer)
     comparison.verifyXT5(session: session)
@@ -30,14 +31,14 @@ private struct SecureStatusComparisonTests {
     comparison.begin(.pairing, peripheralID: peer)
     comparison.verifyXT5(session: session)
     precondition(comparison.receive(read, session: session))
-    precondition(comparison.commitPairing(peripheralID: peer))
+    precondition(comparison.commitPairing(peripheralID: peer, cameraID: cameraID))
     comparison.endAttempt()
 
     comparison.begin(.pairing, peripheralID: otherPeer)
     comparison.verifyXT5(session: otherSession)
     precondition(comparison.receive(read, session: otherSession))
     comparison.endAttempt()
-    precondition(!comparison.commitPairing(peripheralID: otherPeer), "Cancelled pair committed a baseline")
+    precondition(!comparison.commitPairing(peripheralID: otherPeer, cameraID: cameraID), "Cancelled pair committed a baseline")
 
     comparison.begin(.reconnect, peripheralID: otherPeer)
     comparison.verifyXT5(session: otherSession)
