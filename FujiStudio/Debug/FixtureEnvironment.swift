@@ -68,13 +68,14 @@ import Observation
         }
         let reader = FixtureLibrary(sources: originals, image: images.file, root: root, access: access,undecodableRAW:undecodableRAW, metadata: metadata)
         let camera = FixtureCamera(recipes: cachedRecipes, image: images.file, root: root,declaredSlots:slots)
-        let selectedCamera: any CameraServing = cameraOverride ?? camera
+        let arbiter = CameraUseArbiter()
+        let selectedCamera = ArbitratedCameraService(cameraOverride ?? camera, arbiter: arbiter)
         let writer = FixtureWriter(reader: reader, uncertain: uncertain, pairCleanupPending: pairCleanupPending)
         let pool = OriginalResourcePool(reader: reader, prepare: { local in
             PreparedRAW(fileURL: local.fileURL, sha256: local.checksum, sourceID: local.token.assetID, sourceRevision: local.token.sourceRevision,
                 metadata: metadata(local.token))
         })
-        let scheduler = CameraWorkScheduler()
+        let scheduler = CameraWorkScheduler(arbiter: arbiter)
         let resolver = VersionImageResolver(library: reader, catalog: storage.0, pool: pool, rawRenderer: storage.2, cache: storage.1, edits: reader)
         let preview = PreviewCoordinator(pool: pool, camera: selectedCamera, scheduler: scheduler, cache: storage.1, rawRenderer: storage.2,
             storedDisplay: { source, version, progress in try await resolver.resolve(source: source, version: version, progress: progress).lease })
@@ -279,6 +280,7 @@ actor FixtureCamera: CameraServing {
     private var importBarrier: FixtureBarrier?
     private var connectionFailure: CameraServiceError?
     private var disconnectBarrier: FixtureBarrier?
+    private var confirmedCloseFailure: CameraServiceError?
     private(set) var cancelledRenders = 0
     private(set) var renderRequests: [(sourceID: SourceID, recipeID: UUID)] = []
     private(set) var subscriptions = 0, importCount = 0, connectCount = 0, disconnectCount = 0, renderCount = 0, resetCount = 0
@@ -315,7 +317,14 @@ actor FixtureCamera: CameraServing {
         emit(.ready(session))
     }
     func holdDisconnect(_ barrier: FixtureBarrier) { disconnectBarrier = barrier }
-    func disconnect() async { disconnectCount += 1; if let disconnectBarrier { await disconnectBarrier.wait() }; emit(.disconnected) }
+    func setConfirmedCloseFailure(_ failure: CameraServiceError?) { confirmedCloseFailure = failure }
+    func disconnect() async { try? await disconnectConfirmed() }
+    func disconnectConfirmed() async throws {
+        disconnectCount += 1
+        if let disconnectBarrier { await disconnectBarrier.wait() }
+        if let confirmedCloseFailure { throw confirmedCloseFailure }
+        emit(.disconnected)
+    }
     func holdReset(_ barrier: FixtureBarrier) { resetBarrier = barrier }
     func failReset(_ error: CameraServiceError?) { resetFailure = error }
     func failResetAfterReopening(_ error: CameraServiceError) { resetFailure = error; reopenBeforeResetFailure = true }

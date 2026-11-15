@@ -78,10 +78,12 @@ import Testing
                 operationID: operation, exportedAt: at, jpeg: jpeg, availability: .available))
         }
         let reopened = try SwiftDataCatalog(storeURL: try #require(original.modelContainer.configurations.first?.url))
-        let scheduler = CameraWorkScheduler(), pool = OriginalResourcePool(reader: f.reader, prepare: Self.prepare)
-        let exports = ExportCoordinator(reader: f.reader, camera: f.camera, catalog: reopened, writer: f.writer,
+        let camera = f.environment.camera
+        let scheduler = CameraWorkScheduler(arbiter: camera.arbiter)
+        let pool = OriginalResourcePool(reader: f.reader, prepare: Self.prepare)
+        let exports = ExportCoordinator(reader: f.reader, camera: camera, catalog: reopened, writer: f.writer,
             pool: pool, cache: f.environment.cache, scheduler: scheduler)
-        let model = AppModel(environment: AppEnvironment(reader: f.reader, camera: f.camera, catalog: reopened,
+        let model = AppModel(environment: AppEnvironment(reader: f.reader, camera: camera, catalog: reopened,
             originals: pool,
             preview: f.environment.preview, resolver: f.environment.resolver, exports: exports,
             cache: f.environment.cache, thumbnails: f.environment.thumbnails, platform: f.platform))
@@ -322,8 +324,10 @@ import Testing
     private func correctionEnvironment(_ f: FixtureEnvironment.Bundle, reader: CorrectionLibrary,
         camera: (any CameraServing)? = nil,
         prepare: @escaping OriginalResourcePool.Prepare = Self.prepare) throws -> AppEnvironment {
-        let camera = camera ?? f.camera
-        let pool = OriginalResourcePool(reader: reader, prepare: prepare), scheduler = CameraWorkScheduler()
+        let arbiter = CameraUseArbiter()
+        let camera = ArbitratedCameraService(camera ?? f.camera, arbiter: arbiter)
+        let pool = OriginalResourcePool(reader: reader, prepare: prepare)
+        let scheduler = CameraWorkScheduler(arbiter: arbiter)
         let renderer = try RawDisplayRenderer(directory: FileManager.default.temporaryDirectory.appendingPathComponent("correction-display-\(UUID())"))
         let resolver = VersionImageResolver(library: reader, catalog: f.environment.catalog, pool: pool, rawRenderer: renderer, cache: f.environment.cache)
         let preview = PreviewCoordinator(pool: pool, camera: camera, scheduler: scheduler, cache: f.environment.cache, rawRenderer: renderer,
@@ -357,6 +361,7 @@ private struct SourceRejectingCamera: CameraServing {
     func connect() async throws { try await base.connect() }
     func importRecipes() async throws -> ImportedRecipeCollection { try await base.importRecipes() }
     func disconnect() async { await base.disconnect() }
+    func disconnectConfirmed() async throws { try await base.disconnectConfirmed() }
     func resetConnection() async throws { try await base.resetConnection() }
     func render(raw: PreparedRAW, recipe: RecipeSnapshot, policy: OutputPolicy) async throws -> CameraJPEG {
         if rejectedSourceID == nil || raw.sourceID == rejectedSourceID { throw CameraServiceError.unsupportedSource }

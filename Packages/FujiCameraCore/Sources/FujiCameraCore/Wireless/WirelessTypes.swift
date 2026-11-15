@@ -118,6 +118,7 @@ public enum WirelessFailure: Error, Equatable, Sendable {
   case permissionDenied(WirelessPermissionKind)
   case authentication
   case cameraBusy
+  case usbCloseUnconfirmed
   case unsupportedFirmware
   case unsupportedProtocol
   case timeout(WirelessTimeoutStage)

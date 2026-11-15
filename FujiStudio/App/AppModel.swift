@@ -564,7 +564,7 @@ import Observation
                 reduce(.cameraChanged(.authorizationDenied, context: nil))
                 connectionError = nil
             case CameraServiceError.transport(.timeout), CameraServiceError.transport(.notConnected),
-                 CameraServiceError.cancelled, is CancellationError:
+                 CameraServiceError.cancelled, WirelessFailure.cameraBusy, is CancellationError:
                 connectionError = nil // An absent camera is normal while browsing photos.
             default: connectionError = Self.explain(error)
             }
@@ -622,6 +622,12 @@ import Observation
 
     private func stopAutomaticConnection() {
         automaticConnectionTask?.cancel(); automaticConnectionTask = nil
+    }
+
+    func setAutomaticUSBDiscoveryEnabled(_ enabled: Bool) {
+        automaticConnectionEnabled = enabled
+        if enabled { startAutomaticConnection() }
+        else { stopAutomaticConnection() }
     }
 
     func refreshRecipes() async {
@@ -1022,7 +1028,9 @@ import Observation
         case ResourceError.retrievalFailed: "The original could not be downloaded. Check your connection and iCloud Photos, then retry."
         case ResourceError.incompatibleCamera, CameraServiceError.unsupportedSource: "This RAW is not supported by the connected camera."
         case CameraServiceError.unsupportedContext: "Use a supported Fujifilm camera and firmware in USB RAW CONV./BACKUP RESTORE mode."
-        case CameraServiceError.uncertainOperation, CameraServiceError.closeUnconfirmed: "The camera operation could not be confirmed. Reconnect to reconcile before starting more work."
+        case CameraServiceError.uncertainOperation, CameraServiceError.closeUnconfirmed, WirelessFailure.usbCloseUnconfirmed:
+            "The camera operation could not be confirmed. Reconnect to reconcile before starting more work."
+        case WirelessFailure.cameraBusy: "The camera is in use. Finish the current connection before trying again."
         case CameraServiceError.recipeImportFailed: "Recipe import failed. The previous collection is retained. Reconnect before retrying."
         case is CameraServiceError: "Camera connection interrupted. Check USB RAW CONV./BACKUP RESTORE mode and a USB data cable, then reconnect."
         case is CatalogError: "The local catalog could not be updated. Existing exports and recovery records are retained."

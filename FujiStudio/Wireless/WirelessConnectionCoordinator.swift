@@ -5,7 +5,7 @@ import FujiCameraCore
 typealias WirelessTransferSessionFactory = @Sendable (WirelessIdentity, JoinedCameraNetwork)
   async throws -> any WirelessTransferSession
 
-actor WirelessConnectionCoordinator {
+actor WirelessConnectionCoordinator: USBBluetoothControlling {
   private enum Work {
     case discovery
     case pair(DiscoveredCamera)
@@ -54,6 +54,7 @@ actor WirelessConnectionCoordinator {
   private var backoffIndex = 0
   private static let retryDelays: [Duration] = [.seconds(3), .seconds(6), .seconds(12), .seconds(30)]
   private var blockedFailure: WirelessFailure?
+  private var bluetoothSuspendedForUSB = false
 
   private var wifiRequest: WiFiRequest?
   private var activeTransfer: WirelessConnectionIntent?
@@ -113,6 +114,22 @@ actor WirelessConnectionCoordinator {
     }
   }
 
+  func suspendBluetoothForUSB() async throws {
+    guard wifiLease == nil, wifiRequest == nil, activeTransfer == nil else {
+      throw WirelessFailure.cameraBusy
+    }
+    bluetoothSuspendedForUSB = true
+    pendingDiscovery = nil
+    // The gateway's disconnect waits for the native session to retire. Suppression
+    // is visible before we suspend, including to a reconnect or discovery in progress.
+    await stopBluetoothWork()
+  }
+
+  func resumeBluetoothAfterUSB() {
+    bluetoothSuspendedForUSB = false
+    startAutomaticReconnect()
+  }
+
   func select(_ id: WirelessCameraID) async throws {
     try await withSavedCameraMutation {
       guard id != snapshot.selectedCameraID else { return }
@@ -148,7 +165,7 @@ actor WirelessConnectionCoordinator {
   }
 
   func startDiscovery() async {
-    guard snapshot.activity != .background, !mutatingStore, cleanup == nil,
+    guard snapshot.activity != .background, !bluetoothSuspendedForUSB, !mutatingStore, cleanup == nil,
       activeTransfer == nil, wifiRequest == nil, wifiAttempt == nil, wifiLease == nil, pendingDiscovery == nil
     else { return }
     if case .discovery = work?.kind { return }
@@ -160,7 +177,7 @@ actor WirelessConnectionCoordinator {
     await loadSavedCameras()
     guard pendingDiscovery == id, !Task.isCancelled else { return }
     await resetConnection(preservingDiscovery: id)
-    guard pendingDiscovery == id, !Task.isCancelled, !mutatingStore, cleanup == nil,
+    guard pendingDiscovery == id, !Task.isCancelled, !bluetoothSuspendedForUSB, !mutatingStore, cleanup == nil,
       activeTransfer == nil, wifiRequest == nil, wifiLease == nil, work == nil
     else { return }
     clearFailures()
@@ -173,7 +190,7 @@ actor WirelessConnectionCoordinator {
   }
 
   func pair(_ camera: DiscoveredCamera) {
-    guard snapshot.activity != .background, !mutatingStore, activeTransfer == nil,
+    guard snapshot.activity != .background, !bluetoothSuspendedForUSB, !mutatingStore, activeTransfer == nil,
       case .discovery = work?.kind, snapshot.discoveredCameras.contains(camera)
     else { return }
     // Pair uses the gateway's cached advertisement. A full disconnect would discard it.
@@ -188,7 +205,7 @@ actor WirelessConnectionCoordinator {
 
   func retryBluetooth() async {
     await loadSavedCameras()
-    guard snapshot.activity != .background, !mutatingStore, cleanup == nil, pendingDiscovery == nil,
+    guard snapshot.activity != .background, !bluetoothSuspendedForUSB, !mutatingStore, cleanup == nil, pendingDiscovery == nil,
       work == nil, activeTransfer == nil, wifiLease == nil,
       wifiAttempt?.autoSave != true, snapshot.bluetooth != .ready
     else { return }
@@ -205,7 +222,7 @@ actor WirelessConnectionCoordinator {
     try Task.checkCancellation()
     guard snapshot.activity != .background else { throw CancellationError() }
     guard let camera = selectedCamera else { throw WirelessFailure.peerMismatch }
-    guard !mutatingStore, cleanup == nil, wifiRequest == nil, activeTransfer == nil, pendingDiscovery == nil,
+    guard !bluetoothSuspendedForUSB, !mutatingStore, cleanup == nil, wifiRequest == nil, activeTransfer == nil, pendingDiscovery == nil,
       wifiAttempt?.autoSave != true,
       !isPairing, snapshot.bluetooth != .discovering
     else { throw WirelessFailure.cameraBusy }
@@ -335,7 +352,7 @@ actor WirelessConnectionCoordinator {
   }
 
   private func startAutomaticReconnect() {
-    guard snapshot.activity == .active, !mutatingStore, cleanup == nil, activeTransfer == nil, pendingDiscovery == nil,
+    guard snapshot.activity == .active, !bluetoothSuspendedForUSB, !mutatingStore, cleanup == nil, activeTransfer == nil, pendingDiscovery == nil,
       wifiAttempt == nil, wifiTeardown == nil, wifiLease == nil,
       work == nil, savedLoaded, retry == nil, blockedFailure == nil, snapshot.bluetooth != .ready
     else { return }
@@ -522,7 +539,7 @@ actor WirelessConnectionCoordinator {
   }
 
   private func scheduleRetry() {
-    guard snapshot.activity == .active, activeTransfer == nil, wifiLease == nil, blockedFailure == nil else { return }
+    guard snapshot.activity == .active, !bluetoothSuspendedForUSB, activeTransfer == nil, wifiLease == nil, blockedFailure == nil else { return }
     let id = UUID()
     let delay = Self.retryDelays[backoffIndex]
     backoffIndex = min(backoffIndex + 1, Self.retryDelays.count - 1)

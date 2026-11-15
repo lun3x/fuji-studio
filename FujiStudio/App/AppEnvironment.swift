@@ -31,7 +31,7 @@ import UIKit
 /// One composition per app. All service boundaries carry values or owned file leases.
 @MainActor struct AppEnvironment {
     let reader: any PhotoLibraryReading
-    let camera: any CameraServing
+    let camera: ArbitratedCameraService
     let catalog: any CatalogStoring
     let originals: OriginalResourcePool
     let preview: PreviewCoordinator
@@ -41,6 +41,11 @@ import UIKit
     let thumbnails: any GridThumbnailProviding
     let platform: any AppPlatform
     let jpegDetail = JPEGDetailRenderer()
+    var cameraUseArbiter: CameraUseArbiter { camera.arbiter }
+    var wirelessOwnership: some WirelessCameraOwnershipGateway {
+        let preview = self.preview
+        return camera.wirelessOwnership { await preview.invalidate() }
+    }
 
     static func live() async throws -> AppEnvironment {
         // SwiftData's executor must be created away from the UI actor; cache scans and journal
@@ -62,9 +67,11 @@ import UIKit
             return (catalog, cache, journal, renderer, caches.appendingPathComponent("raw-metadata", isDirectory: true))
         }.value
         let reader = PhotoLibraryReader()
-        let camera = FujiCameraService(session: ImageCaptureSessionTransport(), journal: storage.2)
+        let arbiter = CameraUseArbiter()
+        let camera = ArbitratedCameraService(
+            FujiCameraService(session: ImageCaptureSessionTransport(), journal: storage.2), arbiter: arbiter)
         let pool = OriginalResourcePool(reader: reader, metadataCacheDirectory: storage.4)
-        let scheduler = CameraWorkScheduler()
+        let scheduler = CameraWorkScheduler(arbiter: arbiter)
         let resolver = VersionImageResolver(library: reader, catalog: storage.0, pool: pool, rawRenderer: storage.3, cache: storage.1)
         let preview = PreviewCoordinator(pool: pool, camera: camera, scheduler: scheduler, cache: storage.1, rawRenderer: storage.3,
             storedDisplay: { source, version, progress in try await resolver.resolve(source: source, version: version, progress: progress).lease })

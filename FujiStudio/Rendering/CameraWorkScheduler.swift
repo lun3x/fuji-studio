@@ -3,39 +3,49 @@ import Foundation
 
 enum CameraSchedulingError: Error, Sendable, Equatable { case exportAlreadyActive, wrongJob }
 
-/// Owns admission, not the camera's native operation lifetime. Active work always drains.
-/// The separate camera service gate continues to protect recipe imports and direct callers.
+/// Holds USB ownership for the export job while scheduling individual preview and export items.
 actor CameraWorkScheduler: CameraWorkScheduling {
     private struct Waiter {
         let id: UUID
         let continuation: CheckedContinuation<Void, Error>
     }
+    private let arbiter: CameraUseArbiter
     private(set) var exportJobID: UUID?
+    private var exportPending = false
     private var active = false
     private var beginning: Waiter?
     private var exports: [Waiter] = []
     private var preview: Waiter?
     var hasDeferredPreview: Bool { preview != nil }
 
+    init(arbiter: CameraUseArbiter = CameraUseArbiter()) { self.arbiter = arbiter }
+
     func beginExport(jobID: UUID) async throws {
         try Task.checkCancellation()
         guard exportJobID == nil else { throw CameraSchedulingError.exportAlreadyActive }
         exportJobID = jobID // Reserve the job; individual items yield to previews.
+        exportPending = true
         do {
+            try await arbiter.beginUSBExport(jobID)
+            guard exportJobID == jobID else { throw CancellationError() }
             if active { try await wait(kind: .begin) }
             try Task.checkCancellation()
+            guard exportJobID == jobID else { throw CancellationError() }
+            exportPending = false
         } catch {
-            if exportJobID == jobID { exportJobID = nil; dispatch() }
+            await endExport(jobID: jobID)
             throw error
         }
     }
 
-    func endExport(jobID: UUID) {
+    func endExport(jobID: UUID) async {
         guard exportJobID == jobID else { return }
         exportJobID = nil
+        exportPending = false
         beginning?.continuation.resume(throwing: CancellationError()); beginning = nil
         exports.forEach { $0.continuation.resume(throwing: CancellationError()) }; exports = []
         dispatch()
+        await arbiter.endUSBExport(jobID)
     }
 
     func withPreview<T: Sendable>(_ operation: @Sendable () async throws -> T) async throws -> T {
@@ -49,7 +59,7 @@ actor CameraWorkScheduler: CameraWorkScheduling {
 
     func withExportItem(jobID: UUID, operation: @Sendable () async throws -> CameraJPEG) async throws -> CameraJPEG {
         try Task.checkCancellation()
-        guard exportJobID == jobID, beginning == nil else { throw CameraSchedulingError.wrongJob }
+        guard exportJobID == jobID, !exportPending else { throw CameraSchedulingError.wrongJob }
         if active { try await wait(kind: .export) } else { active = true }
         defer { active = false; dispatch() }
         try Task.checkCancellation()

@@ -353,6 +353,39 @@ struct FujiCameraServiceTests {
             #expect(try journal.unresolved().count == 1)
         }
     }
+    @Test func confirmedDisconnectFailsUntilNativeCloseSucceeds() async throws {
+        let f = try ProductionOperationFixture(); defer { f.remove() }
+        let wire = ProductionSession(fixture: f, mode: .closeFails)
+        let journal = try CameraOperationJournal(directory: f.directory.appendingPathComponent("journal"), filePolicy: TestJournalFilePolicy())
+        let service = makeService(wire, journal)
+        try await service.connect()
+        await #expect(throws: CameraServiceError.closeUnconfirmed) { try await service.disconnectConfirmed() }
+        #expect(await wire.closes == 1)
+
+        await wire.setMode(.normal)
+        try await service.disconnectConfirmed()
+        try await service.disconnectConfirmed()
+        #expect(await wire.closes == 2)
+    }
+
+    @Test func confirmedDisconnectWaitsForNativeCloseEvenIfCallerCancels() async throws {
+        let f = try ProductionOperationFixture(); defer { f.remove() }
+        let wire = ProductionSession(fixture: f)
+        let journal = try CameraOperationJournal(directory: f.directory.appendingPathComponent("journal"), filePolicy: TestJournalFilePolicy())
+        let barrier = FixtureBarrier()
+        await wire.holdClose(barrier)
+        let service = makeService(wire, journal)
+        try await service.connect()
+
+        let disconnecting = Task { try await service.disconnectConfirmed() }
+        await barrier.entered()
+        disconnecting.cancel()
+        #expect(await wire.closes == 0)
+        await barrier.release()
+        try await disconnecting.value
+        #expect(await wire.closes == 1)
+    }
+
     @Test func disconnectDuringStateSubscriptionPreventsNativeOpen() async throws {
         let f=try ProductionOperationFixture();defer { f.remove() }
         let wire=ProductionSession(fixture:f,holdStates:true)

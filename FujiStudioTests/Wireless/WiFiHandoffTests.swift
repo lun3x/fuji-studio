@@ -6,6 +6,148 @@ import XCTest
 
 @MainActor
 final class WiFiHandoffTests: XCTestCase {
+  func testBackgroundUSBConnectDrainsBeforeWiFiActivationOrJoin() async throws {
+    let usb = try await FixtureEnvironment.make()
+    let fixture = Fixture(ownership: usb.environment.wirelessOwnership)
+    await fixture.start()
+    let nativeOpen = FixtureBarrier()
+    let nativeClose = FixtureBarrier()
+    await usb.camera.holdConnect(nativeOpen)
+    await usb.camera.holdDisconnect(nativeClose)
+    let model = AppModel(environment: usb.environment)
+    await model.start()
+    await nativeOpen.entered()
+
+    let wifi = Task { await fixture.coordinator.connectWiFi() }
+    try await waitUntilUSBReserved(usb.environment.cameraUseArbiter)
+    XCTAssertFalse(fixture.log.events.contains("credentials"))
+    XCTAssertFalse(fixture.log.events.contains("native join"))
+    do {
+      try await usb.environment.camera.resetConnection()
+      XCTFail("USB reset entered a Wi-Fi reservation")
+    } catch WirelessFailure.cameraBusy {}
+
+    await nativeOpen.release()
+    await nativeClose.entered()
+    XCTAssertFalse(fixture.log.events.contains("credentials"))
+    XCTAssertFalse(fixture.log.events.contains("native join"))
+    await nativeClose.release()
+    await wifi.value
+    let closed = await usb.camera.disconnectCount
+    XCTAssertEqual(closed, 1)
+    XCTAssertEqual(fixture.log.events.filter { $0 == "credentials" || $0 == "native join" },
+                   ["credentials", "native join"])
+    await fixture.coordinator.disconnectWiFi()
+  }
+
+  func testUnconfirmedUSBCloseRetainsOwnership() async throws {
+    let usb = try await FixtureEnvironment.make()
+    try await usb.environment.camera.connect()
+    await usb.camera.setConfirmedCloseFailure(.closeUnconfirmed)
+    let fixture = Fixture(ownership: usb.environment.wirelessOwnership)
+    await fixture.start()
+
+    await fixture.coordinator.connectWiFi()
+    await usb.camera.setConfirmedCloseFailure(nil)
+    await fixture.coordinator.connectWiFi()
+    XCTAssertEqual(fixture.log.events.filter { $0 == "credentials" }.count, 0)
+    XCTAssertEqual(fixture.log.events.filter { $0 == "native join" }.count, 0)
+    let attempts = await usb.camera.disconnectCount
+    XCTAssertEqual(attempts, 1)
+    let state = await snapshot(fixture.coordinator)
+    XCTAssertEqual(state.wifiFailure, .usbCloseUnconfirmed)
+    XCTAssertEqual(state.wifiFailurePhase, .acquiringOwnership)
+
+    try await usb.environment.camera.disconnectConfirmed()
+    await fixture.coordinator.connectWiFi()
+    let recovered = await snapshot(fixture.coordinator)
+    XCTAssertEqual(recovered.wifi, .ready)
+    await fixture.coordinator.disconnectWiFi()
+  }
+
+  func testRecipeImportCleanupDrainsBeforeUSBHandoffClose() async throws {
+    let usb = try await FixtureEnvironment.make(cameraModel: "X-E3")
+    try await usb.environment.camera.connect()
+    let cleanup = FixtureBarrier()
+    await usb.camera.holdImport(cleanup)
+    let importing = Task { try await usb.environment.camera.importRecipes() }
+    await cleanup.entered()
+    let fixture = Fixture(ownership: usb.environment.wirelessOwnership)
+    await fixture.start()
+    let wifi = Task { await fixture.coordinator.connectWiFi() }
+    try await waitUntilUSBReserved(usb.environment.cameraUseArbiter)
+
+    let closes = await usb.camera.disconnectCount
+    XCTAssertEqual(closes, 0)
+    XCTAssertFalse(fixture.log.events.contains("credentials"))
+    XCTAssertFalse(fixture.log.events.contains("native join"))
+    await cleanup.release()
+    _ = try await importing.value
+    await wifi.value
+    let ready = await snapshot(fixture.coordinator)
+    XCTAssertEqual(ready.wifi, .ready)
+    await fixture.coordinator.disconnectWiFi()
+  }
+
+  func testUnconfirmedWirelessCloseKeepsUSBBlockedUntilRetry() async throws {
+    let usb = try await FixtureEnvironment.make()
+    let close = WirelessCloseFixture()
+    let fixture = Fixture(ownership: usb.environment.wirelessOwnership, close: close)
+    await fixture.start()
+    await fixture.coordinator.connectWiFi()
+    await fixture.coordinator.disconnectWiFi()
+
+    do {
+      try await usb.environment.camera.connect()
+      XCTFail("USB opened after a failed wireless close")
+    } catch WirelessFailure.cameraBusy {}
+    let failed = await snapshot(fixture.coordinator)
+    XCTAssertEqual(failed.wifiFailurePhase, .disconnecting)
+    let first = await usb.camera.connectCount
+    XCTAssertEqual(first, 0)
+
+    await close.allowClose()
+    await fixture.coordinator.disconnectWiFi()
+    try await usb.environment.camera.connect()
+    let connects = await usb.camera.connectCount
+    XCTAssertEqual(connects, 1)
+  }
+
+  func testUSBWaitsForNativeBluetoothCloseAndAfterUSBDisconnectBluetoothCanReconnect() async throws {
+    let usb = try await FixtureEnvironment.make()
+    let fixture = Fixture(ownership: usb.environment.wirelessOwnership)
+    try await usb.environment.cameraUseArbiter.installBluetoothController(fixture.coordinator)
+    await fixture.start()
+    let close = FixtureBarrier()
+    fixture.bluetooth.disconnectBarrier = close
+    let connecting = Task { try await usb.environment.camera.connect() }
+    await close.entered()
+    await fixture.coordinator.retryBluetooth()
+    let first = await usb.camera.connectCount
+    XCTAssertEqual(first, 0)
+    XCTAssertEqual(fixture.log.events.filter { $0 == "authenticated" }.count, 1)
+
+    await close.release()
+    try await connecting.value
+    await fixture.coordinator.retryBluetooth()
+    let suspended = await snapshot(fixture.coordinator)
+    XCTAssertEqual(suspended.bluetooth, .idle)
+
+    try await usb.environment.camera.disconnectConfirmed()
+    await fixture.start()
+    XCTAssertEqual(fixture.log.events.filter { $0 == "authenticated" }.count, 2)
+  }
+
+  private func waitUntilUSBReserved(_ arbiter: CameraUseArbiter) async throws {
+    let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+    while ContinuousClock.now < deadline {
+      do { try await arbiter.withUSB {} }
+      catch WirelessFailure.cameraBusy { return }
+      await Task.yield()
+    }
+    XCTFail("Wireless did not reserve USB ownership")
+  }
+
   func testAutoSaveSetupWaitsForVerificationAndKeepsCameraOwnership() async throws {
     let gateway = HandoffAutoSave()
     let fixture = Fixture(model: .xe3, autoSave: gateway)
@@ -277,7 +419,8 @@ private final class Fixture {
   let coordinator: WirelessConnectionCoordinator
 
   init(
-    failure: WirelessFailure? = nil, model: WirelessCameraModel = .xt5, autoSave: HandoffAutoSave? = nil
+    failure: WirelessFailure? = nil, model: WirelessCameraModel = .xt5, autoSave: HandoffAutoSave? = nil,
+    ownership: (any WirelessCameraOwnershipGateway)? = nil, close: WirelessCloseFixture? = nil
   ) {
     let camera = SavedCamera(id: id, peripheralID: UUID(), model: model, displayName: "Fixture")
     let bluetooth = HandoffBluetooth(id: id, log: log, failure: failure)
@@ -287,10 +430,10 @@ private final class Fixture {
     self.gateway = gateway
     coordinator = WirelessConnectionCoordinator(
       bluetooth: bluetooth, store: HandoffStore(camera: camera),
-      authorization: { .allowed }, wifi: gateway, ownership: HandoffOwner(log: log),
+      authorization: { .allowed }, wifi: gateway, ownership: ownership ?? HandoffOwner(log: log),
       sessionFactory: { identity, _ in
         await log.record("allocate socket")
-        return HandoffSession(identity: identity, log: log, failure: failure)
+        return HandoffSession(identity: identity, log: log, failure: failure, closeFixture: close)
       }, autoSave: autoSave)
     autoSave?.use(log: log)
   }
@@ -367,6 +510,7 @@ private final class HandoffBluetooth: BluetoothGateway {
   var reconnectBarrier: HandoffBarrier?
   var reconnectFailure: WirelessFailure?
   var identityBarrier: HandoffBarrier?
+  var disconnectBarrier: FixtureBarrier?
 
   init(id: WirelessCameraID, log: HandoffLog, failure: WirelessFailure?) {
     self.id = id
@@ -397,7 +541,9 @@ private final class HandoffBluetooth: BluetoothGateway {
     return network(id: id)
   }
   func events() async -> AsyncStream<BluetoothGatewayEvent> { notifications.stream }
-  func disconnect() async {}
+  func disconnect() async {
+    if let disconnectBarrier { await disconnectBarrier.wait() }
+  }
   func drop() { notifications.continuation.yield(.disconnected(id, .connectionLost)) }
 }
 
@@ -484,6 +630,7 @@ private struct HandoffSession: WirelessTransferSession {
   let identity: WirelessIdentity
   let log: HandoffLog
   let failure: WirelessFailure?
+  var closeFixture: WirelessCloseFixture? = nil
 
   func open() async throws -> WirelessIdentity {
     await log.record("PTP identity")
@@ -507,7 +654,18 @@ private struct HandoffSession: WirelessTransferSession {
   }
   func thumbnail(_ object: WirelessObjectDescriptor) async throws -> Data { Data() }
   func download(_ object: WirelessObjectDescriptor, to sink: @escaping @Sendable (Data) async throws -> Void) async throws {}
-  func close() async throws { await log.record("close socket") }
+  func close() async throws {
+    await log.record("close socket")
+    try await closeFixture?.confirmClose()
+  }
+}
+
+private actor WirelessCloseFixture {
+  private var allowed = false
+  func allowClose() { allowed = true }
+  func confirmClose() throws {
+    guard allowed else { throw WirelessFailure.connectionLost }
+  }
 }
 
 private func network(id: WirelessCameraID = .init()) -> CameraNetwork {

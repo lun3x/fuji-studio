@@ -576,12 +576,17 @@ public actor FujiCameraService: CameraServing {
     return reply
   }
   public func disconnect() async {
+    try? await disconnectConfirmed()
+  }
+  public func disconnectConfirmed() async throws {
     admissionEpoch &+= 1
     stopRequested = true
     let owner = Task.detached {
-      try await self.gate.withExclusiveAccess { _ = await self.closeUncancelled() }
+      try await self.gate.withExclusiveAccess {
+        guard await self.closeUncancelled() else { throw CameraServiceError.closeUnconfirmed }
+      }
     }
-    _ = try? await owner.value
+    try await owner.value
   }
   public func resetConnection() async throws {
     guard !Task.isCancelled else { throw CameraServiceError.cancelled }

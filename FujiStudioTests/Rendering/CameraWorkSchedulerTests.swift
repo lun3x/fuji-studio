@@ -4,6 +4,25 @@ import Testing
 @testable import FujiStudio
 
 struct CameraWorkSchedulerTests {
+    @Test func wirelessCannotEnterBetweenExportItems() async throws {
+        let f = try RenderFixture(); defer { f.remove() }
+        let arbiter = CameraUseArbiter()
+        let scheduler = CameraWorkScheduler(arbiter: arbiter)
+        let job = UUID()
+        try await scheduler.beginExport(jobID: job)
+        _ = try await scheduler.withExportItem(jobID: job) { try f.jpeg() }
+        await scheduler.endExport(jobID: UUID())
+        await #expect(throws: WirelessFailure.cameraBusy) {
+            try await arbiter.acquireWireless {
+                Issue.record("Handoff tried to close USB during export")
+            }
+        }
+        _ = try await scheduler.withExportItem(jobID: job) { try f.jpeg() }
+        await scheduler.endExport(jobID: job)
+        let lease = try await arbiter.acquireWireless {}
+        await arbiter.releaseWireless(lease)
+    }
+
     @Test func admitsOwnedExportItem() async throws {
         let f = try RenderFixture(); defer { f.remove() }
         let scheduler = CameraWorkScheduler(), job = UUID()

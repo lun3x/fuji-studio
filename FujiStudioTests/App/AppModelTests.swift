@@ -551,6 +551,36 @@ import Testing
         #expect(model.message != nil)
     }
 
+    @Test func wirelessOwnershipDefersAutomaticUSBDiscoveryUntilRelease() async throws {
+        let f = try await FixtureEnvironment.make(), retry = ManualConnectionRetry()
+        let ownership = f.environment.wirelessOwnership
+        let lease = try await ownership.acquireWireless()
+        let model = AppModel(environment: f.environment, connectionRetryWait: { try await retry.wait($0) })
+        await model.start()
+        await eventually { await retry.isWaiting }
+        #expect(await f.camera.connectCount == 0)
+        #expect(model.connectionError == nil)
+
+        await ownership.releaseWireless(lease)
+        await retry.advance()
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
+        #expect(await f.camera.connectCount == 1)
+        #expect(await f.camera.renderCount == 0)
+        await model.sceneChanged(.background)
+    }
+
+    @Test func automaticUSBDiscoveryCanBeEnabledAfterAppStartup() async throws {
+        let f = try await FixtureEnvironment.make()
+        let model = AppModel(environment: f.environment)
+        await model.start(automaticallyConnect: false)
+        #expect(await f.camera.connectCount == 0)
+
+        model.setAutomaticUSBDiscoveryEnabled(true)
+        await eventually { model.state.currentCameraExecutionContext != nil && !model.isRefreshing }
+        #expect(await f.camera.connectCount == 1)
+        await model.sceneChanged(.background)
+    }
+
     @Test func startupAutomaticallyConnectsAndImportsRecipesOnlyOnce() async throws {
         let f = try await FixtureEnvironment.make()
         let model = AppModel(environment: f.environment)

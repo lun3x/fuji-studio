@@ -466,6 +466,7 @@ actor BatchCamera: CameraServing {
     func connect() {}
     func importRecipes() throws -> ImportedRecipeCollection { throw CameraServiceError.unsupportedContext }
     func disconnect() {}
+    func disconnectConfirmed() { /* This file-backed fixture has no native session. */ }
     func resetConnection() {}
     func render(raw: PreparedRAW, recipe: RecipeSnapshot, policy: OutputPolicy) async throws -> CameraJPEG {
         sources.append(raw.sourceID); recipes.append(recipe.id)

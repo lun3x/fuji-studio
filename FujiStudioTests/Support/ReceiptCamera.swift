@@ -79,5 +79,6 @@ actor ReceiptCamera: CameraServing {
     context = nil
     emit(.disconnected)
   }
+  func disconnectConfirmed() { disconnect() }
   func resetConnection() { disconnect(); connect() }
 }
