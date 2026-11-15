@@ -23,6 +23,15 @@ private struct ProbeWiFiActivationTests {
     guard await rejects(.peerMismatch, { try await activate(camera.id) }) else { exit(1) }
     precondition(gateway.activations == 0, "An ineligible identity started activation")
 
+    let legacyCamera = SavedCamera(id: .init(), peripheralID: UUID(), model: .xe3, displayName: "Synthetic X-E3")
+    let legacyGateway = TestGateway(camera: legacyCamera)
+    legacyGateway.firmware = WirelessSupportPolicy().record(for: legacyCamera.model).firmware
+    guard await rejects(.unsupportedProtocol, {
+      try await ProbeWiFiActivation.activate(
+        camera: legacyCamera, selected: legacyCamera.id, gateway: legacyGateway)
+    }) else { exit(1) }
+    precondition(legacyGateway.activations == 0, "X-E3 identity started X-T5 activation")
+
     gateway.model = camera.model
     let network = try await activate(camera.id)
     precondition(network.credential.cameraID == camera.id)

@@ -6,6 +6,7 @@ enum ProbeWiFiActivation {
     camera: SavedCamera, selected: WirelessCameraID?, gateway: any BluetoothGateway
   ) async throws -> CameraNetwork {
     try Task.checkCancellation()
+    guard camera.model == .xt5 else { throw WirelessFailure.unsupportedProtocol }
     guard camera.id == selected else { throw WirelessFailure.peerMismatch }
     let identity = try await gateway.identity(for: camera.id)
     guard identity.cameraID == camera.id, identity.model == camera.model else {
