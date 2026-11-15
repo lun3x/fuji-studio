@@ -116,6 +116,27 @@ acknowledgment timed out before establishing a Bluetooth link. No substituted
 acknowledgment was sent, so that hypothesis remains untested. No WiFi activation,
 network join or photo transfer occurred in this run.
 
+A later run of the buffered notification probe at `1694a307` repeated first
+pairing after removing the Mac's previous X-T5 bond. Local GATT readiness was
+reached at 13:01:19 UTC. The controller left the link open until 13:04:12, a
+173-second hold. The user reported that the camera still displayed the code,
+confirmed that MENU/OK had already been pressed to accept it, and reported that
+pressing MENU/OK again had no effect. No qualifying notifications from the eight
+subscribed characteristics appeared in the buffered trace after link retirement.
+That result concerns callbacks delivered to the probe, not packets observed on
+air. Waiting longer and repeating the camera confirmation did not produce a
+camera-side completion indication in this run.
+
+The next normal reconnect again read a different status prefix and disconnected
+during its acknowledgment at 13:06:13. A guarded original-registration-value
+trial connected at 13:06:25 and submitted the substituted acknowledgment to the
+production Bluetooth driver. The driver logged the write, then the link closed
+with CoreBluetooth error 7 before a write callback. Unlike the earlier timed-out
+trial, this attempt reached the substituted write; it did not reach authenticated
+readiness.
+Camera receipt of that write remains unobserved. Camera-side registration, WiFi
+activation and photo transfer remain unverified.
+
 ### Follow-up automated verification
 
 The X-T5 model fix at `74eedf3c` passed the 12 Bluetooth gateway tests on a
