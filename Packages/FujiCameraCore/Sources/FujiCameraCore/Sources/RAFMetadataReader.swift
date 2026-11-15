@@ -66,6 +66,12 @@ public struct RAFMetadataReader: Sendable {
     }
     let jpegRange = try section(data, offsetField: 84, lengthField: 88, fileByteCount: fileByteCount)
     let directoryRange = try section(data, offsetField: 92, lengthField: 96, fileByteCount: fileByteCount)
+    let payloadRange = payloadOffset..<(payloadOffset + payloadLength)
+    guard !jpegRange.overlaps(directoryRange), !jpegRange.overlaps(payloadRange),
+      !directoryRange.overlaps(payloadRange)
+    else {
+      throw ResourceError.invalidRAF("Overlapping RAF sections")
+    }
     guard jpegRange.count <= maximumJPEGBytes else {
       throw ResourceError.invalidRAF("Embedded JPEG metadata exceeds inspection limits")
     }

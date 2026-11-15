@@ -1,5 +1,6 @@
 import Foundation
 import FujiCameraCore
+import Synchronization
 import XCTest
 @testable import FujiStudio
 
@@ -71,15 +72,28 @@ final class ImportJournalTests: XCTestCase {
         job.captures[0].originals = [original]
         let snapshot = try await journal.save(job)
         let callback = journal.placeholderWriter
-        async let save: ImportJob? = try? journal.save(snapshot)
+        let saveTask = Task.detached { try await journal.save(snapshot) }
         let callbackTask = Task.detached {
             try callback.persistPlaceholder(jobID: snapshot.id, captureID: selection.captureID, assetID: "asset")
         }
         try await callbackTask.value
-        _ = await save
-        await assertImportThrows { _ = try await journal.save(snapshot) }
+        let saveResult = await saveTask.result
+        do {
+            _ = try await journal.save(snapshot)
+            XCTFail("A snapshot that predates the placeholder must be stale")
+        } catch {
+            XCTAssertEqual(error as? ImportJournalError, .staleRevision)
+        }
         let reloaded = try await reload(journalRoot)
         XCTAssertEqual(reloaded.captures[0].placeholderAssetID, "asset")
+        switch saveResult {
+        case .success(let saved):
+            XCTAssertEqual(saved.revision, snapshot.revision + 1)
+            XCTAssertEqual(reloaded.revision, saved.revision + 1)
+        case .failure(let error):
+            XCTAssertEqual(error as? ImportJournalError, .staleRevision)
+            XCTAssertEqual(reloaded.revision, snapshot.revision + 1)
+        }
         XCTAssertEqual(try staging.fileURL(for: original).deletingLastPathComponent().resolvingSymlinksInPath(),
                        stagingRoot.resolvingSymlinksInPath())
         var paused = reloaded
@@ -137,6 +151,57 @@ final class ImportJournalTests: XCTestCase {
         XCTAssertEqual(afterFailure.captures[0].placeholderAssetID, "asset")
         XCTAssertNil(afterFailure.captures[0].receipt)
         XCTAssertEqual(try ResourceChecksum.sha256(staging.fileURL(for: raw)), raw.sha256)
+    }
+
+    func testVisiblePlaceholderAndReceiptRequireDirectorySyncBeforeAcknowledgement() async throws {
+        let fixture = try ImportFileFixture()
+        defer { fixture.cleanUp() }
+        let journalRoot = fixture.root.appendingPathComponent("journal", isDirectory: true)
+        let staging = try ImportStagingStore(root: fixture.root.appendingPathComponent("staging", isDirectory: true))
+        let working = try ImportJournal(root: journalRoot)
+        let selection = fixture.selection(pair: false)
+        let raw = try await staging.write(object: fixture.object(.raf), session: ImportFileSession(bytes: fixture.raf))
+        var job = try ImportJob(selections: [selection], importDate: .distantPast)
+        job.captures[0].stage = .submitting
+        job.captures[0].originals = [raw]
+        job = try await working.save(job)
+        let url = journalRoot.appendingPathComponent(job.id.uuidString + ".json")
+        let blockSync = Mutex(true)
+        let beforeDirectorySync: @Sendable () throws -> Void = {
+            if blockSync.withLock({ $0 }) { throw POSIXError(.EIO) }
+        }
+        let failing = try ImportJournal(root: journalRoot, beforeDirectorySync: beforeDirectorySync)
+        let reopened = try ImportJournal(root: journalRoot, beforeDirectorySync: beforeDirectorySync)
+
+        XCTAssertThrowsError(try failing.placeholderWriter.persistPlaceholder(
+            jobID: job.id, captureID: selection.captureID, assetID: "visible-placeholder")) {
+                XCTAssertEqual($0 as? POSIXError, POSIXError(.EIO))
+            }
+        XCTAssertTrue(try String(contentsOf: url, encoding: .utf8).contains("visible-placeholder"))
+        XCTAssertThrowsError(try reopened.placeholderWriter.persistPlaceholder(
+            jobID: job.id, captureID: selection.captureID, assetID: "visible-placeholder"))
+        await assertImportThrows { _ = try await reopened.loadJobs() }
+        blockSync.withLock { $0 = false }
+        try reopened.placeholderWriter.persistPlaceholder(jobID: job.id, captureID: selection.captureID,
+                                                          assetID: "visible-placeholder")
+        let withPlaceholder = try await reopened.loadJobs()
+        XCTAssertEqual(withPlaceholder.first?.revision, job.revision + 1)
+        XCTAssertEqual(withPlaceholder.first?.captures[0].placeholderAssetID, "visible-placeholder")
+
+        let receipt = ImportReceipt(captureID: selection.captureID, fingerprints: [raw.fingerprint],
+                                    assetID: "visible-placeholder", verifiedAt: job.importDate)
+        blockSync.withLock { $0 = true }
+        await assertImportThrows { try await failing.recordReceipt(receipt, jobID: job.id) }
+        XCTAssertTrue(try String(contentsOf: url, encoding: .utf8).contains(#""stage":"imported""#))
+        await assertImportThrows { try await reopened.recordReceipt(receipt, jobID: job.id) }
+        await assertImportThrows { _ = try await reopened.loadJobs() }
+        XCTAssertEqual(try ResourceChecksum.sha256(staging.fileURL(for: raw)), raw.sha256)
+
+        blockSync.withLock { $0 = false }
+        try await reopened.recordReceipt(receipt, jobID: job.id)
+        let completed = try await reopened.loadJobs()
+        XCTAssertEqual(completed.first?.revision, job.revision + 2)
+        XCTAssertEqual(completed.first?.captures[0].receipt, receipt)
     }
 
     func testCorruptAndUnknownSchemaAreQuarantinedAndKeepReportingRecoveryError() async throws {

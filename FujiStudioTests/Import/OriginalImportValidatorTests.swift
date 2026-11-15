@@ -71,6 +71,25 @@ final class OriginalImportValidatorTests: XCTestCase {
         }
     }
 
+    func testRevalidationRejectsMatchingFingerprintWithoutIndependentSensorPayload() async throws {
+        let fixture = try ImportFileFixture()
+        defer { fixture.cleanUp() }
+        let store = try ImportStagingStore(root: fixture.root)
+        let staged = try await store.write(object: fixture.object(.raf), session: ImportFileSession(bytes: fixture.raf))
+        let bytes = fixture.rafWithoutSensorPayload
+        let object = fixture.object(.raf, byteLength: UInt64(bytes.count))
+        try bytes.write(to: store.fileURL(for: staged))
+        let recorded = StagedOriginal(relativePath: staged.relativePath,
+            fingerprint: .init(role: .raf, originalFilename: object.filename, byteCount: object.byteLength,
+                               sha256: ResourceChecksum.sha256(bytes)),
+            metadata: staged.metadata, descriptor: object, verifiedTransferMode: staged.verifiedTransferMode)
+        let selection = ImportSelection(captureID: .init(describing: [object]), camera: fixture.camera,
+                                        descriptors: [object], policy: .rawOnly)
+
+        XCTAssertThrowsError(try OriginalImportValidator(staging: store).validate(
+            selection, originals: [recorded], importDate: .distantPast))
+    }
+
     private func originals(_ fixture: ImportFileFixture, store: ImportStagingStore) async throws -> [StagedOriginal] {
         let raw = try await store.write(object: fixture.object(.raf), session: ImportFileSession(bytes: fixture.raf))
         let jpeg = try await store.write(object: fixture.object(), session: ImportFileSession(bytes: fixture.jpeg))

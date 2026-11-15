@@ -84,9 +84,16 @@ struct ResourceMetadataTransferTests {
 
     @Test func excessiveMetadataPrefixFailsWithinMemoryLimit() async throws {
         var (token, bytes) = try fixture(largePayload: true)
-        // Move the JPEG beyond the bounded prefix, without allocating the declared RAW size.
-        bytes.replaceSubrange(84..<88, with: withUnsafeBytes(of: UInt32(40 * 1024 * 1024).bigEndian) { Data($0) })
-        token.byteCount = 100 * 1024 * 1024
+        // Place the JPEG beyond the bounded prefix and after geometry, with the sensor
+        // payload immediately after it. The transfer supplies only the header and padding.
+        let jpegOffset = 40 * 1024 * 1024
+        let jpegLength = bytes[88..<92].reduce(0) { ($0 << 8) | Int($1) }
+        let payloadOffset = jpegOffset + jpegLength
+        let payloadLength = bytes[104..<108].reduce(0) { ($0 << 8) | Int($1) }
+        for (field, offset) in [(84, jpegOffset), (100, payloadOffset)] {
+            bytes.replaceSubrange(field..<(field + 4), with: withUnsafeBytes(of: UInt32(offset).bigEndian) { Data($0) })
+        }
+        token.byteCount = Int64(payloadOffset + payloadLength)
         let header = Data(bytes.prefix(128)), transfer = ResourceMetadataTransfer(token: token)
         let cancellation = MetadataCancellation()
         await #expect(throws: ResourceError.invalidRAF("RAF metadata exceeds the inspection limit")) {

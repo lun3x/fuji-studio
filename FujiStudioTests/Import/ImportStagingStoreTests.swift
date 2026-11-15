@@ -85,6 +85,18 @@ final class ImportStagingStoreTests: XCTestCase {
         XCTAssertEqual(try ResourceChecksum.sha256(normal.fileURL(for: retained)), retained.sha256)
     }
 
+    func testExactLengthRAFCannotSubstituteGeometryForMissingSensorData() async throws {
+        let fixture = try ImportFileFixture()
+        defer { fixture.cleanUp() }
+        let store = try ImportStagingStore(root: fixture.root)
+        let bytes = fixture.rafWithoutSensorPayload
+        let object = fixture.object(.raf, byteLength: UInt64(bytes.count))
+        await assertImportThrows {
+            _ = try await store.write(object: object, session: ImportFileSession(bytes: bytes))
+        }
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: fixture.root.path).isEmpty)
+    }
+
     func testEscapingAndSymlinkPathsDoNotResolve() async throws {
         let fixture = try ImportFileFixture()
         defer { fixture.cleanUp() }
@@ -176,6 +188,13 @@ struct ImportFileFixture {
     }
 
     func cleanUp() { try? FileManager.default.removeItem(at: root) }
+
+    var rafWithoutSensorPayload: Data {
+        var bytes = raf
+        bytes.replaceSubrange(100..<108, with: raf[92..<100])
+        bytes.removeLast(16)
+        return bytes
+    }
 
     func object(_ format: WirelessObjectFormat = .jpeg, sessionID: UUID? = nil, handle: UInt32? = nil,
                 filename: String? = nil, byteLength: UInt64? = nil, dimensions: PixelSize? = nil) -> WirelessObjectDescriptor {

@@ -10,8 +10,11 @@ enum ImportJournalError: Error, Equatable, Sendable {
 actor ImportJournal {
     nonisolated let placeholderWriter: ImportJournalStore
 
-    init(root: URL = ImportDisk.root("journal"), beforeReplace: @escaping @Sendable () throws -> Void = {}) throws {
-        placeholderWriter = try ImportJournalStore(root: root, beforeReplace: beforeReplace)
+    init(root: URL = ImportDisk.root("journal"),
+         beforeReplace: @escaping @Sendable () throws -> Void = {},
+         beforeDirectorySync: @escaping @Sendable () throws -> Void = {}) throws {
+        placeholderWriter = try ImportJournalStore(root: root, beforeReplace: beforeReplace,
+                                                   beforeDirectorySync: beforeDirectorySync)
     }
 
     @discardableResult
@@ -44,19 +47,26 @@ final class ImportJournalStore: Sendable {
     private static let lock = NSLock()
     private let disk: ImportDisk
     private let beforeReplace: @Sendable () throws -> Void
+    private let beforeDirectorySync: @Sendable () throws -> Void
 
-    fileprivate init(root: URL, beforeReplace: @escaping @Sendable () throws -> Void) throws {
+    fileprivate init(root: URL, beforeReplace: @escaping @Sendable () throws -> Void,
+                     beforeDirectorySync: @escaping @Sendable () throws -> Void) throws {
         disk = try ImportDisk(root: root)
         self.beforeReplace = beforeReplace
+        self.beforeDirectorySync = beforeDirectorySync
     }
 
     fileprivate func loadJobs() throws -> [ImportJob] {
         try Self.lock.withLock {
             let files = try journalFiles()
-            return try files.map(read).sorted {
+            let jobs = try files.map(read).sorted {
                 if $0.importDate != $1.importDate { return $0.importDate < $1.importDate }
                 return $0.id.uuidString < $1.id.uuidString
             }
+            // A prior process may have renamed a file and failed before flushing the entry.
+            // A successful sync is required before the caller can act on any visible receipt.
+            try synchronizeDirectory()
+            return jobs
         }
     }
 
@@ -104,6 +114,9 @@ final class ImportJournalStore: Sendable {
             if job.captures[index] != current {
                 try job.validate()
                 _ = try persistNext(job)
+            } else {
+                // An identical retry can see a replacement whose previous sync failed.
+                try synchronizeDirectory()
             }
         }
     }
@@ -146,7 +159,7 @@ final class ImportJournalStore: Sendable {
     private func quarantine(_ file: URL) throws -> Never {
         let destination = disk.root.appendingPathComponent(UUID().uuidString + ".quarantine")
         try disk.rename(file, to: destination, replacing: false)
-        try disk.synchronizeDirectory()
+        try synchronizeDirectory()
         throw ImportJournalError.recoveryRequired
     }
 
@@ -161,7 +174,12 @@ final class ImportJournalStore: Sendable {
         try handle.synchronize()
         try beforeReplace()
         try disk.rename(temporary, to: url(job.id))
-        try disk.synchronizeDirectory()
+        try synchronizeDirectory()
         return next
+    }
+
+    private func synchronizeDirectory() throws {
+        try beforeDirectorySync()
+        try disk.synchronizeDirectory()
     }
 }

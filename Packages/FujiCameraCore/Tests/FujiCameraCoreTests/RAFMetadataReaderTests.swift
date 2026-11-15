@@ -83,6 +83,31 @@ struct RAFMetadataReaderTests {
         }
     }
 
+    @Test func rejectsEveryOverlapBetweenRAFSections() throws {
+        let local = try fixture(model: "X-T5")
+        defer { try? FileManager.default.removeItem(at: local.fileURL) }
+        let original = try Data(contentsOf: local.fileURL)
+        let geometry = Data(original[92..<100])
+        let jpeg = Data(original[84..<92])
+        let jpegBytes = original[88..<92].reduce(0) { ($0 << 8) | Int($1) }
+        let directoryBytes = original[96..<100].reduce(0) { ($0 << 8) | Int($1) }
+        func big32(_ n: Int) -> Data { withUnsafeBytes(of: UInt32(n).bigEndian) { Data($0) } }
+        var payloadAliasesGeometry = original
+        payloadAliasesGeometry.replaceSubrange(100..<108, with: geometry)
+        payloadAliasesGeometry.removeLast(16)
+        var payloadAliasesJPEG = original
+        payloadAliasesJPEG.replaceSubrange(100..<108, with: jpeg)
+        var jpegIncludesGeometry = original
+        jpegIncludesGeometry.replaceSubrange(88..<92, with: big32(jpegBytes + directoryBytes))
+
+        let reader = RAFMetadataReader()
+        for bytes in [payloadAliasesGeometry, payloadAliasesJPEG, jpegIncludesGeometry] {
+            try bytes.write(to: local.fileURL)
+            #expect(throws: ResourceError.self) { try reader.metadata(inFileAt: local.fileURL) }
+            #expect(throws: ResourceError.self) { try reader.metadata(in: bytes, fileByteCount: bytes.count) }
+        }
+    }
+
     private var token: ResourceToken {
         ResourceToken(assetID: "source", role: .alternateOriginal, contentTypeIdentifier: "com.fuji.raw-image",
                       format: .raf, originalFilename: "test.RAF", discriminator: "fixture", sourceRevision: "revision-1")
