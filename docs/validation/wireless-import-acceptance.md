@@ -97,6 +97,25 @@ distinguishes smartphone destinations from the separate Bluetooth device list.
 [Fujifilm code confirmation sequence](https://digitalcamera-support-en.fujifilm.com/digitalcameraengpcdetail?aid=000008450),
 [X-T5 pairing destination menus](https://fujifilm-dsc.com/en-int/manual/x-t5/connections/network_usb_menu/)
 
+After the user approved forgetting the Mac's X-T5 bond, the development-signed
+`738f173d` probe completed the expected first-pair GATT sequence at 11:58:06 UTC
+on November 15, 2026. It retained the four-byte secure-status value in memory.
+The controller explicitly disconnected at 11:58:23. The next saved reconnect
+read a valid four-byte value for the same verified camera; its first three bytes
+differed from the first-pair baseline. The normal acknowledgment write was
+followed by CoreBluetooth error 7 before a write response. Only equality flags
+were recorded, not the values or hashes.
+
+The user reported that the camera still displayed “please confirm the connection
+on your device” after confirming on the Mac, then displayed “connection lost.”
+The probe's ready state therefore establishes completion of its expected GATT
+operations, not completion of camera-side registration. The controller's explicit
+disconnect may have interrupted registration; the missing step remains unknown.
+A guarded diagnostic reconnect intended to reuse the original registration
+acknowledgment timed out before establishing a Bluetooth link. No substituted
+acknowledgment was sent, so that hypothesis remains untested. No WiFi activation,
+network join or photo transfer occurred in this run.
+
 ### Follow-up automated verification
 
 The X-T5 model fix at `74eedf3c` passed the 12 Bluetooth gateway tests on a
