@@ -134,10 +134,21 @@ extension CameraHostedTransferSession {
 
   private func prepareGalleryOriginalMode(slot: UInt32) async throws {
     guard selectedStorage == slot else { throw WirelessFailure.unavailableStorage }
-    if case .refused(let code) = galleryOriginalRestoration { throw PTPError.responseCode(code) }
-    if case .unconfirmed = galleryOriginalRestoration { throw WirelessFailure.originalSizeUnavailable }
-    if galleryOriginalModePrepared {
+    let confirmOnly: Bool
+    switch galleryOriginalRestoration {
+    case .owed:
+      // A retry can confirm this setting without replacing the saved prior value.
+      confirmOnly = true
+    case .refused(let code):
+      throw PTPError.responseCode(code)
+    case .setting, .unconfirmed:
+      throw WirelessFailure.originalSizeUnavailable
+    case nil:
+      confirmOnly = galleryOriginalModePrepared
+    }
+    if confirmOnly {
       try await requireGalleryOriginalMode()
+      galleryOriginalModePrepared = true
       return
     }
 

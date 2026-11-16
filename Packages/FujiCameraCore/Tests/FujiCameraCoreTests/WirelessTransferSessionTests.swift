@@ -559,6 +559,38 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
     XCTAssertEqual(remaining, 0)
   }
 
+  func testGalleryDownloadRetriesOnlyConfirmationAfterAnAcknowledgedModeChange() async throws {
+    let info = object("CANDIDATE.RAF", format: 0xb103, bytes: 3)
+    let mismatchedMode = Exchange.property(0xd226, word(1, 2))
+    let channel = Replay(start(.xt5, "4.31") + galleryStartup + xappSetup.dropFirst() + card([1])
+      + [originalMode, .read(0x1008, [1], info), .write(0xd244, [2])] + card([], storage: 2)
+      + [originalMode, .write(0xd244, [1])] + card([1]) + [
+        .property(0xd226, word(0, 2)), .write(0xd226, [2, 0]), mismatchedMode,
+        mismatchedMode, originalMode, .read(0x1008, [1], info),
+        .read(0x101b, [1, 0, 3], Data([1, 2, 3])), .write(0xd226, [0, 0]), .read(0x1003),
+      ])
+    let session = diagnosticSession(channel)
+    _ = try await session.listCameraPhotos()
+    let candidates = try await session.scannedPairCandidates()
+    let member = try XCTUnwrap(candidates.first)
+    for _ in 0..<2 {
+      await expect(.originalSizeUnavailable) {
+        _ = try await session.downloadGalleryCandidate(member) { _ in
+          XCTFail("Unconfirmed original mode reached the download sink")
+        }
+      }
+    }
+    let received = Bytes()
+    _ = try await session.downloadGalleryCandidate(member) { await received.append($0) }
+    let bytes = await received.value
+    XCTAssertEqual(bytes, Data([1, 2, 3]))
+    try await session.close()
+    let remaining = await channel.remaining
+    let closed = await channel.closed
+    XCTAssertEqual(remaining, 0)
+    XCTAssertTrue(closed)
+  }
+
   func testGalleryDownloadRetryReconfiguresCardAfterResetWasRefused() async throws {
     let info = object("CANDIDATE.RAF", format: 0xb103, bytes: 3)
     var rejectedReset = Exchange.galleryFilterReset
