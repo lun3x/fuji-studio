@@ -81,7 +81,12 @@ actor CameraHostedTransferSession: WirelessTransferSession {
       _ = try await transport.initialize(request)
       // The pinned libfuji camera-hosted implementation waits 50 ms after the ACK.
       transport.observeIdentity(.init(.openSessionDelay, .waiting))
-      try await Task.sleep(for: .milliseconds(50))
+      do {
+        try await Task.sleep(for: .milliseconds(50))
+      } catch {
+        transport.observeIdentity(.init(.openSessionDelay, .failed, failure: .init(error)))
+        throw error
+      }
       transport.observeIdentity(.init(.openSessionDelay, .completed))
       _ = try await execute(0x1002, [1])
       didOpenSession = true

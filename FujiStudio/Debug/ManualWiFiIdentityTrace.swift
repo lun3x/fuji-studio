@@ -22,6 +22,7 @@ final class ManualWiFiIdentityTrace: Sendable {
     private(set) var droppedEvents = 0
     private(set) var protocolFailure: Entry?
     private(set) var cleanupFailure: Entry?
+    private(set) var timerElapsed: Entry?
     private(set) var deadline: Entry?
     private(set) var protocolStageAtDeadline: Trace.Stage?
     private(set) var cleanupStageAtDeadline: Trace.Stage?
@@ -34,7 +35,7 @@ final class ManualWiFiIdentityTrace: Sendable {
 
     enum CodingKeys: String, CodingKey {
       case ordinal, startedAt, events, droppedEvents, protocolFailure, cleanupFailure
-      case deadline, protocolStageAtDeadline, cleanupStageAtDeadline, pendingProtocol, lastProtocolStage
+      case timerElapsed, deadline, protocolStageAtDeadline, cleanupStageAtDeadline, pendingProtocol, lastProtocolStage
       case pendingCloseSession, pendingSocket, pendingSessionCleanup
     }
 
@@ -48,11 +49,12 @@ final class ManualWiFiIdentityTrace: Sendable {
         event: event)
       let stage = event.stage
       switch stage {
-      case .identityDeadline:
-        deadline = entry
+      case .identityTimerElapsed:
+        timerElapsed = entry
         protocolStageAtDeadline = pendingProtocol
         cleanupStageAtDeadline = pendingSocket ?? pendingCloseSession ?? pendingSessionCleanup
-      case .identityCancellation: break
+      case .identityDeadline: deadline = entry
+      case .identityResult, .identityCancellation: break
       case .socketClose: Self.updatePending(event, slot: &pendingSocket)
       case .sessionCleanup: Self.updatePending(event, slot: &pendingSessionCleanup)
       case .closeSessionWrite, .closeSessionHeader, .closeSessionData, .closeSessionFinalHeader, .closeSessionResponseBody:
@@ -63,7 +65,7 @@ final class ManualWiFiIdentityTrace: Sendable {
       }
       if event.action == .failed {
         switch stage {
-        case .identityDeadline, .identityCancellation: break
+        case .identityTimerElapsed, .identityDeadline, .identityResult, .identityCancellation: break
         case .socketClose, .sessionCleanup, .closeSessionWrite, .closeSessionHeader, .closeSessionData,
              .closeSessionFinalHeader, .closeSessionResponseBody:
           cleanupFailure = entry
@@ -135,7 +137,8 @@ final class ManualWiFiIdentityTrace: Sendable {
       return true
     }
     if recorded {
-      scheduleWrite(urgent: event.action == .failed || event.stage == .attempt || event.stage == .socketClose)
+      scheduleWrite(urgent: event.action == .failed || event.stage == .attempt
+        || event.stage == .socketClose || event.stage == .identityTimerElapsed)
     }
   }
 

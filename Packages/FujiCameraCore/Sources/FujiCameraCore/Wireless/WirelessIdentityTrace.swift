@@ -4,7 +4,8 @@ public enum WirelessIdentityTrace {
   public typealias Observer = @Sendable (Event) -> Void
 
   public enum Stage: String, Sendable, Codable {
-    case attempt, identityDeadline, identityCancellation, tcpConnect, socketRead, socketClose
+    case attempt, identityTimerElapsed, identityDeadline, identityResult, identityCancellation
+    case tcpConnect, socketRead, socketClose
     case initializationWrite, initializationHeader, initializationBody, initializationACK
     case openSessionDelay
     case openSessionWrite, openSessionHeader, openSessionData, openSessionFinalHeader, openSessionResponseBody

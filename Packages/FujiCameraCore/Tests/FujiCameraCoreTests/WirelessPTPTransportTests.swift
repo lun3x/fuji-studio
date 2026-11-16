@@ -82,6 +82,27 @@ final class WirelessPTPTransportTests: XCTestCase, @unchecked Sendable {
     }
   }
 
+  func testCancellingPostACKDelayEndsThePendingStageWithoutOpeningSession() async throws {
+    let trace = TraceEvents()
+    let channel = FixtureChannel(reads: [ack])
+    let transport = WirelessPTPTransport(channel: channel, identityTrace: { event in
+      trace.append(event)
+      if event == .init(.openSessionDelay, .waiting) {
+        withUnsafeCurrentTask { $0?.cancel() }
+      }
+    })
+    let session = XAppTransferAdapter.makeSession(
+      transport: transport, expectedIdentity: .init(cameraID: .init(), model: .xt5, firmware: "4.30"),
+      clientGUID: Data(1...16))
+    let operation = Task { try await session.open() }
+    do { _ = try await operation.value; XCTFail("Cancelled post-ACK wait opened a session") }
+    catch is CancellationError {}
+    try await session.close()
+    let writes = await channel.writes
+    XCTAssertEqual(writes.count, 1)
+    XCTAssertEqual(trace.events.last, .init(.openSessionDelay, .failed, failure: .cancelled))
+  }
+
   func testBuildsSourceDerivedInitRequest() throws {
     XCTAssertEqual(
       try FujiWirelessFrameDecoder.initializationRequest(

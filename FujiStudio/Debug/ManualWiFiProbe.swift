@@ -444,6 +444,8 @@ final class ManualWiFiProbe {
     }
   }
 
+  private struct IdentityDeadlineReached: Error {}
+
   private static func readIdentity(
     _ expected: WirelessIdentity, makeSession: @escaping SessionFactory,
     trace: WirelessIdentityTrace.Observer?
@@ -471,12 +473,21 @@ final class ManualWiFiProbe {
         }
         group.addTask {
           try await Task.sleep(for: .seconds(20))
-          trace?(.init(.identityDeadline, .failed, failure: .outerDeadline))
-          throw WirelessFailure.timeout(.transactionInactivity)
+          trace?(.init(.identityTimerElapsed, .completed))
+          throw IdentityDeadlineReached()
         }
         defer { group.cancelAll() }
-        guard let identity = try await group.next() else { throw WirelessFailure.connectionLost }
-        return identity
+        do {
+          guard let identity = try await group.next() else { throw WirelessFailure.connectionLost }
+          trace?(.init(.identityResult, .completed))
+          return identity
+        } catch is IdentityDeadlineReached {
+          trace?(.init(.identityDeadline, .failed, failure: .outerDeadline))
+          throw WirelessFailure.timeout(.transactionInactivity)
+        } catch {
+          trace?(.init(.identityResult, .failed, failure: .init(error)))
+          throw error
+        }
       }
     } onCancel: {
       trace?(.init(.identityCancellation, .failed, failure: .cancelled))

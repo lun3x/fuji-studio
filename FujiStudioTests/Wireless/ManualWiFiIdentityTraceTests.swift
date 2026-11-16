@@ -13,24 +13,38 @@ struct ManualWiFiIdentityTraceTests {
     let first = trace.begin()
     first(.init(.getDeviceInfoData, .waiting))
     first(.init(.getDeviceInfoData, .readRequested, bytes: 65_536))
+    first(.init(.identityTimerElapsed, .completed))
     first(.init(.identityDeadline, .failed, failure: .outerDeadline))
     first(.init(.getDeviceInfoData, .failed, failure: .cancelled))
     first(.init(.socketClose, .waiting))
     let second = trace.begin()
     second(.init(.sessionCleanup, .waiting))
     second(.init(.closeSessionHeader, .waiting))
-    second(.init(.identityDeadline, .failed, failure: .outerDeadline))
+    second(.init(.identityTimerElapsed, .completed))
     first(.init(.socketClose, .completed))
-    second(.init(.identityCancellation, .failed, failure: .cancelled))
+    second(.init(.identityResult, .failed, failure: .peerMismatch))
+    second(.init(.attempt, .failed, failure: .peerMismatch))
+    let third = trace.begin()
+    third(.init(.identityTimerElapsed, .completed))
+    third(.init(.identityCancellation, .failed, failure: .cancelled))
+    third(.init(.identityResult, .failed, failure: .cancelled))
+    third(.init(.attempt, .failed, failure: .cancelled))
 
     let attempts = try await read(file) {
-      $0.count == 2 && self.events($0[0]).count == 7 && self.events($0[1]).count == 5
+      $0.count == 3 && self.events($0[0]).count == 8 && self.events($0[1]).count == 6
+        && self.events($0[2]).count == 5
     }
     #expect(attempts[0]["protocolStageAtDeadline"] as? String == "getDeviceInfoData")
     #expect(attempts[0]["cleanupStageAtDeadline"] == nil)
     #expect(attempts[0]["lastProtocolStage"] as? String == "getDeviceInfoData")
     #expect(attempts[0]["pendingSocket"] == nil)
+    #expect(attempts[0]["deadline"] != nil)
     #expect(attempts[1]["cleanupStageAtDeadline"] as? String == "closeSessionHeader")
+    #expect(attempts[1]["timerElapsed"] != nil)
+    #expect(attempts[1]["deadline"] == nil)
+    #expect(failure(attempts[1]) == "peerMismatch")
+    #expect(attempts[2]["deadline"] == nil)
+    #expect(failure(attempts[2]) == "cancelled")
     #expect(attempts[1]["ordinal"] as? Int == 2)
     let firstEvents = events(attempts[0])
     let secondEvents = events(attempts[1])
@@ -69,6 +83,11 @@ struct ManualWiFiIdentityTraceTests {
 
   private func events(_ attempt: [String: Any]) -> [[String: Any]] {
     attempt["events"] as? [[String: Any]] ?? []
+  }
+
+  private func failure(_ attempt: [String: Any]) -> String? {
+    let record = attempt["protocolFailure"] as? [String: Any]
+    return (record?["event"] as? [String: Any])?["failure"] as? String
   }
 
   private func read(
