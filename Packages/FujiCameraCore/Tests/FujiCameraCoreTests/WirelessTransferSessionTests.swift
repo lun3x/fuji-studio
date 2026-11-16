@@ -351,6 +351,37 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
     XCTAssertEqual(remaining, 0)
   }
 
+  func testGalleryDownloadRetryReconfiguresCardAfterResetWasRefused() async throws {
+    let info = object("CANDIDATE.RAF", format: 0xb103, bytes: 3)
+    var rejectedReset = Exchange.galleryFilterReset
+    rejectedReset.response = 0x2002
+    let selectFirst: [Exchange] = [.write(0xd244, [1])]
+    let channel = Replay(start(.xt5, "4.31") + galleryStartup + xappSetup.dropFirst() + card([1])
+      + [.read(0x1008, [1], info), .write(0xd244, [2])] + card([], storage: 2)
+      + selectFirst + cardSetup() + [rejectedReset]
+      + selectFirst + card([1]) + [
+        .property(0xd226, word(2, 2)), .read(0x1008, [1], info),
+        .read(0x101b, [1, 0, 3], Data([1, 2, 3])), .read(0x1003),
+      ])
+    let session = diagnosticSession(channel)
+    _ = try await session.listCameraPhotos()
+    let candidates = try await session.scannedPairCandidates()
+    let member = try XCTUnwrap(candidates.first)
+    do {
+      _ = try await session.downloadGalleryCandidate(member) { _ in XCTFail("Rejected reset reached sink") }
+      XCTFail("Rejected reset allowed download")
+    } catch {
+      XCTAssertEqual(error as? PTPError, .responseCode(0x2002))
+    }
+    let received = Bytes()
+    _ = try await session.downloadGalleryCandidate(member) { await received.append($0) }
+    let bytes = await received.value
+    XCTAssertEqual(bytes, Data([1, 2, 3]))
+    try await session.close()
+    let remaining = await channel.remaining
+    XCTAssertEqual(remaining, 0)
+  }
+
   func testGalleryCandidateRejectsForeignMemberAndChangedObjectAfterUnavailableCard() async throws {
     let raf = object("CANDIDATE.RAF", format: 0xb103, bytes: 3)
     let changed = object("CHANGED.RAF", format: 0xb103, bytes: 3)

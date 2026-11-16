@@ -60,11 +60,11 @@ extension CameraHostedTransferSession {
       throw WirelessFailure.unavailableStorage
     }
     transport.observeIdentity(.init(.galleryStorageConfirmation, .completed))
-    selectedStorage = storage
+    // A retry must not skip setup after an incomplete filter reset or refresh.
+    selectedStorage = nil
     do {
       _ = try await execute(0x9054, [0x10000001])
     } catch PTPError.responseCode(0x2013) {
-      selectedStorage = nil
       // The reference attributes StoreNotAvailable to an inaccessible slot.
       return nil
     }
@@ -80,6 +80,7 @@ extension CameraHostedTransferSession {
     transport.observeIdentity(.init(.galleryHandleValidation, .waiting))
     do {
       let handles = try Self.validateXAppHandles(payload, count: count)
+      selectedStorage = storage
       transport.observeIdentity(.init(.galleryHandleValidation, .completed))
       return handles
     } catch {

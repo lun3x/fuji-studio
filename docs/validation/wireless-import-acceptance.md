@@ -599,8 +599,8 @@ Fuji Studio now sends that reset after card setup and before the 9053
 refresh and inventory reads. It requires a valid successful response for
 each available card and repeats the reset on card reselection. The
 `galleryFilterReset` trace stage records the transaction outcome. A reset
-failure aborts that inventory before refresh. Replay tests cover this
-integration. The combined Fuji Studio sequence still needs physical
+failure aborts that inventory before refresh. A retry repeats card setup
+after a failed reset. Replay tests cover this integration. The combined Fuji Studio sequence still needs physical
 validation.
 
 Repeat the full scan and pair trial on the X-T5. Confirm a successful
