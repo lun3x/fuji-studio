@@ -144,6 +144,22 @@ struct ManualWiFiProbeTests {
     #expect(!FileManager.default.fileExists(atPath: completed.appending(path: result.files[0].relativePath).path))
   }
 
+  @Test func pairIsNotPublishedWhenOriginalSizeRestorationFailsDuringClose() async throws {
+    let files = try ImportFileFixture()
+    defer { files.cleanUp() }
+    let fixture = ManualWiFiFixture(pairRoot: files.root)
+    await fixture.transfer.setGalleryFiles([files.object(.raf): files.raf, files.object(.jpeg): files.jpeg])
+    await fixture.transfer.failGalleryClose(.responseCode(0x2002))
+    await prepareHandoff(fixture)
+    fixture.probe.confirmJoined()
+    fixture.probe.testPairDownload()
+    await fixture.probe.waitForOperation()
+    #expect(await fixture.transfer.actions == [.listPhotos, .download(.raf), .download(.jpeg), .close])
+    #expect(fixture.events.last?.phase == .galleryFailed)
+    #expect(fixture.probe.pairResult == nil)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: files.root.path).isEmpty)
+  }
+
   @Test(arguments: ["short", "signature", "metadata", "capture"]) func failedSecondFileLeavesNoPrivatePair(fault: String) async throws {
     let files = try ImportFileFixture(jpegDate: fault == "capture" ? "2023:01:02 03:04:05" : "2020:01:02 03:04:05")
     defer { files.cleanUp() }

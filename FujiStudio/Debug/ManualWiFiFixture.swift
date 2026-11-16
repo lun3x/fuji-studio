@@ -133,6 +133,7 @@ final class ManualWiFiFixture {
     private var galleryBarrier: FixtureBarrier?
     private var galleryDelay: Duration?
     private var holdGalleryClose = false
+    private var galleryCloseError: PTPError?
     private var closingGallery: AsyncStream<Void>.Continuation?
     private var confirmGalleryAbort: CheckedContinuation<Void, Never>?
     private var galleryAborted = false
@@ -210,8 +211,11 @@ final class ManualWiFiFixture {
       confirmGalleryAbort = nil
     }
 
-    func close() async {
+    func failGalleryClose(_ error: PTPError) { galleryCloseError = error }
+
+    func close() async throws {
       actions.append(.close)
+      if let galleryCloseError { throw galleryCloseError }
       guard holdGalleryClose else { return }
       closingGallery?.yield()
       closingGallery?.finish()

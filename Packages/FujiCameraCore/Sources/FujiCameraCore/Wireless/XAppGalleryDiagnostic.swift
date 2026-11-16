@@ -45,6 +45,12 @@ public struct XAppGalleryDiagnosticResult: Sendable, Equatable {
   }
 }
 
+enum GalleryOriginalRestoration {
+  case setting(WirelessIdentityTrace.GalleryOriginalMode)
+  case owed(WirelessIdentityTrace.GalleryOriginalMode)
+  case unconfirmed
+}
+
 public typealias XAppOriginalControlObservation = WirelessIdentityTrace.OriginalControl
 
 public protocol XAppGalleryDiagnostic: XAppConnectionDiagnostic {
@@ -72,6 +78,7 @@ extension CameraHostedTransferSession {
       var card = XAppGalleryDiagnosticResult.Card(slot: slot, totalHandles: handles?.count, samples: [])
       transport.observeIdentity(.init(.galleryCardSummary, .waiting, galleryCard: card.summary))
       if let handles {
+        try await prepareGalleryOriginalMode()
         for handle in handles {
           let info = try await objectInfo(handle: handle, storage: slot)
           card.record(info)
@@ -109,9 +116,8 @@ extension CameraHostedTransferSession {
     transport.observeIdentity(.init(.pairControlRead, .waiting, pairFile: .init(role: role, expectedBytes: expected)))
     let observation: XAppOriginalControlObservation
     do {
-      observation = .reported(try await readScalar(0xd226, widths: [2, 4]))
-    } catch PTPError.responseCode(0x200a) {
-      observation = .unsupported
+      try await requireGalleryOriginalMode()
+      observation = .reported(2)
     } catch {
       let response: UInt16?
       if case PTPError.responseCode(let code) = error { response = code } else { response = nil }
@@ -123,6 +129,95 @@ extension CameraHostedTransferSession {
       pairFile: .init(role: role, expectedBytes: expected, originalControl: observation)))
     try await streamMatchingObject(object, length: length, to: sink)
     return observation
+  }
+
+  private func prepareGalleryOriginalMode() async throws {
+    if galleryOriginalModePrepared {
+      try await requireGalleryOriginalMode()
+      return
+    }
+
+    let prior = try await readGalleryOriginalMode(stage: .galleryOriginalModeRead)
+    if prior != .original {
+      let stage = WirelessIdentityTrace.Stage.galleryOriginalModeWrite
+      transport.observeIdentity(.init(stage, .waiting, galleryOriginalMode: .original))
+      galleryOriginalRestoration = .setting(prior)
+      do {
+        try await setProperty(0xd226, WirelessIdentityTrace.GalleryOriginalMode.original.rawValue, width: 2) {
+          if case .setting = galleryOriginalRestoration { galleryOriginalRestoration = .owed(prior) }
+        }
+        transport.observeIdentity(.init(stage, .completed, galleryOriginalMode: .original))
+      } catch let PTPError.responseCode(code) {
+        if case .setting = galleryOriginalRestoration { galleryOriginalRestoration = nil }
+        transport.observeIdentity(.init(stage, .failed, failure: .rejected, responseCode: code))
+        throw PTPError.responseCode(code)
+      } catch {
+        transport.observeIdentity(.init(stage, .failed, failure: .init(error)))
+        if case .setting = galleryOriginalRestoration {
+          markGalleryRestorationUnconfirmed(.init(error))
+        }
+        throw error
+      }
+      try await requireGalleryOriginalMode()
+    }
+    galleryOriginalModePrepared = true
+  }
+
+  private func requireGalleryOriginalMode() async throws {
+    _ = try await readGalleryOriginalMode(stage: .galleryOriginalModeConfirmation, requireOriginal: true)
+  }
+
+  private func readGalleryOriginalMode(
+    stage: WirelessIdentityTrace.Stage, requireOriginal: Bool = false
+  ) async throws -> WirelessIdentityTrace.GalleryOriginalMode {
+    transport.observeIdentity(.init(stage, .waiting))
+    do {
+      let value = try await readScalar(0xd226, widths: [2, 4])
+      guard let mode = WirelessIdentityTrace.GalleryOriginalMode(rawValue: value),
+        !requireOriginal || mode == .original
+      else { throw WirelessFailure.originalSizeUnavailable }
+      transport.observeIdentity(.init(stage, .completed, galleryOriginalMode: mode))
+      return mode
+    } catch {
+      let response: UInt16?
+      if case PTPError.responseCode(let code) = error { response = code } else { response = nil }
+      transport.observeIdentity(.init(stage, .failed, failure: .init(error), responseCode: response))
+      if response == 0x200a { throw WirelessFailure.originalSizeUnavailable }
+      throw error
+    }
+  }
+
+  func restoreGalleryOriginalMode(canRestore: Bool) async throws {
+    guard let restoration = galleryOriginalRestoration else { return }
+    guard canRestore, case .owed(let prior) = restoration else {
+      markGalleryRestorationUnconfirmed(canRestore ? .connectionLost : .cancelled)
+      throw WirelessFailure.originalSizeUnavailable
+    }
+    let stage = WirelessIdentityTrace.Stage.galleryOriginalModeRestore
+    transport.observeIdentity(.init(stage, .waiting, galleryOriginalMode: prior))
+    do {
+      try await setProperty(0xd226, prior.rawValue, width: 2, whileClosing: true) {
+        galleryOriginalRestoration = nil
+      }
+      transport.observeIdentity(.init(stage, .completed, galleryOriginalMode: prior))
+    } catch let PTPError.responseCode(code) {
+      transport.observeIdentity(.init(stage, .failed, failure: .rejected, responseCode: code, galleryOriginalMode: prior))
+      throw PTPError.responseCode(code)
+    } catch {
+      markGalleryRestorationUnconfirmed(.init(error))
+      throw error
+    }
+  }
+
+  func markGalleryRestorationUnconfirmed(_ failure: WirelessIdentityTrace.Failure) {
+    let prior: WirelessIdentityTrace.GalleryOriginalMode
+    switch galleryOriginalRestoration {
+    case .setting(let mode), .owed(let mode): prior = mode
+    case .unconfirmed, nil: return
+    }
+    galleryOriginalRestoration = .unconfirmed
+    transport.observeIdentity(.init(.galleryOriginalModeRestoreUnconfirmed, .failed,
+      failure: failure, galleryOriginalMode: prior))
   }
 
 }

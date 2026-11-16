@@ -547,8 +547,9 @@ pair. It prefers a same-card pair and can select a corroborated split-card
 pair. If no pair qualifies, the app closes the connection without requesting
 file bytes. Otherwise it rereads the correct slot and ObjectInfo as needed,
 then streams the RAF and JPEG serially using GetPartialObject (101B), bounded
-to 1 MiB per request. It reads D226 before each candidate and records the
-observation without changing D226 or D227.
+to 1 MiB per request. This version read D226 before each candidate without
+changing D226 or D227. The original-size transfer update below supersedes
+that diagnostic behavior.
 [Libfuji XApp transfer reference](https://github.com/petabyt/libfuji/blob/3b9932a46d025405dae505ddb624733b6ea3edd1/lib/fuji.c#L875)
 [GFX100 II firmware 2.30 transfer capture](https://github.com/epsalmond/ptpsim/blob/a2cea30d8622ba9e71d49338b0d0eda20b664689/packages/camera-config-data/fuji/gfx100ii/evidence/IMAGE_TRANSFER_FW230.md)
 
@@ -610,3 +611,41 @@ outcomes, and socket cleanup, and compare the private hashes with the
 corresponding files read independently from the card. The official
 filter capture contains no file downloads, and physical RAW download
 and original-byte equality remain unverified.
+
+#### Official XApp original-size JPEG transfer
+
+A subsequent official XApp capture on the same X-T5 04.31 verified the
+effect of D226 on one JPEG. Gallery ObjectInfo reported 167,936 bytes at
+7,728 × 5,152. With D226 set to 1 as a little-endian UInt16, a fresh
+ObjectInfo reported 3,345,240 bytes at 3,840 × 2,560. The matching partial
+object response contained that exact byte count and decoded at those
+dimensions. With D226 set to 2 as a little-endian UInt16, fresh ObjectInfo
+reported 24,667,151 bytes at 7,728 × 5,152. Two partial-object responses
+delivered exactly 24,667,151 bytes, and the resulting JPEG decoded at
+7,728 × 5,152. The capture includes the same-session setter returning
+D226 to 0 after the earlier resized transfer. It does not establish the
+setting's persistence across sessions. No D227 operation appeared.
+
+The Debug scan now reads D226 on the selected available card, accepts the
+observed modes 0, 1 and 2, and selects mode 2 with the captured two-byte
+setter when needed. It requires confirmation before reading ObjectInfo,
+checks the mode after card reselection and before each candidate transfer,
+and rechecks the same object's complete frozen metadata. The lengths used
+for disk preflight, transfer verification and the private receipt come
+from ObjectInfo collected in mode 2. Fuji Studio retains its 1 MiB
+partial-object limit and restores the saved mode before graceful
+CloseSession when it changed the setting. A failed or unconfirmed
+restoration prevents publication. Cancellation closes the socket promptly,
+and the trace records an unconfirmed restoration if it cannot be completed.
+An acknowledged restoration confirms the transfer-control write in that
+session. The capture does not establish per-card or post-session persistence.
+This change is limited to the Debug diagnostic. Production admission
+continues to require independently validated Wi-Fi identity.
+
+Repeat the full scan and pair trial on the X-T5 and verify the reset,
+both format counts, mode confirmation, exact transfer lengths and cleanup
+in the trace. If the diagnostic changes D226, confirm restoration before
+declaring success. The official JPEG transfer establishes the mode and
+metadata change for that JPEG. Fuji Studio's combined sequence, physical
+RAF download, and equality to independently read card bytes still await
+validation.

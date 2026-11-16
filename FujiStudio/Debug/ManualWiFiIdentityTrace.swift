@@ -89,7 +89,8 @@ final class ManualWiFiIdentityTrace: Sendable {
         switch stage {
         case .identityTimerElapsed, .identityDeadline, .identityResult, .identityCancellation: break
         case .socketClose, .sessionCleanup, .closeSessionWrite, .closeSessionHeader, .closeSessionData,
-             .closeSessionFinalHeader, .closeSessionResponseBody:
+             .closeSessionFinalHeader, .closeSessionResponseBody,
+             .galleryOriginalModeRestore, .galleryOriginalModeRestoreUnconfirmed:
           cleanupFailure = entry
         case .galleryOpen where event.responseCode == 0x2013: break
         case .pairControlRead where event.responseCode == 0x200a: break
@@ -123,7 +124,8 @@ final class ManualWiFiIdentityTrace: Sendable {
            .galleryCardBegin, .galleryStorageWrite, .galleryStorageRead, .galleryStorageConfirmation,
            .galleryOpen, .galleryPreviewSetup, .galleryModeStatus, .gallerySelectedImages,
            .galleryFilterReset, .galleryObjectListBegin, .galleryObjectCount, .galleryHandleList, .galleryHandleValidation,
-           .galleryCardSummary:
+           .galleryCardSummary, .galleryOriginalModeRead, .galleryOriginalModeWrite, .galleryOriginalModeConfirmation,
+           .galleryOriginalModeRestore, .galleryOriginalModeRestoreUnconfirmed:
         break
       default:
         return

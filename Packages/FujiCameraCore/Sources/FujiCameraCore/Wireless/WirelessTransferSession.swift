@@ -38,10 +38,12 @@ actor CameraHostedTransferSession: WirelessTransferSession {
   private let sessionID = UUID()
   #if DEBUG
   var galleryObjects: [UInt32: [UInt32: WirelessObjectDescriptor]]?
+  var galleryOriginalModePrepared = false
+  var galleryOriginalRestoration: GalleryOriginalRestoration?
   #endif
   private var peer: WirelessIdentity?
   private var didOpenSession = false
-  private var closing: Task<Void, Never>?
+  private var closing: Task<Void, Error>?
   var busy = false
   private var transactionID: UInt32 = 0
 
@@ -135,7 +137,10 @@ actor CameraHostedTransferSession: WirelessTransferSession {
   }
 
   #if DEBUG
-  func abortGallery() async { await transport.close() }
+  func abortGallery() async {
+    markGalleryRestorationUnconfirmed(.cancelled)
+    await transport.close()
+  }
 
   func openGallery() async throws -> XAppConnectionDiagnosticResult {
     guard WirelessSupportPolicy().assess(model: expectedIdentity.model.rawValue, firmware: expectedIdentity.firmware)
@@ -367,21 +372,33 @@ actor CameraHostedTransferSession: WirelessTransferSession {
   }
 
   func close() async throws {
-    if let closing { await closing.value; return }
+    if let closing { return try await closing.value }
     #if DEBUG
     galleryObjects = nil
     #endif
     let shouldCloseSession = didOpenSession && !busy && !Task.isCancelled
-    let close = Task {
+    let close = Task<Void, Error> {
+      #if DEBUG
+      let restoration: Result<Void, Error>
+      do {
+        try await restoreGalleryOriginalMode(canRestore: shouldCloseSession)
+        restoration = .success(())
+      } catch {
+        restoration = .failure(error)
+      }
+      #endif
       if shouldCloseSession {
         if legacyAccurateLengthsEnabled { try? await resetLegacyLengthReporting(whileClosing: true) }
         // Even a PTP refusal must be followed by confirmed native socket teardown.
         _ = try? await execute(0x1003, whileClosing: true)
       }
       await transport.close()
+      #if DEBUG
+      try restoration.get()
+      #endif
     }
     closing = close
-    await close.value
+    try await close.value
   }
 
   func execute(

@@ -600,6 +600,7 @@ final class ManualWiFiProbe {
     case .permissionDenied(.localNetwork): return "Allow Local Network access for Fuji Manual WiFi in Settings, then retry."
     case .unsupportedFirmware: return "The camera firmware could not be admitted. The X-T5 requires firmware 4.30 or later."
     case .peerMismatch: return "The selected X-T5 could not be verified. Check the camera and retry."
+    case .originalSizeUnavailable: return "The camera did not confirm original transfer size. Start a new Wi-Fi handoff to retry."
     case .timeout(.wifiReadiness): return "Camera Wi-Fi did not become ready. Check the camera and retry."
     default: return fallback
     }

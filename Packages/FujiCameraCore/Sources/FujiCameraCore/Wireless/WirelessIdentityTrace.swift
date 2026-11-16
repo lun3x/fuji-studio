@@ -16,6 +16,8 @@ public enum WirelessIdentityTrace {
     case galleryCardBegin, galleryStorageWrite, galleryStorageRead, galleryStorageConfirmation
     case galleryOpen, galleryPreviewSetup, galleryModeStatus, gallerySelectedImages, galleryFilterReset
     case galleryObjectListBegin, galleryObjectCount, galleryHandleList, galleryHandleValidation
+    case galleryOriginalModeRead, galleryOriginalModeWrite, galleryOriginalModeConfirmation
+    case galleryOriginalModeRestore, galleryOriginalModeRestoreUnconfirmed
     case galleryObjectInfo, galleryObjectInfoValidation, galleryCardSummary
     case pairSelection, pairControlRead, pairPartialObject, pairFileTransfer, pairFileValidation
     case pairValidation, pairStoragePrepare, pairPublication, pairCleanup
@@ -44,7 +46,7 @@ public enum WirelessIdentityTrace {
         case .authentication: self = .authentication
         case .unavailableStorage: self = .unavailableStorage
         case .peerMismatch: self = .peerMismatch
-        case .unsupportedProtocol, .unsupportedFirmware: self = .unsupported
+        case .unsupportedProtocol, .unsupportedFirmware, .originalSizeUnavailable: self = .unsupported
         default: self = .other
         }
       } else if let error = error as? PTPError {
@@ -100,6 +102,12 @@ public enum WirelessIdentityTrace {
     }
   }
 
+  public enum GalleryOriginalMode: UInt32, Sendable, Codable {
+    case mode0 = 0
+    case mode1 = 1
+    case original = 2
+  }
+
   public enum PairRole: String, Sendable, Codable { case raf, jpeg }
 
   public enum OriginalControl: Sendable, Codable, Equatable {
@@ -131,11 +139,12 @@ public enum WirelessIdentityTrace {
     public let galleryCard: GalleryCardSummary?
     public let gallerySlot: UInt32?
     public let pairFile: PairFile?
+    public let galleryOriginalMode: GalleryOriginalMode?
 
     public init(
       _ stage: Stage, _ action: Action, bytes: Int? = nil, failure: Failure? = nil,
       responseCode: UInt16? = nil, galleryCard: GalleryCardSummary? = nil, gallerySlot: UInt32? = nil,
-      pairFile: PairFile? = nil
+      pairFile: PairFile? = nil, galleryOriginalMode: GalleryOriginalMode? = nil
     ) {
       self.stage = stage
       self.action = action
@@ -144,6 +153,7 @@ public enum WirelessIdentityTrace {
       self.responseCode = responseCode
       self.galleryCard = galleryCard
       self.pairFile = pairFile
+      self.galleryOriginalMode = galleryOriginalMode
       self.gallerySlot = gallerySlot.flatMap { (1...2).contains($0) ? $0 : nil }
     }
   }
