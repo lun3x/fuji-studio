@@ -69,7 +69,7 @@ extension CameraHostedTransferSession {
     guard galleryObjects == nil else { throw WirelessFailure.unsupportedProtocol }
     try begin()
     defer { busy = false }
-    let connection = try await openGallery()
+    try await openGallery()
     let slots = try await configureXAppGalleryMode()
     var cards: [XAppGalleryDiagnosticResult.Card] = []
     var objects: [UInt32: [UInt32: WirelessObjectDescriptor]] = [:]
@@ -93,7 +93,7 @@ extension CameraHostedTransferSession {
       cards.append(card)
     }
     galleryObjects = objects
-    return .init(wifiIdentityAvailable: connection != .respondingWithoutDeviceInfo, cards: cards)
+    return .init(wifiIdentityAvailable: false, cards: cards)
   }
 
   func scannedPairCandidates() throws -> [WirelessObjectDescriptor] {

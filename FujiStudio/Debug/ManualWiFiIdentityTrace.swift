@@ -26,6 +26,7 @@ final class ManualWiFiIdentityTrace: Sendable {
     private(set) var galleryCards: [String: Trace.GalleryCardSummary] = [:]
     private(set) var pairMilestones: [String: Entry] = [:]
     private(set) var gallerySetup: [Entry] = []
+    private(set) var galleryInventoryMilestones: [String: Entry] = [:]
     private var didValidateXAppAccess = false
     private(set) var protocolFailure: Entry?
     private(set) var emptyDeviceInfo: Entry?
@@ -45,6 +46,7 @@ final class ManualWiFiIdentityTrace: Sendable {
       case pairMilestones, kind, ordinal, startedAt, events, droppedEvents, protocolFailure, cleanupFailure, emptyDeviceInfo, galleryCards, gallerySetup
       case timerElapsed, deadline, protocolStageAtDeadline, cleanupStageAtDeadline, pendingProtocol, lastProtocolStage
       case pendingCloseSession, pendingSocket, pendingSessionCleanup
+      case galleryInventoryMilestones
     }
 
     fileprivate mutating func append(_ event: Trace.Event, sequence: Int, now: ContinuousClock.Instant) {
@@ -114,6 +116,13 @@ final class ManualWiFiIdentityTrace: Sendable {
       let event = entry.event
       guard event.action == .completed || event.action == .failed else { return }
       switch event.stage {
+      case .galleryVersionValidation where event.galleryVersion != nil:
+        galleryInventoryMilestones[event.stage.rawValue] = entry
+      case .galleryInitialInventory, .galleryFilteredInventory:
+        guard let slot = event.gallerySlot, event.galleryHandleCount != nil else { return }
+        // Keep the first inventory of each phase and slot across later reselections.
+        let key = event.stage.rawValue + "." + String(slot)
+        if galleryInventoryMilestones[key] == nil { galleryInventoryMilestones[key] = entry }
       case .xAppAccess:
         didValidateXAppAccess = event.action == .completed
       case .xAppEventsRead:

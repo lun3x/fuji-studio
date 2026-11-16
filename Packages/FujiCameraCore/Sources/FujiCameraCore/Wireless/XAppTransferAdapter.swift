@@ -12,7 +12,7 @@ public enum XAppTransferAdapter {
 }
 
 extension CameraHostedTransferSession {
-  // Sequence based on libfuji 3b9932a and the GFX100 II 2.30 XApp gallery capture.
+  // The production path retains its remote-version requirement before gallery setup.
   func configureXApp() async throws -> [UInt32] {
     try await requireXAppRemoteVersion()
     return try await configureXAppGalleryMode()
@@ -20,19 +20,20 @@ extension CameraHostedTransferSession {
 
   func configureXAppGalleryMode() async throws -> [UInt32] {
     try await setProperty(0xdf01, 20, width: 2)
-    let galleryVersion = try await readScalar(0xdf28)
-    guard (1...3).contains(galleryVersion) else {
+    let version = try await readScalar(0xdf28)
+    guard let galleryVersion = WirelessIdentityTrace.GalleryVersion(rawValue: version) else {
       transport.observeIdentity(.init(.galleryVersionValidation, .failed, failure: .unsupported))
       throw WirelessFailure.unsupportedProtocol
     }
-    transport.observeIdentity(.init(.galleryVersionValidation, .completed))
-    try await setProperty(0xdf28, galleryVersion, width: 4)
+    try await setProperty(0xdf28, galleryVersion.rawValue, width: 4)
+    transport.observeIdentity(.init(.galleryVersionValidation, .completed, galleryVersion: galleryVersion))
     let storage = try await readScalar(0xd244, widths: [1, 2, 4])
     guard storage == 1 || storage == 2 else {
       transport.observeIdentity(.init(.galleryStorageConfirmation, .failed, failure: .unsupported))
       throw WirelessFailure.unsupportedProtocol
     }
-    selectedStorage = storage
+    _ = try await readEvents()
+    xAppInitialStorage = storage
     return [storage, storage == 1 ? 2 : 1]
   }
 
@@ -50,22 +51,24 @@ extension CameraHostedTransferSession {
   }
 
   func configureXAppCard(_ storage: UInt32) async throws -> [UInt32]? {
-    if selectedStorage != storage {
+    let needsSelection = (selectedStorage ?? xAppInitialStorage) != storage
+    xAppInitialStorage = nil
+    if needsSelection {
       #if DEBUG
       try await restoreGalleryOriginalMode(canRestore: true, whileClosing: false)
       galleryOriginalModePrepared = false
       #endif
-      try await setProperty(0xd244, storage, width: 1)
       selectedStorage = nil
+      try await setProperty(0xd244, storage, width: 1)
     }
+    // A retry must repeat setup after a failed confirmation, filter, or refresh.
+    selectedStorage = nil
     let confirmedStorage = try await readScalar(0xd244, widths: [1, 2, 4])
     guard confirmedStorage == storage else {
       transport.observeIdentity(.init(.galleryStorageConfirmation, .failed, failure: .unavailableStorage))
       throw WirelessFailure.unavailableStorage
     }
     transport.observeIdentity(.init(.galleryStorageConfirmation, .completed))
-    // A retry must not skip setup after a failed filter selection or refresh.
-    selectedStorage = nil
     do {
       _ = try await execute(0x9054, [0x10000001])
     } catch PTPError.responseCode(0x2013) {
@@ -76,19 +79,30 @@ extension CameraHostedTransferSession {
     _ = try await execute(0x9050)
     _ = try await readEvents()
     _ = try await property(0xd22b)
+    // The cold X-T5 gallery inventories the card before making any filter writes.
+    _ = try await refreshXAppInventory(slot: storage, stage: .galleryInitialInventory)
     // XApp on X-T5 04.31 selects JPEG+RAW with one 8-byte D604 record set to 0x0011.
     let jpegRAWFilter = Data([
       0x01, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x04, 0xd6, 0x11, 0x00,
     ])
     _ = try await execute(0x9051, data: jpegRAWFilter)
+    let handles = try await refreshXAppInventory(slot: storage, stage: .galleryFilteredInventory)
+    selectedStorage = storage
+    return handles
+  }
+
+  private func refreshXAppInventory(
+    slot: UInt32, stage: WirelessIdentityTrace.Stage
+  ) async throws -> [UInt32] {
     _ = try await execute(0x9053, [0, 30_000])
+    _ = try await readEvents()
     let count = try await readScalar(0xd620)
     let payload = try await property(0xd621)
     transport.observeIdentity(.init(.galleryHandleValidation, .waiting))
     do {
       let handles = try Self.validateXAppHandles(payload, count: count)
-      selectedStorage = storage
       transport.observeIdentity(.init(.galleryHandleValidation, .completed))
+      transport.observeIdentity(.init(stage, .completed, gallerySlot: slot, galleryHandleCount: count))
       return handles
     } catch {
       transport.observeIdentity(.init(.galleryHandleValidation, .failed, failure: .init(error)))
@@ -139,9 +153,9 @@ extension XAppTransferAdapter {
 
 extension CameraHostedTransferSession: XAppGalleryDiagnostic {
   // From the pinned libfuji XApp setup and X-T5 trace. This check ends before any gallery writes.
-  func checkXAppStartup() async throws {
+  func checkXAppStartup(validatesRemoteVersion: Bool = true) async throws {
     try await withThrowingTaskGroup(of: Void.self) { group in
-      group.addTask { try await self.readXAppStartup() }
+      group.addTask { try await self.readXAppStartup(validatesRemoteVersion: validatesRemoteVersion) }
       group.addTask {
         try await Task.sleep(for: WirelessLimits.transactionInactivity)
         throw WirelessFailure.timeout(.transactionInactivity)
@@ -152,7 +166,7 @@ extension CameraHostedTransferSession: XAppGalleryDiagnostic {
     try Task.checkCancellation()
   }
 
-  private func readXAppStartup() async throws {
+  private func readXAppStartup(validatesRemoteVersion: Bool) async throws {
     do {
       while true {
         let state = try await readEvents()[0xdf00]
@@ -168,6 +182,7 @@ extension CameraHostedTransferSession: XAppGalleryDiagnostic {
       transport.observeIdentity(.init(.xAppAccess, .failed, failure: .init(error)))
       throw error
     }
+    guard validatesRemoteVersion else { return }
     do {
       try await requireXAppRemoteVersion()
       transport.observeIdentity(.init(.xAppVersionValidation, .completed))

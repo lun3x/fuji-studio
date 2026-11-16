@@ -142,46 +142,64 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
     XCTAssertTrue(closed)
   }
 
-  func testGalleryAppliesCapturedJPEGRAWFilterAndScansBeyondTheSample() async throws {
-    for emptyDeviceInfo in [false, true] {
-      let startup: [Exchange] = emptyDeviceInfo
-        ? [.read(0x1002, [1]), .emptyDeviceInfo] : start(.xt5, "4.31")
-      let handles = (1...34).map(UInt32.init)
-      let metadata = handles.map {
-        if $0 == 33 { return Exchange.read(0x1008, [$0], object("LATE.RAF", format: 0xb103, bytes: 789)) }
-        return Exchange.read(0x1008, [$0], object("SAMPLE\($0).JPG", format: 0x3801, bytes: 456))
-      }
-      let jpegOnly = handles.filter { $0 != 33 }
-      var filter = Exchange.galleryJPEGRAWFilter
-      filter.alternative = cardRefresh(jpegOnly) + [originalMode] + metadata.filter { $0.parameters != [33] }
-      let channel = Replay(startup + galleryStartup + xappSetup.dropFirst() + cardSetup()
-        + [filter] + cardRefresh(handles) + [originalMode] + metadata + [
-          .write(0xd244, [2]), .property(0xd244, Data([2])),
-          .rejection(0x9054, [0x10000001], 0x2013), .read(0x1003),
-        ])
-      let session = diagnosticSession(channel)
-      let result = try await session.listCameraPhotos()
-      XCTAssertEqual(result.wifiIdentityAvailable, !emptyDeviceInfo)
-      XCTAssertEqual(result.cards.map(\.summary.totalHandles), [34, nil])
-      XCTAssertEqual(result.cards.map(\.summary.jpegCount), [33, 0])
-      XCTAssertEqual(result.cards.map(\.summary.rafCount), [1, 0])
-      XCTAssertEqual(result.cards.map(\.summary.scannedCount), [34, 0])
-      let candidates = try await session.scannedPairCandidates()
-      XCTAssertEqual(candidates.filter { $0.format == .jpeg }.count, 33)
-      XCTAssertEqual(candidates.filter { $0.format == .raf }.map(\.filename), ["LATE.RAF"])
-      XCTAssertEqual(result.cards[0].samples.count, 32)
-      XCTAssertEqual(result.cards[0].samples.first?.filename, "SAMPLE1.JPG")
-      await expect(.connectionLost) { _ = try await session.enumerate() }
-      try await session.close()
-      let remaining = await channel.remaining
-      let closed = await channel.closed
-      XCTAssertEqual(remaining, 0)
-      XCTAssertTrue(closed)
+  func testGalleryAppliesCapturedJPEGRAWFilterAfterColdInventory() async throws {
+    // X-T5 04.31 cold transactions 1–17, then the combined filter and
+    // refresh from transactions 2319–2323. Inventory is reduced for replay.
+    let handles = (101...134).map(UInt32.init)
+    let list = handles.reduce(into: Data()) { $0 += word($1) }
+    let metadata = handles.map {
+      if $0 == 133 { return Exchange.read(0x1008, [$0], object("PAIR.RAF", format: 0xb103, bytes: 789)) }
+      return Exchange.read(0x1008, [$0], object("PHOTO\($0).JPG", format: 0x3801, bytes: 456))
     }
+    let channel = Replay([
+      .read(0x1002, [1]),
+      .property(0xd212, events([(0xdf00, 6), (0xd222, 35)])),
+      .write(0xdf01, [20, 0]), .property(0xdf28, word(3)), .write(0xdf28, [3, 0, 0, 0]),
+      .property(0xd244, Data([2])), .property(0xd212, events([(0xdf00, 20), (0xd222, 35)])),
+      .property(0xd244, Data([2])), .read(0x9054, [0x10000001]),
+      .read(0x9055, [0x10000001]), .read(0x9050),
+      .property(0xd212, events([(0xd22f, 1)])), .property(0xd22b, word(35)),
+      .read(0x9053, [0, 30000]), .property(0xd212, events()),
+      .property(0xd620, word(35)), .property(0xd621, word(35) + word(20) + list),
+      .galleryJPEGRAWFilter,
+      .read(0x9053, [0, 30000]), .property(0xd212, events()),
+      .property(0xd620, word(34)), .property(0xd621, word(34) + list),
+      originalMode,
+    ] + metadata + [
+      .write(0xd244, [1]), .property(0xd244, Data([1])),
+      .rejection(0x9054, [0x10000001], 0x2013), .read(0x1003),
+    ])
+    let (observations, trace) = AsyncStream<WirelessIdentityTrace.Event>.makeStream()
+    let session = diagnosticSession(channel) { trace.yield($0) }
+    let result = try await session.listCameraPhotos()
+    XCTAssertFalse(result.wifiIdentityAvailable)
+    XCTAssertEqual(result.cards.map(\.summary.totalHandles), [34, nil])
+    XCTAssertEqual(result.cards.map(\.summary.jpegCount), [33, 0])
+    XCTAssertEqual(result.cards.map(\.summary.rafCount), [1, 0])
+    XCTAssertEqual(result.cards.first?.samples.count, 32)
+    XCTAssertEqual(result.cards.first?.samples.first?.filename, "PHOTO101.JPG")
+    let candidates = try await session.scannedPairCandidates()
+    XCTAssertEqual(Set(candidates.map(\.handle)), Set(handles))
+    await expect(.connectionLost) { _ = try await session.enumerate() }
+    try await session.close()
+    trace.finish()
+    var milestones: [WirelessIdentityTrace.Event] = []
+    for await event in observations where event.galleryVersion != nil || event.galleryHandleCount != nil {
+      milestones.append(event)
+    }
+    XCTAssertEqual(milestones, [
+      .init(.galleryVersionValidation, .completed, galleryVersion: .version3),
+      .init(.galleryInitialInventory, .completed, gallerySlot: 2, galleryHandleCount: 35),
+      .init(.galleryFilteredInventory, .completed, gallerySlot: 2, galleryHandleCount: 34),
+    ])
+    let remaining = await channel.remaining
+    let closed = await channel.closed
+    XCTAssertEqual(remaining, 0)
+    XCTAssertTrue(closed)
   }
 
   func testGalleryDoesNotReturnInventoryOrDownloadCandidatesAfterInvalidFilterReply() async throws {
-    let setup = start(.xt5, "4.31") + galleryStartup + xappSetup.dropFirst() + cardSetup()
+    let setup = galleryStartup + cardSetup() + cardRefresh([])
     var rejected = Exchange.galleryJPEGRAWFilter
     rejected.response = 0x2002
     var missing = Exchange.galleryJPEGRAWFilter
@@ -215,7 +233,7 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
   }
 
   func testGalleryDistinguishesEmptyAndUnavailableCards() async throws {
-    let channel = Replay(start(.xt5, "4.31") + galleryStartup + xappSetup.dropFirst() + card([])
+    let channel = Replay(galleryStartup + card([])
       + [originalMode, .write(0xd244, [2]), .property(0xd244, Data([2])),
         .rejection(0x9054, [0x10000001], 0x2013), .read(0x1003)])
     let session = diagnosticSession(channel)
@@ -232,8 +250,28 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
     let duplicate = card([1, 1])
     let mismatch = Array(card([1]).dropLast()) + [.property(0xd621, word(0))]
     let malformed = card([1]) + [originalMode, .read(0x1008, [1], Data([1]))]
-    for steps in [duplicate, mismatch, malformed] {
-      let channel = Replay(start(.xt5, "4.31") + galleryStartup + xappSetup.dropFirst() + steps + [.read(0x1003)])
+    let coldCountMismatch = cardSetup() + [
+      .read(0x9053, [0, 30000]), .property(0xd212, events()),
+      .property(0xd620, word(1)), .property(0xd621, word(0)),
+    ]
+    for steps in [coldCountMismatch, duplicate, mismatch, malformed] {
+      let channel = Replay(galleryStartup + steps + [.read(0x1003)])
+      let session = diagnosticSession(channel)
+      await expect(.malformedData) { _ = try await session.listCameraPhotos() }
+      await expect(.objectChanged) { _ = try await session.scannedPairCandidates() }
+      try await session.close()
+      let remaining = await channel.remaining
+      XCTAssertEqual(remaining, 0)
+    }
+  }
+
+  func testGalleryStopsAfterMalformedPostRefreshEvents() async throws {
+    let invalidRefresh: [Exchange] = [
+      .read(0x9053, [0, 30000]), .property(0xd212, word(1, 2)),
+    ]
+    let filteredSetup = cardRefresh([]) + [.galleryJPEGRAWFilter]
+    for priorSteps in [[], filteredSetup] {
+      let channel = Replay(galleryStartup + cardSetup() + priorSteps + invalidRefresh + [.read(0x1003)])
       let session = diagnosticSession(channel)
       await expect(.malformedData) { _ = try await session.listCameraPhotos() }
       await expect(.objectChanged) { _ = try await session.scannedPairCandidates() }
@@ -253,9 +291,8 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
     XCTAssertNil(initialization)
   }
 
-  func testGalleryRejectsUnsupportedRemoteVersionWithNonemptyDeviceInfoBeforeWrites() async throws {
-    let channel = Replay(start(.xt5, "4.31") + [.property(0xd212, events([(0xdf00, 6)])),
-      .property(0xdf24, word(0x20006)), .read(0x1003)])
+  func testGalleryRejectsUnsupportedAccessBeforeGalleryWrites() async throws {
+    let channel = Replay([.read(0x1002, [1]), .property(0xd212, events([(0xdf00, 3)])), .read(0x1003)])
     let session = diagnosticSession(channel)
     await expect(.unsupportedProtocol) { _ = try await session.listCameraPhotos() }
     try await session.close()
@@ -263,10 +300,11 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
     XCTAssertEqual(remaining, 0)
   }
 
-  func testGalleryRejectsUnsupportedWiFiFirmwareEvenWithSupportedBluetoothFirmware() async throws {
-    let channel = Replay(start(.xt5, "4.29") + [.read(0x1003)])
+  func testGalleryRejectsUnsupportedGalleryVersionBeforeEcho() async throws {
+    let channel = Replay([.read(0x1002, [1]), .property(0xd212, events([(0xdf00, 6)])),
+      .write(0xdf01, [20, 0]), .property(0xdf28, word(4)), .read(0x1003)])
     let session = diagnosticSession(channel)
-    await expect(.unsupportedFirmware) { _ = try await session.listCameraPhotos() }
+    await expect(.unsupportedProtocol) { _ = try await session.listCameraPhotos() }
     try await session.close()
     let remaining = await channel.remaining
     XCTAssertEqual(remaining, 0)
@@ -275,7 +313,7 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
   func testGalleryRejectsUncorrelatedHandleListAndClosesSocket() async throws {
     var response = card([1]).last!
     response.responseTransaction = 999
-    let channel = Replay(start(.xt5, "4.31") + galleryStartup + xappSetup.dropFirst()
+    let channel = Replay(galleryStartup
       + card([1]).dropLast() + [response])
     let session = diagnosticSession(channel)
     do {
@@ -292,7 +330,7 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
   }
 
   func testGalleryAbortClosesSocketWhileObjectInfoReplyIsPending() async throws {
-    let channel = Replay(start(.xt5, "4.31") + galleryStartup + xappSetup.dropFirst()
+    let channel = Replay(galleryStartup
       + card([1]) + [originalMode, .read(0x1008, [1], object("PENDING.JPG", format: 0x3801, bytes: 456))])
     let (pending, signal) = AsyncStream<Void>.makeStream()
     await channel.holdReply(matching: .read(0x1008, [1]), signal)
@@ -319,7 +357,7 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
     for prior: UInt8 in [0, 1] {
       var modeRead = Exchange.property(0xd226, word(UInt32(prior), 2))
       modeRead.alternative = [.read(0x1008, [1], placeholder)]
-      let channel = Replay(start(.xt5, "4.31") + galleryStartup + xappSetup.dropFirst() + card([1]) + [
+      let channel = Replay(galleryStartup + card([1]) + [
         modeRead, .write(0xd226, [2, 0]), originalMode, .read(0x1008, [1], original),
         .write(0xd226, [prior, 0]), .write(0xd244, [2]), .property(0xd244, Data([2])),
         .rejection(0x9054, [0x10000001], 0x2013),
@@ -362,7 +400,7 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
         [.write(0xd226, [1, 0])]),
     ]
     for (negotiation, restoration) in cases {
-      let channel = Replay(start(.xt5, "4.31") + galleryStartup + xappSetup.dropFirst() + card([1])
+      let channel = Replay(galleryStartup + card([1])
         + negotiation + restoration + [.read(0x1003)])
       let session = diagnosticSession(channel)
       do {
@@ -387,7 +425,7 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
       let secondCard: [Exchange] = secondAvailable
         ? card([1], storage: 2) + [originalMode, .read(0x1008, [1], jpeg)]
         : [.property(0xd244, Data([2])), .rejection(0x9054, [0x10000001], 0x2013)]
-      let startup = start(.xt5, "4.31") + galleryStartup + xappSetup.dropFirst() + card([1])
+      let startup = galleryStartup + card([1])
       var steps = startup + negotiateFirst + [
         .read(0x1008, [1], raf), restoreFirst, .write(0xd244, [2]),
       ] + secondCard
@@ -425,7 +463,7 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
   func testGalleryRestoreRefusalBlocksTheCardSwitchAndClosesTheSocket() async throws {
     var refusal = Exchange.write(0xd226, [0, 0])
     refusal.response = 0x2002
-    let channel = Replay(start(.xt5, "4.31") + galleryStartup + xappSetup.dropFirst() + card([])
+    let channel = Replay(galleryStartup + card([])
       + [.property(0xd226, word(0, 2)), .write(0xd226, [2, 0]), originalMode, refusal, .read(0x1003)],
       galleryModes: [1: 0, 2: 2])
     let session = diagnosticSession(channel)
@@ -451,7 +489,7 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
   func testGalleryRestoreRefusalStillClosesSocketAndRemainsAFailedClose() async throws {
     var refusal = Exchange.write(0xd226, [0, 0])
     refusal.response = 0x2002
-    let channel = Replay(start(.xt5, "4.31") + galleryStartup + xappSetup.dropFirst() + card([])
+    let channel = Replay(galleryStartup + card([])
       + [originalMode, .write(0xd244, [2])] + card([], storage: 2)
       + [.property(0xd226, word(0, 2)), .write(0xd226, [2, 0]), originalMode, refusal, .read(0x1003)],
       galleryModes: [1: 2, 2: 0])
@@ -472,7 +510,7 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
   }
 
   func testGalleryAbortWhileOriginalModeAcknowledgementOrRestorationIsPending() async throws {
-    let setup = start(.xt5, "4.31") + galleryStartup + xappSetup.dropFirst() + card([])
+    let setup = galleryStartup + card([])
     let enable = Exchange.write(0xd226, [2, 0])
     let restore = Exchange.write(0xd226, [0, 0])
     for duringRestore in [false, true] {
@@ -524,7 +562,7 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
     let raf = object("CANDIDATE.RAF", format: 0xb103, bytes: cap + 1)
     let jpeg = object("CANDIDATE.JPG", format: 0x3801, bytes: 2)
     let rawBlock = Data(repeating: 0x52, count: Int(cap))
-    var steps = start(.xt5, "4.31") + galleryStartup + xappSetup.dropFirst() + card([1])
+    var steps = galleryStartup + card([1])
     steps += [originalMode, .read(0x1008, [1], raf), .write(0xd244, [2])] + card([1], storage: 2)
     steps += [originalMode, .read(0x1008, [1], jpeg), .write(0xd244, [1])] + card([1])
     steps += [
@@ -566,7 +604,7 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
   func testGalleryDownloadRetriesOnlyConfirmationAfterAnAcknowledgedModeChange() async throws {
     let info = object("CANDIDATE.RAF", format: 0xb103, bytes: 3)
     let mismatchedMode = Exchange.property(0xd226, word(1, 2))
-    let channel = Replay(start(.xt5, "4.31") + galleryStartup + xappSetup.dropFirst() + card([1])
+    let channel = Replay(galleryStartup + card([1])
       + [originalMode, .read(0x1008, [1], info), .write(0xd244, [2])] + card([], storage: 2)
       + [originalMode, .write(0xd244, [1])] + card([1]) + [
         .property(0xd226, word(0, 2)), .write(0xd226, [2, 0]), mismatchedMode,
@@ -600,9 +638,9 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
     var rejectedFilter = Exchange.galleryJPEGRAWFilter
     rejectedFilter.response = 0x2002
     let selectFirst: [Exchange] = [.write(0xd244, [1])]
-    let channel = Replay(start(.xt5, "4.31") + galleryStartup + xappSetup.dropFirst() + card([1])
+    let channel = Replay(galleryStartup + card([1])
       + [originalMode, .read(0x1008, [1], info), .write(0xd244, [2])] + card([], storage: 2)
-      + [originalMode] + selectFirst + cardSetup() + [rejectedFilter]
+      + [originalMode] + selectFirst + cardSetup() + cardRefresh([]) + [rejectedFilter]
       + selectFirst + card([1]) + [
         .property(0xd226, word(2, 2)), .read(0x1008, [1], info),
         .read(0x101b, [1, 0, 3], Data([1, 2, 3])), .read(0x1003),
@@ -629,7 +667,7 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
   func testGalleryCandidateRejectsForeignMemberAndChangedObjectAfterUnavailableCard() async throws {
     let raf = object("CANDIDATE.RAF", format: 0xb103, bytes: 3)
     let changed = object("CHANGED.RAF", format: 0xb103, bytes: 3)
-    let channel = Replay(start(.xt5, "4.31") + galleryStartup + xappSetup.dropFirst() + card([1])
+    let channel = Replay(galleryStartup + card([1])
       + [originalMode, .read(0x1008, [1], raf), .write(0xd244, [2]), .property(0xd244, Data([2])),
          .rejection(0x9054, [0x10000001], 0x2013), .write(0xd244, [1])] + card([1])
       + [.property(0xd226, word(2, 2)), .read(0x1008, [1], changed), .read(0x1003)])
@@ -664,7 +702,7 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
       (validPrelude + [.rejection(0x101b, [1, 0, 3], 0x2002)], .responseCode(0x2002))
     ]
     for (transfer, expected) in cases + [(validPrelude + [badTransaction], .wrongTransaction(expected: 33, actual: 0))] {
-      let channel = Replay(start(.xt5, "4.31") + galleryStartup + xappSetup.dropFirst() + card([])
+      let channel = Replay(galleryStartup + card([])
         + [originalMode, .write(0xd244, [2])] + card([1], storage: 2) + [originalMode, .read(0x1008, [1], info)] + transfer)
       let session = diagnosticSession(channel)
       _ = try await session.listCameraPhotos()
@@ -688,7 +726,7 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
   private var originalMode: Exchange { .property(0xd226, word(2, 2)) }
 
   private var galleryStartup: [Exchange] {
-    [.property(0xd212, events([(0xdf00, 6)])), .property(0xdf24, word(0x2000c))]
+    [.read(0x1002, [1]), .property(0xd212, events([(0xdf00, 6)]))] + galleryModeSetup
   }
 
   private func diagnosticSession(
@@ -1207,8 +1245,12 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
   }
 
   private var xappSetup: [Exchange] {
-    [.property(0xdf24, word(0x2000c)), .write(0xdf01, [20, 0]), .property(0xdf28, word(3)), .write(0xdf28, [3, 0, 0, 0]),
-     .property(0xd244, Data([1]))]
+    [.property(0xdf24, word(0x2000c))] + galleryModeSetup
+  }
+
+  private var galleryModeSetup: [Exchange] {
+    [.write(0xdf01, [20, 0]), .property(0xdf28, word(3)), .write(0xdf28, [3, 0, 0, 0]),
+     .property(0xd244, Data([1])), .property(0xd212, events([(0xdf00, 20)]))]
   }
 
   private func cardSetup(storage: UInt8 = 1) -> [Exchange] {
@@ -1218,11 +1260,11 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
   }
 
   private func card(_ handles: [UInt32], storage: UInt8 = 1) -> [Exchange] {
-    cardSetup(storage: storage) + [.galleryJPEGRAWFilter] + cardRefresh(handles)
+    cardSetup(storage: storage) + cardRefresh([]) + [.galleryJPEGRAWFilter] + cardRefresh(handles)
   }
 
   private func cardRefresh(_ handles: [UInt32]) -> [Exchange] {
-    [.read(0x9053, [0, 30000]), .property(0xd620, word(UInt32(handles.count))),
+    [.read(0x9053, [0, 30000]), .property(0xd212, events()), .property(0xd620, word(UInt32(handles.count))),
      .property(0xd621, word(UInt32(handles.count)) + handles.reduce(into: Data()) { $0 += word($1) })]
   }
 

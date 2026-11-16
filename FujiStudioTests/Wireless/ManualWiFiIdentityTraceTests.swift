@@ -164,6 +164,34 @@ struct ManualWiFiIdentityTraceTests {
     #expect(pair["jpeg.pairFileTransfer.failed"] != nil)
   }
 
+  @Test func firstValidatedInventoryMilestonesSurviveReselectionAndOverflow() async throws {
+    let file = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: file) }
+    let trace = ManualWiFiIdentityTrace(url: file)
+    let observer = trace.begin(kind: .gallery)
+    observer(.init(.galleryVersionValidation, .completed, galleryVersion: .version3))
+    observer(.init(.galleryInitialInventory, .completed, gallerySlot: 2, galleryHandleCount: 1_227))
+    observer(.init(.galleryFilteredInventory, .completed, gallerySlot: 2, galleryHandleCount: 1_155))
+    observer(.init(.galleryInitialInventory, .completed, gallerySlot: 1, galleryHandleCount: .max))
+    observer(.init(.galleryFilteredInventory, .completed, gallerySlot: 3, galleryHandleCount: 5))
+    for _ in 0..<200 {
+      observer(.init(.galleryInitialInventory, .completed, gallerySlot: 2, galleryHandleCount: 1_155))
+      observer(.init(.galleryFilteredInventory, .completed, gallerySlot: 2, galleryHandleCount: 1_154))
+    }
+    observer(.init(.attempt, .completed))
+    let attempts = try await read(file) { self.events($0[0]).last?["sequence"] as? Int == 407 }
+    let milestones = try #require(attempts[0]["galleryInventoryMilestones"] as? [String: [String: Any]])
+    #expect(milestones.count == 3)
+    let version = milestones["galleryVersionValidation"]?["event"] as? [String: Any]
+    #expect(version?["galleryVersion"] as? Int == 3)
+    let initial = milestones["galleryInitialInventory.2"]?["event"] as? [String: Any]
+    #expect(initial?["gallerySlot"] as? Int == 2)
+    #expect(initial?["galleryHandleCount"] as? Int == 1_227)
+    let filtered = milestones["galleryFilteredInventory.2"]?["event"] as? [String: Any]
+    #expect(filtered?["galleryHandleCount"] as? Int == 1_155)
+    #expect(filtered?["bytes"] == nil)
+  }
+
   private func events(_ attempt: [String: Any]) -> [[String: Any]] {
     attempt["events"] as? [[String: Any]] ?? []
   }

@@ -48,6 +48,7 @@ actor CameraHostedTransferSession: WirelessTransferSession {
   private var transactionID: UInt32 = 0
 
   var selectedStorage: UInt32?
+  var xAppInitialStorage: UInt32?
   private var storageIDs: [UInt32]?
   private var pendingStorage: [UInt32] = []
   private var cardScan: CardScan?
@@ -142,18 +143,13 @@ actor CameraHostedTransferSession: WirelessTransferSession {
     await transport.close()
   }
 
-  func openGallery() async throws -> XAppConnectionDiagnosticResult {
+  func openGallery() async throws {
     guard WirelessSupportPolicy().assess(model: expectedIdentity.model.rawValue, firmware: expectedIdentity.firmware)
       == .supported(.xt5)
     else { throw WirelessFailure.unsupportedFirmware }
-    let connection = try await openXAppDiagnostic()
-    if case .identified(let observed) = connection {
-      guard WirelessSupportPolicy().assess(model: observed.model.rawValue, firmware: observed.firmware)
-        == .supported(.xt5)
-      else { throw WirelessFailure.unsupportedFirmware }
-    }
-    try await checkXAppStartup()
-    return connection
+    guard mode == .xApp else { throw WirelessFailure.unsupportedProtocol }
+    try await startSession()
+    try await checkXAppStartup(validatesRemoteVersion: false)
   }
 
   func checkConnection() async throws -> XAppConnectionDiagnosticResult {

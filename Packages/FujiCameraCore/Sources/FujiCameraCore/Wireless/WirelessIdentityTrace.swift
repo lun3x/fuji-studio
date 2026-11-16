@@ -16,6 +16,7 @@ public enum WirelessIdentityTrace {
     case galleryCardBegin, galleryStorageWrite, galleryStorageRead, galleryStorageConfirmation
     case galleryOpen, galleryPreviewSetup, galleryModeStatus, gallerySelectedImages, galleryJPEGRAWFilter
     case galleryObjectListBegin, galleryObjectCount, galleryHandleList, galleryHandleValidation
+    case galleryInitialInventory, galleryFilteredInventory
     case galleryOriginalModeRead, galleryOriginalModeWrite, galleryOriginalModeConfirmation
     case galleryOriginalModeRestore, galleryOriginalModeRestoreUnconfirmed
     case galleryObjectInfo, galleryObjectInfoValidation, galleryCardSummary
@@ -108,6 +109,12 @@ public enum WirelessIdentityTrace {
     case original = 2
   }
 
+  public enum GalleryVersion: UInt32, Sendable, Codable {
+    case version1 = 1
+    case version2 = 2
+    case version3 = 3
+  }
+
   public enum PairRole: String, Sendable, Codable { case raf, jpeg }
 
   public enum OriginalControl: Sendable, Codable, Equatable {
@@ -140,11 +147,14 @@ public enum WirelessIdentityTrace {
     public let gallerySlot: UInt32?
     public let pairFile: PairFile?
     public let galleryOriginalMode: GalleryOriginalMode?
+    public let galleryVersion: GalleryVersion?
+    public let galleryHandleCount: UInt32?
 
     public init(
       _ stage: Stage, _ action: Action, bytes: Int? = nil, failure: Failure? = nil,
       responseCode: UInt16? = nil, galleryCard: GalleryCardSummary? = nil, gallerySlot: UInt32? = nil,
-      pairFile: PairFile? = nil, galleryOriginalMode: GalleryOriginalMode? = nil
+      pairFile: PairFile? = nil, galleryOriginalMode: GalleryOriginalMode? = nil,
+      galleryVersion: GalleryVersion? = nil, galleryHandleCount: UInt32? = nil
     ) {
       self.stage = stage
       self.action = action
@@ -155,6 +165,10 @@ public enum WirelessIdentityTrace {
       self.pairFile = pairFile
       self.galleryOriginalMode = galleryOriginalMode
       self.gallerySlot = gallerySlot.flatMap { (1...2).contains($0) ? $0 : nil }
+      self.galleryVersion = galleryVersion
+      self.galleryHandleCount = self.gallerySlot == nil ? nil : galleryHandleCount.flatMap {
+        $0 <= WirelessPTPTransport.maximumObjectsPerStorage ? $0 : nil
+      }
     }
   }
 }

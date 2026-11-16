@@ -494,8 +494,8 @@ showed “Not found.” This was a brief protocol response, with no confirmed
 gallery connection or independent Wi-Fi identity.
 
 The first Debug gallery test reused the camera-hosted session and gallery setup used
-by the adapter. After the Bluetooth firmware guard, it opens a fresh session
-and validates DeviceInfo when present, waits for XApp access, and checks
+by the adapter. After the Bluetooth firmware guard, it opened a fresh session,
+validated DeviceInfo when present, waited for XApp access, and checked
 RemoteVersion before the first gallery write. The sequence uses DF01 mode 20,
 echoes DF28, confirms each D244 card selection, and runs 9054, 9055, 9050,
 D212, D22B and 9053 in that order before reading D620 and D621. The card
@@ -511,12 +511,9 @@ bounds and discards that response.
 [Libfuji XApp setup and ordered listing](https://github.com/petabyt/libfuji/blob/3b9932a46d025405dae505ddb624733b6ea3edd1/lib/fuji.c#L310-L535)
 [GFX100 II firmware 2.30 transfer capture](https://github.com/epsalmond/ptpsim/blob/a2cea30d8622ba9e71d49338b0d0eda20b664689/packages/camera-config-data/fuji/gfx100ii/evidence/IMAGE_TRANSFER_FW230.md)
 
-The reference capture is from a different body. The diagnostic does not
-replay its D226/D227 resize writes: property widths and persistence on the
-X-T5 are unverified. If gallery setup fails, the omitted writes are one
-unresolved protocol difference. The implementation does not change production
-peer admission. Empty DeviceInfo is acceptable for this bounded test and
-remains inadequate to admit production transfer.
+The GFX100 II reference is from a different body. The first test left D226
+and D227 alone while their behavior on the X-T5 was unverified. Production
+peer admission requires validated DeviceInfo.
 
 #### Physical gallery listing on X-T5 04.31
 
@@ -606,12 +603,34 @@ download. The trace recorded D226 changing from 0 to 2 with confirmation
 and an acknowledged restoration to 0 before the slot change. The socket
 closed cleanly.
 
-Fuji Studio now explicitly selects JPEG+RAW after card setup and before
-the 9053 refresh and inventory reads on each available card, including
-card reselection. The `galleryJPEGRAWFilter` trace stage records the
-transaction outcome. Filter failure aborts inventory before refresh or
-download, and a retry repeats card setup. Replay checks the captured
-command and data and verifies that enumeration exposes both formats.
+The follow-up physical build at `aaf7fd02` sent the exact JPEG+RAW filter
+payload and the camera accepted it. Card 2 returned 548 handles, all JPEG.
+The diagnostic had applied the filter before its first refresh. The
+count and handle list arrived before the D226 original-size negotiation
+and ObjectInfo reads, so neither step accounts for the inventory difference
+in that trial.
+
+On the newly opened official XApp session, OpenSession was followed by
+D212 with access state 6, then DF01 mode 20, DF28 read and echo, D244,
+and another D212 read before confirming D244. That session returned a
+mixed inventory of 1,227 objects before any filter write. A later capture
+on a running session showed the confirmed JPEG+RAW filter returning
+1,155 handles. The captures do not isolate which sequence difference
+affected the Fuji Studio trial.
+
+The Debug gallery follows that startup through its Bluetooth firmware
+gate, session open, and D212 readiness check. It skips the DeviceInfo and
+DF24 reads, so the result reports Wi-Fi identity as unavailable. The
+standalone connection check and production peer admission retain their
+existing identity behavior. Shared gallery setup reads D212 after the
+initial D244 read. On each available card, including reselection, it
+validates a baseline inventory using 9053, D212, D620 and D621. It then
+writes the JPEG+RAW filter and repeats that refresh sequence. Only the
+final handle list is scanned for import candidates. The trace retains
+the acknowledged DF28 version and each slot's first validated baseline
+and filtered counts even after the rolling log fills during the scan.
+Replay verifies the command sequence, response validation, and mixed
+JPEG and RAW enumeration.
 
 Repeat the full scan and pair trial on the X-T5. Confirm successful
 JPEG+RAW selection and both formats in the full counts for the available card.
