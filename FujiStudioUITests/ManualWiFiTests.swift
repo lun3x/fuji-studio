@@ -10,6 +10,44 @@ final class ManualWiFiTests: XCTestCase {
       expected: "Wi-Fi session responds. Bluetooth reports X-T5 firmware 04.31. Wi-Fi identity is unavailable.")
   }
 
+  func testGalleryRequiresManualConfirmationAndShowsSampleAfterClosure() {
+    let app = XCUIApplication()
+    app.launchArguments = ["--manual-wifi-fixture"]
+    app.launchEnvironment["FUJI_FIXTURE_EMPTY_DEVICE_INFO"] = "1"
+    app.launch()
+    let find = app.buttons["manualWiFi.findPaired"]
+    XCTAssertTrue(find.waitForExistence(timeout: 10))
+    find.tap()
+    let camera = app.buttons["manualWiFi.pairedCamera"].firstMatch
+    XCTAssertTrue(camera.waitForExistence(timeout: 10))
+    camera.tap()
+    let start = app.buttons["manualWiFi.startWiFi"]
+    XCTAssertTrue(start.waitForExistence(timeout: 10))
+    app.buttons["manualWiFi.confirmRegistration"].tap()
+    start.tap()
+
+    let confirm = app.buttons["manualWiFi.confirm"]
+    XCTAssertTrue(confirm.waitForExistence(timeout: 10))
+    let list = app.buttons["manualWiFi.listPhotos"]
+    for _ in 0..<3 where !list.isHittable { app.swipeUp() }
+    XCTAssertTrue(list.exists)
+    XCTAssertFalse(list.isEnabled)
+    if !confirm.isHittable { app.swipeDown() }
+    confirm.tap()
+    for _ in 0..<3 where !list.isHittable { app.swipeUp() }
+    XCTAssertTrue(list.isEnabled)
+    list.tap()
+
+    let status = app.staticTexts["manualWiFi.status"]
+    let completed = NSPredicate(format: "label CONTAINS %@", "Connection closed after the test.")
+    let finished = XCTNSPredicateExpectation(predicate: completed, object: status)
+    XCTAssertEqual(XCTWaiter.wait(for: [finished], timeout: 10), .completed)
+    XCTAssertTrue(status.label.contains("Wi-Fi identity is unavailable"))
+    XCTAssertTrue(app.staticTexts["2 camera objects. Sampled 2: 1 JPEG, 1 RAF, 0 other."].exists)
+    XCTAssertTrue(app.staticTexts["FIXTURE.JPG"].exists)
+    XCTAssertTrue(app.staticTexts["Unavailable"].exists)
+  }
+
   private func checkConnection(withoutDeviceInfo: Bool, expected: String) {
     let app = XCUIApplication()
     app.launchArguments = ["--manual-wifi-fixture"]

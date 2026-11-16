@@ -41,6 +41,65 @@ struct ManualWiFiProbeTests {
     #expect(probe.handoff == nil)
   }
 
+  @Test func galleryRequiresManualConfirmationAndClosesBeforeRetainingResult() async {
+    let fixture = ManualWiFiFixture(withoutDeviceInfo: true)
+    let probe = fixture.probe
+    await prepareHandoff(fixture)
+    probe.listCameraPhotos()
+    #expect(await fixture.transfer.actions.isEmpty)
+    probe.confirmJoined()
+    probe.listCameraPhotos()
+    await probe.waitForOperation()
+    #expect(await fixture.transfer.actions == [.listPhotos, .close])
+    #expect(probe.galleryResult?.cards.first?.summary.sampledCount == 2)
+    #expect(probe.status.contains("Wi-Fi identity is unavailable"))
+    #expect(probe.status.contains("Connection closed after the test."))
+    #expect(probe.handoff == nil)
+
+    probe.connect(.saved(fixture.otherCamera))
+    #expect(probe.galleryResult == nil)
+    await probe.waitForOperation()
+  }
+
+  @Test func backgroundRetiresGalleryEvenIfTheSessionReturnsLate() async {
+    let fixture = ManualWiFiFixture()
+    let probe = fixture.probe
+    await prepareHandoff(fixture)
+    let barrier = FixtureBarrier()
+    await fixture.transfer.holdGallery(barrier)
+    probe.confirmJoined()
+    probe.listCameraPhotos()
+    await barrier.entered()
+    probe.sceneChanged(.background)
+    await barrier.release()
+    await probe.waitForOperation()
+    #expect(await fixture.transfer.actions.contains(.close))
+    #expect(probe.galleryResult == nil)
+    #expect(fixture.events.last?.phase == .leftDuringOperation)
+  }
+
+  @Test func galleryDeadlineClosesTheSessionAndDoesNotPublishResults() async {
+    let fixture = ManualWiFiFixture(galleryDeadline: .milliseconds(200))
+    let probe = fixture.probe
+    await prepareHandoff(fixture)
+    await fixture.transfer.delayGallery(.seconds(90))
+    probe.confirmJoined()
+    probe.listCameraPhotos()
+    await probe.waitForOperation()
+    #expect(await fixture.transfer.actions == [.listPhotos, .close])
+    #expect(probe.galleryResult == nil)
+    #expect(fixture.events.last?.failure == .ptpTimeout)
+  }
+
+  private func prepareHandoff(_ fixture: ManualWiFiFixture) async {
+    let probe = fixture.probe
+    probe.connect(.saved(fixture.camera))
+    await probe.waitForOperation()
+    probe.confirmRegistration()
+    probe.startWiFi()
+    await probe.waitForOperation()
+  }
+
   @Test(arguments: [false, true]) func cameraRegistrationMustBeConfirmedBeforeStartingWiFi(pair: Bool) async {
     let fixture = ManualWiFiFixture()
     let probe = fixture.probe

@@ -483,3 +483,49 @@ unavailable. Confirm the zero-byte DeviceInfo milestone, access and version
 validation, and socket cleanup in the bounded trace. The check issues no
 gallery writes, inventory requests, or photo operations. Independent Wi-Fi
 identity and transfer admission still require validated DeviceInfo.
+
+### Manual X-T5 gallery diagnostic
+
+The connection check at `3ffe900e` opened a PTP session on the 04.31
+X-T5, received empty DeviceInfo, then validated access state 6 and a supported
+remote version before closing. The trace reached the result in 182 ms.
+The user reported that the camera stayed on “Waiting for connected” and later
+showed “Not found.” This was a brief protocol response, with no confirmed
+gallery connection or independent Wi-Fi identity.
+
+The next Debug test reuses the camera-hosted session and gallery setup used
+by the adapter. After the Bluetooth firmware guard, it opens a fresh session
+and validates DeviceInfo when present, waits for XApp access, and checks
+RemoteVersion before the first gallery write. The sequence uses DF01 mode 20,
+echoes DF28, confirms each D244 card selection, and runs 9054, 9055, 9050,
+D212, D22B and 9053 in that order before reading D620 and D621. The card
+handles must agree with both counts. The test requests GetObjectInfo for at
+most the first 32 handles per available card, in the order returned by the
+camera. The on-screen JPEG, RAF and other counts describe only that sample.
+A card with zero objects is distinct from an unavailable card (9054 returning
+StoreNotAvailable). The phone displays reported filenames, formats and sizes
+after cleanup. It does not fetch thumbnails or originals or write to Photos.
+The camera's 9055 setup response may include preview bytes; the transport
+bounds and discards that response.
+[Libfuji gallery setup and card inventory](https://github.com/petabyt/libfuji/blob/3b9932a46d025405dae505ddb624733b6ea3edd1/lib/fuji.c#L211-L245)
+[Libfuji XApp setup and ordered listing](https://github.com/petabyt/libfuji/blob/3b9932a46d025405dae505ddb624733b6ea3edd1/lib/fuji.c#L310-L535)
+[GFX100 II firmware 2.30 transfer capture](https://github.com/epsalmond/ptpsim/blob/a2cea30d8622ba9e71d49338b0d0eda20b664689/packages/camera-config-data/fuji/gfx100ii/evidence/IMAGE_TRANSFER_FW230.md)
+
+The reference capture is from a different body. The diagnostic does not
+replay its D226/D227 resize writes: property widths and persistence on the
+X-T5 are unverified. If gallery setup fails, the omitted writes are one
+unresolved protocol difference. The implementation does not change production
+peer admission. Empty DeviceInfo is acceptable for this bounded test and
+remains inadequate to admit production transfer.
+
+For the next iPhone trial, start with a fresh Bluetooth handoff from the
+already paired Fuji iPhone destination and join the network in Settings.
+Confirm the network in the diagnostic and choose **List camera photos**.
+Use the camera's confirmation if prompted, then record what the camera
+displays during listing and after the app closes the connection. The
+diagnostic cannot verify the current SSID. The gallery deadline is 90 seconds;
+the original connection check stays at 20 seconds. The protected identity
+trace contains typed command stages, any correlated response rejection code,
+card summaries and cleanup milestones; it contains no filenames, object
+handles, credentials or raw data. No physical gallery result has been
+observed yet.

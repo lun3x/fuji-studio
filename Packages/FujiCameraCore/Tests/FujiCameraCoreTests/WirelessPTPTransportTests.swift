@@ -50,7 +50,7 @@ final class WirelessPTPTransportTests: XCTestCase, @unchecked Sendable {
     ])
     XCTAssertTrue(trace.events.contains(.init(.getDeviceInfoData, .waiting)))
     XCTAssertTrue(trace.events.contains(.init(.getDeviceInfoFinalHeader, .waiting)))
-    XCTAssertTrue(trace.events.contains(.init(.closeSessionResponseBody, .failed, failure: .rejected)))
+    XCTAssertTrue(trace.events.contains(.init(.closeSessionResponseBody, .failed, failure: .rejected, responseCode: 0x2002)))
     XCTAssertTrue(trace.events.contains(.init(.initializationHeader, .readCompleted, bytes: 3)))
   }
 

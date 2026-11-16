@@ -15,6 +15,10 @@ extension CameraHostedTransferSession {
   // Sequence based on libfuji 3b9932a and the GFX100 II 2.30 XApp gallery capture.
   func configureXApp() async throws -> [UInt32] {
     try await requireXAppRemoteVersion()
+    return try await configureXAppGalleryMode()
+  }
+
+  func configureXAppGalleryMode() async throws -> [UInt32] {
     try await setProperty(0xdf01, 20, width: 2)
     let galleryVersion = try await readScalar(0xdf28)
     guard (1...3).contains(galleryVersion) else { throw WirelessFailure.unsupportedProtocol }
@@ -44,7 +48,11 @@ extension CameraHostedTransferSession {
       selectedStorage = nil
     }
     let confirmedStorage = try await readScalar(0xd244, widths: [1, 2, 4])
-    guard confirmedStorage == storage else { throw WirelessFailure.unavailableStorage }
+    guard confirmedStorage == storage else {
+      transport.observeIdentity(.init(.galleryStorageConfirmation, .failed, failure: .unavailableStorage))
+      throw WirelessFailure.unavailableStorage
+    }
+    transport.observeIdentity(.init(.galleryStorageConfirmation, .completed))
     selectedStorage = storage
     do {
       _ = try await execute(0x9054, [0x10000001])
@@ -59,6 +67,18 @@ extension CameraHostedTransferSession {
     _ = try await execute(0x9053, [0, 30_000])
     let count = try await readScalar(0xd620)
     let payload = try await property(0xd621)
+    transport.observeIdentity(.init(.galleryHandleValidation, .waiting))
+    do {
+      let handles = try Self.validateXAppHandles(payload, count: count)
+      transport.observeIdentity(.init(.galleryHandleValidation, .completed))
+      return handles
+    } catch {
+      transport.observeIdentity(.init(.galleryHandleValidation, .failed, failure: .init(error)))
+      throw error
+    }
+  }
+
+  private static func validateXAppHandles(_ payload: Data, count: UInt32) throws -> [UInt32] {
     guard count <= WirelessPTPTransport.maximumObjectsPerStorage,
       payload.count == 4 + Int(count) * 4,
       try Self.scalar(Data(payload.prefix(4))) == count
@@ -99,7 +119,7 @@ extension XAppTransferAdapter {
   }
 }
 
-extension CameraHostedTransferSession: XAppConnectionDiagnostic {
+extension CameraHostedTransferSession: XAppGalleryDiagnostic {
   // From the pinned libfuji XApp setup and X-T5 trace. This check ends before any gallery writes.
   func checkXAppStartup() async throws {
     try await withThrowingTaskGroup(of: Void.self) { group in

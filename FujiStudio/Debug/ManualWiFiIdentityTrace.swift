@@ -14,12 +14,16 @@ final class ManualWiFiIdentityTrace: Sendable {
     let event: Trace.Event
   }
 
+  enum Kind: String, Encodable { case connection, gallery }
+
   struct Attempt: Encodable {
+    let kind: Kind
     let ordinal: Int
     let startedAt: Date
     fileprivate let start: ContinuousClock.Instant
     private(set) var events: [Entry] = []
     private(set) var droppedEvents = 0
+    private(set) var galleryCards: [String: Trace.GalleryCardSummary] = [:]
     private(set) var protocolFailure: Entry?
     private(set) var emptyDeviceInfo: Entry?
     private(set) var cleanupFailure: Entry?
@@ -35,14 +39,14 @@ final class ManualWiFiIdentityTrace: Sendable {
     private(set) var pendingSessionCleanup: Trace.Stage?
 
     enum CodingKeys: String, CodingKey {
-      case ordinal, startedAt, events, droppedEvents, protocolFailure, cleanupFailure, emptyDeviceInfo
+      case kind, ordinal, startedAt, events, droppedEvents, protocolFailure, cleanupFailure, emptyDeviceInfo, galleryCards
       case timerElapsed, deadline, protocolStageAtDeadline, cleanupStageAtDeadline, pendingProtocol, lastProtocolStage
       case pendingCloseSession, pendingSocket, pendingSessionCleanup
     }
 
     fileprivate mutating func append(_ event: Trace.Event, sequence: Int, now: ContinuousClock.Instant) {
       let event = if event.stage == .socketRead, let stage = pendingProtocol ?? pendingCloseSession {
-        Trace.Event(stage, event.action, bytes: event.bytes, failure: event.failure)
+        Trace.Event(stage, event.action, bytes: event.bytes, failure: event.failure, responseCode: event.responseCode)
       } else { event }
       let elapsed = start.duration(to: now).components
       let entry = Entry(
@@ -56,6 +60,10 @@ final class ManualWiFiIdentityTrace: Sendable {
         cleanupStageAtDeadline = pendingSocket ?? pendingCloseSession ?? pendingSessionCleanup
       case .identityDeadline: deadline = entry
       case .deviceInfoValidation where event.action == .noData && event.bytes == 0: emptyDeviceInfo = entry
+      case .galleryCardSummary:
+        if let card = event.galleryCard, (1...2).contains(card.slot) {
+          galleryCards[String(card.slot)] = card
+        }
       case .identityResult, .identityCancellation: break
       case .socketClose: Self.updatePending(event, slot: &pendingSocket)
       case .sessionCleanup: Self.updatePending(event, slot: &pendingSessionCleanup)
@@ -71,6 +79,7 @@ final class ManualWiFiIdentityTrace: Sendable {
         case .socketClose, .sessionCleanup, .closeSessionWrite, .closeSessionHeader, .closeSessionData,
              .closeSessionFinalHeader, .closeSessionResponseBody:
           cleanupFailure = entry
+        case .galleryOpen where event.responseCode == 0x2013: break
         case .attempt where protocolFailure != nil || deadline != nil: break
         default: protocolFailure = entry
         }
@@ -118,11 +127,11 @@ final class ManualWiFiIdentityTrace: Sendable {
   }
 
   /// The returned observer permanently belongs to this identity invocation, including late cleanup.
-  func begin() -> Trace.Observer {
+  func begin(kind: Kind = .connection) -> Trace.Observer {
     let ordinal = state.withLock { state in
       state.ordinal += 1
       let ordinal = state.ordinal
-      state.attempts.append(.init(ordinal: ordinal, startedAt: Date(), start: .now))
+      state.attempts.append(.init(kind: kind, ordinal: ordinal, startedAt: Date(), start: .now))
       if state.attempts.count > 6 { state.attempts.removeFirst() }
       return ordinal
     }

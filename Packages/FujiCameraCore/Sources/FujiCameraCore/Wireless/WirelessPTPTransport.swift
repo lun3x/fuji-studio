@@ -108,13 +108,13 @@ public actor WirelessPTPTransport: PTPTransport {
       transport.lastTransaction = command.transactionID
       transport.waitForTrace(stages?.write)
       try await transport.write(encoded)
-      transport.finishTrace()
       if let outgoing {
         var container = FujiWirelessFrameDecoder.dataHeader(
           length: outgoing.count, command: command)
         container.append(outgoing)
         try await transport.write(container)
       }
+      transport.finishTrace()
 
       transport.waitForTrace(stages?.header)
       var (header, bytes) = try await transport.readHeader(for: command)
@@ -154,7 +154,7 @@ public actor WirelessPTPTransport: PTPTransport {
         transport.finishTrace()
         return .success(.init(reply: reply, receivedDataContainer: receivedDataContainer))
       } catch let PTPError.responseCode(code) {
-        transport.finishTrace(failure: .rejected)
+        transport.finishTrace(failure: .rejected, responseCode: code)
         // A complete, correlated rejection consumed its response. The socket is synchronized.
         return .failure(.responseCode(code))
       }
@@ -351,10 +351,10 @@ public actor WirelessPTPTransport: PTPTransport {
     identityTrace(.init(stage, .waiting))
   }
 
-  private func finishTrace(failure: WirelessIdentityTrace.Failure? = nil) {
+  private func finishTrace(failure: WirelessIdentityTrace.Failure? = nil, responseCode: UInt16? = nil) {
     guard let stage = traceStage, let identityTrace else { return }
     traceStage = nil
-    identityTrace(.init(stage, failure == nil ? .completed : .failed, failure: failure))
+    identityTrace(.init(stage, failure == nil ? .completed : .failed, failure: failure, responseCode: responseCode))
   }
 
   private struct TraceCommand {
@@ -374,8 +374,28 @@ public actor WirelessPTPTransport: PTPTransport {
       case (0x1015, 0xdf24):
         (.xAppVersionRead, .xAppVersionRead, .xAppVersionRead, .xAppVersionRead, .xAppVersionRead)
       default:
-        (.otherCommand, .otherCommand, .otherCommand, .otherCommand, .otherCommand)
+        Self.milestones(for: command)
       }
+    }
+
+    private static func milestones(for command: PTPCommand) -> (Stage, Stage, Stage, Stage, Stage) {
+      let stage: Stage = switch (command.opcode, command.parameters.first) {
+      case (0x1016, 0xdf01): .galleryModeWrite
+      case (0x1015, 0xdf28): .galleryVersionRead
+      case (0x1016, 0xdf28): .galleryVersionWrite
+      case (0x1016, 0xd244): .galleryStorageWrite
+      case (0x1015, 0xd244): .galleryStorageRead
+      case (0x9054, _): .galleryOpen
+      case (0x9055, _): .galleryPreviewSetup
+      case (0x9050, _): .galleryModeStatus
+      case (0x1015, 0xd22b): .gallerySelectedImages
+      case (0x9053, _): .galleryObjectListBegin
+      case (0x1015, 0xd620): .galleryObjectCount
+      case (0x1015, 0xd621): .galleryHandleList
+      case (0x1008, _): .galleryObjectInfo
+      default: .otherCommand
+      }
+      return (stage, stage, stage, stage, stage)
     }
   }
 }

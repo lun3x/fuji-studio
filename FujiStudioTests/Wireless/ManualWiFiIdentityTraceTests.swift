@@ -87,6 +87,37 @@ struct ManualWiFiIdentityTraceTests {
     _ = try await read(file) { $0.isEmpty }
   }
 
+  @Test func galleryCardSummariesAndRejectionCodeSurviveOverflowWithoutFilenames() async throws {
+    let file = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: file) }
+    let trace = ManualWiFiIdentityTrace(url: file)
+    let observer = trace.begin(kind: .gallery)
+    let sample = XAppGalleryDiagnosticResult.Card(slot: 2, totalHandles: 40,
+      samples: [.init(filename: "PRIVATE.RAF", format: .raf, byteLength: 4_294_967)])
+    observer(.init(.galleryCardSummary, .completed, galleryCard: sample.summary))
+    observer(.init(.galleryModeStatus, .failed, failure: .rejected, responseCode: 0x2002))
+    for _ in 0..<200 { observer(.init(.galleryObjectInfo, .completed)) }
+    let unavailable = XAppGalleryDiagnosticResult.Card(slot: 1, totalHandles: nil, samples: [])
+    observer(.init(.galleryOpen, .failed, failure: .rejected, responseCode: 0x2013))
+    observer(.init(.galleryCardSummary, .completed, galleryCard: unavailable.summary))
+    observer(.init(.attempt, .completed))
+    let attempts = try await read(file) { self.events($0[0]).last?["sequence"] as? Int == 206 }
+    let attempt = try #require(attempts.first)
+    #expect(attempt["kind"] as? String == "gallery")
+    let cards = try #require(attempt["galleryCards"] as? [String: [String: Any]])
+    #expect(cards.count == 2)
+    #expect(cards["2"]?["totalHandles"] as? Int == 40)
+    #expect(cards["2"]?["sampledCount"] as? Int == 1)
+    #expect(cards["2"]?["sampledRAF"] as? Int == 1)
+    #expect(cards["1"]?["status"] as? String == "unavailable")
+    let failure = try #require(attempt["protocolFailure"] as? [String: Any])
+    let event = try #require(failure["event"] as? [String: Any])
+    #expect(event["responseCode"] as? Int == 0x2002)
+    let json = try String(contentsOf: file, encoding: .utf8)
+    #expect(!json.contains("PRIVATE.RAF"))
+    #expect(!json.contains("4294967"))
+  }
+
   private func events(_ attempt: [String: Any]) -> [[String: Any]] {
     attempt["events"] as? [[String: Any]] ?? []
   }

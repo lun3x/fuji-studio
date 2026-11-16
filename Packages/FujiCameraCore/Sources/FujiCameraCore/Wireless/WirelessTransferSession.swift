@@ -132,12 +132,51 @@ actor CameraHostedTransferSession: WirelessTransferSession {
   }
 
   #if DEBUG
+  func abortGallery() async { await transport.close() }
+
+  func listCameraPhotos() async throws -> XAppGalleryDiagnosticResult {
+    guard WirelessSupportPolicy().assess(model: expectedIdentity.model.rawValue, firmware: expectedIdentity.firmware)
+      == .supported(.xt5)
+    else { throw WirelessFailure.unsupportedFirmware }
+    try begin()
+    defer { busy = false }
+    let connection = try await openXAppDiagnostic()
+    if case .identified(let observed) = connection {
+      guard WirelessSupportPolicy().assess(model: observed.model.rawValue, firmware: observed.firmware)
+        == .supported(.xt5)
+      else { throw WirelessFailure.unsupportedFirmware }
+    }
+    try await checkXAppStartup()
+    let slots = try await configureXAppGalleryMode()
+    var cards: [XAppGalleryDiagnosticResult.Card] = []
+    for slot in slots {
+      let handles = try await configureXAppCard(slot)
+      var samples: [XAppGalleryDiagnosticResult.Sample] = []
+      if let handles {
+        for handle in handles.prefix(XAppGalleryDiagnosticResult.sampleLimitPerCard) {
+          let info = try await objectInfo(handle: handle, storage: slot)
+          samples.append(.init(filename: info.filename, format: info.format, byteLength: info.byteLength))
+        }
+      }
+      let card = XAppGalleryDiagnosticResult.Card(slot: slot, totalHandles: handles?.count, samples: samples)
+      transport.observeIdentity(.init(.galleryCardSummary, .completed, galleryCard: card.summary))
+      cards.append(card)
+    }
+    return .init(wifiIdentityAvailable: connection != .respondingWithoutDeviceInfo, cards: cards)
+  }
+
   func checkConnection() async throws -> XAppConnectionDiagnosticResult {
+    try begin()
+    defer { busy = false }
+    let connection = try await openXAppDiagnostic()
+    if connection == .respondingWithoutDeviceInfo { try await checkXAppStartup() }
+    return connection
+  }
+
+  private func openXAppDiagnostic() async throws -> XAppConnectionDiagnosticResult {
     guard mode == .xApp, expectedIdentity.model == .xt5 else {
       throw WirelessFailure.unsupportedProtocol
     }
-    try begin()
-    defer { busy = false }
     try await startSession()
     let command = try commandFor(0x1001, [], whileClosing: false)
     let (reply, receivedDataContainer) = try await transport.executeWithDataPhase(command)
@@ -151,7 +190,6 @@ actor CameraHostedTransferSession: WirelessTransferSession {
       throw WirelessFailure.malformedData
     }
     transport.observeIdentity(.init(.deviceInfoValidation, .noData, bytes: 0))
-    try await checkXAppStartup()
     return .respondingWithoutDeviceInfo
   }
   #endif
@@ -434,6 +472,7 @@ actor CameraHostedTransferSession: WirelessTransferSession {
 
   private func objectInfo(handle: UInt32, storage: UInt32) async throws -> WirelessObjectDescriptor {
     let info = try await execute(0x1008, [handle]).data
+    transport.observeIdentity(.init(.galleryObjectInfoValidation, .waiting))
     do {
       var r = try PTPDatasets.Reader(info)
       let reportedStorage = try r.u32()
@@ -462,6 +501,7 @@ actor CameraHostedTransferSession: WirelessTransferSession {
       default: format = .other(code)
       }
       let orientation = keywords.hasPrefix("Orientation:") ? Int(keywords.dropFirst(12)) : nil
+      transport.observeIdentity(.init(.galleryObjectInfoValidation, .completed))
       return .init(
         cameraID: expectedIdentity.cameraID, sessionID: sessionID, storageID: storage, handle: handle,
         directory: directory, filename: String(filename), format: format, byteLength: UInt64(length),
@@ -470,7 +510,8 @@ actor CameraHostedTransferSession: WirelessTransferSession {
         orientation: orientation.flatMap { (1...8).contains($0) ? $0 : nil },
         reportedStorageID: reportedStorage == 0 ? nil : reportedStorage,
         hasThumbnail: mode != .autoSave && thumbnailBytes > 0)
-    } catch is PTPDatasetError {
+    } catch {
+      transport.observeIdentity(.init(.galleryObjectInfoValidation, .failed, failure: .malformedData))
       throw WirelessFailure.malformedData
     }
   }

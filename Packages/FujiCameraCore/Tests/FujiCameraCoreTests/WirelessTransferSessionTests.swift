@@ -142,6 +142,135 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
     XCTAssertTrue(closed)
   }
 
+  func testGalleryListsCompleteHandleCountsAndSamplesWithCardAffinity() async throws {
+    for emptyDeviceInfo in [false, true] {
+      let startup: [Exchange] = emptyDeviceInfo
+        ? [.read(0x1002, [1]), .emptyDeviceInfo] : start(.xt5, "4.31")
+      let handles = (1...34).map(UInt32.init)
+      let sample = handles.prefix(32).map {
+        Exchange.read(0x1008, [$0], object("SAMPLE\($0).JPG", format: 0x3801, bytes: 456))
+      }
+      let channel = Replay(startup + galleryStartup + xappSetup.dropFirst() + card(handles)
+        + sample + [.write(0xd244, [2])] + card([1], storage: 2)
+        + [.read(0x1008, [1], object("SECOND.RAF", format: 0xb103, bytes: 789)), .read(0x1003)])
+      let session = diagnosticSession(channel)
+      let result = try await session.listCameraPhotos()
+      XCTAssertEqual(result.wifiIdentityAvailable, !emptyDeviceInfo)
+      XCTAssertEqual(result.cards.map(\.summary.totalHandles), [34, 1])
+      XCTAssertEqual(result.cards.map(\.summary.sampledJPEG), [32, 0])
+      XCTAssertEqual(result.cards.map(\.summary.sampledRAF), [0, 1])
+      XCTAssertEqual(result.cards[0].samples.first?.filename, "SAMPLE1.JPG")
+      XCTAssertEqual(result.cards[1].samples.first?.filename, "SECOND.RAF")
+      XCTAssertEqual(result.cards[1].samples.first?.byteLength, 789)
+      await expect(.connectionLost) { _ = try await session.enumerate() }
+      try await session.close()
+      let remaining = await channel.remaining
+      let closed = await channel.closed
+      XCTAssertEqual(remaining, 0)
+      XCTAssertTrue(closed)
+    }
+  }
+
+  func testGalleryDistinguishesEmptyAndUnavailableCards() async throws {
+    let channel = Replay(start(.xt5, "4.31") + galleryStartup + xappSetup.dropFirst() + card([])
+      + [.write(0xd244, [2]), .property(0xd244, Data([2])),
+        .rejection(0x9054, [0x10000001], 0x2013), .read(0x1003)])
+    let session = diagnosticSession(channel)
+    let result = try await session.listCameraPhotos()
+    XCTAssertEqual(result.cards.map(\.summary.status), [.available, .unavailable])
+    XCTAssertEqual(result.cards.map(\.summary.totalHandles), [0, nil])
+    XCTAssertEqual(result.cards.map(\.summary.sampledCount), [0, 0])
+    try await session.close()
+    let remaining = await channel.remaining
+    XCTAssertEqual(remaining, 0)
+  }
+
+  func testGalleryRejectsInvalidHandlesAndMetadataBeforeReturningResults() async throws {
+    let duplicate = card([1, 1])
+    let mismatch = Array(card([1]).dropLast()) + [.property(0xd621, word(0))]
+    let malformed = card([1]) + [.read(0x1008, [1], Data([1]))]
+    for steps in [duplicate, mismatch, malformed] {
+      let channel = Replay(start(.xt5, "4.31") + galleryStartup + xappSetup.dropFirst() + steps + [.read(0x1003)])
+      let session = diagnosticSession(channel)
+      await expect(.malformedData) { _ = try await session.listCameraPhotos() }
+      try await session.close()
+      let remaining = await channel.remaining
+      XCTAssertEqual(remaining, 0)
+    }
+  }
+
+  func testGalleryRejectsUnsupportedBluetoothFirmwareBeforeWirelessTraffic() async throws {
+    let channel = Replay([])
+    let camera = WirelessIdentity(cameraID: WirelessCameraID(), model: .xt5, firmware: "4.29")
+    let session = diagnosticSession(channel, camera: camera)
+    await expect(.unsupportedFirmware) { _ = try await session.listCameraPhotos() }
+    try await session.close()
+    let initialization = await channel.initializationRequest
+    XCTAssertNil(initialization)
+  }
+
+  func testGalleryRejectsUnsupportedRemoteVersionWithNonemptyDeviceInfoBeforeWrites() async throws {
+    let channel = Replay(start(.xt5, "4.31") + [.property(0xd212, events([(0xdf00, 6)])),
+      .property(0xdf24, word(0x20006)), .read(0x1003)])
+    let session = diagnosticSession(channel)
+    await expect(.unsupportedProtocol) { _ = try await session.listCameraPhotos() }
+    try await session.close()
+    let remaining = await channel.remaining
+    XCTAssertEqual(remaining, 0)
+  }
+
+  func testGalleryRejectsUnsupportedWiFiFirmwareEvenWithSupportedBluetoothFirmware() async throws {
+    let channel = Replay(start(.xt5, "4.29") + [.read(0x1003)])
+    let session = diagnosticSession(channel)
+    await expect(.unsupportedFirmware) { _ = try await session.listCameraPhotos() }
+    try await session.close()
+    let remaining = await channel.remaining
+    XCTAssertEqual(remaining, 0)
+  }
+
+  func testGalleryRejectsUncorrelatedHandleListAndClosesSocket() async throws {
+    var response = card([1]).last!
+    response.responseTransaction = 999
+    let channel = Replay(start(.xt5, "4.31") + galleryStartup + xappSetup.dropFirst()
+      + card([1]).dropLast() + [response])
+    let session = diagnosticSession(channel)
+    do {
+      _ = try await session.listCameraPhotos()
+      XCTFail("An uncorrelated handle list returned a gallery")
+    } catch PTPError.wrongTransaction(_, let actual) {
+      XCTAssertEqual(actual, 999)
+    }
+    try await session.close()
+    let remaining = await channel.remaining
+    let closed = await channel.closed
+    XCTAssertEqual(remaining, 0)
+    XCTAssertTrue(closed)
+  }
+
+  func testGalleryAbortClosesSocketWhileObjectInfoReplyIsPending() async throws {
+    let channel = Replay(start(.xt5, "4.31") + galleryStartup + xappSetup.dropFirst()
+      + card([1]) + [.read(0x1008, [1], object("PENDING.JPG", format: 0x3801, bytes: 456))])
+    let (pending, signal) = AsyncStream<Void>.makeStream()
+    await channel.holdObjectInfoReply(signal)
+    let session = diagnosticSession(channel)
+    let listing = Task { try await session.listCameraPhotos() }
+    for await _ in pending { break }
+    await session.abortGallery()
+    do {
+      _ = try await listing.value
+      XCTFail("An aborted diagnostic returned a result")
+    } catch {}
+    try await session.close()
+    let remaining = await channel.remaining
+    let closed = await channel.closed
+    XCTAssertEqual(remaining, 0)
+    XCTAssertTrue(closed)
+  }
+
+  private var galleryStartup: [Exchange] {
+    [.property(0xd212, events([(0xdf00, 6)])), .property(0xdf24, word(0x2000c))]
+  }
+
   private func diagnosticSession(
     _ channel: Replay, camera: WirelessIdentity? = nil,
     trace: WirelessIdentityTrace.Observer? = nil
@@ -743,6 +872,11 @@ private actor Replay: WirelessByteChannel {
     resumeD227Read?.resume()
     resumeD227Read = nil
   }
+  private var holdObjectInfo: AsyncStream<Void>.Continuation?
+  private var pendingObjectInfo: CheckedContinuation<Void, Never>?
+
+  func holdObjectInfoReply(_ signal: AsyncStream<Void>.Continuation) { holdObjectInfo = signal }
+
   private var objectReads = 0
   private(set) var sizeControls: [UInt8] = []
   private(set) var operations: [UInt16] = []
@@ -850,12 +984,25 @@ private actor Replay: WirelessByteChannel {
         d227EnableReply.finish()
       }
     }
+    if operations.last == 0x1008, let holdObjectInfo {
+      self.holdObjectInfo = nil
+      await withCheckedContinuation { continuation in
+        pendingObjectInfo = continuation
+        holdObjectInfo.yield()
+        holdObjectInfo.finish()
+      }
+      if closed { throw PTPError.notConnected }
+    }
     let result = Data(buffer.prefix(maximumBytes))
     buffer.removeFirst(result.count)
     return result
   }
 
-  func close() async { closed = true }
+  func close() async {
+    closed = true
+    pendingObjectInfo?.resume()
+    pendingObjectInfo = nil
+  }
 }
 
 private actor Bytes {

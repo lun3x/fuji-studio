@@ -12,6 +12,11 @@ public enum WirelessIdentityTrace {
     case getDeviceInfoWrite, getDeviceInfoHeader, getDeviceInfoData, getDeviceInfoFinalHeader, getDeviceInfoResponseBody
     case deviceInfoValidation, xAppEventsRead, xAppAccess, xAppVersionRead, xAppVersionValidation
     case closeSessionWrite, closeSessionHeader, closeSessionData, closeSessionFinalHeader, closeSessionResponseBody
+    case galleryModeWrite, galleryVersionRead, galleryVersionWrite
+    case galleryStorageWrite, galleryStorageRead, galleryStorageConfirmation
+    case galleryOpen, galleryPreviewSetup, galleryModeStatus, gallerySelectedImages
+    case galleryObjectListBegin, galleryObjectCount, galleryHandleList, galleryHandleValidation
+    case galleryObjectInfo, galleryObjectInfoValidation, galleryCardSummary
     case sessionCleanup, otherCommand
   }
 
@@ -22,7 +27,7 @@ public enum WirelessIdentityTrace {
   public enum Failure: String, Sendable, Codable {
     case cancelled, outerDeadline, tcpSetupTimeout, transactionInactivity
     case localNetworkPermission, routeUnavailable, connectionLost, malformedData
-    case authentication, peerMismatch, unsupported, rejected, other
+    case authentication, peerMismatch, unsupported, unavailableStorage, rejected, other
 
     public init(_ error: any Error) {
       if error is CancellationError { self = .cancelled; return }
@@ -35,6 +40,7 @@ public enum WirelessIdentityTrace {
         case .connectionLost: self = .connectionLost
         case .malformedData: self = .malformedData
         case .authentication: self = .authentication
+        case .unavailableStorage: self = .unavailableStorage
         case .peerMismatch: self = .peerMismatch
         case .unsupportedProtocol, .unsupportedFirmware: self = .unsupported
         default: self = .other
@@ -56,17 +62,45 @@ public enum WirelessIdentityTrace {
     }
   }
 
+  public struct GalleryCardSummary: Sendable, Codable, Equatable {
+    public enum Status: String, Sendable, Codable { case available, unavailable }
+    public let slot: UInt32
+    public let totalHandles: Int?
+    public let sampledJPEG: Int
+    public let sampledRAF: Int
+    public let sampledOther: Int
+    public let status: Status
+    public let sampledCount: Int
+
+    init(slot: UInt32, totalHandles: Int?, sampledJPEG: Int, sampledRAF: Int, sampledOther: Int) {
+      self.slot = slot
+      self.totalHandles = totalHandles
+      self.sampledJPEG = sampledJPEG
+      self.sampledRAF = sampledRAF
+      self.sampledOther = sampledOther
+      status = totalHandles == nil ? .unavailable : .available
+      sampledCount = sampledJPEG + sampledRAF + sampledOther
+    }
+  }
+
   public struct Event: Sendable, Codable, Equatable {
     public let stage: Stage
     public let action: Action
     public let bytes: Int?
     public let failure: Failure?
+    public let responseCode: UInt16?
+    public let galleryCard: GalleryCardSummary?
 
-    public init(_ stage: Stage, _ action: Action, bytes: Int? = nil, failure: Failure? = nil) {
+    public init(
+      _ stage: Stage, _ action: Action, bytes: Int? = nil, failure: Failure? = nil,
+      responseCode: UInt16? = nil, galleryCard: GalleryCardSummary? = nil
+    ) {
       self.stage = stage
       self.action = action
       self.bytes = bytes.map { min(max($0, 0), 65_536) }
       self.failure = failure
+      self.responseCode = responseCode
+      self.galleryCard = galleryCard
     }
   }
 }

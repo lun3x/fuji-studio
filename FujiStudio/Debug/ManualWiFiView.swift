@@ -1,4 +1,5 @@
 #if DEBUG
+import FujiCameraCore
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
@@ -16,10 +17,14 @@ struct ManualWiFiView: View {
         Form {
           Section {
             Text(probe.status).accessibilityIdentifier("manualWiFi.status")
+            if probe.galleryInProgress { ProgressView() }
           } header: {
             Text("X-T5 connection diagnostic")
           } footer: {
-            Text("Temporary test for X-T5 firmware 4.30 or later. It checks the Wi-Fi connection without transferring photos.")
+            Text("Temporary test for X-T5 firmware 4.30 or later. It checks the connection and can list a sample of camera metadata.")
+          }
+          if let result = probe.galleryResult {
+            galleryResults(result)
           }
           if let mode = probe.registrationMode {
             Section("Check registration on the camera") {
@@ -85,7 +90,10 @@ struct ManualWiFiView: View {
               Button("Check camera connection") { probe.identify() }
                 .accessibilityIdentifier("manualWiFi.identify")
                 .disabled(!probe.canIdentify)
-              Text("If prompted, allow Local Network access. The result shows whether the camera answered and whether it supplied identity over Wi-Fi.")
+              Button("List camera photos") { probe.listCameraPhotos() }
+                .accessibilityIdentifier("manualWiFi.listPhotos")
+                .disabled(!probe.canListPhotos)
+              Text("If prompted, allow Local Network access. If the camera asks, confirm the connection on the camera. Listing counts camera objects and reads metadata for up to \(XAppGalleryDiagnosticResult.sampleLimitPerCard) per card. The test closes the connection when finished.")
             }
           }
           Section("Camera selection") {
@@ -145,6 +153,40 @@ struct ManualWiFiView: View {
       await current.observe()
     }
     .onChange(of: scenePhase) { _, value in probe?.sceneChanged(value) }
+  }
+
+  @ViewBuilder
+  private func galleryResults(_ result: XAppGalleryDiagnosticResult) -> some View {
+    ForEach(result.cards, id: \.summary.slot) { card in
+      Section {
+        if let total = card.summary.totalHandles {
+          Text("\(total) camera objects. Sampled \(card.summary.sampledCount): \(card.summary.sampledJPEG) JPEG, \(card.summary.sampledRAF) RAF, \(card.summary.sampledOther) other.")
+          ForEach(Array(card.samples.enumerated()), id: \.offset) { _, sample in
+            LabeledContent {
+              Text("\(formatLabel(sample.format)) · \(sample.byteLength.formatted()) bytes")
+            } label: {
+              Text(verbatim: sample.filename).privacySensitive()
+            }
+          }
+        } else {
+          Text("Unavailable")
+        }
+      } header: {
+        Text("Card \(card.summary.slot)")
+      } footer: {
+        if let total = card.summary.totalHandles, total > 0 {
+          Text("First \(card.summary.sampledCount) of \(total) objects in camera order. Metadata limit: \(XAppGalleryDiagnosticResult.sampleLimitPerCard) per card.")
+        }
+      }
+    }
+  }
+
+  private func formatLabel(_ format: WirelessObjectFormat) -> String {
+    switch format {
+    case .jpeg: "JPEG"
+    case .raf: "RAF"
+    case .other: "Other"
+    }
   }
 
   private func localLabel(_ camera: SavedCamera, in probe: ManualWiFiProbe) -> String {

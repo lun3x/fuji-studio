@@ -19,7 +19,7 @@ final class ManualWiFiFixture {
   private let lease: Lease
   let probe: ManualWiFiProbe
 
-  init(withoutDeviceInfo: Bool = false) {
+  init(withoutDeviceInfo: Bool = false, galleryDeadline: Duration = .seconds(90)) {
     let cameras = [camera, otherCamera]
     let lease = Lease()
     self.lease = lease
@@ -33,7 +33,7 @@ final class ManualWiFiFixture {
       authorizeLaunch: { _, _ in },
       makeSession: { identity, _ in await transfer.setIdentity(identity); return transfer },
       startLease: { expire in lease.expiration = expire; return { lease.expiration = nil } },
-      record: { lease.events.append($0) })
+      record: { lease.events.append($0) }, galleryDeadline: galleryDeadline)
     probe.sceneChanged(.active)
   }
 
@@ -120,12 +120,14 @@ final class ManualWiFiFixture {
     }
   }
 
-  actor Transfer: XAppConnectionDiagnostic {
-    enum Action { case open, close }
+  actor Transfer: XAppGalleryDiagnostic {
+    enum Action { case open, listPhotos, close }
 
     private var identity: WirelessIdentity?
     private let withoutDeviceInfo: Bool
     private(set) var actions: [Action] = []
+    private var galleryBarrier: FixtureBarrier?
+    private var galleryDelay: Duration?
 
     init(withoutDeviceInfo: Bool) { self.withoutDeviceInfo = withoutDeviceInfo }
 
@@ -137,6 +139,23 @@ final class ManualWiFiFixture {
       return withoutDeviceInfo ? .respondingWithoutDeviceInfo : .identified(identity)
     }
 
+    func holdGallery(_ barrier: FixtureBarrier) { galleryBarrier = barrier }
+    func delayGallery(_ delay: Duration) { galleryDelay = delay }
+
+    func listCameraPhotos() async throws -> XAppGalleryDiagnosticResult {
+      actions.append(.listPhotos)
+      if let galleryDelay { try await Task.sleep(for: galleryDelay) }
+      await galleryBarrier?.wait()
+      return .init(wifiIdentityAvailable: !withoutDeviceInfo, cards: [
+        .init(slot: 1, totalHandles: 2, samples: [
+          .init(filename: "FIXTURE.JPG", format: .jpeg, byteLength: 15_000),
+          .init(filename: "FIXTURE.RAF", format: .raf, byteLength: 30_000)
+        ]),
+        .init(slot: 2, totalHandles: nil, samples: [])
+      ])
+    }
+
+    func abortGallery() {}
     func close() { actions.append(.close) }
 
   }
