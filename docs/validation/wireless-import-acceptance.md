@@ -641,6 +641,33 @@ single D22F (DatabaseFilename) event and returns no numeric value for
 it. Replay uses the captured bytes and reaches both inventory refreshes,
 enumerates JPEG and RAF candidates, and closes the session successfully.
 
+The official cold XApp session reported 1,227 objects in its first D212
+event and later offered DF28 version 3. The three native sessions
+reported 548 in the first D212 event, before the camera offered version
+2. Version 2 remains a valid negotiated value. The difference in object
+counts preceded the version exchange, and these captures do not establish
+what caused either difference.
+
+The official initialization request carried a fixed 12-byte identifier
+followed by the connected phone's IPv4 address in little-endian order.
+The earlier native sessions sent a persisted UUID in that field. The
+manual Debug gallery and connection check now use the captured fixed
+bytes and the local IPv4 from the ready TCP connection. If the connection
+has no concrete local IPv4, the diagnostic closes it and reports route
+unavailable before sending the request. [Apple's local endpoint API](https://developer.apple.com/documentation/network/nwpath/localendpoint)
+supplies the address, and the same field layout is documented in the
+[Dial In Fujifilm PTP/IP transport](https://github.com/maam00/dialin-tools/blob/848a651c926a44c6f7b5bc1d1f44b27e8a50b959/ios/DialInCamera/Sources/DialInCamera/Import/FujiPTPIPTransport.swift#L7-L45).
+[Libfuji's initialization](https://github.com/petabyt/libfuji/blob/3b9932a46d025405dae505ddb624733b6ea3edd1/lib/fuji.c#L587-L620)
+uses the same 12-byte prefix with a zero suffix, and its
+[X-T5 test log](https://github.com/petabyt/libfuji/blob/3b9932a46d025405dae505ddb624733b6ea3edd1/docs/testsuite/fudge-log-x5.txt#L5-L85)
+records version 3. The manual trace records selection of the captured
+initialization profile without retaining address or packet data.
+
+In the next physical capture, verify the initialization field, compare
+the first D212 object count, and record the DF28 version the camera
+offers and accepts. Those measurements can show whether the observed
+differences persist with the corrected initialization profile.
+
 Repeat the full scan and pair trial on the X-T5. Confirm successful
 JPEG+RAW selection and both formats in the full counts for the available card.
 If a pair qualifies, record the observed transfer lengths, validation

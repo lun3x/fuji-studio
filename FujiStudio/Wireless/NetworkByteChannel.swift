@@ -41,6 +41,7 @@ actor NetworkByteChannel: WirelessByteChannel {
   }
 
   protocol Driver: Sendable {
+    var localEndpoint: NWEndpoint? { get }
     func start(_ handler: @escaping @Sendable (Event) -> Void)
     func read(
       maximumBytes: Int, completion: @escaping @Sendable (Result<Read, WirelessFailure>) -> Void)
@@ -145,6 +146,13 @@ actor NetworkByteChannel: WirelessByteChannel {
     parameters.requiredInterfaceType = .wifi
     parameters.prohibitedInterfaceTypes = [.cellular]
     return parameters
+  }
+
+  var connectedLocalIPv4Bytes: Data? {
+    guard phase == .ready,
+          case .hostPort(host: .ipv4(let address), port: _)? = driver.localEndpoint
+    else { return nil }
+    return address.rawValue
   }
 
   func start() async throws {
@@ -344,6 +352,10 @@ actor NetworkByteChannel: WirelessByteChannel {
   }
 }
 
+extension NetworkByteChannel.Driver {
+  var localEndpoint: NWEndpoint? { nil }
+}
+
 private final class NativeNetworkConnection: NetworkByteChannel.Driver {
   private let connection: NWConnection
   private let reportRefusal: Bool
@@ -353,6 +365,8 @@ private final class NativeNetworkConnection: NetworkByteChannel.Driver {
     self.connection = connection
     self.reportRefusal = reportRefusal
   }
+
+  var localEndpoint: NWEndpoint? { connection.currentPath?.localEndpoint }
 
   func start(_ handler: @escaping @Sendable (NetworkByteChannel.Event) -> Void) {
     connection.stateUpdateHandler = { [weak connection, reportRefusal] state in

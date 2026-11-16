@@ -6,6 +6,7 @@ public enum WirelessIdentityTrace {
   public enum Stage: String, Sendable, Codable {
     case attempt, identityTimerElapsed, identityDeadline, identityResult, identityCancellation
     case tcpConnect, socketRead, socketClose
+    case manualCapturedInitializationProfile
     case initializationWrite, initializationHeader, initializationBody, initializationACK
     case openSessionDelay
     case openSessionWrite, openSessionHeader, openSessionData, openSessionFinalHeader, openSessionResponseBody

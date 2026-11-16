@@ -7,6 +7,58 @@ import XCTest
 @testable import FujiStudio
 
 final class NetworkByteChannelTests: XCTestCase, @unchecked Sendable {
+  #if DEBUG
+  func testManualGalleryInitializationUsesTheConnectedIPv4() async throws {
+    let cases: [(String, [UInt8])] = [
+      ("192.168.0.149", [0x95, 0x00, 0xa8, 0xc0]),
+      ("10.23.45.67", [0x43, 0x2d, 0x17, 0x0a]),
+    ]
+    for (ip, addressBytes) in cases {
+      let address = try XCTUnwrap(IPv4Address(ip))
+      let driver = TestConnection(localEndpoint: .hostPort(host: .ipv4(address), port: 49152))
+      let channel = try await connected(driver)
+      let session = try await ManualWiFiProbe.makeGallerySession(
+        channel: channel, expectedIdentity: .init(cameraID: .init(), model: .xt5, firmware: "4.31"),
+        trace: nil)
+      let listing = Task { try await session.listCameraPhotos() }
+      defer { listing.cancel() }
+      try await eventually { driver.written != nil }
+      let frame = try XCTUnwrap(driver.written)
+      XCTAssertEqual(frame.count, 82)
+      XCTAssertEqual(Data(frame[12..<28]), Data([
+        0xad, 0xa5, 0x48, 0x5d, 0x87, 0xb2, 0x7f, 0x0b, 0xd3, 0xd5, 0xde, 0xd0,
+      ] + addressBytes))
+      XCTAssertEqual(Data(frame[28..<50]), Data("Fuji iPhone".utf16.flatMap { [UInt8($0), 0] }))
+      await session.abortGallery()
+      _ = await listing.result
+    }
+  }
+
+  func testManualGalleryMissingOrNonIPv4EndpointClosesBeforeReturning() async throws {
+    let ipv6 = try XCTUnwrap(IPv6Address("fe80::1"))
+    let endpoints: [NWEndpoint?] = [
+      nil, .hostPort(host: .ipv6(ipv6), port: 49152), .service(name: "camera", type: "_ptp._tcp", domain: "local.", interface: nil),
+    ]
+    for endpoint in endpoints {
+      let driver = TestConnection(localEndpoint: endpoint)
+      let trace = Mutex([WirelessIdentityTrace.Event]())
+      let channel = try await connected(driver, trace: { event in trace.withLock { $0.append(event) } })
+      do {
+        let session = try await ManualWiFiProbe.makeGallerySession(
+          channel: channel, expectedIdentity: .init(cameraID: .init(), model: .xt5, firmware: "4.31"),
+          trace: nil)
+        XCTAssertTrue(trace.withLock { $0.contains(.init(.socketClose, .completed)) })
+        await session.abortGallery()
+        XCTFail("Manual gallery accepted a socket without a concrete local IPv4")
+      } catch {
+        XCTAssertEqual(error as? WirelessFailure, .routeUnavailable)
+        XCTAssertTrue(trace.withLock { $0.contains(.init(.socketClose, .completed)) })
+      }
+      XCTAssertNil(driver.written)
+    }
+  }
+  #endif
+
   func testAutoSaveRetriesRefusedPortOnlyAfterClosingEachDial() async throws {
     let selected = try XCTUnwrap(IPv4Address("192.168.1.53"))
     let refused = TestConnection(automaticallyAcknowledgesClose: false)
@@ -214,8 +266,10 @@ final class NetworkByteChannelTests: XCTestCase, @unchecked Sendable {
     XCTAssertEqual(driver.cancelCount, 1)
   }
 
-  private func connected(_ driver: TestConnection) async throws -> NetworkByteChannel {
-    let channel = NetworkByteChannel(driver: driver)
+  private func connected(
+    _ driver: TestConnection, trace: WirelessIdentityTrace.Observer? = nil
+  ) async throws -> NetworkByteChannel {
+    let channel = NetworkByteChannel(driver: driver, identityTrace: trace)
     let setup = Task { try await channel.start() }
     try await eventually { driver.started }
     driver.emit(.ready)
@@ -247,8 +301,10 @@ private final class TestConnection: NetworkByteChannel.Driver {
 
   private let state = Mutex(State())
   private let automaticallyAcknowledgesClose: Bool
-  init(automaticallyAcknowledgesClose: Bool = true) {
+  let localEndpoint: NWEndpoint?
+  init(automaticallyAcknowledgesClose: Bool = true, localEndpoint: NWEndpoint? = nil) {
     self.automaticallyAcknowledgesClose = automaticallyAcknowledgesClose
+    self.localEndpoint = localEndpoint
   }
 
   var started: Bool { state.withLock { $0.handler != nil } }

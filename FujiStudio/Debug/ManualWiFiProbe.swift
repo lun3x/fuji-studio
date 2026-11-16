@@ -750,14 +750,36 @@ private final class ManualWiFiReport {
 }
 
 extension ManualWiFiProbe {
+  static func makeGallerySession(
+    channel: NetworkByteChannel, expectedIdentity: WirelessIdentity,
+    trace: WirelessIdentityTrace.Observer?
+  ) async throws -> any XAppGalleryDiagnostic {
+    let clientGUID: Data
+    do {
+      clientGUID = try manualInitializationGUID(localIPv4Bytes: await channel.connectedLocalIPv4Bytes)
+    } catch {
+      await channel.close()
+      throw error
+    }
+    trace?(.init(.manualCapturedInitializationProfile, .completed))
+    return XAppTransferAdapter.makeGalleryDiagnostic(
+      transport: WirelessPTPTransport(channel: channel, identityTrace: trace),
+      expectedIdentity: expectedIdentity, clientGUID: clientGUID,
+      clientName: ManualWiFiBluetoothDriver.phoneDestinationName)
+  }
+
+  private static func manualInitializationGUID(localIPv4Bytes: Data?) throws -> Data {
+    guard let address = localIPv4Bytes, address.count == 4 else { throw WirelessFailure.routeUnavailable }
+    // The captured XApp field is a fixed identifier followed by the TCP source IPv4 in little-endian order.
+    var field = Data([0xad, 0xa5, 0x48, 0x5d, 0x87, 0xb2, 0x7f, 0x0b, 0xd3, 0xd5, 0xde, 0xd0])
+    field.append(contentsOf: address.reversed())
+    return field
+  }
+
   static func live() -> ManualWiFiProbe {
     let suite = "com.lun3x.FujiStudio.wireless-protocol-probe"
     let defaults = UserDefaults(suiteName: suite)!
     let store = KeychainCameraStore(defaults: defaults, service: suite)
-    let clientID = defaults.string(forKey: "clientID").flatMap(UUID.init(uuidString:)) ?? UUID()
-    defaults.set(clientID.uuidString, forKey: "clientID")
-    let guid = withUnsafeBytes(of: clientID.uuid) { Data($0) }
-    let clientName = ManualWiFiBluetoothDriver.phoneDestinationName
     let bluetoothTrace = ManualWiFiBluetoothTrace.live()
     let driver = ManualWiFiBluetoothDriver(trace: bluetoothTrace.append)
     let report = ManualWiFiReport()
@@ -769,9 +791,7 @@ extension ManualWiFiProbe {
       authorizeLaunch: { try driver.beginStandardActivation(peripheralID: $0, selectionIsCurrent: $1) },
       makeSession: { identity, trace in
         let channel = try await NetworkByteChannel.connect(to: .cameraHosted(mode: .xApp), identityTrace: trace)
-        return XAppTransferAdapter.makeGalleryDiagnostic(
-          transport: WirelessPTPTransport(channel: channel, identityTrace: trace),
-          expectedIdentity: identity, clientGUID: guid, clientName: clientName)
+        return try await makeGallerySession(channel: channel, expectedIdentity: identity, trace: trace)
       },
       startLease: { expire in
         let app = UIApplication.shared
