@@ -51,6 +51,10 @@ extension CameraHostedTransferSession {
 
   func configureXAppCard(_ storage: UInt32) async throws -> [UInt32]? {
     if selectedStorage != storage {
+      #if DEBUG
+      try await restoreGalleryOriginalMode(canRestore: true, whileClosing: false)
+      galleryOriginalModePrepared = false
+      #endif
       try await setProperty(0xd244, storage, width: 1)
       selectedStorage = nil
     }

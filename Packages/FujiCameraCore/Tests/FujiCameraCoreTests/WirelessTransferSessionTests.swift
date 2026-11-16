@@ -317,11 +317,12 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
       modeRead.alternative = [.read(0x1008, [1], placeholder)]
       let channel = Replay(start(.xt5, "4.31") + galleryStartup + xappSetup.dropFirst() + card([1]) + [
         modeRead, .write(0xd226, [2, 0]), originalMode, .read(0x1008, [1], original),
-        .write(0xd244, [2]), .property(0xd244, Data([2])),
+        .write(0xd226, [prior, 0]), .write(0xd244, [2]), .property(0xd244, Data([2])),
         .rejection(0x9054, [0x10000001], 0x2013),
         .write(0xd244, [1]),
       ] + card([1]) + [
-        originalMode, .read(0x1008, [1], original),
+        .property(0xd226, word(UInt32(prior), 2)), .write(0xd226, [2, 0]), originalMode,
+        .read(0x1008, [1], original),
         .read(0x101b, [1, 0, fullLength - 1], fullBlock),
         .read(0x101b, [1, fullLength - 1, 1], Data([0xd9])),
         .write(0xd226, [prior, 0]), .read(0x1003),
@@ -373,12 +374,83 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
     }
   }
 
+  func testGalleryRestoresModeOnTheChangedCardBeforeSelectingAnotherCard() async throws {
+    let raf = object("PAIR.RAF", format: 0xb103, bytes: 3)
+    let jpeg = object("PAIR.JPG", format: 0x3801, bytes: 3)
+    let negotiateFirst: [Exchange] = [.property(0xd226, word(0, 2)), .write(0xd226, [2, 0]), originalMode]
+    let restoreFirst = Exchange.write(0xd226, [0, 0])
+    for secondAvailable in [false, true] {
+      let secondCard: [Exchange] = secondAvailable
+        ? card([1], storage: 2) + [originalMode, .read(0x1008, [1], jpeg)]
+        : [.property(0xd244, Data([2])), .rejection(0x9054, [0x10000001], 0x2013)]
+      let startup = start(.xt5, "4.31") + galleryStartup + xappSetup.dropFirst() + card([1])
+      var steps = startup + negotiateFirst + [
+        .read(0x1008, [1], raf), restoreFirst, .write(0xd244, [2]),
+      ] + secondCard
+      if secondAvailable {
+        steps += [.write(0xd244, [1])] + card([1]) + negotiateFirst + [
+          .read(0x1008, [1], raf), .read(0x101b, [1, 0, 3], Data([1, 2, 3])),
+          restoreFirst, .write(0xd244, [2]),
+        ] + card([1], storage: 2) + [
+          originalMode, .read(0x1008, [1], jpeg), .read(0x101b, [1, 0, 3], Data([4, 5, 6])),
+        ]
+      }
+      let prior: [UInt8: UInt8] = [1: 0, 2: 2]
+      let channel = Replay(steps + [.read(0x1003)], galleryModes: prior)
+      let session = diagnosticSession(channel)
+      let gallery = try await session.listCameraPhotos()
+      XCTAssertEqual(gallery.cards.map(\.summary.status), [.available, secondAvailable ? .available : .unavailable])
+      if secondAvailable {
+        let candidates = try await session.scannedPairCandidates()
+        let first = try XCTUnwrap(candidates.first { $0.storageID == 1 })
+        let second = try XCTUnwrap(candidates.first { $0.storageID == 2 })
+        let received = Bytes()
+        _ = try await session.downloadGalleryCandidate(first) { await received.append($0) }
+        _ = try await session.downloadGalleryCandidate(second) { await received.append($0) }
+        let bytes = await received.value
+        XCTAssertEqual(bytes, Data([1, 2, 3, 4, 5, 6]))
+      }
+      try await session.close()
+      let finalModes = await channel.galleryModes
+      XCTAssertEqual(finalModes, prior)
+      let remaining = await channel.remaining
+      XCTAssertEqual(remaining, 0)
+    }
+  }
+
+  func testGalleryRestoreRefusalBlocksTheCardSwitchAndClosesTheSocket() async throws {
+    var refusal = Exchange.write(0xd226, [0, 0])
+    refusal.response = 0x2002
+    let channel = Replay(start(.xt5, "4.31") + galleryStartup + xappSetup.dropFirst() + card([])
+      + [.property(0xd226, word(0, 2)), .write(0xd226, [2, 0]), originalMode, refusal, .read(0x1003)],
+      galleryModes: [1: 0, 2: 2])
+    let session = diagnosticSession(channel)
+    do {
+      _ = try await session.listCameraPhotos()
+      XCTFail("Card selection continued after restoration was refused")
+    } catch {
+      XCTAssertEqual(error as? PTPError, .responseCode(0x2002))
+    }
+    await expect(.objectChanged) { _ = try await session.scannedPairCandidates() }
+    do {
+      try await session.close()
+      XCTFail("Cleanup discarded the failed restoration")
+    } catch {
+      XCTAssertEqual(error as? PTPError, .responseCode(0x2002))
+    }
+    let remaining = await channel.remaining
+    let closed = await channel.closed
+    XCTAssertEqual(remaining, 0)
+    XCTAssertTrue(closed)
+  }
+
   func testGalleryRestoreRefusalStillClosesSocketAndRemainsAFailedClose() async throws {
     var refusal = Exchange.write(0xd226, [0, 0])
     refusal.response = 0x2002
     let channel = Replay(start(.xt5, "4.31") + galleryStartup + xappSetup.dropFirst() + card([])
-      + [.property(0xd226, word(0, 2)), .write(0xd226, [2, 0]), originalMode, .write(0xd244, [2])]
-      + card([], storage: 2) + [originalMode, refusal, .read(0x1003)])
+      + [originalMode, .write(0xd244, [2])] + card([], storage: 2)
+      + [.property(0xd226, word(0, 2)), .write(0xd226, [2, 0]), originalMode, refusal, .read(0x1003)],
+      galleryModes: [1: 2, 2: 0])
     let session = diagnosticSession(channel)
     _ = try await session.listCameraPhotos()
     for _ in 0..<2 {
@@ -400,11 +472,10 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
     let enable = Exchange.write(0xd226, [2, 0])
     let restore = Exchange.write(0xd226, [0, 0])
     for duringRestore in [false, true] {
-      var steps = setup + [.property(0xd226, word(0, 2)), enable]
-      if duringRestore {
-        steps += [originalMode, .write(0xd244, [2]), .property(0xd244, Data([2])),
-          .rejection(0x9054, [0x10000001], 0x2013), restore]
-      }
+      let prior = Exchange.property(0xd226, word(0, 2))
+      let steps = duringRestore
+        ? setup + [originalMode, .write(0xd244, [2])] + card([], storage: 2) + [prior, enable, originalMode, restore]
+        : setup + [prior, enable]
       let channel = Replay(steps)
       let (pending, signal) = AsyncStream<Void>.makeStream()
       let (events, trace) = AsyncStream<WirelessIdentityTrace.Event>.makeStream()
@@ -435,6 +506,7 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
       }
       XCTAssertEqual(unconfirmed.count, 1)
       XCTAssertEqual(unconfirmed.first?.galleryOriginalMode, .mode0)
+      XCTAssertEqual(unconfirmed.first?.gallerySlot, duringRestore ? 2 : 1)
       XCTAssertEqual(unconfirmed.first?.action, .failed)
       let remaining = await channel.remaining
       let closed = await channel.closed
@@ -1182,6 +1254,8 @@ private actor Replay: WirelessByteChannel {
   private var exchanges: [Exchange]
   private let optionalReads: [Exchange]
   private let phoneObjectInformation: PhoneObjectInformation?
+  private var gallerySlot: UInt8?
+  private(set) var galleryModes: [UInt8: UInt8]?
   private var buffer = Data()
   private var initialized = false
   private var transaction: UInt32 = 1
@@ -1214,11 +1288,12 @@ private actor Replay: WirelessByteChannel {
 
   init(
     _ exchanges: [Exchange], optionalReads: [Exchange] = [],
-    phoneObjectInformation: PhoneObjectInformation? = nil
+    phoneObjectInformation: PhoneObjectInformation? = nil, galleryModes: [UInt8: UInt8]? = nil
   ) {
     self.exchanges = exchanges
     self.optionalReads = optionalReads
     self.phoneObjectInformation = phoneObjectInformation
+    self.galleryModes = galleryModes
   }
 
   func write(_ data: Data) async throws {
@@ -1303,7 +1378,20 @@ private actor Replay: WirelessByteChannel {
     respond(step)
   }
 
-  private func respond(_ step: Exchange) {
+  private func respond(_ expected: Exchange) {
+    var step = expected
+    if galleryModes != nil {
+      if step.parameters == [0xd244], step.response == 0x2001 {
+        gallerySlot = (step.outbound ?? step.payload).first
+      }
+      if step.parameters == [0xd226], step.response == 0x2001, let gallerySlot {
+        if let outbound = step.outbound, let mode = outbound.first {
+          galleryModes?[gallerySlot] = mode
+        } else if let mode = galleryModes?[gallerySlot] {
+          step.payload = word(UInt32(mode), step.payload.count)
+        }
+      }
+    }
     if let heldReply, heldReply.exchange.opcode == step.opcode,
       heldReply.exchange.parameters == step.parameters, heldReply.exchange.outbound == step.outbound {
       holdNextRead = true

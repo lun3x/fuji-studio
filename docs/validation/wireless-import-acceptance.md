@@ -629,13 +629,15 @@ setting's persistence across sessions. No D227 operation appeared.
 The Debug scan now reads D226 on the selected available card, accepts the
 observed modes 0, 1 and 2, and selects mode 2 with the captured two-byte
 setter when needed. It requires confirmation before reading ObjectInfo,
-checks the mode after card reselection and before each candidate transfer,
-and rechecks the same object's complete frozen metadata. The lengths used
+negotiates independently after each card reselection, and checks the mode
+before each candidate transfer. It rechecks the same object's complete
+frozen metadata. The lengths used
 for disk preflight, transfer verification and the private receipt come
 from ObjectInfo collected in mode 2. Fuji Studio retains its 1 MiB
-partial-object limit and restores the saved mode before graceful
-CloseSession when it changed the setting. A failed or unconfirmed
-restoration prevents publication. Cancellation closes the socket promptly,
+partial-object limit. When it changes the mode, it restores the saved
+value on that card before selecting another slot or closing the session.
+A failed or unconfirmed restoration prevents switching to another card
+and prevents publication. Cancellation closes the socket promptly,
 and the trace records an unconfirmed restoration if it cannot be completed.
 An acknowledged restoration confirms the transfer-control write in that
 session. The capture does not establish per-card or post-session persistence.

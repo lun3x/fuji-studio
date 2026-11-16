@@ -381,7 +381,7 @@ actor CameraHostedTransferSession: WirelessTransferSession {
       #if DEBUG
       let restoration: Result<Void, Error>
       do {
-        try await restoreGalleryOriginalMode(canRestore: shouldCloseSession)
+        try await restoreGalleryOriginalMode(canRestore: shouldCloseSession, whileClosing: true)
         restoration = .success(())
       } catch {
         restoration = .failure(error)
