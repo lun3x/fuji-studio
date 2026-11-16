@@ -395,15 +395,26 @@ evidence. Python, if needed, must use the project's `.venv`.
   The fast iOS run passed 913 with two skips. The full iOS suite passed 1,031
   with six skips and zero failures, including all six manual Wi-Fi UI tests.
   The isolated simulator and its test clones were removed.
+- `2ab055fd`: full iOS suite 1,032 passed, six skipped, zero failed.
+- `db6e81b1`: the portable suite passed 101 XCTest and 141 Swift Testing tests.
+  The production X-T5 replay covers both files, including a short RAF response,
+  recovery of the next offset, and D226 restoration. An unrelated camera name
+  in the TCP opening reply stops the session before OpenSession. The iOS Release
+  simulator build succeeded. Both opt-in native PhotoKit tests passed, including
+  an asset with one primary JPEG and one alternate RAF. Both resources were read
+  back and matched byte-for-byte against the fixtures. The complete iOS suite
+  passed 1,032 with six skips and zero failures. Task simulators and their test
+  clones were removed.
 
 ### Phone state at checkpoint
 
-The signed count-check Debug app from `9fd5b43d` completed the first physical
-count trial. The iPhone now has the timing-only diagnostic from `aa3f1c41`,
-built with `FUJI_XAPP_CAPTURED_CLIENT_NAME='Fuji iPhone'` in
-`/tmp/fuji-wifi-df28.qfkNcK`. Both comparison builds passed strict codesign
-verification and were installed and launched normally. The timing-only build
-successfully reused the saved Fuji Studio pairing.
+The iPhone has the signed manual Debug diagnostic with both BLE app flags and
+the corrected short-read handling. It passed strict codesign verification and
+was installed and launched normally. The first physical download on the earlier
+app-flag build stopped during RAF transfer. The corrected transfer still needs
+a physical rerun. The current iPhone Release provisioning profile lacks the
+Hotspot Configuration and Access Wi-Fi Information entitlements, so Xcode
+could not sign the production app for this phone.
 
 ### Working conventions
 
@@ -425,9 +436,7 @@ Before relaunching after a hardware test, copy these app Documents files with
 `ManualWiFiBluetoothTrace.json`, and `ManualWiFiProbe.json`. They reset at launch.
 Discover the attached phone with `xcrun devicectl list devices`.
 
-The timing comparison's RVI capture ended with 184 packets and zero kernel
-drops. `rvi0` was removed afterward. Use the timing-only run as the native
-baseline for the Bluetooth comparison, with a new bounded TCP capture for
-timestamp correlation. Keep the existing Fuji Studio pairing for the native
-trace and record the DF28 value offered. Use changes in negotiation or inventory
-to decide when to repeat a full scan.
+The successful count capture ended with 196 packets and zero kernel drops.
+The corrected-transfer capture window expired before a retry and `rvi0` was
+removed. Use the saved Fuji Studio pairing on the installed manual build for
+the next physical download and read back its completed pair receipt.
