@@ -28,6 +28,49 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
     }
   }
 
+  func testXAppEventReaderAcceptsOnlyTheCapturedShortFilenameEvent() async throws {
+    let filenameEvent = Data([0x01, 0x00, 0x2f, 0xd2, 0x01, 0x00, 0x00])
+    let malformed = [
+      Data(filenameEvent.dropLast()),
+      filenameEvent + Data([0, 0]),
+      Data([0x01, 0x00, 0x30, 0xd2, 0x01, 0x00, 0x00]),
+    ]
+    let numeric = Data([0x01, 0x00, 0x2f, 0xd2, 0x78, 0x56, 0x34, 0x12])
+    let replies = [filenameEvent, numeric, Data([0, 0])] + malformed
+    let channel = Replay(start(.xt5, "4.31")
+      + replies.map { .property(0xd212, $0) } + [.read(0x1003)])
+    let session = CameraHostedTransferSession(
+      transport: .init(channel: channel), expectedIdentity: identity(.xt5), mode: .xApp,
+      clientGUID: Data(repeating: 1, count: 16))
+    _ = try await session.open()
+    let filename = try await session.readEvents()
+    let scalar = try await session.readEvents()
+    let empty = try await session.readEvents()
+    XCTAssertEqual(filename, [:])
+    XCTAssertEqual(scalar, [0xd22f: 0x12345678])
+    XCTAssertEqual(empty, [:])
+    for _ in malformed {
+      await expect(.malformedData) { _ = try await session.readEvents() }
+    }
+    try await session.close()
+    let remaining = await channel.remaining
+    XCTAssertEqual(remaining, 0)
+  }
+
+  func testLegacyEventReaderRejectsTheShortXAppFilenameEvent() async throws {
+    let channel = Replay(start(.xe3, "1.32") + [
+      .property(0xd212, Data([0x01, 0x00, 0x2f, 0xd2, 0x01, 0x00, 0x00])), .read(0x1003),
+    ])
+    let session = CameraHostedTransferSession(
+      transport: .init(channel: channel), expectedIdentity: identity(.xe3), mode: .phone,
+      clientGUID: Data(repeating: 1, count: 16))
+    _ = try await session.open()
+    await expect(.malformedData) { _ = try await session.readEvents() }
+    try await session.close()
+    let remaining = await channel.remaining
+    XCTAssertEqual(remaining, 0)
+  }
+
   #if DEBUG
   func testManualXAppDiagnosticAcceptsExactEmptyDeviceInfoWithReadOnlyStartup() async throws {
     let channel = Replay([.read(0x1002, [1]), .emptyDeviceInfo,
@@ -149,6 +192,7 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
     let list = handles.reduce(into: Data()) { $0 += word($1) }
     let metadata = handles.map {
       if $0 == 133 { return Exchange.read(0x1008, [$0], object("PAIR.RAF", format: 0xb103, bytes: 789)) }
+      if $0 == 134 { return Exchange.read(0x1008, [$0], object("PAIR.JPG", format: 0x3801, bytes: 456)) }
       return Exchange.read(0x1008, [$0], object("PHOTO\($0).JPG", format: 0x3801, bytes: 456))
     }
     let channel = Replay([
@@ -158,7 +202,7 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
       .property(0xd244, Data([2])), .property(0xd212, events([(0xdf00, 20), (0xd222, 35)])),
       .property(0xd244, Data([2])), .read(0x9054, [0x10000001]),
       .read(0x9055, [0x10000001]), .read(0x9050),
-      .property(0xd212, events([(0xd22f, 1)])), .property(0xd22b, word(35)),
+      .property(0xd212, Data([0x01, 0x00, 0x2f, 0xd2, 0x01, 0x00, 0x00])), .property(0xd22b, word(35)),
       .read(0x9053, [0, 30000]), .property(0xd212, events()),
       .property(0xd620, word(35)), .property(0xd621, word(35) + word(20) + list),
       .galleryJPEGRAWFilter,
@@ -180,6 +224,7 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
     XCTAssertEqual(result.cards.first?.samples.first?.filename, "PHOTO101.JPG")
     let candidates = try await session.scannedPairCandidates()
     XCTAssertEqual(Set(candidates.map(\.handle)), Set(handles))
+    XCTAssertEqual(Set(candidates.filter { $0.handle >= 133 }.map(\.filename)), ["PAIR.JPG", "PAIR.RAF"])
     await expect(.connectionLost) { _ = try await session.enumerate() }
     try await session.close()
     trace.finish()

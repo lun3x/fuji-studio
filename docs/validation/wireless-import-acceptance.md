@@ -632,6 +632,15 @@ and filtered counts even after the rolling log fills during the scan.
 Replay verifies the command sequence, response validation, and mixed
 JPEG and RAW enumeration.
 
+In three physical Fuji Studio sessions at `51e6b0b0`, D212 immediately
+after 9050 returned `01 00 2f d2 01 00 00` with response `2001`. The
+official cold XApp session received the same payload and continued.
+Fuji Studio rejected it as malformed and closed the session before
+the first 9053 refresh. The XApp event reader now accepts this exact
+single D22F (DatabaseFilename) event and returns no numeric value for
+it. Replay uses the captured bytes and reaches both inventory refreshes,
+enumerates JPEG and RAF candidates, and closes the session successfully.
+
 Repeat the full scan and pair trial on the X-T5. Confirm successful
 JPEG+RAW selection and both formats in the full counts for the available card.
 If a pair qualifies, record the observed transfer lengths, validation

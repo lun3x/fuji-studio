@@ -47,6 +47,11 @@ extension CameraHostedTransferSession {
   @discardableResult
   func readEvents(whileClosing: Bool = false) async throws -> [UInt32: UInt32] {
     let data = try await execute(0x1015, [0xd212], whileClosing: whileClosing).data
+    // The X-T5 XApp gallery can return this single D22F (DatabaseFilename) event
+    // after 9050. Consume the exact captured form without producing a UInt32 value.
+    if mode == .xApp, data == Data([0x01, 0x00, 0x2f, 0xd2, 0x01, 0x00, 0x00]) {
+      return [:]
+    }
     guard data.count >= 2 else { throw WirelessFailure.malformedData }
     let count = Int(try Self.scalar(Data(data.prefix(2)), widths: [2]))
     guard data.count == 2 + count * 6, count <= 4096 else { throw WirelessFailure.malformedData }
