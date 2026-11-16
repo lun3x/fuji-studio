@@ -15,7 +15,7 @@ remain on this branch as well.
 - Native Bluetooth registration, Wi-Fi launch, manual iPhone association, native
   TCP/PTP setup and JPEG gallery enumeration have worked. **Native RAW exposure
   and a successful native JPEG+RAW download have not been established.**
-- Latest physical trial used source revision `1885339990c5c156ac8bb15c28a981ead92dfe6c`.
+- The prior full metadata trial used source revision `1885339990c5c156ac8bb15c28a981ead92dfe6c`.
   The user forgot the phone bond and paired again. Image-viewing launch `03 00`
   succeeded on its **first** acknowledged request; positive readiness followed
   about seven seconds later. No busy retry was needed in this trial.
@@ -49,11 +49,33 @@ original files. The required `9055` gallery setup can still return a thumbnail.
 Its trace kind is distinct from full scans and pair downloads. Full metadata scan
 and **Test JPEG+RAW download** remain separate explicit actions.
 
-Use the count action for subsequent negotiation experiments. A count of 548 on
-the current card reproduces the known restricted inventory; there is no reason
-to spend another four minutes classifying it. A larger count is a useful signal,
-but actual format enumeration and a validated pair download are still required
-before claiming JPEG+RAW support.
+### First physical count trial
+
+The X-T5 on firmware 04.31 reconnected using the saved Fuji Studio pairing.
+The first `03 00` launch write was acknowledged and positive readiness followed
+about five seconds later. The count run started at 17:36:02 UTC on November 16.
+
+| Milestone | Result | Elapsed from count start |
+| --- | --- | ---: |
+| DF28 validation | Camera offered 2 and the app echoed 2 | 735 ms |
+| Card 2 initial inventory | 548 validated handles | 1,248 ms |
+| Card 2 after acknowledged JPEG+RAW filter | 548 validated handles | 1,460 ms |
+| Card 1 gallery open | `0x2013`, card unavailable | 1,644 ms |
+| CloseSession and socket closure | Completed | 1,654 ms |
+| Count attempt | Completed | 1,655 ms |
+
+The count reproduces the prior restricted inventory size. Format evidence comes
+from the earlier full scan, which classified all 548 entries as JPEG. Use the
+count action for subsequent negotiation experiments. A larger count still needs
+format enumeration and a validated pair download to establish JPEG+RAW support.
+
+Earlier in the same app session, a pair attempt also read DF28 = 2 and counted
+548 handles before and after the filter. It then changed card 2's D226 from 0 to 2
+and was cancelled during ObjectInfo after classifying 15 JPEGs. The socket closed
+and the trace marked restoration of D226 to 0 unconfirmed. The intervening Wi-Fi
+handoff expired before a TCP probe. The successful count run did not read D226,
+so its starting transfer mode is unknown. The pair attempt had already hit the
+same DF28 and handle counts before writing D226.
 
 ## Protocol facts established by captures
 
@@ -222,6 +244,7 @@ Do not delete these workspaces while the investigation continues:
 | `/tmp/fuji-gallery-negotiation/.build/PhoneEvidence/image-viewing-trial` | Latest `bluetooth.json`, `phase.json`, `identity.json`. |
 | `/tmp/fuji-gallery-negotiation/.superpowers/negotiation` | Protocol audit, implementation briefs, reports and reviews for launch/parser changes. |
 | `/tmp/fuji-quick-gallery-count/.superpowers/count` | Count feature brief, progress, report, diff and review. |
+| `/tmp/fuji-iphone-count-evidence.vPwfCE` | iPhone Bluetooth, probe and identity traces for the first physical count trial and preceding retries. |
 
 macOS tcpdump sometimes prepended a 24-byte classic PCAP header before PCAPNG;
 normalization strips it only when the PCAPNG magic is present at byte 24.
@@ -261,8 +284,8 @@ Its installation container is `4F0B1C79-6E1B-4AB2-A482-034667FDF7B8`. The code a
 this documentation checkpoint is unchanged from that source revision. Entitlements
 were the application identifier, team identifier and development get-task-allow;
 unsupported Hotspot/Wi-Fi-info entitlements were absent. The user had put the phone
-on normal Wi-Fi for installation. **The new count-only action has not yet had a
-physical camera trial.** The last physical result remains the 548-JPEG trial above.
+on normal Wi-Fi for installation. The same build completed the first physical
+count trial described above.
 
 ### Working conventions
 
@@ -286,7 +309,7 @@ Discover the attached phone with `xcrun devicectl list devices`.
 
 No RVI capture is currently running: the latest capture was stopped after 3,499
 packets with zero kernel drops, and `rvi0` was removed. Start a fresh bounded capture
-before the next packet-level trial if needed. The current priority is a quick
-count baseline using the existing Fuji Studio pairing, followed by evidence-driven
-comparison of pre-TCP/retained state. Do not force version 3, invent capability
-bytes, or request another full 548-object scan merely to reproduce the same count.
+before the next packet-level trial if needed. Use the completed count as the
+baseline for comparison of pre-TCP and retained camera state. Keep the existing
+Fuji Studio pairing for native trials and record the DF28 value the camera offers.
+Use changes in negotiation or inventory to decide when to repeat a full scan.
