@@ -116,15 +116,15 @@ Its remaining 54 bytes contained different zero-padded UTF-16LE client names.
 The camera's initialization reply matched and its first D212 reply already
 differed, before DF01 or the DF28 read.
 
-| Before the DF28 reply | Fresh XApp | Fuji Studio baseline |
-| --- | ---: | ---: |
-| Initialization reply to OpenSession command | 11 ms | 54 ms |
-| OpenSession reply to D212 command | 207 ms | 2 ms |
-| D212 reply to DF01 command | 392 ms | 1 ms |
-| DF01 reply to DF28 command | 1 ms | 1 ms |
-| First D212 `D220` | 0 | 1 |
-| First D212 `D222` and `D401` | 0 | 548 |
-| DF28 reply | 3 | 2 |
+| Before the DF28 reply | Fresh XApp | Fuji Studio baseline | Fuji Studio with XApp timing |
+| --- | ---: | ---: | ---: |
+| Initialization reply to OpenSession command | 11 ms | 54 ms | 14 ms |
+| OpenSession reply to D212 command | 207 ms | 2 ms | 223 ms |
+| D212 reply to DF01 command | 392 ms | 1 ms | 403 ms |
+| DF01 reply to DF28 command | 1 ms | 1 ms | 1 ms |
+| First D212 `D220` | 0 | 1 | 1 |
+| First D212 `D222` and `D401` | 0 | 548 | 548 |
+| DF28 reply | 3 | 2 | 2 |
 
 The older XApp capture's second socket returned D220 = 1 and D222/D401 = 1,227,
 then offered version 3 with only 1 ms from the D212 reply to the DF01 command.
@@ -143,7 +143,27 @@ TCP opening frame matched all 82 bytes of XApp's captured frame. The X-T5 ACKed
 the bytes at TCP level and sent no initialization payload. The app timed out
 waiting for the header after 32 seconds and closed the socket. This happened
 before OpenSession, so the run exercised the XApp name under the Fuji Studio
-pairing and yielded no evidence about the planned timing changes or DF28.
+pairing and ended before the timing changes or the DF28 read. The next attempt
+sent the same 82 bytes and again received a TCP ACK without an initialization
+payload. This suggests the TCP name is tied to Bluetooth identity or retained
+camera state. The condition the camera checks remains unknown.
+
+The timing-only build kept `Fuji iPhone` in the TCP opening frame. The run at
+17:57:54 UTC established a session and sent the same PTP frames as XApp through
+the DF28 read. The on-wire delays are shown above. The first D212 payload was
+byte-identical to the earlier Fuji Studio baseline. The camera returned DF28 = 2
+and card 2 had 548 handles both before and after JPEG+RAW filtering. Card 1 was
+unavailable and the attempt closed cleanly after 2,068 ms. The captured timing
+changes alone did not account for the version or inventory difference.
+
+The next comparison needs a USB Bluetooth trace starting before reconnect and
+continuing through the first TCP reply. Capture Fuji Studio with its saved
+pairing first. Then capture XApp's first connection and include registration if
+switching apps requires re-pairing. Compare GATT reads, writes and subscriptions
+by characteristic, plus the timing from `03 00` through the TCP request.
+Apple's [Bluetooth for iOS/iPadOS profile](https://developer.apple.com/feedback-assistant/profiles-and-logs/)
+and [PacketLogger live capture](https://developer.apple.com/videos/play/wwdc2019/901/)
+provide the Bluetooth evidence missing from the TCP-only RVI traces.
 
 Native gallery configuration confirms D244 per slot, uses `9054 [10000001]`,
 `9055 [10000001]`, `9050`, D212, D22B, and then `9053 [0,30000]`, D212, D620, D621.
