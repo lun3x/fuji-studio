@@ -80,19 +80,27 @@ actor CameraHostedTransferSession: WirelessTransferSession {
         clientName: "Fuji Studio", clientGUID: clientGUID)
       _ = try await transport.initialize(request)
       // The pinned libfuji camera-hosted implementation waits 50 ms after the ACK.
+      transport.observeIdentity(.init(.openSessionDelay, .waiting))
       try await Task.sleep(for: .milliseconds(50))
+      transport.observeIdentity(.init(.openSessionDelay, .completed))
       _ = try await execute(0x1002, [1])
       didOpenSession = true
       let device: FujiDeviceInfo
       let evidence: WirelessProtocolPeerKey?
       do {
-        (device, evidence) = try PTPDatasets.wirelessDeviceInfo(try await execute(0x1001).data)
+        let data = try await execute(0x1001).data
+        transport.observeIdentity(.init(.deviceInfoValidation, .waiting))
+        (device, evidence) = try PTPDatasets.wirelessDeviceInfo(data)
       } catch is PTPDatasetError {
+        transport.observeIdentity(.init(.deviceInfoValidation, .failed, failure: .malformedData))
         throw WirelessFailure.malformedData
       }
       guard device.manufacturer.uppercased() == "FUJIFILM",
         device.model == expectedIdentity.model.rawValue
-      else { throw WirelessFailure.peerMismatch }
+      else {
+        transport.observeIdentity(.init(.deviceInfoValidation, .failed, failure: .peerMismatch))
+        throw WirelessFailure.peerMismatch
+      }
       if mode == .autoSave, evidence != expectedIdentity.protocolPeerKey {
         throw WirelessFailure.peerMismatch
       }
@@ -102,6 +110,7 @@ actor CameraHostedTransferSession: WirelessTransferSession {
       declaresJPEGOnly = mode == .phone && !device.imageFormats.isEmpty
         && !device.imageFormats.contains(0xb103)
       peer = observed
+      transport.observeIdentity(.init(.deviceInfoValidation, .completed))
       return observed
     } catch PTPError.authorizationDenied {
       throw WirelessFailure.authentication

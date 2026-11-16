@@ -16,6 +16,72 @@ final class WirelessPTPTransportTests: XCTestCase, @unchecked Sendable {
   private var ack: Data { initialAck(name: [0x58, 0, 0x2d, 0, 0x54, 0, 0x35, 0, 0, 0]) }
   private let command = PTPCommand(opcode: 0x1009, parameters: [42], transactionID: 1)
 
+  func testTraceNamesFragmentedHandshakeAndIdentityCommandsWithoutChangingWireSequence() async throws {
+    let chunks = [
+      Data(ack.prefix(3)), Data(ack.dropFirst(3).prefix(11)), Data(ack.dropFirst(14)),
+      frame(type: 3, code: 0x2001),
+      frame(type: 2, code: 0x1001, transaction: 2, payload: Data([1, 2, 3])),
+      frame(type: 3, code: 0x2001, transaction: 2),
+      frame(type: 3, code: 0x2002, transaction: 3),
+    ]
+    let commands = [
+      PTPCommand(opcode: 0x1002, parameters: [1], transactionID: 1),
+      PTPCommand(opcode: 0x1001, parameters: [], transactionID: 2),
+      PTPCommand(opcode: 0x1003, parameters: [], transactionID: 3),
+    ]
+    let trace = TraceEvents()
+    let channel = FixtureChannel(reads: chunks)
+    let control = FixtureChannel(reads: chunks)
+    for (wire, observer) in [(channel, trace.append as WirelessIdentityTrace.Observer?), (control, nil)] {
+      let transport = WirelessPTPTransport(channel: wire, identityTrace: observer)
+      _ = try await transport.initialize(request)
+      for command in commands {
+        do { _ = try await transport.execute(command, data: nil) }
+        catch PTPError.responseCode(0x2002) where command.opcode == 0x1003 {}
+      }
+      await transport.close()
+    }
+    let tracedWrites = await channel.writes
+    let defaultWrites = await control.writes
+    XCTAssertEqual(tracedWrites, defaultWrites)
+    XCTAssertEqual(trace.events.filter { $0.action == .completed }.map(\.stage), [
+      .initializationWrite, .initializationACK, .openSessionWrite, .openSessionResponseBody,
+      .getDeviceInfoWrite, .getDeviceInfoResponseBody, .closeSessionWrite,
+    ])
+    XCTAssertTrue(trace.events.contains(.init(.getDeviceInfoData, .waiting)))
+    XCTAssertTrue(trace.events.contains(.init(.getDeviceInfoFinalHeader, .waiting)))
+    XCTAssertTrue(trace.events.contains(.init(.closeSessionResponseBody, .failed, failure: .rejected)))
+    XCTAssertTrue(trace.events.contains(.init(.initializationHeader, .readCompleted, bytes: 3)))
+  }
+
+  func testTraceIdentifiesThePendingReadBeforeCancellation() async throws {
+    let cases: [([Data], PTPCommand?, WirelessIdentityTrace.Stage)] = [
+      ([], nil, .initializationHeader),
+      ([Data(ack.prefix(14))], nil, .initializationBody),
+      ([ack], .init(opcode: 0x1002, parameters: [1], transactionID: 1), .openSessionHeader),
+      ([ack, frame(type: 2, code: 0x1001, payload: Data([1]), declaredLength: 16)],
+       .init(opcode: 0x1001, parameters: [], transactionID: 1), .getDeviceInfoData),
+    ]
+    for (chunks, command, stage) in cases {
+      let trace = TraceEvents()
+      let channel = FixtureChannel(reads: chunks, suspendAtEnd: true)
+      let transport = WirelessPTPTransport(channel: channel, identityTrace: trace.append)
+      let operation = Task {
+        _ = try await transport.initialize(request)
+        if let command { _ = try await transport.execute(command, data: nil) }
+      }
+      await channel.waitUntilSuspended()
+      XCTAssertEqual(trace.events.last?.stage, stage)
+      XCTAssertEqual(trace.events.last?.action, .readRequested)
+      operation.cancel()
+      do { try await operation.value; XCTFail("Cancelled transport succeeded") }
+      catch is CancellationError {}
+      XCTAssertTrue(trace.events.contains(.init(stage, .failed, failure: .cancelled)))
+      let closed = await channel.closed
+      XCTAssertTrue(closed)
+    }
+  }
+
   func testBuildsSourceDerivedInitRequest() throws {
     XCTAssertEqual(
       try FujiWirelessFrameDecoder.initializationRequest(
@@ -513,5 +579,16 @@ private actor SinkGate {
     let continuation = blocked
     blocked = nil
     continuation?.resume()
+  }
+}
+
+private final class TraceEvents: @unchecked Sendable {
+  private let lock = NSLock()
+  private var storage: [WirelessIdentityTrace.Event] = []
+
+  var events: [WirelessIdentityTrace.Event] { lock.withLock { storage } }
+
+  func append(_ event: WirelessIdentityTrace.Event) {
+    lock.withLock { storage.append(event) }
   }
 }

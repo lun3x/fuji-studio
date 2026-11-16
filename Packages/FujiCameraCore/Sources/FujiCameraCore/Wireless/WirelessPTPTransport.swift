@@ -9,6 +9,8 @@ public actor WirelessPTPTransport: PTPTransport {
 
   private let channel: any WirelessByteChannel
   private let inactivityTimeout: Duration
+  private let identityTrace: WirelessIdentityTrace.Observer?
+  private var traceStage: WirelessIdentityTrace.Stage?
   public let partialObjectLimit: UInt32
   private var decoder = FujiWirelessFrameDecoder()
   private var initialized = false
@@ -21,10 +23,12 @@ public actor WirelessPTPTransport: PTPTransport {
   public init(
     channel: any WirelessByteChannel,
     inactivityTimeout: Duration = WirelessLimits.transactionInactivity,
-    maximumPartialObjectBytes: UInt32 = WirelessPTPTransport.maximumPartialObjectBytes
+    maximumPartialObjectBytes: UInt32 = WirelessPTPTransport.maximumPartialObjectBytes,
+    identityTrace: WirelessIdentityTrace.Observer? = nil
   ) {
     self.channel = channel
     self.inactivityTimeout = inactivityTimeout
+    self.identityTrace = identityTrace
     partialObjectLimit = min(maximumPartialObjectBytes, Self.maximumPartialObjectBytes)
   }
 
@@ -34,12 +38,18 @@ public actor WirelessPTPTransport: PTPTransport {
     try FujiWirelessFrameDecoder.validateInitializationRequest(request)
     let id = beginOperation()
     return try await run(id) { transport in
+      transport.waitForTrace(.initializationWrite)
       try await transport.write(request)
+      transport.finishTrace()
+      transport.waitForTrace(.initializationHeader)
       var reply = try await transport.readExactly(FujiWirelessFrameDecoder.initHeaderBytes)
       let length = try FujiWirelessFrameDecoder.initializationLength(reply)
+      transport.waitForTrace(.initializationBody)
       reply.append(try await transport.readExactly(length - reply.count))
       try transport.validateBoundary()
+      transport.waitForTrace(.initializationACK)
       try FujiWirelessFrameDecoder.validateInitializationReply(reply)
+      transport.finishTrace()
       transport.initialized = true
       return reply
     }
@@ -82,8 +92,11 @@ public actor WirelessPTPTransport: PTPTransport {
 
     let id = beginOperation()
     let result: Result<PTPReply, PTPError> = try await run(id) { transport in
+      let stages = transport.identityTrace.map { _ in TraceCommand(command.opcode) }
       transport.lastTransaction = command.transactionID
+      transport.waitForTrace(stages?.write)
       try await transport.write(encoded)
+      transport.finishTrace()
       if let outgoing {
         var container = FujiWirelessFrameDecoder.dataHeader(
           length: outgoing.count, command: command)
@@ -91,10 +104,12 @@ public actor WirelessPTPTransport: PTPTransport {
         try await transport.write(container)
       }
 
+      transport.waitForTrace(stages?.header)
       var (header, bytes) = try await transport.readHeader(for: command)
       var payload = Data()
       var receivedBytes: UInt64 = 0
       if header.type == 2 {
+        transport.waitForTrace(stages?.data)
         guard outgoing == nil else { throw PTPError.unexpectedContainerType(header.type) }
         receivedBytes = UInt64(header.payloadLength)
         let limit = expectedBytes ?? UInt64(Self.maximumMetadataBytes)
@@ -107,9 +122,11 @@ public actor WirelessPTPTransport: PTPTransport {
         } else {
           payload = try await transport.readMetadata(header.payloadLength, inventory: inventory)
         }
+        transport.waitForTrace(stages?.finalHeader)
         (header, bytes) = try await transport.readHeader(for: command)
         guard header.type == 3 else { throw PTPError.unexpectedContainerType(header.type) }
       }
+      transport.waitForTrace(stages?.responseBody)
       bytes.append(try await transport.readExactly(header.payloadLength))
       try transport.validateBoundary()
       do {
@@ -121,8 +138,10 @@ public actor WirelessPTPTransport: PTPTransport {
           guard let count = reply.parameters.first else { throw PTPError.truncatedContainer }
           guard count <= Self.maximumObjectsPerStorage else { throw PTPError.payloadTooLarge }
         }
+        transport.finishTrace()
         return .success(reply)
       } catch let PTPError.responseCode(code) {
+        transport.finishTrace(failure: .rejected)
         // A complete, correlated rejection consumed its response. The socket is synchronized.
         return .failure(.responseCode(code))
       }
@@ -215,8 +234,14 @@ public actor WirelessPTPTransport: PTPTransport {
 
   private func fillBuffer() async throws {
     guard decoder.availableBytes == 0 else { return }
+    if let traceStage {
+      identityTrace?(.init(traceStage, .readRequested, bytes: FujiWirelessFrameDecoder.maximumReadBytes))
+    }
     let bytes = try await io { [channel] in
       try await channel.read(maximumBytes: FujiWirelessFrameDecoder.maximumReadBytes)
+    }
+    if let traceStage {
+      identityTrace?(.init(traceStage, bytes.isEmpty ? .endOfStream : .readCompleted, bytes: bytes.count))
     }
     guard !bytes.isEmpty else { throw PTPError.truncatedContainer }
     try decoder.supply(bytes)
@@ -292,11 +317,48 @@ public actor WirelessPTPTransport: PTPTransport {
       await closeTask.value
       return
     }
+    if traceStage != nil {
+      finishTrace(failure: .init(failure))
+    }
     terminalError = failure
     decoder = FujiWirelessFrameDecoder()
     let channel = self.channel
     let cleanup = Task { await channel.close() }
     closeTask = cleanup
     await cleanup.value
+  }
+
+  nonisolated func observeIdentity(_ event: @autoclosure () -> WirelessIdentityTrace.Event) {
+    identityTrace?(event())
+  }
+
+  private func waitForTrace(_ stage: WirelessIdentityTrace.Stage?) {
+    guard let identityTrace, let stage else { return }
+    traceStage = stage
+    identityTrace(.init(stage, .waiting))
+  }
+
+  private func finishTrace(failure: WirelessIdentityTrace.Failure? = nil) {
+    guard let stage = traceStage, let identityTrace else { return }
+    traceStage = nil
+    identityTrace(.init(stage, failure == nil ? .completed : .failed, failure: failure))
+  }
+
+  private struct TraceCommand {
+    typealias Stage = WirelessIdentityTrace.Stage
+    let write, header, data, finalHeader, responseBody: Stage
+
+    init(_ opcode: UInt16) {
+      (write, header, data, finalHeader, responseBody) = switch opcode {
+      case 0x1002:
+        (.openSessionWrite, .openSessionHeader, .openSessionData, .openSessionFinalHeader, .openSessionResponseBody)
+      case 0x1001:
+        (.getDeviceInfoWrite, .getDeviceInfoHeader, .getDeviceInfoData, .getDeviceInfoFinalHeader, .getDeviceInfoResponseBody)
+      case 0x1003:
+        (.closeSessionWrite, .closeSessionHeader, .closeSessionData, .closeSessionFinalHeader, .closeSessionResponseBody)
+      default:
+        (.otherCommand, .otherCommand, .otherCommand, .otherCommand, .otherCommand)
+      }
+    }
   }
 }

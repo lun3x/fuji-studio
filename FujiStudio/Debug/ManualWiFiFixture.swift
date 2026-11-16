@@ -30,7 +30,7 @@ final class ManualWiFiFixture {
       findPaired: { try await finder.find($0) },
       password: { _ in "fixture-password" },
       authorizeLaunch: { _, _ in },
-      makeSession: { identity in await transfer.setIdentity(identity); return transfer },
+      makeSession: { identity, _ in await transfer.setIdentity(identity); return transfer },
       startLease: { expire in lease.expiration = expire; return { lease.expiration = nil } },
       record: { lease.events.append($0) })
     probe.sceneChanged(.active)

@@ -72,6 +72,7 @@ actor NetworkByteChannel: WirelessByteChannel {
 
   private let driver: any Driver
   private let setupTimeout: Duration
+  private let identityTrace: WirelessIdentityTrace.Observer?
   private var phase = Phase.idle
   private var operation: UUID?
   private var waiter: Waiter?
@@ -81,13 +82,19 @@ actor NetworkByteChannel: WirelessByteChannel {
   private var setupTimer: Task<Void, Never>?
   private var closeWaiters: [CheckedContinuation<Void, Never>] = []
 
-  init(driver: any Driver, setupTimeout: Duration = WirelessLimits.tcpSetup) {
+  init(
+    driver: any Driver, setupTimeout: Duration = WirelessLimits.tcpSetup,
+    identityTrace: WirelessIdentityTrace.Observer? = nil
+  ) {
     self.driver = driver
     self.setupTimeout = setupTimeout
+    self.identityTrace = identityTrace
   }
 
-  static func connect(to endpoint: Endpoint) async throws -> NetworkByteChannel {
-    let channel = NetworkByteChannel(driver: nativeDriver(for: endpoint))
+  static func connect(
+    to endpoint: Endpoint, identityTrace: WirelessIdentityTrace.Observer? = nil
+  ) async throws -> NetworkByteChannel {
+    let channel = NetworkByteChannel(driver: nativeDriver(for: endpoint), identityTrace: identityTrace)
     try await channel.start()
     return channel
   }
@@ -156,6 +163,7 @@ actor NetworkByteChannel: WirelessByteChannel {
           do { try await Task.sleep(for: setupTimeout) } catch { return }
           await self?.setupExpired()
         }
+        identityTrace?(.init(.tcpConnect, .waiting))
         driver.start { signals.yield(.state($0)) }
       }
     } catch {
@@ -230,6 +238,9 @@ actor NetworkByteChannel: WirelessByteChannel {
   private func handle(_ signal: Signal) {
     switch signal {
     case .state(.cancelled):
+      if phase == .connecting {
+        identityTrace?(.init(.tcpConnect, .failed, failure: .cancelled))
+      }
       if phase != .closing { error = WirelessFailure.connectionLost }
       finishClose()
     case .state(.ready):
@@ -238,6 +249,7 @@ actor NetworkByteChannel: WirelessByteChannel {
       setupTimer?.cancel()
       setupTimer = nil
       waiter = nil
+      identityTrace?(.init(.tcpConnect, .completed))
       continuation.resume()
     case .state(.failed(let failure)):
       if phase == .ready, failure == .timeout(.tcpSetup) {
@@ -249,6 +261,11 @@ actor NetworkByteChannel: WirelessByteChannel {
       guard operation == id, case .read(let limit, let continuation) = waiter else { return }
       switch result {
       case .success(let read):
+        if read.isComplete {
+          identityTrace?(.init(.socketRead, .endOfStream, bytes: read.data.count))
+        } else if read.data.isEmpty {
+          identityTrace?(.init(.socketRead, .noData, bytes: 0))
+        }
         guard read.data.count <= limit, read.isComplete || !read.data.isEmpty else {
           beginClose(WirelessFailure.malformedData)
           return
@@ -273,6 +290,9 @@ actor NetworkByteChannel: WirelessByteChannel {
 
   private func beginClose(_ failure: any Error) {
     guard phase != .closing, phase != .closed else { return }
+    if phase == .connecting {
+      identityTrace?(.init(.tcpConnect, .failed, failure: .init(failure)))
+    }
     error = failure
     if phase == .idle {
       finishClose()
@@ -283,11 +303,13 @@ actor NetworkByteChannel: WirelessByteChannel {
     setupTimer = nil
     let pending = waiter
     waiter = nil
+    identityTrace?(.init(.socketClose, .waiting))
     driver.cancel()
     pending?.fail(failure)
   }
 
   private func finishClose() {
+    identityTrace?(.init(.socketClose, .completed))
     phase = .closed
     setupTimer?.cancel()
     setupTimer = nil

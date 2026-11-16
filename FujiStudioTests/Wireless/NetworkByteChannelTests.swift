@@ -114,7 +114,10 @@ final class NetworkByteChannelTests: XCTestCase, @unchecked Sendable {
 
   func testConnectDeadlineClosesAndDiscardsLateReady() async throws {
     let driver = TestConnection()
-    let channel = NetworkByteChannel(driver: driver, setupTimeout: .milliseconds(25))
+    let trace = Mutex([WirelessIdentityTrace.Event]())
+    let channel = NetworkByteChannel(
+      driver: driver, setupTimeout: .milliseconds(25),
+      identityTrace: { event in trace.withLock { $0.append(event) } })
     do {
       try await channel.start()
       XCTFail("Inactive connection became ready")
@@ -129,6 +132,12 @@ final class NetworkByteChannelTests: XCTestCase, @unchecked Sendable {
     } catch {
       XCTAssertEqual(error as? WirelessFailure, .timeout(.tcpSetup))
     }
+    XCTAssertEqual(trace.withLock { $0 }, [
+      .init(.tcpConnect, .waiting),
+      .init(.tcpConnect, .failed, failure: .tcpSetupTimeout),
+      .init(.socketClose, .waiting),
+      .init(.socketClose, .completed),
+    ])
   }
 
   func testReadCapsRequestAndDeliversFinalBytesBeforeEOF() async throws {
