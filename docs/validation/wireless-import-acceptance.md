@@ -737,3 +737,19 @@ still need physical X-T5 validation. In the next trial, record the
 actual BLE write ordinals and readiness results, then compare the
 first D212 batch, the offered DF28 value, and the JPEG and RAW counts.
 The test leaves TCP initialization, timing, and negotiation unchanged.
+
+#### Mixed XApp gallery events
+
+The official XApp trace on X-T5 04.31 returned a 13-byte D212 batch after
+four 9054 requests for the initially unavailable slot 1 received 2013.
+The batch contains numeric D21B (DeviceError) with value 15 followed by
+the known five-byte D22F (DatabaseFilename) record. The XApp event
+reader preserves the numeric records and consumes the exact short
+terminal record without returning a numeric value for it.
+
+The Debug regression replay uses the native card-switch sequence. It
+supplies the captured batch after slot 2's 9050 and checks D22B,
+inventory, JPEG and RAW enumeration, and session cleanup. The physical
+capture shows the batch on the first slot. Event delivery after a slot
+switch and the native gallery's JPEG and RAW counts still need a
+physical trial.

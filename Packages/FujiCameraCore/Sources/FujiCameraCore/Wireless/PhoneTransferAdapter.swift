@@ -47,16 +47,22 @@ extension CameraHostedTransferSession {
   @discardableResult
   func readEvents(whileClosing: Bool = false) async throws -> [UInt32: UInt32] {
     let data = try await execute(0x1015, [0xd212], whileClosing: whileClosing).data
-    // The X-T5 XApp gallery can return this single D22F (DatabaseFilename) event
-    // after 9050. Consume the exact captured form without producing a UInt32 value.
-    if mode == .xApp, data == Data([0x01, 0x00, 0x2f, 0xd2, 0x01, 0x00, 0x00]) {
-      return [:]
-    }
     guard data.count >= 2 else { throw WirelessFailure.malformedData }
     let count = Int(try Self.scalar(Data(data.prefix(2)), widths: [2]))
-    guard data.count == 2 + count * 6, count <= 4096 else { throw WirelessFailure.malformedData }
+    guard count <= 4096 else { throw WirelessFailure.malformedData }
+    let fixedSize = 2 + count * 6
+    let numericEnd: Int
+    if mode == .xApp, count > 0, data.count == fixedSize - 1,
+       data.suffix(5) == Data([0x2f, 0xd2, 0x01, 0x00, 0x00]) {
+      // The X-T5 XApp gallery can end its event batch with this exact short
+      // D22F (DatabaseFilename) record. It has no UInt32 value to return.
+      numericEnd = data.count - 5
+    } else {
+      guard data.count == fixedSize else { throw WirelessFailure.malformedData }
+      numericEnd = fixedSize
+    }
     var events: [UInt32: UInt32] = [:]
-    for offset in stride(from: 2, to: data.count, by: 6) {
+    for offset in stride(from: 2, to: numericEnd, by: 6) {
       let property = try Self.scalar(data.subdata(in: offset..<(offset + 2)), widths: [2])
       events[property] = try Self.scalar(data.subdata(in: (offset + 2)..<(offset + 6)))
     }

@@ -5,6 +5,10 @@ import XCTest
 @testable import FujiCameraCore
 
 final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
+  private let mixedXAppEvents = Data([
+    0x02, 0x00, 0x1b, 0xd2, 0x0f, 0x00, 0x00, 0x00, 0x2f, 0xd2, 0x01, 0x00, 0x00,
+  ])
+
   func testXAppInitializationWritesTheConfiguredClientNameAndPreservesTheDefault() async throws {
     let camera = identity(.xt5)
     let guid = Data(0..<16)
@@ -57,18 +61,63 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
     XCTAssertEqual(remaining, 0)
   }
 
-  func testLegacyEventReaderRejectsTheShortXAppFilenameEvent() async throws {
-    let channel = Replay(start(.xe3, "1.32") + [
-      .property(0xd212, Data([0x01, 0x00, 0x2f, 0xd2, 0x01, 0x00, 0x00])), .read(0x1003),
-    ])
+  func testXAppEventReaderPreservesNumericEventsBeforeTheShortFilenameEvent() async throws {
+    let filename = Data([0x2f, 0xd2, 0x01, 0x00, 0x00])
+    let numeric = events([(0xd21b, 15), (0xd22f, 0x12345678), (0xdf00, 6)]).dropFirst(2)
+    let replies: [(Data, [UInt32: UInt32])] = [
+      (mixedXAppEvents, [0xd21b: 15]),
+      (Data([4, 0]) + numeric + filename, [0xd21b: 15, 0xd22f: 0x12345678, 0xdf00: 6]),
+    ]
+    let records = Data(mixedXAppEvents.dropFirst(2))
+    let deviceError = Data(events([(0xd21b, 15)]).dropFirst(2))
+    let oversized = word(4097, 2) + Data(repeating: 0, count: 4096 * 6)
+    let malformed: [Data] = [
+      Data([0x00, 0x00]) + records,
+      Data([0x03, 0x00]) + records,
+      Data(mixedXAppEvents.dropLast()),
+      mixedXAppEvents + Data([0, 0]),
+      Data(mixedXAppEvents.dropLast()) + Data([1]),
+      Data(mixedXAppEvents.dropLast(5)) + Data([0x30, 0xd2, 1, 0, 0]),
+      Data([0x02, 0x00]) + filename + deviceError,
+      oversized + filename,
+    ]
+    let channel = Replay(start(.xt5, "4.31")
+      + (replies.map { $0.0 } + malformed).map { .property(0xd212, $0) }
+      + [.read(0x1003)])
     let session = CameraHostedTransferSession(
-      transport: .init(channel: channel), expectedIdentity: identity(.xe3), mode: .phone,
+      transport: .init(channel: channel), expectedIdentity: identity(.xt5), mode: .xApp,
       clientGUID: Data(repeating: 1, count: 16))
     _ = try await session.open()
-    await expect(.malformedData) { _ = try await session.readEvents() }
+    for (_, expected) in replies {
+      let actual = try await session.readEvents()
+      XCTAssertEqual(actual, expected)
+    }
+    for _ in malformed {
+      await expect(.malformedData) { _ = try await session.readEvents() }
+    }
     try await session.close()
     let remaining = await channel.remaining
     XCTAssertEqual(remaining, 0)
+  }
+
+  func testLegacyEventReadersRejectTheShortXAppFilenameEvent() async throws {
+    let filename = Data([0x01, 0x00, 0x2f, 0xd2, 0x01, 0x00, 0x00])
+    for mode in [WirelessMode.phone, .autoSave] {
+      let channel = Replay(start(.xe3, "1.32") + [
+        .property(0xd212, filename), .property(0xd212, mixedXAppEvents), .read(0x1003),
+      ])
+      let camera = mode == .autoSave ? autoSaveIdentity() : identity(.xe3)
+      let session = CameraHostedTransferSession(
+        transport: .init(channel: channel), expectedIdentity: camera, mode: mode,
+        clientGUID: Data(repeating: 1, count: 16))
+      _ = try await session.open()
+      for _ in 0..<2 {
+        await expect(.malformedData) { _ = try await session.readEvents() }
+      }
+      try await session.close()
+      let remaining = await channel.remaining
+      XCTAssertEqual(remaining, 0)
+    }
   }
 
   #if DEBUG
@@ -289,6 +338,36 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
     try await session.close()
     let remaining = await channel.remaining
     XCTAssertEqual(remaining, 0)
+  }
+
+  func testGalleryEnumeratesTheSecondSlotAfterMixedEvents() async throws {
+    // Regression replay of the native card-switch sequence using the captured
+    // event bytes. The official trace returned those bytes on the first slot.
+    let unavailableSlot: [Exchange] = [
+      .property(0xd244, Data([1])), .rejection(0x9054, [0x10000001], 0x2013),
+      .write(0xd244, [2]),
+    ]
+    let availableSlot = card([1, 2], storage: 2, postOpenEvents: mixedXAppEvents)
+    let inventory: [Exchange] = [
+      originalMode,
+      .read(0x1008, [1], object("PAIR.RAF", format: 0xb103, bytes: 3)),
+      .read(0x1008, [2], object("PAIR.JPG", format: 0x3801, bytes: 5)),
+    ]
+    let channel = Replay(galleryStartup + unavailableSlot + availableSlot + inventory + [.read(0x1003)])
+    let session = diagnosticSession(channel)
+    let gallery = try await session.listCameraPhotos()
+    XCTAssertEqual(gallery.cards.map(\.summary.status), [.unavailable, .available])
+    XCTAssertEqual(gallery.cards.map(\.summary.totalHandles), [nil, 2])
+    XCTAssertEqual(gallery.cards.map(\.summary.rafCount), [0, 1])
+    XCTAssertEqual(gallery.cards.map(\.summary.jpegCount), [0, 1])
+    let candidates = try await session.scannedPairCandidates()
+    XCTAssertEqual(candidates.map(\.storageID), [2, 2])
+    XCTAssertEqual(Set(candidates.map(\.filename)), ["PAIR.RAF", "PAIR.JPG"])
+    try await session.close()
+    let remaining = await channel.remaining
+    let closed = await channel.closed
+    XCTAssertEqual(remaining, 0)
+    XCTAssertTrue(closed)
   }
 
   func testGalleryRejectsInvalidHandlesAndMetadataBeforeReturningResults() async throws {
@@ -929,13 +1008,15 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
   }
 
   private func autoSaveSession(_ channel: Replay) -> any WirelessTransferSession {
-    let key = Data(SHA256.hash(data: Data("FujiStudio:PTP-DeviceInfo:X-E3:private".utf8)))
-    return AutoSaveTransferAdapter.makeSession(
-      transport: .init(channel: channel),
-      expectedIdentity: .init(
-        cameraID: WirelessCameraID(), model: .xe3, firmware: "1.32",
-        protocolPeerKey: .init(bytes: key)),
+    AutoSaveTransferAdapter.makeSession(
+      transport: .init(channel: channel), expectedIdentity: autoSaveIdentity(),
       clientGUID: Data(repeating: 1, count: 16))
+  }
+
+  private func autoSaveIdentity() -> WirelessIdentity {
+    let key = Data(SHA256.hash(data: Data("FujiStudio:PTP-DeviceInfo:X-E3:private".utf8)))
+    return .init(
+      cameraID: WirelessCameraID(), model: .xe3, firmware: "1.32", protocolPeerKey: .init(bytes: key))
   }
 
   func testXAppEnumeratesBothSlotsAndRefetchesInOriginalModeBeforeStreaming() async throws {
@@ -1298,14 +1379,15 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
      .property(0xd244, Data([1])), .property(0xd212, events([(0xdf00, 20)]))]
   }
 
-  private func cardSetup(storage: UInt8 = 1) -> [Exchange] {
+  private func cardSetup(storage: UInt8 = 1, postOpenEvents: Data = Data([0, 0])) -> [Exchange] {
     [.property(0xd244, Data([storage])),
      .read(0x9054, [0x10000001]), .read(0x9055, [0x10000001]), .read(0x9050),
-     .property(0xd212, events()), .property(0xd22b, word(0))]
+     .property(0xd212, postOpenEvents), .property(0xd22b, word(0))]
   }
 
-  private func card(_ handles: [UInt32], storage: UInt8 = 1) -> [Exchange] {
-    cardSetup(storage: storage) + cardRefresh([]) + [.galleryJPEGRAWFilter] + cardRefresh(handles)
+  private func card(_ handles: [UInt32], storage: UInt8 = 1, postOpenEvents: Data = Data([0, 0])) -> [Exchange] {
+    cardSetup(storage: storage, postOpenEvents: postOpenEvents)
+      + cardRefresh([]) + [.galleryJPEGRAWFilter] + cardRefresh(handles)
   }
 
   private func cardRefresh(_ handles: [UInt32]) -> [Exchange] {
