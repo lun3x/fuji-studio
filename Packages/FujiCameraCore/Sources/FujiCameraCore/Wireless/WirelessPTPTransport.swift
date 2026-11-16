@@ -389,6 +389,7 @@ public actor WirelessPTPTransport: PTPTransport {
       case (0x9055, _): .galleryPreviewSetup
       case (0x9050, _): .galleryModeStatus
       case (0x1015, 0xd22b): .gallerySelectedImages
+      case (0x9051, _): .galleryFilterReset
       case (0x9053, _): .galleryObjectListBegin
       case (0x1015, 0xd620): .galleryObjectCount
       case (0x1015, 0xd621): .galleryHandleList

@@ -72,6 +72,8 @@ extension CameraHostedTransferSession {
     _ = try await execute(0x9050)
     _ = try await readEvents()
     _ = try await property(0xd22b)
+    // The X-T5 XApp trace clears all filter records before refreshing the object list.
+    _ = try await execute(0x9051, data: Data([0, 0, 0, 0]))
     _ = try await execute(0x9053, [0, 30_000])
     let count = try await readScalar(0xd620)
     let payload = try await property(0xd621)

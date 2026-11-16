@@ -142,29 +142,66 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
     XCTAssertTrue(closed)
   }
 
-  func testGalleryListsCompleteHandleCountsAndSamplesWithCardAffinity() async throws {
+  func testGalleryClearsPriorJPEGFilterAndScansBeyondTheSample() async throws {
     for emptyDeviceInfo in [false, true] {
       let startup: [Exchange] = emptyDeviceInfo
         ? [.read(0x1002, [1]), .emptyDeviceInfo] : start(.xt5, "4.31")
       let handles = (1...34).map(UInt32.init)
-      let sample = handles.map {
+      let metadata = handles.map {
         if $0 == 33 { return Exchange.read(0x1008, [$0], object("LATE.RAF", format: 0xb103, bytes: 789)) }
         return Exchange.read(0x1008, [$0], object("SAMPLE\($0).JPG", format: 0x3801, bytes: 456))
       }
-      let channel = Replay(startup + galleryStartup + xappSetup.dropFirst() + card(handles)
-        + sample + [.write(0xd244, [2])] + card([1], storage: 2)
-        + [.read(0x1008, [1], object("SECOND.RAF", format: 0xb103, bytes: 789)), .read(0x1003)])
+      let jpegOnly = handles.filter { $0 != 33 }
+      var reset = Exchange.galleryFilterReset
+      reset.alternative = cardRefresh(jpegOnly) + metadata.filter { $0.parameters != [33] }
+      let channel = Replay(startup + galleryStartup + xappSetup.dropFirst() + cardSetup()
+        + [reset] + cardRefresh(handles) + metadata + [
+          .write(0xd244, [2]), .property(0xd244, Data([2])),
+          .rejection(0x9054, [0x10000001], 0x2013), .read(0x1003),
+        ])
       let session = diagnosticSession(channel)
       let result = try await session.listCameraPhotos()
       XCTAssertEqual(result.wifiIdentityAvailable, !emptyDeviceInfo)
-      XCTAssertEqual(result.cards.map(\.summary.totalHandles), [34, 1])
+      XCTAssertEqual(result.cards.map(\.summary.totalHandles), [34, nil])
       XCTAssertEqual(result.cards.map(\.summary.jpegCount), [33, 0])
-      XCTAssertEqual(result.cards.map(\.summary.rafCount), [1, 1])
+      XCTAssertEqual(result.cards.map(\.summary.rafCount), [1, 0])
+      XCTAssertEqual(result.cards.map(\.summary.scannedCount), [34, 0])
+      let candidates = try await session.scannedPairCandidates()
+      XCTAssertEqual(candidates.filter { $0.format == .raf }.map(\.filename), ["LATE.RAF"])
       XCTAssertEqual(result.cards[0].samples.count, 32)
       XCTAssertEqual(result.cards[0].samples.first?.filename, "SAMPLE1.JPG")
-      XCTAssertEqual(result.cards[1].samples.first?.filename, "SECOND.RAF")
-      XCTAssertEqual(result.cards[1].samples.first?.byteLength, 789)
       await expect(.connectionLost) { _ = try await session.enumerate() }
+      try await session.close()
+      let remaining = await channel.remaining
+      let closed = await channel.closed
+      XCTAssertEqual(remaining, 0)
+      XCTAssertTrue(closed)
+    }
+  }
+
+  func testGalleryDoesNotReturnInventoryOrDownloadCandidatesAfterInvalidFilterResetReply() async throws {
+    let setup = start(.xt5, "4.31") + galleryStartup + xappSetup.dropFirst() + cardSetup()
+    let failures: [(Exchange, PTPError, [Exchange])] = [
+      (.init(opcode: 0x9051, parameters: [], outbound: Data([0, 0, 0, 0]), response: 0x2002),
+        .responseCode(0x2002), [.read(0x1003)]),
+      (.init(opcode: 0x9051, parameters: [], outbound: Data([0, 0, 0, 0]), omitsResponse: true),
+        .truncatedContainer, []),
+      (.init(opcode: 0x9051, parameters: [], outbound: Data([0, 0, 0, 0]), responseTransaction: 0),
+        .wrongTransaction(expected: UInt32(setup.count + 1), actual: 0), []),
+    ]
+    let candidate = WirelessObjectDescriptor(
+      cameraID: .init(), sessionID: .init(), storageID: 1, handle: 1, filename: "PAIRED.RAF", format: .raf, byteLength: 3)
+    for (reset, failure, cleanup) in failures {
+      let channel = Replay(setup + [reset] + cleanup)
+      let session = diagnosticSession(channel)
+      do {
+        _ = try await session.listCameraPhotos()
+        XCTFail("A failed filter reset returned a gallery")
+      } catch {
+        XCTAssertEqual(error as? PTPError, failure)
+      }
+      await expect(.objectChanged) { _ = try await session.scannedPairCandidates() }
+      await expect(.objectChanged) { _ = try await session.downloadGalleryCandidate(candidate) { _ in XCTFail() } }
       try await session.close()
       let remaining = await channel.remaining
       let closed = await channel.closed
@@ -897,11 +934,18 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
      .property(0xd244, Data([1]))]
   }
 
-  private func card(_ handles: [UInt32], storage: UInt8 = 1) -> [Exchange] {
+  private func cardSetup(storage: UInt8 = 1) -> [Exchange] {
     [.property(0xd244, Data([storage])),
      .read(0x9054, [0x10000001]), .read(0x9055, [0x10000001]), .read(0x9050),
-     .property(0xd212, events()), .property(0xd22b, word(0)),
-     .read(0x9053, [0, 30000]), .property(0xd620, word(UInt32(handles.count))),
+     .property(0xd212, events()), .property(0xd22b, word(0))]
+  }
+
+  private func card(_ handles: [UInt32], storage: UInt8 = 1) -> [Exchange] {
+    cardSetup(storage: storage) + [.galleryFilterReset] + cardRefresh(handles)
+  }
+
+  private func cardRefresh(_ handles: [UInt32]) -> [Exchange] {
+    [.read(0x9053, [0, 30000]), .property(0xd620, word(UInt32(handles.count))),
      .property(0xd621, word(UInt32(handles.count)) + handles.reduce(into: Data()) { $0 += word($1) })]
   }
 
@@ -938,6 +982,12 @@ private struct Exchange: Sendable {
   var sendsEmptyData = false
   var dataCode: UInt16?
   var responseTransaction: UInt32?
+  var omitsResponse = false
+  var alternative: [Exchange] = []
+
+  static var galleryFilterReset: Self {
+    .init(opcode: 0x9051, parameters: [], outbound: Data([0, 0, 0, 0]))
+  }
 
   static var emptyDeviceInfo: Self { .init(opcode: 0x1001, parameters: [], sendsEmptyData: true) }
 
@@ -1013,6 +1063,16 @@ private actor Replay: WirelessByteChannel {
     }
     let parameters = step.parameters.reduce(into: Data()) { $0 += word($1) }
     let expectedCommand = frame(1, step.opcode, transaction, parameters)
+    if !waitingForData, let alternate = step.alternative.first {
+      let alternateParameters = alternate.parameters.reduce(into: Data()) { $0 += word($1) }
+      if data == frame(1, alternate.opcode, transaction, alternateParameters) {
+        // The camera kept its previous view when the application refreshed without a reset.
+        let nextCard = exchanges.dropFirst().firstIndex { $0.parameters == [0xd244] } ?? exchanges.endIndex
+        exchanges.replaceSubrange(..<nextCard, with: step.alternative)
+        try await write(data)
+        return
+      }
+    }
     if data != expectedCommand, let alternative = optionalReads.first(where: { exchange in
       let parameters = exchange.parameters.reduce(into: Data()) { $0 += word($1) }
       return data == frame(1, exchange.opcode, transaction, parameters)
@@ -1076,7 +1136,9 @@ private actor Replay: WirelessByteChannel {
       buffer += frame(2, step.dataCode ?? step.opcode, transaction, step.payload)
     }
     let count = step.opcode == 0x101b ? word(UInt32(step.payload.count)) : Data()
-    buffer += frame(3, step.response, step.responseTransaction ?? transaction, count)
+    if !step.omitsResponse {
+      buffer += frame(3, step.response, step.responseTransaction ?? transaction, count)
+    }
     transaction += 1
   }
 
