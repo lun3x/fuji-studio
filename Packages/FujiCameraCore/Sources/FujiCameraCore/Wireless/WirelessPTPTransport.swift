@@ -73,6 +73,19 @@ public actor WirelessPTPTransport: PTPTransport {
     try await transact(command, outgoing: nil, expectedBytes: expectedBytes, sink: sink).reply
   }
 
+  /// The X-T5 can return less than requested. The declared payload still has to arrive in full.
+  func receivePartialObject(
+    _ command: PTPCommand, maximumBytes: UInt32, sink: @escaping @Sendable (Data) async throws -> Void
+  ) async throws -> UInt32 {
+    let result = try await transact(command, outgoing: nil, expectedBytes: UInt64(maximumBytes),
+      acceptsShortPartialObject: true, sink: sink)
+    let received = result.dataByteCount
+    guard result.reply.parameters.isEmpty || result.reply.parameters == [received] else {
+      throw WirelessFailure.malformedData
+    }
+    return received
+  }
+
   public func close() async {
     await terminate(PTPError.notConnected)
   }
@@ -80,10 +93,12 @@ public actor WirelessPTPTransport: PTPTransport {
   private struct TransactionReply: Sendable {
     let reply: PTPReply
     let receivedDataContainer: Bool
+    let dataByteCount: UInt32
   }
 
   private func transact(
     _ command: PTPCommand, outgoing: Data?, expectedBytes: UInt64?,
+    acceptsShortPartialObject: Bool = false,
     sink: (@Sendable (Data) async throws -> Void)?
   ) async throws -> TransactionReply {
     try ensureIdle()
@@ -99,6 +114,7 @@ public actor WirelessPTPTransport: PTPTransport {
       throw PTPError.payloadTooLarge
     }
     let partialLimit = try validatePartialRequest(command, expectedBytes: expectedBytes)
+    guard !acceptsShortPartialObject || partialLimit != nil else { throw PTPError.invalidParameters }
     let inventory = InventoryShape(command)
     guard sink == nil || inventory == nil else { throw PTPError.invalidParameters }
 
@@ -129,7 +145,10 @@ public actor WirelessPTPTransport: PTPTransport {
         guard receivedBytes <= limit, receivedBytes <= partialLimit ?? limit else {
           throw PTPError.payloadTooLarge
         }
-        if let expectedBytes, receivedBytes != expectedBytes { throw PTPError.truncatedContainer }
+        if let expectedBytes, !acceptsShortPartialObject, receivedBytes != expectedBytes {
+          throw PTPError.truncatedContainer
+        }
+        if acceptsShortPartialObject, receivedBytes == 0 { throw PTPError.truncatedContainer }
         if let sink {
           try await transport.stream(header.payloadLength, to: sink)
         } else {
@@ -145,14 +164,19 @@ public actor WirelessPTPTransport: PTPTransport {
       do {
         let reply = try PTPCodec.decode(
           response: bytes, data: payload, for: command, maximumDataBytes: Self.maximumMetadataBytes)
-        if let expectedBytes, receivedBytes != expectedBytes { throw PTPError.truncatedContainer }
+        if acceptsShortPartialObject {
+          guard receivedBytes > 0 else { throw PTPError.truncatedContainer }
+        } else if let expectedBytes, receivedBytes != expectedBytes {
+          throw PTPError.truncatedContainer
+        }
         if inventory != nil, payload.isEmpty { throw PTPError.truncatedContainer }
         if command.opcode == 0x1006 {
           guard let count = reply.parameters.first else { throw PTPError.truncatedContainer }
           guard count <= Self.maximumObjectsPerStorage else { throw PTPError.payloadTooLarge }
         }
         transport.finishTrace()
-        return .success(.init(reply: reply, receivedDataContainer: receivedDataContainer))
+        return .success(.init(reply: reply, receivedDataContainer: receivedDataContainer,
+          dataByteCount: UInt32(receivedBytes)))
       } catch let PTPError.responseCode(code) {
         transport.finishTrace(failure: .rejected, responseCode: code)
         // A complete, correlated rejection consumed its response. The socket is synchronized.

@@ -67,6 +67,7 @@ final class NativeBluetoothGateway: BluetoothGateway {
 
   private let store: any CameraPairingStore
   private let driver: any BluetoothPeripheralDriver
+  private let usesXT5PhotoTransfer: Bool
   private var availability = BluetoothAvailability.unknown
   private var advertisements: [UUID: Advertisement] = [:]
   private var discovery: (id: UUID, continuation: Discovery.Continuation)?
@@ -78,9 +79,11 @@ final class NativeBluetoothGateway: BluetoothGateway {
   private var operationID: UUID?
   private var disconnectWaiters: [CheckedContinuation<Void, Never>] = []
 
-  init(store: any CameraPairingStore, driver: any BluetoothPeripheralDriver = CoreBluetoothDriver()) {
+  init(store: any CameraPairingStore, driver: any BluetoothPeripheralDriver = CoreBluetoothDriver(),
+       usesXT5PhotoTransfer: Bool = false) {
     self.store = store
     self.driver = driver
+    self.usesXT5PhotoTransfer = usesXT5PhotoTransfer
     driver.eventHandler = { [weak self] event in self?.receive(event) }
   }
 
@@ -366,7 +369,7 @@ final class NativeBluetoothGateway: BluetoothGateway {
     switch model {
     case .xt5:
       guard token == nil else { throw WirelessFailure.peerMismatch }
-      session?.profile = XT5BLEProfile()
+      session?.profile = XT5BLEProfile(photoTransfer: usesXT5PhotoTransfer)
     case .xe3:
       guard let token else { throw WirelessFailure.authentication }
       session?.profile = XE3BLEProfile(intent: pairing ? .pair(token) : .reconnect(token))

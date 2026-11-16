@@ -132,11 +132,13 @@ struct FujiBLEHandshake: Sendable {
     case readStatus
     case writeAuthentication
     case identify
+    case writeAppFlags(ArraySlice<BLEGATTCharacteristic>)
     case readSSID
     case subscribe(ArraySlice<BLEGATTCharacteristic>)
     case readFirmware
     case authenticated
     case readPassword
+    case readWiFiStatus(password: String)
     case launchWiFi(password: String, earlyStatus: UInt8?)
     case waitForWiFi(password: String)
     case failed
@@ -145,6 +147,8 @@ struct FujiBLEHandshake: Sendable {
   let method: Method
   let subscriptions: [BLEGATTCharacteristic]
   private let requiredSubscriptions: Set<BLEGATTCharacteristic>
+  private let xAppPhotoTransfer: Bool
+  private var appFlags: [BLEGATTCharacteristic] = []
   private var stage = Stage.waitingForServices
   private var characteristics: Set<BLEGATTCharacteristic> = []
   private var networkSSID: String?
@@ -156,11 +160,12 @@ struct FujiBLEHandshake: Sendable {
 
   init(
     method: Method, subscriptions: [BLEGATTCharacteristic],
-    requiredSubscriptions: Set<BLEGATTCharacteristic> = []
+    requiredSubscriptions: Set<BLEGATTCharacteristic> = [], xAppPhotoTransfer: Bool = false
   ) {
     self.method = method
     self.subscriptions = subscriptions
     self.requiredSubscriptions = requiredSubscriptions.union([FujiBLEGATT.readiness])
+    self.xAppPhotoTransfer = xAppPhotoTransfer
   }
 
   mutating func receive(_ event: BLEProtocolEvent) throws -> [BLEProtocolAction] {
@@ -178,6 +183,13 @@ struct FujiBLEHandshake: Sendable {
     case (.waitingForServices, .services(let discovered)):
       let required = requiredSubscriptions.union([method.characteristic, identification])
       guard required.isSubset(of: discovered) else { throw WirelessFailure.unsupportedProtocol }
+      if xAppPhotoTransfer {
+        appFlags = try XT5BLEProfile.appFlagUUIDs.map { uuid in
+          let matches = discovered.filter { $0.characteristic == uuid }
+          guard matches.count == 1, let match = matches.first else { throw WirelessFailure.unsupportedProtocol }
+          return match
+        }
+      }
       characteristics = discovered
       switch method {
       case .secure(let status):
@@ -199,11 +211,10 @@ struct FujiBLEHandshake: Sendable {
       return [.write(identification, Data("Fuji Studio".utf8), .identify)]
 
     case (.identify, .wrote(let characteristic)) where characteristic == identification:
-      if characteristics.contains(GATT.ssid) {
-        stage = .readSSID
-        return [.read(GATT.ssid)]
-      }
-      return subscribe(to: subscriptions.filter(characteristics.contains)[...])
+      return writeAppFlags(appFlags[...])
+
+    case (.writeAppFlags(let remaining), .wrote(let characteristic)) where characteristic == remaining.first:
+      return writeAppFlags(remaining.dropFirst())
 
     case (.readSSID, .read(GATT.ssid, let bytes)):
       networkSSID = Self.text(bytes, length: 1...32)
@@ -239,8 +250,24 @@ struct FujiBLEHandshake: Sendable {
       guard let password = Self.text(bytes, length: 8...63) else {
         throw WirelessFailure.malformedData
       }
+      if xAppPhotoTransfer {
+        stage = .readWiFiStatus(password: password)
+        return [.read(GATT.readiness)]
+      }
       stage = .launchWiFi(password: password, earlyStatus: nil)
       return [.write(GATT.launch, Data([0x04, 0x00]), .activateWiFi)]
+
+    case (.readWiFiStatus(let password), .read(GATT.readiness, let bytes)):
+      switch Array(bytes) {
+      case [0x03, 0x80], [0x00, 0x80]:
+        stage = .launchWiFi(password: password, earlyStatus: nil)
+        return [.write(GATT.launch, Data([0x03, 0x00]), .activateWiFi)]
+      case [0x01, 0x80]: return try acceptWiFiStatus(1, password: password)
+      case [0x02, 0x80]:
+        stage = .waitForWiFi(password: password)
+        return []
+      default: throw WirelessFailure.malformedData
+      }
 
     case (.launchWiFi(let password, let earlyStatus), .wrote(GATT.launch)):
       return try acceptWiFiStatus(earlyStatus, password: password)
@@ -264,6 +291,18 @@ struct FujiBLEHandshake: Sendable {
     default:
       return []
     }
+  }
+
+  private mutating func writeAppFlags(_ remaining: ArraySlice<BLEGATTCharacteristic>) -> [BLEProtocolAction] {
+    if let next = remaining.first {
+      stage = .writeAppFlags(remaining)
+      return [.write(next, Data([0x01]), .identify)]
+    }
+    if characteristics.contains(FujiBLEGATT.ssid) {
+      stage = .readSSID
+      return [.read(FujiBLEGATT.ssid)]
+    }
+    return subscribe(to: subscriptions.filter(characteristics.contains)[...])
   }
 
   private mutating func subscribe(

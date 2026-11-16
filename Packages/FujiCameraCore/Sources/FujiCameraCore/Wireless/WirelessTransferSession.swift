@@ -36,15 +36,19 @@ actor CameraHostedTransferSession: WirelessTransferSession {
   private let clientGUID: Data
   private let clientName: String
   private let replayCapturedGalleryTiming: Bool
+  private let verifiedCameraNetwork: Bool
   private let sessionID = UUID()
   #if DEBUG
   var galleryObjects: [UInt32: [UInt32: WirelessObjectDescriptor]]?
+  #endif
   var galleryOriginalModePrepared = false
   var galleryOriginalRestoration: GalleryOriginalRestoration?
-  #endif
   private var peer: WirelessIdentity?
   private var didOpenSession = false
   private var closing: Task<Void, Error>?
+  private var keepAliveTimer: Task<Void, Never>?
+  private var keepAliveRequest: Task<Void, Error>?
+  private var keepAliveFailure: (any Error)?
   var busy = false
   private var transactionID: UInt32 = 0
 
@@ -65,7 +69,8 @@ actor CameraHostedTransferSession: WirelessTransferSession {
 
   init(
     transport: WirelessPTPTransport, expectedIdentity: WirelessIdentity, mode: WirelessMode,
-    clientGUID: Data, clientName: String? = nil, replayCapturedGalleryTiming: Bool = false
+    clientGUID: Data, clientName: String? = nil, replayCapturedGalleryTiming: Bool = false,
+    verifiedCameraNetwork: Bool = false
   ) {
     self.transport = transport
     self.expectedIdentity = expectedIdentity
@@ -73,6 +78,7 @@ actor CameraHostedTransferSession: WirelessTransferSession {
     self.clientGUID = clientGUID
     self.clientName = clientName ?? "Fuji Studio"
     self.replayCapturedGalleryTiming = replayCapturedGalleryTiming
+    self.verifiedCameraNetwork = verifiedCameraNetwork
   }
 
   func open() async throws -> WirelessIdentity {
@@ -83,8 +89,16 @@ actor CameraHostedTransferSession: WirelessTransferSession {
       throw WirelessFailure.autoSaveIdentityUnavailable
     }
     if let peer, closing == nil { return peer }
-    try begin()
+    try await begin()
     defer { busy = false }
+    if verifiedCameraNetwork {
+      try await openGallery()
+      let observed = WirelessIdentity(
+        cameraID: expectedIdentity.cameraID, model: .xt5, firmware: expectedIdentity.firmware,
+        firmwareFromBluetooth: true)
+      peer = observed
+      return observed
+    }
     try await startSession()
     let data = try await execute(0x1001).data
     let (device, observed) = try validateDeviceInfo(data)
@@ -98,7 +112,10 @@ actor CameraHostedTransferSession: WirelessTransferSession {
     let request = try FujiWirelessFrameDecoder.initializationRequest(
       clientName: clientName, clientGUID: clientGUID)
     do {
-      _ = try await transport.initialize(request)
+      let reply = try await transport.initialize(request)
+      if verifiedCameraNetwork, try FujiWirelessFrameDecoder.initializationName(reply) != expectedIdentity.model.rawValue {
+        throw WirelessFailure.peerMismatch
+      }
     } catch PTPError.authorizationDenied {
       throw WirelessFailure.authentication
     }
@@ -144,6 +161,7 @@ actor CameraHostedTransferSession: WirelessTransferSession {
     markGalleryRestorationUnconfirmed(.cancelled)
     await transport.close()
   }
+  #endif
 
   func openGallery() async throws {
     guard WirelessSupportPolicy().assess(model: expectedIdentity.model.rawValue, firmware: expectedIdentity.firmware)
@@ -163,8 +181,9 @@ actor CameraHostedTransferSession: WirelessTransferSession {
     try await checkXAppStartup(validatesRemoteVersion: false)
   }
 
+  #if DEBUG
   func checkConnection() async throws -> XAppConnectionDiagnosticResult {
-    try begin()
+    try await begin()
     defer { busy = false }
     let connection = try await openXAppDiagnostic()
     if connection == .respondingWithoutDeviceInfo { try await checkXAppStartup() }
@@ -196,7 +215,7 @@ actor CameraHostedTransferSession: WirelessTransferSession {
     try requireAdmission()
     let evidenceID: String
     switch mode {
-    case .xApp: evidenceID = "libfuji-xapp-reference"
+    case .xApp: evidenceID = verifiedCameraNetwork ? "xt5-camera-network" : "libfuji-xapp-reference"
     case .phone: evidenceID = "libfuji-phone-reference"
     case .autoSave: evidenceID = "libfuji-autosave-reference"
     }
@@ -210,17 +229,18 @@ actor CameraHostedTransferSession: WirelessTransferSession {
     try requireAdmission()
     if let inventoryFailure { throw inventoryFailure }
     if storageIDs == nil {
-      try begin()
+      try await begin()
       defer { busy = false }
       do {
         let slots: [UInt32]
         switch mode {
-        case .xApp: slots = try await configureXApp()
+        case .xApp: slots = try await (verifiedCameraNetwork ? configureXAppGalleryMode() : configureXApp())
         case .phone: slots = try await configurePhone()
         case .autoSave: slots = try await configureAutoSave()
         }
         storageIDs = slots.sorted()
         pendingStorage = slots
+        if verifiedCameraNetwork { startKeepAlive() }
       } catch {
         inventoryFailure = error
         throw error
@@ -235,7 +255,7 @@ actor CameraHostedTransferSession: WirelessTransferSession {
     if let inventoryFailure { throw inventoryFailure }
     if index < batches.count { return batches[index] }
     guard cardScan != nil || !pendingStorage.isEmpty else { return nil }
-    try begin()
+    try await begin()
     defer { busy = false }
     do {
       var batch = try await scanNextBatch()
@@ -258,7 +278,7 @@ actor CameraHostedTransferSession: WirelessTransferSession {
       let handles: [UInt32]?
       if mode == .xApp {
         handles = try await configureXAppCard(storage)
-        if let handles, !handles.isEmpty { try await recordXAppOriginalSize() }
+        if let handles, !handles.isEmpty { try await prepareOriginals(for: storage) }
       } else if let legacyObjectCount {
         // The legacy gallery exposes consecutive handles starting at 1.
         handles = (0..<legacyObjectCount).map { $0 + 1 }
@@ -273,6 +293,7 @@ actor CameraHostedTransferSession: WirelessTransferSession {
     guard var scan = cardScan else { throw WirelessFailure.unavailableStorage }
     if !scan.handles.isEmpty, selectedStorage != scan.id {
       try await selectStorage(for: scan.id)
+      if verifiedCameraNetwork { try await prepareOriginals(for: scan.id) }
     }
     var additions: [WirelessObjectDescriptor] = []
     let previousExposure = rawExposure
@@ -304,9 +325,10 @@ actor CameraHostedTransferSession: WirelessTransferSession {
   func thumbnail(_ object: WirelessObjectDescriptor) async throws -> Data {
     try checkMember(object)
     guard object.hasThumbnail else { return Data() }
-    try begin()
+    try await begin()
     defer { busy = false }
     try await selectStorage(for: object.storageID)
+    if verifiedCameraNetwork { try await prepareOriginals(for: object.storageID) }
     return try await withAccurateLegacyLengths {
       // Libfuji observes that newer camera bodies require ObjectInfo immediately before GetThumb.
       try await verifyObject(object)
@@ -322,10 +344,10 @@ actor CameraHostedTransferSession: WirelessTransferSession {
     guard mode == .xApp else { throw WirelessFailure.originalSizeUnavailable }
     let length = try originalLength(object)
     guard !xAppOriginalControlConflict else { throw WirelessFailure.inconsistentOriginalSizeObservations }
-    try begin()
+    try await begin()
     defer { busy = false }
     try await selectStorage(for: object.storageID)
-    try await recordXAppOriginalSize()
+    try await prepareOriginals(for: object.storageID)
     if let failure = try capabilities().originalSizeFailure { throw failure }
     try await streamMatchingObject(object, length: length, to: sink)
   }
@@ -337,7 +359,7 @@ actor CameraHostedTransferSession: WirelessTransferSession {
     try checkMember(object)
     guard mode != .xApp else { throw WirelessFailure.unsupportedProtocol }
     let length = try originalLength(object)
-    try begin()
+    try await begin()
     defer { busy = false }
     try await withAccurateLegacyLengths { try await streamMatchingObject(object, length: length, to: sink) }
   }
@@ -351,6 +373,15 @@ actor CameraHostedTransferSession: WirelessTransferSession {
       if first != observed { xAppOriginalControlConflict = true }
     } else {
       xAppOriginalControlObserved = observed
+    }
+  }
+
+  private func prepareOriginals(for storage: UInt32) async throws {
+    if verifiedCameraNetwork {
+      try await prepareGalleryOriginalMode(slot: storage)
+      xAppOriginalControlObserved = true
+    } else {
+      try await recordXAppOriginalSize()
     }
   }
 
@@ -370,22 +401,26 @@ actor CameraHostedTransferSession: WirelessTransferSession {
     while offset < length {
       let count = min(transport.partialObjectLimit, length - offset)
       let command = try commandFor(0x101b, [object.handle, offset, count])
-      let reply = try await transport.receive(command, expectedBytes: UInt64(count), sink: sink)
-      guard reply.parameters.isEmpty || reply.parameters == [count] else {
-        throw WirelessFailure.malformedData
+      if mode == .xApp {
+        offset += try await transport.receivePartialObject(command, maximumBytes: count, sink: sink)
+      } else {
+        let reply = try await transport.receive(command, expectedBytes: UInt64(count), sink: sink)
+        guard reply.parameters.isEmpty || reply.parameters == [count] else { throw WirelessFailure.malformedData }
+        offset += count
       }
-      offset += count
     }
   }
 
   func close() async throws {
     if let closing { return try await closing.value }
+    keepAliveTimer?.cancel()
+    keepAliveTimer = nil
     #if DEBUG
     galleryObjects = nil
     #endif
     let shouldCloseSession = didOpenSession && !busy && !Task.isCancelled
     let close = Task<Void, Error> {
-      #if DEBUG
+      _ = await keepAliveRequest?.result
       let restoration: Result<Void, Error>
       do {
         try await restoreGalleryOriginalMode(canRestore: shouldCloseSession, whileClosing: true)
@@ -393,16 +428,13 @@ actor CameraHostedTransferSession: WirelessTransferSession {
       } catch {
         restoration = .failure(error)
       }
-      #endif
       if shouldCloseSession {
         if legacyAccurateLengthsEnabled { try? await resetLegacyLengthReporting(whileClosing: true) }
         // Even a PTP refusal must be followed by confirmed native socket teardown.
         _ = try? await execute(0x1003, whileClosing: true)
       }
       await transport.close()
-      #if DEBUG
       try restoration.get()
-      #endif
     }
     closing = close
     try await close.value
@@ -460,10 +492,33 @@ actor CameraHostedTransferSession: WirelessTransferSession {
     else { throw WirelessFailure.unsupportedFirmware }
   }
 
-  func begin() throws {
+  func begin() async throws {
+    try await keepAliveRequest?.value
     try checkOpenOperation()
+    if let keepAliveFailure { throw keepAliveFailure }
     guard !busy else { throw WirelessFailure.cameraBusy }
     busy = true
+  }
+
+  private func startKeepAlive() {
+    keepAliveTimer = Task { [weak self] in
+      while !Task.isCancelled {
+        do { try await Task.sleep(for: .seconds(1)) } catch { return }
+        guard let self, await self.pollCameraWhenIdle() else { return }
+      }
+    }
+  }
+
+  private func pollCameraWhenIdle() async -> Bool {
+    guard closing == nil, keepAliveFailure == nil else { return false }
+    guard !busy, keepAliveRequest == nil else { return true }
+    let request = Task {
+      _ = try await readEvents()
+    }
+    keepAliveRequest = request
+    if case .failure(let error) = await request.result { keepAliveFailure = error }
+    keepAliveRequest = nil
+    return keepAliveFailure == nil
   }
 
   func checkOpenOperation() throws {

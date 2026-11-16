@@ -45,17 +45,19 @@ public struct WirelessIdentity: Equatable, Sendable {
   /// Keep the original firmware string available for protected evidence.
   public let firmware: String?
   public let protocolPeerKey: WirelessProtocolPeerKey?
+  public let firmwareFromBluetooth: Bool
 
   public init(
     cameraID: WirelessCameraID,
     model: WirelessCameraModel,
     firmware: String?,
-    protocolPeerKey: WirelessProtocolPeerKey? = nil
+    protocolPeerKey: WirelessProtocolPeerKey? = nil, firmwareFromBluetooth: Bool = false
   ) {
     self.cameraID = cameraID
     self.model = model
     self.firmware = firmware
     self.protocolPeerKey = protocolPeerKey
+    self.firmwareFromBluetooth = firmwareFromBluetooth
   }
 }
 

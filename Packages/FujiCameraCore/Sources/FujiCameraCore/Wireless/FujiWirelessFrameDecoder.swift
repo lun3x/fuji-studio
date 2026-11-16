@@ -64,11 +64,18 @@ public struct FujiWirelessFrameDecoder {
     return request
   }
 
+  public static func xAppClientGUID(localIPv4Bytes: Data?) throws -> Data {
+    guard let address = localIPv4Bytes, address.count == 4 else { throw WirelessFailure.routeUnavailable }
+    // The XApp prefix is followed by the connected local IPv4 in little-endian order.
+    let prefix: [UInt8] = [0xad, 0xa5, 0x48, 0x5d, 0x87, 0xb2, 0x7f, 0x0b, 0xd3, 0xd5, 0xde, 0xd0]
+    return Data(prefix + address.reversed())
+  }
+
   static func validateInitializationRequest(_ request: Data) throws {
     guard request.count == maximumInitBytes, uint32(request, 0) == maximumInitBytes,
       uint32(request, 4) == 1, uint32(request, 8) == version
     else { throw PTPError.invalidParameters }
-    try validateName(request)
+    _ = try initializationName(request)
   }
 
   static func initializationLength(_ prefix: Data) throws -> Int {
@@ -86,7 +93,7 @@ public struct FujiWirelessFrameDecoder {
 
   static func validateInitializationReply(_ reply: Data) throws {
     if uint32(reply, 4) == 5 { throw PTPError.authorizationDenied }
-    try validateName(reply)
+    _ = try initializationName(reply)
   }
 
   static func length(_ lengthBytes: Data) -> Int { Int(uint32(lengthBytes, 0)) }
@@ -121,11 +128,12 @@ public struct FujiWirelessFrameDecoder {
     return header
   }
 
-  private static func validateName(_ packet: Data) throws {
+  static func initializationName(_ packet: Data) throws -> String {
     let units = stride(from: initNameOffset, to: packet.count, by: 2).map { uint16(packet, $0) }
     guard let end = units.firstIndex(of: 0), units[end...].allSatisfy({ $0 == 0 }),
       String(decoding: units[..<end], as: UTF16.self).utf16.elementsEqual(units[..<end])
     else { throw PTPError.sessionFailure("Invalid Fuji initialization name") }
+    return String(decoding: units[..<end], as: UTF16.self)
   }
 
   private static func append<T: FixedWidthInteger>(_ value: T, to data: inout Data) {

@@ -780,7 +780,7 @@ extension ManualWiFiProbe {
   ) async throws -> any XAppGalleryDiagnostic {
     let clientGUID: Data
     do {
-      clientGUID = try manualInitializationGUID(localIPv4Bytes: await channel.connectedLocalIPv4Bytes)
+      clientGUID = try FujiWirelessFrameDecoder.xAppClientGUID(localIPv4Bytes: await channel.connectedLocalIPv4Bytes)
     } catch {
       await channel.close()
       throw error
@@ -791,14 +791,6 @@ extension ManualWiFiProbe {
       expectedIdentity: expectedIdentity, clientGUID: clientGUID,
       clientName: capturedClientName ?? ManualWiFiBluetoothDriver.phoneDestinationName,
       replayCapturedStartup: capturedClientName != nil)
-  }
-
-  private static func manualInitializationGUID(localIPv4Bytes: Data?) throws -> Data {
-    guard let address = localIPv4Bytes, address.count == 4 else { throw WirelessFailure.routeUnavailable }
-    // The captured XApp field is a fixed identifier followed by the TCP source IPv4 in little-endian order.
-    var field = Data([0xad, 0xa5, 0x48, 0x5d, 0x87, 0xb2, 0x7f, 0x0b, 0xd3, 0xd5, 0xde, 0xd0])
-    field.append(contentsOf: address.reversed())
-    return field
   }
 
   static func live() -> ManualWiFiProbe {

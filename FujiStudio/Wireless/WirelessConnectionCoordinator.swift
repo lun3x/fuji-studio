@@ -815,7 +815,8 @@ extension WirelessConnectionCoordinator {
       try checkWiFiAttempt(id, intent)
       #if DEBUG
       probeFirmwareObserver?(.init(model: peer.model, source: .cameraNetwork,
-        transferFirmware: peer.firmware, bluetoothFirmware: bleIdentity.firmware))
+        transferFirmware: peer.firmwareFromBluetooth ? nil : peer.firmware,
+        bluetoothFirmware: bleIdentity.firmware))
       #endif
       try verifyFirmware(peer, bluetoothFirmware: bleIdentity.firmware)
       try await loadFirstInventory(opened, id: id, intent: intent)

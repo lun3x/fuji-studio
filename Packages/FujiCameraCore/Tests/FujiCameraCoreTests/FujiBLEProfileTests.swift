@@ -42,6 +42,35 @@ final class FujiBLEProfileTests: XCTestCase {
     [secureStatus, secureName, readiness, configurationNotification, geotagRequest]
   }
 
+  func testXT5PhotoTransferWritesAppFlagsThenActivatesOnlyWhenWiFiIsOff() throws {
+    let flags = XT5BLEProfile.appFlagUUIDs.map { BLEGATTCharacteristic(service: "4500", characteristic: $0) }
+    for networkOn in [false, true] {
+      var profile = XT5BLEProfile(photoTransfer: true)
+      XCTAssertEqual(try profile.receive(.services(secureCharacteristics.union(flags + [ssid, password, launch]))),
+        [.read(secureStatus)])
+      _ = try profile.receive(.read(secureStatus, Data([0, 0, 0, 0])))
+      _ = try profile.receive(.wrote(secureStatus))
+      XCTAssertEqual(try profile.receive(.wrote(secureName)), [.write(flags[0], Data([1]), .identify)])
+      XCTAssertEqual(try profile.receive(.wrote(flags[0])), [.write(flags[1], Data([1]), .identify)])
+      XCTAssertEqual(try profile.receive(.wrote(flags[1])), [.read(ssid)])
+      _ = try profile.receive(.read(ssid, Data("test-network".utf8)))
+      for subscribed in [readiness, configurationNotification, geotagRequest, ssid] {
+        _ = try profile.receive(.subscribed(subscribed))
+      }
+      XCTAssertEqual(try profile.receive(.activateWiFi), [.read(password)])
+      XCTAssertEqual(try profile.receive(.read(password, Data("test-password".utf8))), [.read(readiness)])
+      let ready: [BLEProtocolAction] = [.wifiReady(.init(ssid: "test-network", password: "test-password"))]
+      if networkOn {
+        XCTAssertEqual(try profile.receive(.read(readiness, Data([1, 0x80]))), ready)
+      } else {
+        XCTAssertEqual(try profile.receive(.read(readiness, Data([3, 0x80]))),
+          [.write(launch, Data([3, 0]), .activateWiFi)])
+        XCTAssertEqual(try profile.receive(.wrote(launch)), [])
+        XCTAssertEqual(try profile.receive(.notification(readiness, Data([1, 0x80]))), ready)
+      }
+    }
+  }
+
   func testSecureHandshakeWaitsForGeotagSubscriptionBetweenConfigurationAndSSID() throws {
     var profile = XT5BLEProfile()
     XCTAssertEqual(

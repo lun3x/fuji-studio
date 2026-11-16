@@ -12,9 +12,9 @@ remain on this branch as well.
 
 - Camera: X-T5 firmware **04.31**. Approved support policy: X-T5 **4.30 or later**,
   X-E3 **1.32**. X-E3 Wi-Fi hardware acceptance remains outstanding.
-- Native Bluetooth registration, Wi-Fi launch, manual iPhone association, native
-  TCP/PTP setup and JPEG gallery enumeration have worked. **Native RAW exposure
-  and a successful native JPEG+RAW download have not been established.**
+- With the two BLE app flags enabled, the native gallery exposed the same 548
+  JPEG and 619 RAF handles identified in the prior captures. Native JPEG+RAW
+  pair download is a separate hardware check.
 - The prior full metadata trial used source revision
   `1885339990c5c156ac8bb15c28a981ead92dfe6c`. The user forgot the phone bond and
   paired again. Image-viewing launch `03 00`
@@ -157,8 +157,8 @@ and card 2 had 548 handles both before and after JPEG+RAW filtering. Card 1 was
 unavailable and the attempt closed cleanly after 2,068 ms. The captured timing
 changes alone did not account for the version or inventory difference.
 
-The next comparison needs a USB Bluetooth trace starting before reconnect and
-continuing through the first TCP reply. Capture Fuji Studio with its saved
+For an end-to-end comparison with XApp, start a Bluetooth trace before reconnect
+and continue through the first TCP reply. Capture Fuji Studio with its saved
 pairing first. Then capture XApp's first connection and include registration if
 switching apps requires re-pairing. Compare GATT reads, writes and subscriptions
 by characteristic, plus the timing from `03 00` through the TCP request.
@@ -181,10 +181,33 @@ This Debug build discovers the flags by characteristic UUID across services.
 It writes `01` to `CAEDB497-83BF-482C-91EF-91CF6F1216FF` and then
 `98934B2C-756C-4632-AA2F-DCBA1BFEC824`, waiting for each acknowledgment before
 continuing. Missing or rejected flags stop the attempt and are recorded by
-ordinal. Use the saved pairing, match the prior TCP timing control, and run
-**Check photo counts**. Compare both flag acknowledgments, the camera's first
-D212 reply, the offered DF28, and the validated inventories. The first physical
-flags trial is pending.
+ordinal. The first physical attempt acknowledged both flags and the `03 00`
+Wi-Fi launch, then timed out before readiness. The user power-cycled the X-T5
+and repeated with the same saved pairing. Both flags were acknowledged again,
+and the first Wi-Fi launch received positive readiness about seven seconds
+later.
+
+At 19:50:28 UTC, **Check photo counts** completed in 2.412 seconds. The X-T5
+offered `DF28 = 3`, unlike the previous timing-only run's `2`. The first D212
+event values matched XApp, including D220, D222 and D401 all at zero. Card 1 was
+unavailable. Card 2 returned the same 1,239 unfiltered handles as XApp, then
+1,167 filtered handles. The filter's result matched the disjoint union of the
+548 handles classified as JPEG in the earlier Fuji Studio scan and the 619
+handles selected by the earlier XApp RAW filter. CloseSession and socket
+cleanup completed. The combined flags variant and camera restart succeeded.
+The trial did not isolate the individual flags or the effects of the restart.
+The installed iOS Bluetooth profile also captured the two ATT writes (`01` to
+handles `0x4516` and `0x4519`) in the phone's sysdiagnose. The successful attempt
+then wrote `03 00` to `0x6003` and received `01 80` on `0x5003` about seven
+seconds later.
+
+The first pair attempt classified all 1,167 objects as 548 JPEG and 619 RAF and
+selected a pair. With D226 = 2, it reached 11,534,336 of 40,011,808 expected RAF
+bytes, then rejected the next `101B` response before it streamed a payload. The
+trace did not retain that response's advertised length. Cleanup discarded the
+pending files. The corrected X-T5 transport accepts a positive, correctly framed
+partial response up to the requested length and resumes at the actual byte
+offset. Final lengths and embedded pair metadata are still validated before save.
 
 The reference also NUL-terminates the BLE name, configures more notification
 services, answers the camera's clock request, reads AP status before launch,
@@ -195,9 +218,16 @@ two-flag comparison.
 For original transfers, the [same reference](https://github.com/mjanssen/fujifilm-camera-protocol-data/blob/853e3647cafbdf56c6a920887bf5553c823d8aad/x-t5.md#4-wi-fi-photo-browsing-and-import)
 sets `D226 = 0` then `D227 = 1`, refreshes ObjectInfo, and reads `D235` before
 sending bounded `101B` requests. The current X-T5 diagnostic uses `D226 = 2`,
-which an earlier XApp capture used to fetch a full JPEG. Validate the reference's
-original-transfer sequence after RAF handles are visible. The camera selects
+which an earlier XApp capture used to fetch a full JPEG. The camera selects
 DF28 before either original-transfer sequence is used.
+
+The product X-T5 Wi-Fi path writes both BLE flags and checks AP status before
+requesting image viewing. It binds the TCP session to the secured camera network
+verified by the iOS join gateway, checks the X-T5 model in the initialization
+reply, and uses authenticated BLE firmware evidence. The gallery session uses
+the observed XApp startup, keeps idle PTP alive, and restores D226 on card switch
+or normal closure. The existing camera import job stages and validates the JPEG
+and RAF, then adds both resources to the same PhotoKit asset in one transaction.
 
 Native gallery configuration confirms D244 per slot, uses `9054 [10000001]`,
 `9055 [10000001]`, `9050`, D212, D22B, and then `9053 [0,30000]`, D212, D620, D621.
@@ -333,6 +363,7 @@ Do not delete these workspaces while the investigation continues:
 | `/tmp/fuji-quick-gallery-count/.superpowers/count` | Count feature brief, progress, report, diff and review. |
 | `/tmp/fuji-iphone-count-evidence.vPwfCE` | iPhone Bluetooth, probe and identity traces for the first physical count trial and preceding retries. |
 | `/tmp/fuji-iphone-df28-evidence.C7FRKj` | USB RVI packet capture and app traces for the TCP startup comparison. |
+| `/tmp/fuji-iphone-app-flags.Tytj7Y` | App traces and USB count capture for the two BLE app flags; Bluetooth logs from the user's installed iOS profile. |
 
 macOS tcpdump sometimes prepended a 24-byte classic PCAP header before PCAPNG;
 normalization strips it only when the PCAPNG magic is present at byte 24.

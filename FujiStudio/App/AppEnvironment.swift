@@ -125,7 +125,9 @@ import UIKit
         let guid = withUnsafeBytes(of: clientID.uuid) { Data($0) }
         let store = KeychainCameraStore(defaults: defaults)
         let connection = WirelessConnectionCoordinator(
-            bluetooth: NativeBluetoothGateway(store: store), store: store,
+            bluetooth: NativeBluetoothGateway(
+                store: store, driver: CoreBluetoothDriver(discoverAllServices: true), usesXT5PhotoTransfer: true),
+            store: store,
             wifi: NativeWiFiJoinGateway(credentials: store), ownership: ownership,
             sessionFactory: { identity, _ in
                 let mode: WirelessMode = identity.model == .xt5 ? .xApp : .phone
@@ -133,7 +135,15 @@ import UIKit
                 let transport = WirelessPTPTransport(channel: channel)
                 switch identity.model {
                 case .xt5:
-                    return XAppTransferAdapter.makeSession(transport: transport, expectedIdentity: identity, clientGUID: guid)
+                    do {
+                        let clientGUID = try FujiWirelessFrameDecoder.xAppClientGUID(
+                            localIPv4Bytes: await channel.connectedLocalIPv4Bytes)
+                        return XAppTransferAdapter.makeSessionOnCameraNetwork(
+                            transport: transport, expectedIdentity: identity, clientGUID: clientGUID)
+                    } catch {
+                        await channel.close()
+                        throw error
+                    }
                 case .xe3:
                     return PhoneTransferAdapter.makeSession(transport: transport, expectedIdentity: identity, clientGUID: guid)
                 }

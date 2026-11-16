@@ -12,11 +12,6 @@ final class ManualWiFiBluetoothDriver: BluetoothPeripheralDriver {
     service: "123d8f06-62a1-4935-9322-833c531ee225",
     characteristic: "85b9163e-62d1-49ff-a6f5-054b4630d4a1")
   private static let maximumLaunchWrites = 3
-  // X-T5 4.31 reference setup, mjanssen/fujifilm-camera-protocol-data, section 3.1.
-  private static let appFlagUUIDs = [
-    "caedb497-83bf-482c-91ef-91cf6f1216ff",
-    "98934b2c-756c-4632-aa2f-dcba1bfec824",
-  ]
 
   private enum ImageViewing {
     case awaitingAcknowledgment(ordinal: Int, earlyStatus: Data?)
@@ -173,7 +168,7 @@ final class ManualWiFiBluetoothDriver: BluetoothPeripheralDriver {
         return true
       }
       appFlags = []
-      for (index, uuid) in Self.appFlagUUIDs.enumerated() {
+      for (index, uuid) in XT5BLEProfile.appFlagUUIDs.enumerated() {
         let matches = characteristics.filter { $0.characteristic == uuid }
         guard matches.count == 1, let flag = matches.first else {
           trace(attempt, .appFlagUnavailable(ordinal: index + 1))

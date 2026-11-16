@@ -4,7 +4,13 @@ import Foundation
 public struct XT5BLEProfile: FujiBLEProfile, CustomReflectable {
   private var handshake: FujiBLEHandshake
 
-  public init() {
+  /// X-T5 4.31 photo transfer setup documented by mjanssen and verified on-device.
+  public static let appFlagUUIDs = [
+    "caedb497-83bf-482c-91ef-91cf6f1216ff",
+    "98934b2c-756c-4632-aa2f-dcba1bfec824",
+  ]
+
+  public init(photoTransfer: Bool = false) {
     typealias GATT = FujiBLEGATT
     // The camera needs the passive geotag subscription after NOT1 for registration and
     // for Wi-Fi readiness after a saved reconnect.
@@ -26,7 +32,7 @@ public struct XT5BLEProfile: FujiBLEProfile, CustomReflectable {
           service: GATT.network, characteristic: "82a9f452-c5ce-4ef5-8203-3fc9a47f8171"),
         BLEGATTCharacteristic(
           service: GATT.network, characteristic: "deef7187-3f43-4364-9e22-11a8c8a15951"),
-      ], requiredSubscriptions: Set(configurationSubscriptions))
+      ], requiredSubscriptions: Set(configurationSubscriptions), xAppPhotoTransfer: photoTransfer)
   }
 
   public mutating func receive(_ event: BLEProtocolEvent) throws -> [BLEProtocolAction] {

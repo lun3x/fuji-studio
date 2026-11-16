@@ -888,7 +888,7 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
       responseTransaction: 0)
     let cases: [([Exchange], PTPError)] = [
       ([.rejection(0x1015, [0xd226], 0x2002)], .responseCode(0x2002)),
-      (validPrelude + [.read(0x101b, [1, 0, 3], Data([1]))], .truncatedContainer),
+      (validPrelude + [.init(opcode: 0x101b, parameters: [1, 0, 3], sendsEmptyData: true)], .truncatedContainer),
       (validPrelude + [.read(0x101b, [1, 0, 3], Data([1, 2, 3, 4]))], .payloadTooLarge),
       (validPrelude + [.rejection(0x101b, [1, 0, 3], 0x2002)], .responseCode(0x2002))
     ]
@@ -1142,6 +1142,60 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
     try await session.close()
     let remaining = await channel.remaining
     XCTAssertEqual(remaining, 0)
+  }
+
+  func testVerifiedXAppGalleryStreamsBothOriginalsAcrossShortReadsAndRestoresMode() async throws {
+    let raf = object("DSCF0044.RAF", format: 0xb103, bytes: 5)
+    let jpeg = object("DSCF0044.JPG", format: 0x3801, bytes: 4)
+    let unavailable: [Exchange] = [.property(0xd244, Data([1])), .rejection(0x9054, [0x10000001], 0x2013)]
+    let originals: [Exchange] = [
+      .property(0xd226, word(0, 2)), .write(0xd226, [2, 0]), .property(0xd226, word(2, 2)),
+      .read(0x1008, [44], raf), .read(0x1008, [45], jpeg),
+    ]
+    let downloads: [Exchange] = [
+      .property(0xd226, word(2, 2)), .read(0x1008, [44], raf),
+      .read(0x101b, [44, 0, 3], Data([1, 2])), .read(0x101b, [44, 2, 3], Data([3, 4, 5])),
+      .property(0xd226, word(2, 2)), .read(0x1008, [45], jpeg),
+      .read(0x101b, [45, 0, 3], Data([6, 7, 8])), .read(0x101b, [45, 3, 1], Data([9])),
+      .write(0xd226, [0, 0]), .read(0x1003),
+    ]
+    let commands = [.read(0x1002, [1]), .property(0xd212, events([(0xdf00, 6)]))] + galleryModeSetup
+      + unavailable + [.write(0xd244, [2])] + card([44, 45], storage: 2) + originals + downloads
+    let channel = Replay(commands, initializationName: "X-T5")
+    let selected = identity(.xt5)
+    let session = XAppTransferAdapter.makeSessionOnCameraNetwork(
+      transport: .init(channel: channel, maximumPartialObjectBytes: 3), expectedIdentity: selected,
+      clientGUID: Data(repeating: 1, count: 16))
+
+    let peer = try await session.open()
+    XCTAssertEqual(peer.cameraID, selected.cameraID)
+    XCTAssertNil(peer.protocolPeerKey)
+    XCTAssertTrue(peer.firmwareFromBluetooth)
+    var objects: [WirelessObjectDescriptor] = []
+    for try await batch in try await session.enumerate() { objects += batch.objects }
+    XCTAssertEqual(objects.map(\.format), [.raf, .jpeg])
+    let capabilities = try await session.capabilities()
+    XCTAssertTrue(capabilities.originalSizeVerified)
+    XCTAssertEqual(capabilities.rawExposure, .available)
+
+    let received = Mutex(Data())
+    for object in objects {
+      try await session.download(object) { chunk in received.withLock { $0.append(chunk) } }
+    }
+    XCTAssertEqual(received.withLock { $0 }, Data(1...9))
+    try await session.close()
+    let remaining = await channel.remaining
+    XCTAssertEqual(remaining, 0)
+  }
+
+  func testVerifiedXAppGalleryRejectsDifferentCameraNameBeforeOpeningPTP() async throws {
+    let channel = Replay([], initializationName: "X-E3")
+    let session = XAppTransferAdapter.makeSessionOnCameraNetwork(
+      transport: .init(channel: channel), expectedIdentity: identity(.xt5), clientGUID: Data(repeating: 1, count: 16))
+    await expect(.peerMismatch) { _ = try await session.open() }
+    try await session.close()
+    let operations = await channel.operations
+    XCTAssertTrue(operations.isEmpty)
   }
 
   func testPhoneGalleryAvoidsCaptureAndReportsDeclaredRAWUnavailability() async throws {
@@ -1529,6 +1583,7 @@ private actor Replay: WirelessByteChannel {
   private var exchanges: [Exchange]
   private let optionalReads: [Exchange]
   private let phoneObjectInformation: PhoneObjectInformation?
+  private let initializationName: String
   private var gallerySlot: UInt8?
   private(set) var galleryModes: [UInt8: UInt8]?
   private var buffer = Data()
@@ -1563,19 +1618,21 @@ private actor Replay: WirelessByteChannel {
 
   init(
     _ exchanges: [Exchange], optionalReads: [Exchange] = [],
-    phoneObjectInformation: PhoneObjectInformation? = nil, galleryModes: [UInt8: UInt8]? = nil
+    phoneObjectInformation: PhoneObjectInformation? = nil, galleryModes: [UInt8: UInt8]? = nil,
+    initializationName: String = "Fixture"
   ) {
     self.exchanges = exchanges
     self.optionalReads = optionalReads
     self.phoneObjectInformation = phoneObjectInformation
     self.galleryModes = galleryModes
+    self.initializationName = initializationName
   }
 
   func write(_ data: Data) async throws {
     guard initialized else {
       initialized = true
       initializationRequest = data
-      let name = Data("Fixture".utf16.flatMap { [UInt8(truncatingIfNeeded: $0), UInt8($0 >> 8)] } + [0, 0])
+      let name = Data(initializationName.utf16.flatMap { [UInt8(truncatingIfNeeded: $0), UInt8($0 >> 8)] } + [0, 0])
       buffer = word(UInt32(28 + name.count)) + word(2) + Data(repeating: 0, count: 20) + name
       return
     }

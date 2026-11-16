@@ -1,6 +1,15 @@
 import Foundation
 
 public enum XAppTransferAdapter {
+  /// The caller has authenticated BLE and verified association with that camera's secured network.
+  public static func makeSessionOnCameraNetwork(
+    transport: WirelessPTPTransport, expectedIdentity: WirelessIdentity, clientGUID: Data
+  ) -> any WirelessTransferSession {
+    CameraHostedTransferSession(
+      transport: transport, expectedIdentity: expectedIdentity, mode: .xApp, clientGUID: clientGUID,
+      replayCapturedGalleryTiming: true, verifiedCameraNetwork: true)
+  }
+
   public static func makeSession(
     transport: WirelessPTPTransport, expectedIdentity: WirelessIdentity, clientGUID: Data,
     clientName: String? = nil
@@ -54,10 +63,8 @@ extension CameraHostedTransferSession {
     let needsSelection = (selectedStorage ?? xAppInitialStorage) != storage
     xAppInitialStorage = nil
     if needsSelection {
-      #if DEBUG
       try await restoreGalleryOriginalMode(canRestore: true, whileClosing: false)
       galleryOriginalModePrepared = false
-      #endif
       selectedStorage = nil
       try await setProperty(0xd244, storage, width: 1)
     }
@@ -150,8 +157,9 @@ extension XAppTransferAdapter {
       clientGUID: clientGUID, clientName: clientName)
   }
 }
+#endif
 
-extension CameraHostedTransferSession: XAppGalleryDiagnostic {
+extension CameraHostedTransferSession {
   // From the pinned libfuji XApp setup and X-T5 trace. This check ends before any gallery writes.
   func checkXAppStartup(validatesRemoteVersion: Bool = true) async throws {
     try await withThrowingTaskGroup(of: Void.self) { group in
@@ -192,4 +200,7 @@ extension CameraHostedTransferSession: XAppGalleryDiagnostic {
     }
   }
 }
+
+#if DEBUG
+extension CameraHostedTransferSession: XAppGalleryDiagnostic {}
 #endif
