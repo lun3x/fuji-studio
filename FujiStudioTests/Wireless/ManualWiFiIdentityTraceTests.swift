@@ -92,18 +92,36 @@ struct ManualWiFiIdentityTraceTests {
     defer { try? FileManager.default.removeItem(at: file) }
     let trace = ManualWiFiIdentityTrace(url: file)
     let observer = trace.begin(kind: .gallery)
+    let unavailable = XAppGalleryDiagnosticResult.Card(slot: 1, totalHandles: nil, samples: [])
+    observer(.init(.galleryModeWrite, .completed))
+    observer(.init(.galleryCardBegin, .completed, gallerySlot: 1))
+    observer(.init(.galleryOpen, .failed, failure: .rejected, responseCode: 0x2013))
+    observer(.init(.galleryCardSummary, .completed, galleryCard: unavailable.summary))
+    observer(.init(.galleryCardBegin, .completed, gallerySlot: 2))
+    observer(.init(.galleryStorageWrite, .completed))
+    observer(.init(.galleryModeStatus, .failed, failure: .rejected, responseCode: 0x2002))
+    for _ in 0..<200 { observer(.init(.galleryObjectInfo, .completed)) }
     let sample = XAppGalleryDiagnosticResult.Card(slot: 2, totalHandles: 40,
       samples: [.init(filename: "PRIVATE.RAF", format: .raf, byteLength: 4_294_967)])
     observer(.init(.galleryCardSummary, .completed, galleryCard: sample.summary))
-    observer(.init(.galleryModeStatus, .failed, failure: .rejected, responseCode: 0x2002))
-    for _ in 0..<200 { observer(.init(.galleryObjectInfo, .completed)) }
-    let unavailable = XAppGalleryDiagnosticResult.Card(slot: 1, totalHandles: nil, samples: [])
-    observer(.init(.galleryOpen, .failed, failure: .rejected, responseCode: 0x2013))
-    observer(.init(.galleryCardSummary, .completed, galleryCard: unavailable.summary))
     observer(.init(.attempt, .completed))
-    let attempts = try await read(file) { self.events($0[0]).last?["sequence"] as? Int == 206 }
+    let attempts = try await read(file) { self.events($0[0]).last?["sequence"] as? Int == 210 }
     let attempt = try #require(attempts.first)
     #expect(attempt["kind"] as? String == "gallery")
+    #expect(events(attempt).count == 160)
+    let setup = try #require(attempt["gallerySetup"] as? [[String: Any]])
+    let milestones = setup.compactMap { $0["event"] as? [String: Any] }
+    try #require(milestones.count == 8)
+
+    #expect(milestones.compactMap { $0["stage"] as? String } == [
+      "galleryModeWrite", "galleryCardBegin", "galleryOpen", "galleryCardSummary",
+      "galleryCardBegin", "galleryStorageWrite", "galleryModeStatus", "galleryCardSummary"
+    ])
+    #expect(milestones[1]["gallerySlot"] as? Int == 1)
+    #expect(milestones[2]["responseCode"] as? Int == 0x2013)
+    #expect((milestones[3]["galleryCard"] as? [String: Any])?["slot"] as? Int == 1)
+    #expect(milestones[4]["gallerySlot"] as? Int == 2)
+    #expect((milestones[7]["galleryCard"] as? [String: Any])?["slot"] as? Int == 2)
     let cards = try #require(attempt["galleryCards"] as? [String: [String: Any]])
     #expect(cards.count == 2)
     #expect(cards["2"]?["totalHandles"] as? Int == 40)

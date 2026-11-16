@@ -150,6 +150,7 @@ actor CameraHostedTransferSession: WirelessTransferSession {
     let slots = try await configureXAppGalleryMode()
     var cards: [XAppGalleryDiagnosticResult.Card] = []
     for slot in slots {
+      transport.observeIdentity(.init(.galleryCardBegin, .completed, gallerySlot: slot))
       let handles = try await configureXAppCard(slot)
       var samples: [XAppGalleryDiagnosticResult.Sample] = []
       if let handles {

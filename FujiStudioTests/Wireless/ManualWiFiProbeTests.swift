@@ -91,6 +91,28 @@ struct ManualWiFiProbeTests {
     #expect(fixture.events.last?.failure == .ptpTimeout)
   }
 
+  @Test func galleryDeadlineAbortsAnInProgressGracefulClose() async {
+    let fixture = ManualWiFiFixture(galleryDeadline: .milliseconds(500))
+    let probe = fixture.probe
+    await prepareHandoff(fixture)
+    let (closings, closing) = AsyncStream<Void>.makeStream()
+    await fixture.transfer.holdGalleryClose(entered: closing)
+    probe.confirmJoined()
+    probe.listCameraPhotos()
+    for await _ in closings { break }
+    // A fallback prevents a test hang if the deadline forgets to abort native I/O.
+    let fallback = Task {
+      do { try await Task.sleep(for: .seconds(2)) } catch { return }
+      await fixture.transfer.releaseHeldGalleryCloseForTest()
+    }
+    await probe.waitForOperation()
+    fallback.cancel()
+    #expect(await fixture.transfer.galleryAbortCount == 1)
+    #expect(await fixture.transfer.actions == [.listPhotos, .close])
+    #expect(probe.galleryResult == nil)
+    #expect(fixture.events.last?.failure == .ptpTimeout)
+  }
+
   private func prepareHandoff(_ fixture: ManualWiFiFixture) async {
     let probe = fixture.probe
     probe.connect(.saved(fixture.camera))

@@ -128,6 +128,11 @@ final class ManualWiFiFixture {
     private(set) var actions: [Action] = []
     private var galleryBarrier: FixtureBarrier?
     private var galleryDelay: Duration?
+    private var holdGalleryClose = false
+    private var closingGallery: AsyncStream<Void>.Continuation?
+    private var confirmGalleryAbort: CheckedContinuation<Void, Never>?
+    private var galleryAborted = false
+    private(set) var galleryAbortCount = 0
 
     init(withoutDeviceInfo: Bool) { self.withoutDeviceInfo = withoutDeviceInfo }
 
@@ -155,8 +160,33 @@ final class ManualWiFiFixture {
       ])
     }
 
-    func abortGallery() {}
-    func close() { actions.append(.close) }
+    func holdGalleryClose(entered: AsyncStream<Void>.Continuation) {
+      holdGalleryClose = true
+      closingGallery = entered
+    }
+
+    func abortGallery() {
+      releaseHeldGalleryCloseForTest()
+      galleryAbortCount += 1
+    }
+
+    func releaseHeldGalleryCloseForTest() {
+
+      galleryAborted = true
+      confirmGalleryAbort?.resume()
+      confirmGalleryAbort = nil
+    }
+
+    func close() async {
+      actions.append(.close)
+      guard holdGalleryClose else { return }
+      closingGallery?.yield()
+      closingGallery?.finish()
+      closingGallery = nil
+      if !galleryAborted {
+        await withCheckedContinuation { confirmGalleryAbort = $0 }
+      }
+    }
 
   }
 }

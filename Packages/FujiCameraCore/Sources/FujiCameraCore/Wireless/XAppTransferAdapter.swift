@@ -21,10 +21,17 @@ extension CameraHostedTransferSession {
   func configureXAppGalleryMode() async throws -> [UInt32] {
     try await setProperty(0xdf01, 20, width: 2)
     let galleryVersion = try await readScalar(0xdf28)
-    guard (1...3).contains(galleryVersion) else { throw WirelessFailure.unsupportedProtocol }
+    guard (1...3).contains(galleryVersion) else {
+      transport.observeIdentity(.init(.galleryVersionValidation, .failed, failure: .unsupported))
+      throw WirelessFailure.unsupportedProtocol
+    }
+    transport.observeIdentity(.init(.galleryVersionValidation, .completed))
     try await setProperty(0xdf28, galleryVersion, width: 4)
     let storage = try await readScalar(0xd244, widths: [1, 2, 4])
-    guard storage == 1 || storage == 2 else { throw WirelessFailure.unsupportedProtocol }
+    guard storage == 1 || storage == 2 else {
+      transport.observeIdentity(.init(.galleryStorageConfirmation, .failed, failure: .unsupported))
+      throw WirelessFailure.unsupportedProtocol
+    }
     selectedStorage = storage
     return [storage, storage == 1 ? 2 : 1]
   }

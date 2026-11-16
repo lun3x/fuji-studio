@@ -24,6 +24,8 @@ final class ManualWiFiIdentityTrace: Sendable {
     private(set) var events: [Entry] = []
     private(set) var droppedEvents = 0
     private(set) var galleryCards: [String: Trace.GalleryCardSummary] = [:]
+    private(set) var gallerySetup: [Entry] = []
+    private var didValidateXAppAccess = false
     private(set) var protocolFailure: Entry?
     private(set) var emptyDeviceInfo: Entry?
     private(set) var cleanupFailure: Entry?
@@ -39,7 +41,7 @@ final class ManualWiFiIdentityTrace: Sendable {
     private(set) var pendingSessionCleanup: Trace.Stage?
 
     enum CodingKeys: String, CodingKey {
-      case kind, ordinal, startedAt, events, droppedEvents, protocolFailure, cleanupFailure, emptyDeviceInfo, galleryCards
+      case kind, ordinal, startedAt, events, droppedEvents, protocolFailure, cleanupFailure, emptyDeviceInfo, galleryCards, gallerySetup
       case timerElapsed, deadline, protocolStageAtDeadline, cleanupStageAtDeadline, pendingProtocol, lastProtocolStage
       case pendingCloseSession, pendingSocket, pendingSessionCleanup
     }
@@ -84,12 +86,40 @@ final class ManualWiFiIdentityTrace: Sendable {
         default: protocolFailure = entry
         }
       }
+      if kind == .gallery {
+        retainGallerySetup(entry)
+      }
       events.append(entry)
       if events.count > 160 {
         // Retain the start, with separate slots for empty DeviceInfo, failures and the deadline.
         events.remove(at: 1)
         droppedEvents += 1
       }
+    }
+
+    private mutating func retainGallerySetup(_ entry: Entry) {
+      let event = entry.event
+      guard event.action == .completed || event.action == .failed else { return }
+      switch event.stage {
+      case .xAppAccess:
+        didValidateXAppAccess = event.action == .completed
+      case .xAppEventsRead:
+        // Startup may poll repeatedly; retain only the event-list reads after access.
+        guard didValidateXAppAccess else { return }
+      case .xAppVersionRead, .xAppVersionValidation,
+           .galleryModeWrite, .galleryVersionRead, .galleryVersionValidation, .galleryVersionWrite,
+           .galleryCardBegin, .galleryStorageWrite, .galleryStorageRead, .galleryStorageConfirmation,
+           .galleryOpen, .galleryPreviewSetup, .galleryModeStatus, .gallerySelectedImages,
+           .galleryObjectListBegin, .galleryObjectCount, .galleryHandleList, .galleryHandleValidation,
+           .galleryCardSummary:
+        break
+      default:
+        return
+      }
+      // Two slots have a fixed setup sequence. Keep setup visible even when the
+      // per-object reads use the whole rolling event buffer.
+      if gallerySetup.count == 128 { gallerySetup.removeFirst() }
+      gallerySetup.append(entry)
     }
 
     private static func updatePending(_ event: Trace.Event, slot: inout Trace.Stage?) {

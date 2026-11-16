@@ -12,8 +12,8 @@ public enum WirelessIdentityTrace {
     case getDeviceInfoWrite, getDeviceInfoHeader, getDeviceInfoData, getDeviceInfoFinalHeader, getDeviceInfoResponseBody
     case deviceInfoValidation, xAppEventsRead, xAppAccess, xAppVersionRead, xAppVersionValidation
     case closeSessionWrite, closeSessionHeader, closeSessionData, closeSessionFinalHeader, closeSessionResponseBody
-    case galleryModeWrite, galleryVersionRead, galleryVersionWrite
-    case galleryStorageWrite, galleryStorageRead, galleryStorageConfirmation
+    case galleryModeWrite, galleryVersionRead, galleryVersionValidation, galleryVersionWrite
+    case galleryCardBegin, galleryStorageWrite, galleryStorageRead, galleryStorageConfirmation
     case galleryOpen, galleryPreviewSetup, galleryModeStatus, gallerySelectedImages
     case galleryObjectListBegin, galleryObjectCount, galleryHandleList, galleryHandleValidation
     case galleryObjectInfo, galleryObjectInfoValidation, galleryCardSummary
@@ -90,10 +90,11 @@ public enum WirelessIdentityTrace {
     public let failure: Failure?
     public let responseCode: UInt16?
     public let galleryCard: GalleryCardSummary?
+    public let gallerySlot: UInt32?
 
     public init(
       _ stage: Stage, _ action: Action, bytes: Int? = nil, failure: Failure? = nil,
-      responseCode: UInt16? = nil, galleryCard: GalleryCardSummary? = nil
+      responseCode: UInt16? = nil, galleryCard: GalleryCardSummary? = nil, gallerySlot: UInt32? = nil
     ) {
       self.stage = stage
       self.action = action
@@ -101,6 +102,7 @@ public enum WirelessIdentityTrace {
       self.failure = failure
       self.responseCode = responseCode
       self.galleryCard = galleryCard
+      self.gallerySlot = gallerySlot.flatMap { (1...2).contains($0) ? $0 : nil }
     }
   }
 }
