@@ -11,18 +11,26 @@ final class ManualWiFiTests: XCTestCase {
   }
 
   func testGalleryRequiresManualConfirmationAndShowsCompleteCountsAfterClosure() {
-    checkGallery(downloadPair: false)
+    checkGallery(.scan)
   }
 
   func testPairTestRequiresManualConfirmationAndShowsNoPairAfterFullScan() {
-    checkGallery(downloadPair: true)
+    checkGallery(.pair)
   }
 
-  private func checkGallery(downloadPair: Bool) {
+  func testPhotoCountsRequireManualConfirmationAndShowCardAvailability() {
+    checkGallery(.count)
+  }
+
+  private enum GalleryAction: String {
+    case count = "countPhotos", scan = "listPhotos", pair = "testPair"
+  }
+
+  private func checkGallery(_ action: GalleryAction) {
     let app = XCUIApplication()
     app.launchArguments = ["--manual-wifi-fixture"]
     app.launchEnvironment["FUJI_FIXTURE_EMPTY_DEVICE_INFO"] = "1"
-    if downloadPair { app.launchEnvironment["FUJI_FIXTURE_JPEG_ONLY"] = "1" }
+    if action == .pair { app.launchEnvironment["FUJI_FIXTURE_JPEG_ONLY"] = "1" }
     app.launch()
     let find = app.buttons["manualWiFi.findPaired"]
     XCTAssertTrue(find.waitForExistence(timeout: 10))
@@ -37,22 +45,40 @@ final class ManualWiFiTests: XCTestCase {
 
     let confirm = app.buttons["manualWiFi.confirm"]
     XCTAssertTrue(confirm.waitForExistence(timeout: 10))
-    let list = app.buttons[downloadPair ? "manualWiFi.testPair" : "manualWiFi.listPhotos"]
+    let list = app.buttons["manualWiFi.\(action.rawValue)"]
     for _ in 0..<3 where !list.isHittable { app.swipeUp() }
-    XCTAssertTrue(list.exists)
+    guard list.exists else {
+      XCTFail("The gallery action is missing")
+      return
+    }
     XCTAssertFalse(list.isEnabled)
-    if !confirm.isHittable { app.swipeDown() }
+    if !confirm.isHittable || confirm.frame.midY < app.frame.height * 0.25 {
+      app.swipeDown()
+    }
     confirm.tap()
+    XCTAssertFalse(confirm.isEnabled)
     for _ in 0..<3 where !list.isHittable { app.swipeUp() }
-    XCTAssertTrue(list.isEnabled)
+    guard list.isEnabled else {
+      XCTFail("The gallery action remained disabled after confirmation")
+      return
+    }
     list.tap()
 
     let status = app.staticTexts["manualWiFi.status"]
     let completed = NSPredicate(format: "label CONTAINS %@", "Connection closed after the test.")
     let finished = XCTNSPredicateExpectation(predicate: completed, object: status)
     XCTAssertEqual(XCTWaiter.wait(for: [finished], timeout: 10), .completed)
+    if action == .count {
+      let first = app.descendants(matching: .any)["manualWiFi.photoCount.1"]
+      let second = app.descendants(matching: .any)["manualWiFi.photoCount.2"]
+      XCTAssertEqual(first.value as? String, "2 items")
+      XCTAssertEqual(second.value as? String, "Unavailable")
+      XCTAssertFalse(app.staticTexts["FIXTURE.JPG"].exists)
+      XCTAssertFalse(app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH %@", "Scanned ")).firstMatch.exists)
+      return
+    }
     XCTAssertTrue(status.label.contains("Wi-Fi identity is unavailable"))
-    if downloadPair {
+    if action == .pair {
       XCTAssertTrue(status.label.contains("No unambiguous JPEG+RAW pair"))
       XCTAssertTrue(app.staticTexts["Scanned 40 of 40 objects: 40 JPEG, 0 RAF, 0 other."].exists)
     } else {

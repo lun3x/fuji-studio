@@ -63,6 +63,44 @@ struct ManualWiFiProbeTests {
     await probe.waitForOperation()
   }
 
+  @Test(arguments: [false, true]) func photoCountsRequireManualJoinAndSuccessfulClose(cancel: Bool) async {
+    let fixture = ManualWiFiFixture()
+    let probe = fixture.probe
+    await prepareHandoff(fixture)
+    probe.checkPhotoCounts()
+    #expect(await fixture.transfer.actions.isEmpty)
+    #expect(probe.photoCountResult == nil)
+
+    let (closings, closing) = AsyncStream<Void>.makeStream()
+    await fixture.transfer.holdGalleryClose(entered: closing)
+    probe.confirmJoined()
+    probe.checkPhotoCounts()
+    for await _ in closings { break }
+    #expect(probe.photoCountResult == nil)
+    #expect(probe.galleryResult == nil)
+    #expect(probe.pairResult == nil)
+    #expect(probe.keepsScreenAwake)
+    if cancel {
+      probe.cancel()
+    } else {
+      await fixture.transfer.releaseHeldGalleryCloseForTest()
+    }
+    await probe.waitForOperation()
+    #expect(await fixture.transfer.actions == [.countPhotos, .close])
+    #expect(probe.galleryResult == nil)
+    #expect(probe.pairResult == nil)
+    if cancel {
+      #expect(await fixture.transfer.galleryAbortCount == 1)
+      #expect(probe.photoCountResult == nil)
+    } else {
+      #expect(probe.photoCountResult?.cards.map(\.totalHandles) == [2, nil])
+      #expect(probe.status.contains("Connection closed after the test."))
+      probe.connect(.saved(fixture.otherCamera))
+      #expect(probe.photoCountResult == nil)
+      await probe.waitForOperation()
+    }
+  }
+
   @Test func pairTestClosesWithoutDownloadWhenNoPairIsCorroborated() async {
     let fixture = ManualWiFiFixture()
     let probe = fixture.probe

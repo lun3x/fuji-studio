@@ -753,3 +753,27 @@ inventory, JPEG and RAW enumeration, and session cleanup. The physical
 capture shows the batch on the first slot. Event delivery after a slot
 switch and the native gallery's JPEG and RAW counts still need a
 physical trial.
+
+#### Quick photo count check
+
+On the freshly paired X-T5 with native build `18853399`, the first BLE
+`03 00` write was acknowledged and positive readiness arrived about 7
+seconds after activation. The camera offered DF28 version 2 and the
+app echoed it. Card inventory reported 548 handles both before and
+after JPEG+RAW filtering. The filtered count and validated list arrived
+about 1.2 seconds after TCP startup. The full scan and close took about
+235 seconds and classified all 548 objects as JPEG. The trace contained
+no 101B reads. The fresh XApp capture reported 1,239 unfiltered objects
+with 548 JPEG, 619 RAW, and 72 other objects. The cause of the missing
+RAW entries in the native gallery is still unresolved.
+
+**Check photo counts** runs the same Debug gallery setup and filter,
+including the 9055 setup thumbnail. It shows each available card's
+validated handle count and distinguishes an unavailable card from an
+empty one. The count does not classify formats. The session closes
+before results appear. The action skips per-object metadata reads,
+D226 original-mode changes, and file downloads.
+
+The user reports needing to forget the phone's camera bond and pair
+again when switching between XApp and Fuji Studio. The captures do
+not establish the reason.

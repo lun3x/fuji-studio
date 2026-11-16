@@ -326,6 +326,41 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
     }
   }
 
+  func testPhotoCountsReuseValidatedGalleryInventoryWithoutReadingMetadataOrDownloading() async throws {
+    let unavailable: [Exchange] = [
+      .property(0xd244, Data([2])), .rejection(0x9054, [0x10000001], 0x2013),
+    ]
+    for (first, second, expected) in [
+      (card(Array(1...548)), unavailable, [548, nil]),
+      (card(Array(1...1_167)), card([], storage: 2), [1_167, 0]),
+    ] {
+      // The strict replay accepts only setup, inventory and graceful close.
+      let channel = Replay(galleryStartup + first + [.write(0xd244, [2])] + second + [.read(0x1003)])
+      let session = diagnosticSession(channel)
+      let counts = try await session.checkPhotoCounts()
+      XCTAssertEqual(counts.cards.map(\.slot), [1, 2])
+      XCTAssertEqual(counts.cards.map(\.totalHandles), expected)
+      await expect(.objectChanged) { _ = try await session.scannedPairCandidates() }
+      try await session.close()
+      let remaining = await channel.remaining
+      let closed = await channel.closed
+      XCTAssertEqual(remaining, 0)
+      XCTAssertTrue(closed)
+    }
+  }
+
+  func testPhotoCountsRejectMismatchedHandleListAndClose() async throws {
+    let mismatched = card([1, 2]).dropLast() + [cardRefresh([1]).last!]
+    let channel = Replay(galleryStartup + mismatched + [.read(0x1003)])
+    let session = diagnosticSession(channel)
+    await expect(.malformedData) { _ = try await session.checkPhotoCounts() }
+    try await session.close()
+    let remaining = await channel.remaining
+    let closed = await channel.closed
+    XCTAssertEqual(remaining, 0)
+    XCTAssertTrue(closed)
+  }
+
   func testGalleryDistinguishesEmptyAndUnavailableCards() async throws {
     let channel = Replay(galleryStartup + card([])
       + [originalMode, .write(0xd244, [2]), .property(0xd244, Data([2])),

@@ -1,6 +1,24 @@
 #if DEBUG
 import Foundation
 
+/// Validated JPEG+RAW-filtered inventory without per-object format metadata.
+public struct XAppPhotoCountResult: Sendable, Equatable {
+  public let cards: [Card]
+
+  public init(cards: [Card]) { self.cards = cards }
+
+  public struct Card: Sendable, Equatable {
+    public let slot: UInt32
+    /// A missing count indicates an unavailable card.
+    public let totalHandles: Int?
+
+    public init(slot: UInt32, totalHandles: Int?) {
+      self.slot = slot
+      self.totalHandles = totalHandles
+    }
+  }
+}
+
 /// Safe-to-display summary of the full metadata scan, with bounded rows per card.
 public struct XAppGalleryDiagnosticResult: Sendable, Equatable {
   public static let sampleLimitPerCard = 32
@@ -55,6 +73,7 @@ enum GalleryOriginalRestoration {
 public typealias XAppOriginalControlObservation = WirelessIdentityTrace.OriginalControl
 
 public protocol XAppGalleryDiagnostic: XAppConnectionDiagnostic {
+  func checkPhotoCounts() async throws -> XAppPhotoCountResult
   func listCameraPhotos() async throws -> XAppGalleryDiagnosticResult
   func scannedPairCandidates() async throws -> [WirelessObjectDescriptor]
   func downloadGalleryCandidate(
@@ -65,6 +84,23 @@ public protocol XAppGalleryDiagnostic: XAppConnectionDiagnostic {
 }
 
 extension CameraHostedTransferSession {
+  func checkPhotoCounts() async throws -> XAppPhotoCountResult {
+    try begin()
+    defer { busy = false }
+    try await openGallery()
+    let slots = try await configureXAppGalleryMode()
+    var cards: [XAppPhotoCountResult.Card] = []
+    for slot in slots {
+      transport.observeIdentity(.init(.galleryCardBegin, .completed, gallerySlot: slot))
+      let handles = try await configureXAppCard(slot)
+      if handles == nil {
+        transport.observeIdentity(.init(.galleryCardUnavailable, .completed, gallerySlot: slot))
+      }
+      cards.append(.init(slot: slot, totalHandles: handles?.count))
+    }
+    return .init(cards: cards)
+  }
+
   func listCameraPhotos() async throws -> XAppGalleryDiagnosticResult {
     guard galleryObjects == nil else { throw WirelessFailure.unsupportedProtocol }
     try begin()

@@ -20,7 +20,7 @@ struct ManualWiFiView: View {
             .onChange(of: probe.galleryInProgress) { _, _ in
               scroll.scrollTo("manualWiFi.status", anchor: .top)
             }
-            .onChange(of: probe.galleryResult != nil) { _, hasResult in
+            .onChange(of: probe.galleryResult != nil || probe.photoCountResult != nil) { _, hasResult in
               if hasResult { scroll.scrollTo("manualWiFi.status", anchor: .top) }
             }
         }
@@ -76,7 +76,10 @@ struct ManualWiFiView: View {
       } header: {
         Text("X-T5 connection diagnostic")
       } footer: {
-        Text("Temporary test for X-T5 firmware 4.30 or later. It checks the connection, scans available cards, and can test one JPEG+RAW download.")
+        Text("Temporary test for X-T5 firmware 4.30 or later. It checks the connection, counts or scans photos, and can test one JPEG+RAW download.")
+      }
+      if let result = probe.photoCountResult {
+        photoCounts(result)
       }
       if let result = probe.galleryResult {
         galleryResults(result)
@@ -145,6 +148,9 @@ struct ManualWiFiView: View {
           Button("Check camera connection") { probe.identify() }
             .accessibilityIdentifier("manualWiFi.identify")
             .disabled(!probe.canIdentify)
+          Button("Check photo counts") { probe.checkPhotoCounts() }
+            .accessibilityIdentifier("manualWiFi.countPhotos")
+            .disabled(!probe.canListPhotos)
           Button("Scan all photos") { probe.listCameraPhotos() }
             .accessibilityIdentifier("manualWiFi.listPhotos")
             .disabled(!probe.canListPhotos)
@@ -204,6 +210,28 @@ struct ManualWiFiView: View {
     } else if !running, let previousIdleTimer {
       UIApplication.shared.isIdleTimerDisabled = previousIdleTimer
       self.previousIdleTimer = nil
+    }
+  }
+
+  private func photoCounts(_ result: XAppPhotoCountResult) -> some View {
+    Section {
+      ForEach(result.cards, id: \.slot) { card in
+        let label = "Card \(card.slot)"
+        let value = if let count = card.totalHandles {
+          count == 1 ? "1 item" : "\(count.formatted()) items"
+        } else {
+          "Unavailable"
+        }
+        LabeledContent(label, value: value)
+          .accessibilityElement(children: .ignore)
+          .accessibilityLabel(label)
+          .accessibilityValue(value)
+          .accessibilityIdentifier("manualWiFi.photoCount.\(card.slot)")
+      }
+    } header: {
+      Text("Photo counts")
+    } footer: {
+      Text("Counts are read after requesting the JPEG+RAW filter. The full scan identifies individual formats.")
     }
   }
 

@@ -14,7 +14,7 @@ final class ManualWiFiIdentityTrace: Sendable {
     let event: Trace.Event
   }
 
-  enum Kind: String, Encodable { case connection, gallery, pair }
+  enum Kind: String, Encodable { case connection, gallery, pair, count }
 
   struct Attempt: Encodable {
     let kind: Kind
@@ -130,7 +130,7 @@ final class ManualWiFiIdentityTrace: Sendable {
         guard didValidateXAppAccess else { return }
       case .manualCapturedInitializationProfile, .xAppVersionRead, .xAppVersionValidation,
            .galleryModeWrite, .galleryVersionRead, .galleryVersionValidation, .galleryVersionWrite,
-           .galleryCardBegin, .galleryStorageWrite, .galleryStorageRead, .galleryStorageConfirmation,
+           .galleryCardBegin, .galleryCardUnavailable, .galleryStorageWrite, .galleryStorageRead, .galleryStorageConfirmation,
            .galleryOpen, .galleryPreviewSetup, .galleryModeStatus, .gallerySelectedImages,
            .galleryJPEGRAWFilter, .galleryObjectListBegin, .galleryObjectCount, .galleryHandleList, .galleryHandleValidation,
            .galleryCardSummary, .galleryOriginalModeRead, .galleryOriginalModeWrite, .galleryOriginalModeConfirmation,

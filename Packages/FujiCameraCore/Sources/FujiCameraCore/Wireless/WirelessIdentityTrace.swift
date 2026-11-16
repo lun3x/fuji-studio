@@ -14,7 +14,7 @@ public enum WirelessIdentityTrace {
     case deviceInfoValidation, xAppEventsRead, xAppAccess, xAppVersionRead, xAppVersionValidation
     case closeSessionWrite, closeSessionHeader, closeSessionData, closeSessionFinalHeader, closeSessionResponseBody
     case galleryModeWrite, galleryVersionRead, galleryVersionValidation, galleryVersionWrite
-    case galleryCardBegin, galleryStorageWrite, galleryStorageRead, galleryStorageConfirmation
+    case galleryCardBegin, galleryCardUnavailable, galleryStorageWrite, galleryStorageRead, galleryStorageConfirmation
     case galleryOpen, galleryPreviewSetup, galleryModeStatus, gallerySelectedImages, galleryJPEGRAWFilter
     case galleryObjectListBegin, galleryObjectCount, galleryHandleList, galleryHandleValidation
     case galleryInitialInventory, galleryFilteredInventory

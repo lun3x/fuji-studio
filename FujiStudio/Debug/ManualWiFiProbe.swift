@@ -70,6 +70,7 @@ final class ManualWiFiProbe {
   private(set) var galleryInProgress = false
   private(set) var pairResult: ManualWiFiPairReceipt?
   private(set) var scanProgress: ScanProgress?
+  private(set) var photoCountResult: XAppPhotoCountResult?
   private(set) var galleryResult: XAppGalleryDiagnosticResult?
 
   var visiblePassword: String? { foreground && revealing ? secret : nil }
@@ -180,6 +181,7 @@ final class ManualWiFiProbe {
       guard case .discovered(let camera) = selection, discovered.contains(camera) else { return }
     }
     pairedNearby = []
+    photoCountResult = nil
     galleryResult = nil
     pairResult = nil
     let replace = attempt != nil
@@ -312,9 +314,16 @@ final class ManualWiFiProbe {
     }
   }
 
-  func listCameraPhotos() { runGallery(downloadPair: false) }
+  func checkPhotoCounts() { runGallery(.count) }
 
-  func testPairDownload() { runGallery(downloadPair: true) }
+  func listCameraPhotos() { runGallery(.gallery) }
+
+  func testPairDownload() { runGallery(.pair) }
+
+  private enum GalleryResult: Sendable {
+    case counts(XAppPhotoCountResult)
+    case scan(XAppGalleryDiagnosticResult, ManualWiFiPairReceipt?)
+  }
 
   final class ScanProgress: Sendable {
     struct Snapshot: Sendable {
@@ -336,20 +345,21 @@ final class ManualWiFiProbe {
     var latest: Snapshot { progress.withLock { $0 } }
   }
 
-  private func runGallery(downloadPair: Bool) {
+  private func runGallery(_ kind: ManualWiFiIdentityTrace.Kind) {
     guard canListPhotos, let id = attempt, let identity, let handoff else { return }
     revealing = false
+    photoCountResult = nil
     galleryResult = nil
     pairResult = nil
     galleryInProgress = true
     let progress = ScanProgress()
     scanProgress = progress
-    let report = identityTrace?.begin(kind: downloadPair ? .pair : .gallery)
+    let report = identityTrace?.begin(kind: kind)
     let trace: WirelessIdentityTrace.Observer = { event in
       report?(event)
       progress.observe(event)
     }
-    let store = downloadPair ? makePairStore() : nil
+    let store = kind == .pair ? makePairStore() : nil
     let cleanPending = {
       guard let store else { return }
       do {
@@ -360,7 +370,8 @@ final class ManualWiFiProbe {
       }
     }
     let expires = ContinuousClock.now.advanced(by: galleryDeadline)
-    update(.listingPhotos, "Scanning camera metadata… If the camera asks, confirm the connection on the camera.")
+    let activity = kind == .count ? "Checking photo counts…" : "Scanning camera metadata…"
+    update(.listingPhotos, "\(activity) If the camera asks, confirm the connection on the camera.")
     operation = Task {
       defer {
         galleryInProgress = false
@@ -372,19 +383,20 @@ final class ManualWiFiProbe {
         guard firmware != "unavailable" else { throw WirelessFailure.unsupportedFirmware }
         guard try await bluetooth.identity(for: identity.cameraID) == identity else { throw WirelessFailure.peerMismatch }
         try check(id)
-        let (result, receipt) = try await Self.runSession(identity, makeSession: makeSession, trace: trace,
+        let diagnostic: GalleryResult = try await Self.runSession(identity, makeSession: makeSession, trace: trace,
           deadline: ContinuousClock.now.duration(to: expires), abortOnCancellation: true) { [weak self] session in
+            if kind == .count { return .counts(try await session.checkPhotoCounts()) }
             let scan = try await session.listCameraPhotos()
-            guard let store else { return (scan, nil as ManualWiFiPairReceipt?) }
+            guard let store else { return .scan(scan, nil) }
             try await self?.showCompletedScan(scan, attempt: id)
             trace(.init(.pairSelection, .waiting))
             let candidates = try await session.scannedPairCandidates()
             guard let pair = ManualWiFiPair.select(from: candidates, scan: scan) else {
               trace(.init(.pairSelection, .noData))
-              return (scan, nil)
+              return .scan(scan, nil)
             }
             trace(.init(.pairSelection, .completed))
-            return (scan, try await store.stage(pair, session: session, trace: trace))
+            return .scan(scan, try await store.stage(pair, session: session, trace: trace))
           }
         try check(id)
         guard self.handoff == handoff, userConfirmed,
@@ -396,41 +408,52 @@ final class ManualWiFiProbe {
           trace(.init(.identityDeadline, .failed, failure: .outerDeadline))
           throw WirelessFailure.timeout(.transactionInactivity)
         }
-        if let store, receipt != nil {
-          trace(.init(.pairPublication, .waiting))
-          do {
-            try store.publish()
-            trace(.init(.pairPublication, .completed))
-          } catch {
-            trace(.init(.pairPublication, .failed, failure: .init(error)))
-            throw error
-          }
-        }
-        let provenance = result.wifiIdentityAvailable
-          ? "The camera supplied Wi-Fi identity."
-          : "Wi-Fi identity is unavailable."
-        cleanPending()
-        galleryResult = result
-        pairResult = receipt
         let outcome: String
-        if receipt != nil {
-          outcome = "Validated one JPEG+RAW diagnostic pair in app-private storage. Camera card byte equality is unverified."
-        } else if downloadPair {
-          outcome = "No unambiguous JPEG+RAW pair was found on the available cards. No files downloaded."
-        } else {
-          outcome = "Scanned every object on the available cards."
+        switch diagnostic {
+        case .counts(let counts):
+          photoCountResult = counts
+          outcome = "Checked the photo counts on the available cards."
+        case .scan(let result, let receipt):
+          if let store, receipt != nil {
+            trace(.init(.pairPublication, .waiting))
+            do {
+              try store.publish()
+              trace(.init(.pairPublication, .completed))
+            } catch {
+              trace(.init(.pairPublication, .failed, failure: .init(error)))
+              throw error
+            }
+          }
+          let provenance = result.wifiIdentityAvailable
+            ? "The camera supplied Wi-Fi identity."
+            : "Wi-Fi identity is unavailable."
+          cleanPending()
+          galleryResult = result
+          pairResult = receipt
+          let scanOutcome: String
+          if receipt != nil {
+            scanOutcome = "Validated one JPEG+RAW diagnostic pair in app-private storage. Camera card byte equality is unverified."
+          } else if kind == .pair {
+            scanOutcome = "No unambiguous JPEG+RAW pair was found on the available cards. No files downloaded."
+          } else {
+            scanOutcome = "Scanned every object on the available cards."
+          }
+          outcome = "\(scanOutcome) Bluetooth reports X-T5 firmware \(firmware). \(provenance)"
         }
         trace(.init(.attempt, .completed))
-        await finish(.photosListed,
-          "\(outcome) Bluetooth reports X-T5 firmware \(firmware). \(provenance) Connection closed after the test.",
-          firmware: firmware)
+        await finish(.photosListed, "\(outcome) Connection closed after the test.", firmware: firmware)
       } catch {
         cleanPending()
         trace(.init(.attempt, .failed, failure: .init(error)))
         guard attempt == id else { return }
-        let failure = galleryResult == nil
-          ? "Scan incomplete. Check the camera and start a new Wi-Fi handoff to retry."
-          : "The scan completed, but the pair test failed. Start a new Wi-Fi handoff to retry."
+        let failure: String
+        if kind == .count {
+          failure = "Photo count check incomplete. Check the camera and start a new Wi-Fi handoff to retry."
+        } else if galleryResult == nil {
+          failure = "Scan incomplete. Check the camera and start a new Wi-Fi handoff to retry."
+        } else {
+          failure = "The scan completed, but the pair test failed. Start a new Wi-Fi handoff to retry."
+        }
         await finish(.galleryFailed, Self.failureMessage(error, fallback: failure),
           failure: ManualWiFiEvent.Failure(error))
       }
@@ -554,6 +577,7 @@ final class ManualWiFiProbe {
     let pending = operation
     pending?.cancel()
     if galleryInProgress {
+      photoCountResult = nil
       galleryResult = nil
       pairResult = nil
     }

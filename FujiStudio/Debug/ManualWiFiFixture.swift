@@ -123,7 +123,7 @@ final class ManualWiFiFixture {
   }
 
   actor Transfer: XAppGalleryDiagnostic {
-    enum Action: Equatable { case open, listPhotos, download(WirelessObjectFormat), close }
+    enum Action: Equatable { case open, countPhotos, listPhotos, download(WirelessObjectFormat), close }
 
     private var identity: WirelessIdentity?
     private let withoutDeviceInfo: Bool
@@ -156,6 +156,12 @@ final class ManualWiFiFixture {
 
     func holdGallery(_ barrier: FixtureBarrier) { galleryBarrier = barrier }
     func delayGallery(_ delay: Duration) { galleryDelay = delay }
+
+    func checkPhotoCounts() -> XAppPhotoCountResult {
+      actions.append(.countPhotos)
+      let count = galleryFiles.isEmpty ? (jpegOnly ? 40 : 2) : galleryFiles.count
+      return .init(cards: [.init(slot: 1, totalHandles: count), .init(slot: 2, totalHandles: nil)])
+    }
 
     func listCameraPhotos() async throws -> XAppGalleryDiagnosticResult {
       actions.append(.listPhotos)
