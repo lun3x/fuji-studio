@@ -591,21 +591,30 @@ The official XApp capture on the same X-T5 observed these filter operations:
 - 9051 with the four-byte data `00 00 00 00` specifies zero filter records.
   After XApp confirmed an active filter with 9052, this reset returned OK
   and a 9053 refresh followed by D212 and D620 restored the count of 1,227
-  for both the JPEG and RAW starting states. The initial unfiltered inventory also contained both
-  formats. These observations show that the reset clears the file-format
-  filter. Whether a JPEG filter persisted into the earlier Fuji Studio
-  session remains unconfirmed.
+  for both the JPEG and RAW starting states. The initial unfiltered
+  inventory also contained both formats.
+- A subsequent official XApp capture on the X-T5 04.31 sent
+  `01 00 00 00 08 00 00 00 04 D6 11 00` in transaction 2319 and received
+  OK (0x2001). The payload has one 8-byte record for property D604 with
+  a little-endian UInt16 value of 0x0011. The resulting list contained
+  1,155 handles, comprising exactly 542 JPEG and 613 RAF objects.
 
-Fuji Studio now sends that reset after card setup and before the 9053
-refresh and inventory reads. It requires a valid successful response for
-each available card and repeats the reset on card reselection. The
-`galleryFilterReset` trace stage records the transaction outcome. A reset
-failure aborts that inventory before refresh. A retry repeats card setup
-after a failed reset. Replay tests cover this integration. The combined Fuji Studio sequence still needs physical
-validation.
+In the physical Fuji Studio trial at revision `d60d7753`, the camera
+accepted the four-byte reset and card 2 still returned 542 JPEG and zero
+RAF objects. Card 1 was unavailable, and pair selection found no data to
+download. The trace recorded D226 changing from 0 to 2 with confirmation
+and an acknowledged restoration to 0 before the slot change. The socket
+closed cleanly.
 
-Repeat the full scan and pair trial on the X-T5. Confirm a successful
-filter reset and both formats in the full counts for the available card.
+Fuji Studio now explicitly selects JPEG+RAW after card setup and before
+the 9053 refresh and inventory reads on each available card, including
+card reselection. The `galleryJPEGRAWFilter` trace stage records the
+transaction outcome. Filter failure aborts inventory before refresh or
+download, and a retry repeats card setup. Replay checks the captured
+command and data and verifies that enumeration exposes both formats.
+
+Repeat the full scan and pair trial on the X-T5. Confirm successful
+JPEG+RAW selection and both formats in the full counts for the available card.
 If a pair qualifies, record the observed transfer lengths, validation
 outcomes, and socket cleanup, and compare the private hashes with the
 corresponding files read independently from the card. The official
@@ -644,7 +653,7 @@ session. The capture does not establish per-card or post-session persistence.
 This change is limited to the Debug diagnostic. Production admission
 continues to require independently validated Wi-Fi identity.
 
-Repeat the full scan and pair trial on the X-T5 and verify the reset,
+Repeat the full scan and pair trial on the X-T5 and verify JPEG+RAW selection,
 both format counts, mode confirmation, exact transfer lengths and cleanup
 in the trace. If the diagnostic changes D226, confirm restoration before
 declaring success. The official JPEG transfer establishes the mode and

@@ -142,7 +142,7 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
     XCTAssertTrue(closed)
   }
 
-  func testGalleryClearsPriorJPEGFilterAndScansBeyondTheSample() async throws {
+  func testGalleryAppliesCapturedJPEGRAWFilterAndScansBeyondTheSample() async throws {
     for emptyDeviceInfo in [false, true] {
       let startup: [Exchange] = emptyDeviceInfo
         ? [.read(0x1002, [1]), .emptyDeviceInfo] : start(.xt5, "4.31")
@@ -152,10 +152,10 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
         return Exchange.read(0x1008, [$0], object("SAMPLE\($0).JPG", format: 0x3801, bytes: 456))
       }
       let jpegOnly = handles.filter { $0 != 33 }
-      var reset = Exchange.galleryFilterReset
-      reset.alternative = cardRefresh(jpegOnly) + [originalMode] + metadata.filter { $0.parameters != [33] }
+      var filter = Exchange.galleryJPEGRAWFilter
+      filter.alternative = cardRefresh(jpegOnly) + [originalMode] + metadata.filter { $0.parameters != [33] }
       let channel = Replay(startup + galleryStartup + xappSetup.dropFirst() + cardSetup()
-        + [reset] + cardRefresh(handles) + [originalMode] + metadata + [
+        + [filter] + cardRefresh(handles) + [originalMode] + metadata + [
           .write(0xd244, [2]), .property(0xd244, Data([2])),
           .rejection(0x9054, [0x10000001], 0x2013), .read(0x1003),
         ])
@@ -167,6 +167,7 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
       XCTAssertEqual(result.cards.map(\.summary.rafCount), [1, 0])
       XCTAssertEqual(result.cards.map(\.summary.scannedCount), [34, 0])
       let candidates = try await session.scannedPairCandidates()
+      XCTAssertEqual(candidates.filter { $0.format == .jpeg }.count, 33)
       XCTAssertEqual(candidates.filter { $0.format == .raf }.map(\.filename), ["LATE.RAF"])
       XCTAssertEqual(result.cards[0].samples.count, 32)
       XCTAssertEqual(result.cards[0].samples.first?.filename, "SAMPLE1.JPG")
@@ -179,24 +180,27 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
     }
   }
 
-  func testGalleryDoesNotReturnInventoryOrDownloadCandidatesAfterInvalidFilterResetReply() async throws {
+  func testGalleryDoesNotReturnInventoryOrDownloadCandidatesAfterInvalidFilterReply() async throws {
     let setup = start(.xt5, "4.31") + galleryStartup + xappSetup.dropFirst() + cardSetup()
+    var rejected = Exchange.galleryJPEGRAWFilter
+    rejected.response = 0x2002
+    var missing = Exchange.galleryJPEGRAWFilter
+    missing.omitsResponse = true
+    var wrongTransaction = Exchange.galleryJPEGRAWFilter
+    wrongTransaction.responseTransaction = 0
     let failures: [(Exchange, PTPError, [Exchange])] = [
-      (.init(opcode: 0x9051, parameters: [], outbound: Data([0, 0, 0, 0]), response: 0x2002),
-        .responseCode(0x2002), [.read(0x1003)]),
-      (.init(opcode: 0x9051, parameters: [], outbound: Data([0, 0, 0, 0]), omitsResponse: true),
-        .truncatedContainer, []),
-      (.init(opcode: 0x9051, parameters: [], outbound: Data([0, 0, 0, 0]), responseTransaction: 0),
-        .wrongTransaction(expected: UInt32(setup.count + 1), actual: 0), []),
+      (rejected, .responseCode(0x2002), [.read(0x1003)]),
+      (missing, .truncatedContainer, []),
+      (wrongTransaction, .wrongTransaction(expected: UInt32(setup.count + 1), actual: 0), []),
     ]
     let candidate = WirelessObjectDescriptor(
       cameraID: .init(), sessionID: .init(), storageID: 1, handle: 1, filename: "PAIRED.RAF", format: .raf, byteLength: 3)
-    for (reset, failure, cleanup) in failures {
-      let channel = Replay(setup + [reset] + cleanup)
+    for (filter, failure, cleanup) in failures {
+      let channel = Replay(setup + [filter] + cleanup)
       let session = diagnosticSession(channel)
       do {
         _ = try await session.listCameraPhotos()
-        XCTFail("A failed filter reset returned a gallery")
+        XCTFail("A failed filter selection returned a gallery")
       } catch {
         XCTAssertEqual(error as? PTPError, failure)
       }
@@ -591,14 +595,14 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
     XCTAssertTrue(closed)
   }
 
-  func testGalleryDownloadRetryReconfiguresCardAfterResetWasRefused() async throws {
+  func testGalleryDownloadRetryReconfiguresCardAfterFilterWasRefused() async throws {
     let info = object("CANDIDATE.RAF", format: 0xb103, bytes: 3)
-    var rejectedReset = Exchange.galleryFilterReset
-    rejectedReset.response = 0x2002
+    var rejectedFilter = Exchange.galleryJPEGRAWFilter
+    rejectedFilter.response = 0x2002
     let selectFirst: [Exchange] = [.write(0xd244, [1])]
     let channel = Replay(start(.xt5, "4.31") + galleryStartup + xappSetup.dropFirst() + card([1])
       + [originalMode, .read(0x1008, [1], info), .write(0xd244, [2])] + card([], storage: 2)
-      + [originalMode] + selectFirst + cardSetup() + [rejectedReset]
+      + [originalMode] + selectFirst + cardSetup() + [rejectedFilter]
       + selectFirst + card([1]) + [
         .property(0xd226, word(2, 2)), .read(0x1008, [1], info),
         .read(0x101b, [1, 0, 3], Data([1, 2, 3])), .read(0x1003),
@@ -608,8 +612,8 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
     let candidates = try await session.scannedPairCandidates()
     let member = try XCTUnwrap(candidates.first)
     do {
-      _ = try await session.downloadGalleryCandidate(member) { _ in XCTFail("Rejected reset reached sink") }
-      XCTFail("Rejected reset allowed download")
+      _ = try await session.downloadGalleryCandidate(member) { _ in XCTFail("Rejected filter reached sink") }
+      XCTFail("Rejected filter allowed download")
     } catch {
       XCTAssertEqual(error as? PTPError, .responseCode(0x2002))
     }
@@ -1214,7 +1218,7 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
   }
 
   private func card(_ handles: [UInt32], storage: UInt8 = 1) -> [Exchange] {
-    cardSetup(storage: storage) + [.galleryFilterReset] + cardRefresh(handles)
+    cardSetup(storage: storage) + [.galleryJPEGRAWFilter] + cardRefresh(handles)
   }
 
   private func cardRefresh(_ handles: [UInt32]) -> [Exchange] {
@@ -1258,8 +1262,11 @@ private struct Exchange: Sendable {
   var omitsResponse = false
   var alternative: [Exchange] = []
 
-  static var galleryFilterReset: Self {
-    .init(opcode: 0x9051, parameters: [], outbound: Data([0, 0, 0, 0]))
+  static var galleryJPEGRAWFilter: Self {
+    // XApp JPEG+RAW filter transaction 2319 on X-T5 04.31.
+    .init(opcode: 0x9051, parameters: [], outbound: Data([
+      0x01, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x04, 0xd6, 0x11, 0x00,
+    ]))
   }
 
   static var emptyDeviceInfo: Self { .init(opcode: 0x1001, parameters: [], sendsEmptyData: true) }
@@ -1345,7 +1352,7 @@ private actor Replay: WirelessByteChannel {
     if !waitingForData, let alternate = step.alternative.first {
       let alternateParameters = alternate.parameters.reduce(into: Data()) { $0 += word($1) }
       if data == frame(1, alternate.opcode, transaction, alternateParameters) {
-        // The camera kept its previous view when the application refreshed without a reset.
+        // Refreshing without a filter selection keeps the previous view in this fixture.
         let nextCard = exchanges.dropFirst().firstIndex { $0.parameters == [0xd244] } ?? exchanges.endIndex
         exchanges.replaceSubrange(..<nextCard, with: step.alternative)
         try await write(data)

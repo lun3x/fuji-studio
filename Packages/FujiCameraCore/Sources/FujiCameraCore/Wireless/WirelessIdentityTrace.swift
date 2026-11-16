@@ -14,7 +14,7 @@ public enum WirelessIdentityTrace {
     case closeSessionWrite, closeSessionHeader, closeSessionData, closeSessionFinalHeader, closeSessionResponseBody
     case galleryModeWrite, galleryVersionRead, galleryVersionValidation, galleryVersionWrite
     case galleryCardBegin, galleryStorageWrite, galleryStorageRead, galleryStorageConfirmation
-    case galleryOpen, galleryPreviewSetup, galleryModeStatus, gallerySelectedImages, galleryFilterReset
+    case galleryOpen, galleryPreviewSetup, galleryModeStatus, gallerySelectedImages, galleryJPEGRAWFilter
     case galleryObjectListBegin, galleryObjectCount, galleryHandleList, galleryHandleValidation
     case galleryOriginalModeRead, galleryOriginalModeWrite, galleryOriginalModeConfirmation
     case galleryOriginalModeRestore, galleryOriginalModeRestoreUnconfirmed

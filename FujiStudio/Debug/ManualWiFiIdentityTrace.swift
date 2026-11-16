@@ -123,7 +123,7 @@ final class ManualWiFiIdentityTrace: Sendable {
            .galleryModeWrite, .galleryVersionRead, .galleryVersionValidation, .galleryVersionWrite,
            .galleryCardBegin, .galleryStorageWrite, .galleryStorageRead, .galleryStorageConfirmation,
            .galleryOpen, .galleryPreviewSetup, .galleryModeStatus, .gallerySelectedImages,
-           .galleryFilterReset, .galleryObjectListBegin, .galleryObjectCount, .galleryHandleList, .galleryHandleValidation,
+           .galleryJPEGRAWFilter, .galleryObjectListBegin, .galleryObjectCount, .galleryHandleList, .galleryHandleValidation,
            .galleryCardSummary, .galleryOriginalModeRead, .galleryOriginalModeWrite, .galleryOriginalModeConfirmation,
            .galleryOriginalModeRestore, .galleryOriginalModeRestoreUnconfirmed:
         break

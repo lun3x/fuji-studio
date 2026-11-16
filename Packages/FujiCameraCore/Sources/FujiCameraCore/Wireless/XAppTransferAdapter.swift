@@ -64,7 +64,7 @@ extension CameraHostedTransferSession {
       throw WirelessFailure.unavailableStorage
     }
     transport.observeIdentity(.init(.galleryStorageConfirmation, .completed))
-    // A retry must not skip setup after an incomplete filter reset or refresh.
+    // A retry must not skip setup after a failed filter selection or refresh.
     selectedStorage = nil
     do {
       _ = try await execute(0x9054, [0x10000001])
@@ -76,8 +76,11 @@ extension CameraHostedTransferSession {
     _ = try await execute(0x9050)
     _ = try await readEvents()
     _ = try await property(0xd22b)
-    // The X-T5 XApp trace clears all filter records before refreshing the object list.
-    _ = try await execute(0x9051, data: Data([0, 0, 0, 0]))
+    // XApp on X-T5 04.31 selects JPEG+RAW with one 8-byte D604 record set to 0x0011.
+    let jpegRAWFilter = Data([
+      0x01, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x04, 0xd6, 0x11, 0x00,
+    ])
+    _ = try await execute(0x9051, data: jpegRAWFilter)
     _ = try await execute(0x9053, [0, 30_000])
     let count = try await readScalar(0xd620)
     let payload = try await property(0xd621)

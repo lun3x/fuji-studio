@@ -99,7 +99,7 @@ struct ManualWiFiIdentityTraceTests {
     observer(.init(.galleryCardSummary, .completed, galleryCard: unavailable.summary))
     observer(.init(.galleryCardBegin, .completed, gallerySlot: 2))
     observer(.init(.galleryStorageWrite, .completed))
-    observer(.init(.galleryFilterReset, .failed, failure: .rejected, responseCode: 0x2002))
+    observer(.init(.galleryJPEGRAWFilter, .failed, failure: .rejected, responseCode: 0x2002))
     for _ in 0..<200 { observer(.init(.galleryObjectInfo, .completed)) }
     let sample = XAppGalleryDiagnosticResult.Card(slot: 2, totalHandles: 40,
       samples: [.init(filename: "PRIVATE.RAF", format: .raf, byteLength: 4_294_967)])
@@ -115,7 +115,7 @@ struct ManualWiFiIdentityTraceTests {
 
     #expect(milestones.compactMap { $0["stage"] as? String } == [
       "galleryModeWrite", "galleryCardBegin", "galleryOpen", "galleryCardSummary",
-      "galleryCardBegin", "galleryStorageWrite", "galleryFilterReset", "galleryCardSummary"
+      "galleryCardBegin", "galleryStorageWrite", "galleryJPEGRAWFilter", "galleryCardSummary"
     ])
     #expect(milestones[1]["gallerySlot"] as? Int == 1)
     #expect(milestones[2]["responseCode"] as? Int == 0x2013)
