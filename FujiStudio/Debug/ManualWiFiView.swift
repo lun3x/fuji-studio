@@ -24,7 +24,7 @@ struct ManualWiFiView: View {
               if mode == .pair {
                 Text("On the camera, check that pairing completed and that \(destination) appears in Select Pairing Destination. Select that destination.")
               } else {
-                Text("On the camera, select \(destination) in Select Pairing Destination. If that name is absent, cancel and start a new pairing from Bluetooth discovery.")
+                Text("On the camera, select \(destination) in Select Pairing Destination. If that name is absent, cancel and choose Pair a new camera.")
               }
               Button(probe.registrationConfirmed ? "Camera registration confirmed" : "I verified \(destination) on the camera") {
                 probe.confirmRegistration()
@@ -65,24 +65,34 @@ struct ManualWiFiView: View {
             }
           }
           Section("Camera selection") {
-            ForEach(Array(probe.saved.enumerated()), id: \.element.id) { index, camera in
-              let localRecord = "local record \(index + 1)"
-              let linked = probe.linkedRecordID == camera.id
-              Button("Reconnect to \(camera.displayName) (\(localRecord)\(linked ? ", linked" : ""))") {
-                probe.connect(.saved(camera))
+            Button("Find paired X-T5") { probe.findPairedCamera() }
+              .accessibilityIdentifier("manualWiFi.findPaired")
+              .disabled(!probe.canScan)
+            Text("On the camera, turn Bluetooth on, select Fuji iPhone in Select Pairing Destination, then return the camera to normal shooting.")
+            ForEach(probe.pairedNearby) { camera in
+              Button("Reconnect to nearby \(camera.displayName) (\(localLabel(camera, in: probe)))") {
+                probe.reconnectNearby(camera)
               }
-                .accessibilityIdentifier("manualWiFi.savedCamera")
-                .disabled(!probe.canSelect)
+              .accessibilityIdentifier("manualWiFi.pairedCamera")
+              .disabled(!probe.canReconnect)
             }
-            Button("Discover Bluetooth cameras") { probe.scan() }
+            Button("Pair a new camera") { probe.scanForPairing() }
+              .accessibilityIdentifier("manualWiFi.newPairing")
               .disabled(!probe.canScan)
             ForEach(probe.discovered) { camera in
-              if let saved = ManualWiFiProbe.matchingSavedCamera(for: camera, among: probe.saved) {
-                Button("Reconnect to nearby \(camera.displayName)") { probe.connect(.saved(saved)) }
-                  .disabled(!probe.canSelect)
-              }
               Button("Pair with \(camera.displayName)") { probe.connect(.discovered(camera)) }
                 .disabled(!probe.canSelect)
+            }
+            if !probe.saved.isEmpty {
+              DisclosureGroup("Local saved records") {
+                ForEach(probe.saved) { camera in
+                  let linked = probe.linkedRecordID == camera.id ? ", linked" : ""
+                  Button("Reconnect to \(camera.displayName) (\(localLabel(camera, in: probe))\(linked))") {
+                    probe.connect(.saved(camera))
+                  }
+                  .disabled(!probe.canReconnect)
+                }
+              }
             }
           }
         }
@@ -109,6 +119,11 @@ struct ManualWiFiView: View {
       await current.observe()
     }
     .onChange(of: scenePhase) { _, value in probe?.sceneChanged(value) }
+  }
+
+  private func localLabel(_ camera: SavedCamera, in probe: ManualWiFiProbe) -> String {
+    let index = probe.saved.firstIndex { $0.id == camera.id } ?? 0
+    return "local record \(index + 1)"
   }
 }
 #endif

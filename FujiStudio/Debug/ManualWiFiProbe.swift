@@ -38,6 +38,7 @@ final class ManualWiFiProbe {
 
   private let bluetooth: any BluetoothGateway
   private let loadSaved: () async throws -> [SavedCamera]
+  private let findPaired: ([SavedCamera]) async throws -> ManualPairedCameraMatches
   private let password: (CameraCredentialReference) async throws -> String
   private let authorizeLaunch: (UUID, @escaping () -> Bool) throws -> Void
   private let makeSession: SessionFactory
@@ -56,8 +57,9 @@ final class ManualWiFiProbe {
   private var foreground = false
 
   private(set) var saved: [SavedCamera] = []
+  private(set) var pairedNearby: [SavedCamera] = []
   private(set) var discovered: [DiscoveredCamera] = []
-  private(set) var status = "Select a saved camera or start Bluetooth discovery."
+  private(set) var status = "Find your paired X-T5 or pair a new camera."
   private(set) var handoff: CameraNetwork?
   private(set) var registrationConfirmed = false
   private(set) var userConfirmed = false
@@ -65,6 +67,7 @@ final class ManualWiFiProbe {
   var visiblePassword: String? { foreground && revealing ? secret : nil }
   var canSelect: Bool { foreground && operation == nil }
   var canScan: Bool { canSelect && linkedCamera == nil && scanning == nil }
+  var canReconnect: Bool { canSelect && scanning == nil }
   var registrationMode: ManualWiFiEvent.LinkMode? { handoff == nil ? linkedCamera?.mode : nil }
   var linkedRecordID: WirelessCameraID? { identity?.cameraID }
   var canConfirmRegistration: Bool { canSelect && registrationMode != nil && !registrationConfirmed }
@@ -75,6 +78,7 @@ final class ManualWiFiProbe {
 
   init(
     bluetooth: any BluetoothGateway, loadSaved: @escaping () async throws -> [SavedCamera],
+    findPaired: @escaping ([SavedCamera]) async throws -> ManualPairedCameraMatches,
     password: @escaping (CameraCredentialReference) async throws -> String,
     authorizeLaunch: @escaping (UUID, @escaping () -> Bool) throws -> Void,
     makeSession: @escaping SessionFactory, startLease: @escaping StartLease,
@@ -82,6 +86,7 @@ final class ManualWiFiProbe {
   ) {
     self.bluetooth = bluetooth
     self.loadSaved = loadSaved
+    self.findPaired = findPaired
     self.password = password
     self.authorizeLaunch = authorizeLaunch
     self.makeSession = makeSession
@@ -92,23 +97,55 @@ final class ManualWiFiProbe {
   func observe() async {
     let events = await bluetooth.events()
     do { saved = try await loadSaved().filter { $0.model == .xt5 } }
-    catch { status = "Saved cameras are unavailable. Try Bluetooth discovery." }
+    catch { status = "Saved cameras are unavailable. Unlock the phone and try again." }
     for await event in events { bluetoothEvent(event) }
   }
 
-  func scan() {
+  func findPairedCamera() {
     guard canScan else { return }
     let id = UUID()
     scanID = id
+    pairedNearby = []
     discovered = []
-    update(.discovering, "On the camera, open Bluetooth pairing. Select it when it appears.")
+    update(.findingPaired, "Looking for the paired X-T5. Keep it awake in normal shooting mode.")
     scanning = Task {
-      defer {
-        if scanID == id {
-          scanID = nil
-          scanning = nil
+      defer { endScan(id) }
+      do {
+        let records = try await loadSaved()
+        guard scanID == id, !Task.isCancelled else { return }
+        saved = records.filter { $0.model == .xt5 }
+        let matches = try await findPaired(records)
+        guard scanID == id, !Task.isCancelled else { return }
+        pairedNearby = matches.cameras
+        if matches.ambiguous {
+          update(.pairedAmbiguous, "A nearby camera matches more than one saved record. Those records cannot be selected from this search.")
+        } else if pairedNearby.isEmpty {
+          update(.pairedNotFound, "No paired X-T5 found. Wake the camera, check that Bluetooth is on and Fuji iPhone is selected, then retry.")
+        } else {
+          update(.pairedFound, "Choose the paired X-T5 you want to reconnect.")
         }
+      } catch {
+        guard scanID == id, !Task.isCancelled else { return }
+        update(.bluetoothFailed, Self.failureMessage(error, fallback: "Search stopped. Check Bluetooth and the camera’s Fuji iPhone destination, then retry."),
+          failure: ManualWiFiEvent.Failure(error))
       }
+    }
+  }
+
+  func reconnectNearby(_ camera: SavedCamera) {
+    guard pairedNearby.contains(camera) else { return }
+    connect(.saved(camera))
+  }
+
+  func scanForPairing() {
+    guard canScan else { return }
+    let id = UUID()
+    scanID = id
+    pairedNearby = []
+    discovered = []
+    update(.discovering, "On the camera, open Pairing Registration. Select the camera when it appears.")
+    scanning = Task {
+      defer { endScan(id) }
       do {
         for try await cameras in try await bluetooth.discover() {
           guard scanID == id, !Task.isCancelled else { return }
@@ -122,14 +159,12 @@ final class ManualWiFiProbe {
     }
   }
 
-  static func matchingSavedCamera(for discovered: DiscoveredCamera, among saved: [SavedCamera]) -> SavedCamera? {
-    guard discovered.advertisedModelHint == .xt5 else { return nil }
-    let matches = saved.filter { $0.peripheralID == discovered.peripheralID && $0.model == .xt5 }
-    return matches.count == 1 ? matches.first : nil
-  }
-
   func connect(_ selection: Selection) {
     guard canSelect else { return }
+    if scanning != nil {
+      guard case .discovered(let camera) = selection, discovered.contains(camera) else { return }
+    }
+    pairedNearby = []
     let replace = attempt != nil
     invalidateHandoff()
     let id = UUID()
@@ -259,6 +294,7 @@ final class ManualWiFiProbe {
     case .inactive:
       break
     case .background:
+      pairedNearby = []
       guard canCancel else { return }
       guard handoff != nil, operation == nil else {
         retire(.leftDuringOperation, "The test stopped in the background. Select a camera to retry.")
@@ -297,6 +333,7 @@ final class ManualWiFiProbe {
   }
 
   func waitForOperation() async { await operation?.value }
+  func waitForScan() async { await scanning?.value }
 
   private func currentSelectionCheck(_ id: UUID) -> () -> Bool {
     { [weak self] in self?.attempt == id }
@@ -307,11 +344,21 @@ final class ManualWiFiProbe {
     guard attempt == id else { throw CancellationError() }
   }
 
-  private func stopScan() {
+  private func endScan(_ id: UUID) {
+    guard scanID == id else { return }
     scanID = nil
-    scanning?.cancel()
+    scanning = nil
+  }
+
+  @discardableResult
+  private func stopScan() -> Task<Void, Never>? {
+    let pendingScan = scanning
+    scanID = nil
+    pendingScan?.cancel()
     scanning = nil
     discovered = []
+    pairedNearby = []
+    return pendingScan
   }
 
   private func releaseLease() {
@@ -348,11 +395,12 @@ final class ManualWiFiProbe {
     // The watchdog leaves time for BLE teardown. The hard deadline ends the
     // assertion as soon as the attempt is invalid, even if teardown is pending.
     if releaseImmediately { releaseLease() }
-    stopScan()
+    let pendingScan = stopScan()
     update(phase, message)
     operation = Task {
       await bluetooth.disconnect()
       releaseLease()
+      await pendingScan?.value
       await pending?.value
       operation = nil
     }
@@ -420,6 +468,7 @@ final class ManualWiFiProbe {
 
 struct ManualWiFiEvent: Encodable {
   enum Phase: String, Encodable {
+    case findingPaired, pairedFound, pairedNotFound, pairedAmbiguous
     case discovering, authenticating, bluetoothLinked, bluetoothFailed, registrationConfirmed, activating, activationFailed
     case ready, confirmationRequired, userConfirmed, identifying, identified, identityFailed
     case cancelled, leftDuringOperation, leaseExpired, bluetoothLost
@@ -516,6 +565,7 @@ extension ManualWiFiProbe {
     return ManualWiFiProbe(
       bluetooth: NativeBluetoothGateway(store: store, driver: driver),
       loadSaved: { try await store.cameras() },
+      findPaired: { try await ManualPairedCameraFinder(saved: $0).find() },
       password: { try await store.password(for: $0) },
       authorizeLaunch: { try driver.beginStandardActivation(peripheralID: $0, selectionIsCurrent: $1) },
       makeSession: { identity in

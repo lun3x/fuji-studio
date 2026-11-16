@@ -77,19 +77,49 @@ struct ManualWiFiProbeTests {
     #expect(await fixture.bluetooth.activationCount == 0)
   }
 
-  @Test func nearbyReconnectRequiresAnUnambiguousPeripheralAndModelMatch() {
+  @Test func findingPairedCameraWaitsForAUserSelectionBeforeConnecting() async {
     let fixture = ManualWiFiFixture()
-    let camera = fixture.camera
-    let nearby = DiscoveredCamera(peripheralID: camera.peripheralID,
-      advertisedModelHint: .xt5, displayName: "Different advertisement label")
-    let duplicate = SavedCamera(id: WirelessCameraID(), peripheralID: camera.peripheralID,
-      model: .xt5, displayName: camera.displayName)
-    let unresolved = DiscoveredCamera(peripheralID: camera.peripheralID,
-      advertisedModelHint: nil, displayName: camera.displayName)
-    #expect(ManualWiFiProbe.matchingSavedCamera(for: nearby, among: [fixture.otherCamera, camera]) == camera)
-    #expect(ManualWiFiProbe.matchingSavedCamera(for: nearby, among: [duplicate, camera]) == nil)
-    #expect(ManualWiFiProbe.matchingSavedCamera(for: nearby, among: [fixture.otherCamera]) == nil)
-    #expect(ManualWiFiProbe.matchingSavedCamera(for: unresolved, among: [camera]) == nil)
+    let probe = fixture.probe
+    probe.findPairedCamera()
+    await probe.waitForScan()
+    #expect(probe.pairedNearby == [fixture.camera])
+    #expect(await fixture.bluetooth.reconnectCount == 0)
+    #expect(await fixture.bluetooth.discoverCount == 0)
+    probe.reconnectNearby(fixture.otherCamera)
+    #expect(await fixture.bluetooth.reconnectCount == 0)
+    probe.reconnectNearby(fixture.camera)
+    await probe.waitForOperation()
+    #expect(await fixture.bluetooth.reconnectCount == 1)
+    #expect(probe.linkedRecordID == fixture.camera.id)
+    #expect(!probe.canStartWiFi)
+  }
+
+  @Test(arguments: [false, true]) func retiredFinderMustDrainBeforePairingOrReconnecting(background: Bool) async {
+    let fixture = ManualWiFiFixture()
+    let probe = fixture.probe
+    let heldFinder = FixtureBarrier()
+    fixture.finder.beforeReturn = heldFinder
+    probe.findPairedCamera()
+    await heldFinder.entered()
+    if background {
+      probe.sceneChanged(.background)
+      probe.sceneChanged(.active)
+    } else {
+      probe.cancel()
+    }
+    probe.scanForPairing()
+    probe.reconnectNearby(fixture.camera)
+    probe.connect(.saved(fixture.camera))
+    #expect(await fixture.bluetooth.discoverCount == 0)
+    #expect(await fixture.bluetooth.reconnectCount == 0)
+    await heldFinder.release()
+    await probe.waitForOperation()
+    #expect(probe.pairedNearby.isEmpty)
+    probe.scanForPairing()
+    await probe.waitForScan()
+    #expect(await fixture.bluetooth.discoverCount == 1)
+    #expect(probe.discovered.count == 1)
+    #expect(probe.pairedNearby.isEmpty)
   }
 
   @Test func selectionChangeRequiresASeparateFreshConfirmation() async {

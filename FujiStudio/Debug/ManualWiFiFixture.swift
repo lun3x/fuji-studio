@@ -1,4 +1,5 @@
 #if DEBUG && targetEnvironment(simulator)
+import CoreBluetooth
 import Foundation
 import FujiCameraCore
 
@@ -14,6 +15,7 @@ final class ManualWiFiFixture {
   let otherCamera = SavedCamera(id: WirelessCameraID(), peripheralID: UUID(), model: .xt5, displayName: "Alternate X-T5")
   let bluetooth = Bluetooth()
   let transfer = Transfer()
+  let finder = SavedFinder()
   private let lease: Lease
   let probe: ManualWiFiProbe
 
@@ -22,8 +24,11 @@ final class ManualWiFiFixture {
     let lease = Lease()
     self.lease = lease
     let transfer = self.transfer
+    let finder = self.finder
     probe = ManualWiFiProbe(
-      bluetooth: bluetooth, loadSaved: { cameras }, password: { _ in "fixture-password" },
+      bluetooth: bluetooth, loadSaved: { cameras },
+      findPaired: { try await finder.find($0) },
+      password: { _ in "fixture-password" },
       authorizeLaunch: { _, _ in },
       makeSession: { identity in await transfer.setIdentity(identity); return transfer },
       startLease: { expire in lease.expiration = expire; return { lease.expiration = nil } },
@@ -35,6 +40,24 @@ final class ManualWiFiFixture {
   var events: [ManualWiFiEvent] { lease.events }
   func expireLease(_ reason: ManualWiFiProbe.LeaseExpiration) { lease.expiration?(reason) }
 
+  @MainActor
+  final class SavedFinder {
+    var beforeReturn: FixtureBarrier?
+
+    func find(_ saved: [SavedCamera]) async throws -> ManualPairedCameraMatches {
+      await beforeReturn?.wait()
+      var results = ManualPairedCameraMatches(saved: saved)
+      if let camera = saved.first {
+        results.receive(peripheralID: camera.peripheralID, advertisement: [
+          CBAdvertisementDataServiceUUIDsKey: [ManualPairedCameraMatches.service],
+          CBAdvertisementDataManufacturerDataKey: Data([0xd8, 0x04, 0, 0, 0, 0, 0, 0]),
+          CBAdvertisementDataIsConnectable: true
+        ])
+      }
+      return results
+    }
+  }
+
   actor Bluetooth: BluetoothGateway {
     private var selected: SavedCamera?
     private var activationBarrier: FixtureBarrier?
@@ -42,6 +65,8 @@ final class ManualWiFiFixture {
     private var disconnectBarrier: FixtureBarrier?
     private(set) var disconnectCount = 0
     private(set) var activationCount = 0
+    private(set) var discoverCount = 0
+    private(set) var reconnectCount = 0
 
     func holdActivation(_ barrier: FixtureBarrier, thenThrow failure: WirelessFailure? = nil) {
       activationBarrier = barrier
@@ -51,7 +76,12 @@ final class ManualWiFiFixture {
     func holdDisconnect(_ barrier: FixtureBarrier) { disconnectBarrier = barrier }
 
     func discover() async throws -> AsyncThrowingStream<[DiscoveredCamera], Error> {
-      AsyncThrowingStream { $0.finish() }
+      discoverCount += 1
+      let camera = DiscoveredCamera(peripheralID: UUID(), advertisedModelHint: .xt5, displayName: "New fixture X-T5")
+      return AsyncThrowingStream {
+        $0.yield([camera])
+        $0.finish()
+      }
     }
 
     func pair(_ camera: DiscoveredCamera) async throws -> SavedCamera {
@@ -61,7 +91,10 @@ final class ManualWiFiFixture {
       return paired
     }
 
-    func reconnect(_ camera: SavedCamera, allowPermissionPrompt: Bool) async throws { selected = camera }
+    func reconnect(_ camera: SavedCamera, allowPermissionPrompt: Bool) async throws {
+      reconnectCount += 1
+      selected = camera
+    }
 
     func identity(for id: WirelessCameraID) async throws -> WirelessIdentity {
       guard selected?.id == id else { throw WirelessFailure.peerMismatch }

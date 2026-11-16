@@ -6,8 +6,12 @@ final class ManualWiFiTests: XCTestCase {
     app.launchArguments = ["--manual-wifi-fixture"]
     app.launch()
 
-    let connect = app.buttons["manualWiFi.savedCamera"].firstMatch
+    let find = app.buttons["manualWiFi.findPaired"]
+    XCTAssertTrue(find.waitForExistence(timeout: 10))
+    find.tap()
+    let connect = app.buttons["manualWiFi.pairedCamera"].firstMatch
     XCTAssertTrue(connect.waitForExistence(timeout: 10))
+    XCTAssertTrue(app.staticTexts["manualWiFi.status"].label.contains("Choose the paired X-T5"))
     connect.tap()
 
     let start = app.buttons["manualWiFi.startWiFi"]
@@ -36,5 +40,19 @@ final class ManualWiFiTests: XCTestCase {
     let status = app.staticTexts.matching(NSPredicate(format: "label == %@", "X-T5 identified. Firmware 04.31.")).firstMatch
     XCTAssertTrue(status.waitForExistence(timeout: 10))
     XCTAssertFalse(app.staticTexts["manualWiFi.password"].exists)
+  }
+
+  func testPairingInstructionsAppearOnlyInTheNewCameraFlow() {
+    let app = XCUIApplication()
+    app.launchArguments = ["--manual-wifi-fixture"]
+    app.launch()
+
+    let pair = app.buttons["manualWiFi.newPairing"]
+    XCTAssertTrue(pair.waitForExistence(timeout: 10))
+    XCTAssertFalse(app.staticTexts["manualWiFi.status"].label.contains("open Pairing Registration"))
+    pair.tap()
+    XCTAssertTrue(app.buttons["Pair with New fixture X-T5"].waitForExistence(timeout: 10))
+    XCTAssertTrue(app.staticTexts["manualWiFi.status"].label.contains("open Pairing Registration"))
+    XCTAssertFalse(app.buttons["manualWiFi.pairedCamera"].exists)
   }
 }
