@@ -19,11 +19,12 @@ final class ManualWiFiFixture {
   private let lease: Lease
   let probe: ManualWiFiProbe
 
-  init(withoutDeviceInfo: Bool = false, galleryDeadline: Duration = .seconds(90)) {
+  init(withoutDeviceInfo: Bool = false, galleryDeadline: Duration = .seconds(90),
+       jpegOnly: Bool = false, pairRoot: URL? = nil) {
     let cameras = [camera, otherCamera]
     let lease = Lease()
     self.lease = lease
-    let transfer = Transfer(withoutDeviceInfo: withoutDeviceInfo)
+    let transfer = Transfer(withoutDeviceInfo: withoutDeviceInfo, jpegOnly: jpegOnly)
     self.transfer = transfer
     let finder = self.finder
     probe = ManualWiFiProbe(
@@ -33,7 +34,8 @@ final class ManualWiFiFixture {
       authorizeLaunch: { _, _ in },
       makeSession: { identity, _ in await transfer.setIdentity(identity); return transfer },
       startLease: { expire in lease.expiration = expire; return { lease.expiration = nil } },
-      record: { lease.events.append($0) }, galleryDeadline: galleryDeadline)
+      record: { lease.events.append($0) }, galleryDeadline: galleryDeadline,
+      makePairStore: { pairRoot.map { .init(root: $0) } ?? .init() })
     probe.sceneChanged(.active)
   }
 
@@ -121,10 +123,12 @@ final class ManualWiFiFixture {
   }
 
   actor Transfer: XAppGalleryDiagnostic {
-    enum Action { case open, listPhotos, close }
+    enum Action: Equatable { case open, listPhotos, download(WirelessObjectFormat), close }
 
     private var identity: WirelessIdentity?
     private let withoutDeviceInfo: Bool
+    private let jpegOnly: Bool
+    private var galleryFiles: [WirelessObjectDescriptor: Data] = [:]
     private(set) var actions: [Action] = []
     private var galleryBarrier: FixtureBarrier?
     private var galleryDelay: Duration?
@@ -134,7 +138,12 @@ final class ManualWiFiFixture {
     private var galleryAborted = false
     private(set) var galleryAbortCount = 0
 
-    init(withoutDeviceInfo: Bool) { self.withoutDeviceInfo = withoutDeviceInfo }
+    init(withoutDeviceInfo: Bool, jpegOnly: Bool) {
+      self.withoutDeviceInfo = withoutDeviceInfo
+      self.jpegOnly = jpegOnly
+    }
+
+    func setGalleryFiles(_ files: [WirelessObjectDescriptor: Data]) { galleryFiles = files }
 
     func setIdentity(_ identity: WirelessIdentity) { self.identity = identity }
 
@@ -151,13 +160,37 @@ final class ManualWiFiFixture {
       actions.append(.listPhotos)
       if let galleryDelay { try await Task.sleep(for: galleryDelay) }
       await galleryBarrier?.wait()
+      let files = if !galleryFiles.isEmpty {
+        galleryFiles.keys.sorted { $0.handle < $1.handle }.map {
+          XAppGalleryDiagnosticResult.Sample(filename: $0.filename, format: $0.format, byteLength: $0.byteLength)
+        }
+      } else if jpegOnly {
+        (1...40).map {
+          XAppGalleryDiagnosticResult.Sample(filename: "FIXTURE\($0).JPG", format: .jpeg, byteLength: 15_000)
+        }
+      } else {
+        [
+          XAppGalleryDiagnosticResult.Sample(filename: "FIXTURE.JPG", format: .jpeg, byteLength: 15_000),
+          XAppGalleryDiagnosticResult.Sample(filename: "FIXTURE.RAF", format: .raf, byteLength: 30_000)
+        ]
+      }
       return .init(wifiIdentityAvailable: !withoutDeviceInfo, cards: [
-        .init(slot: 1, totalHandles: 2, samples: [
-          .init(filename: "FIXTURE.JPG", format: .jpeg, byteLength: 15_000),
-          .init(filename: "FIXTURE.RAF", format: .raf, byteLength: 30_000)
-        ]),
+        .init(slot: 1, totalHandles: files.count, samples: files),
         .init(slot: 2, totalHandles: nil, samples: [])
       ])
+    }
+
+    func scannedPairCandidates() -> [WirelessObjectDescriptor] { Array(galleryFiles.keys) }
+
+    func downloadGalleryCandidate(
+      _ object: WirelessObjectDescriptor, to sink: @escaping @Sendable (Data) async throws -> Void
+    ) async throws -> XAppOriginalControlObservation {
+      guard let bytes = galleryFiles[object] else { throw WirelessFailure.objectChanged }
+      actions.append(.download(object.format))
+      let midpoint = bytes.count / 2
+      try await sink(Data(bytes.prefix(midpoint)))
+      try await sink(Data(bytes.dropFirst(midpoint)))
+      return .reported(2)
     }
 
     func holdGalleryClose(entered: AsyncStream<Void>.Continuation) {

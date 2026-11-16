@@ -147,8 +147,9 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
       let startup: [Exchange] = emptyDeviceInfo
         ? [.read(0x1002, [1]), .emptyDeviceInfo] : start(.xt5, "4.31")
       let handles = (1...34).map(UInt32.init)
-      let sample = handles.prefix(32).map {
-        Exchange.read(0x1008, [$0], object("SAMPLE\($0).JPG", format: 0x3801, bytes: 456))
+      let sample = handles.map {
+        if $0 == 33 { return Exchange.read(0x1008, [$0], object("LATE.RAF", format: 0xb103, bytes: 789)) }
+        return Exchange.read(0x1008, [$0], object("SAMPLE\($0).JPG", format: 0x3801, bytes: 456))
       }
       let channel = Replay(startup + galleryStartup + xappSetup.dropFirst() + card(handles)
         + sample + [.write(0xd244, [2])] + card([1], storage: 2)
@@ -157,8 +158,9 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
       let result = try await session.listCameraPhotos()
       XCTAssertEqual(result.wifiIdentityAvailable, !emptyDeviceInfo)
       XCTAssertEqual(result.cards.map(\.summary.totalHandles), [34, 1])
-      XCTAssertEqual(result.cards.map(\.summary.sampledJPEG), [32, 0])
-      XCTAssertEqual(result.cards.map(\.summary.sampledRAF), [0, 1])
+      XCTAssertEqual(result.cards.map(\.summary.jpegCount), [33, 0])
+      XCTAssertEqual(result.cards.map(\.summary.rafCount), [1, 1])
+      XCTAssertEqual(result.cards[0].samples.count, 32)
       XCTAssertEqual(result.cards[0].samples.first?.filename, "SAMPLE1.JPG")
       XCTAssertEqual(result.cards[1].samples.first?.filename, "SECOND.RAF")
       XCTAssertEqual(result.cards[1].samples.first?.byteLength, 789)
@@ -179,7 +181,7 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
     let result = try await session.listCameraPhotos()
     XCTAssertEqual(result.cards.map(\.summary.status), [.available, .unavailable])
     XCTAssertEqual(result.cards.map(\.summary.totalHandles), [0, nil])
-    XCTAssertEqual(result.cards.map(\.summary.sampledCount), [0, 0])
+    XCTAssertEqual(result.cards.map(\.summary.scannedCount), [0, 0])
     try await session.close()
     let remaining = await channel.remaining
     XCTAssertEqual(remaining, 0)
@@ -193,6 +195,7 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
       let channel = Replay(start(.xt5, "4.31") + galleryStartup + xappSetup.dropFirst() + steps + [.read(0x1003)])
       let session = diagnosticSession(channel)
       await expect(.malformedData) { _ = try await session.listCameraPhotos() }
+      await expect(.objectChanged) { _ = try await session.scannedPairCandidates() }
       try await session.close()
       let remaining = await channel.remaining
       XCTAssertEqual(remaining, 0)
@@ -265,6 +268,109 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
     let closed = await channel.closed
     XCTAssertEqual(remaining, 0)
     XCTAssertTrue(closed)
+  }
+
+  func testGalleryDownloadsBoundedCandidatesFromTheirOwnCardsWithoutResizeWrites() async throws {
+    let cap = UInt32(1_048_576)
+    let raf = object("CANDIDATE.RAF", format: 0xb103, bytes: cap + 1)
+    let jpeg = object("CANDIDATE.JPG", format: 0x3801, bytes: 2)
+    let rawBlock = Data(repeating: 0x52, count: Int(cap))
+    var steps = start(.xt5, "4.31") + galleryStartup + xappSetup.dropFirst() + card([1])
+    steps += [.read(0x1008, [1], raf), .write(0xd244, [2])] + card([1], storage: 2)
+    steps += [.read(0x1008, [1], jpeg), .write(0xd244, [1])] + card([1])
+    steps += [
+      .property(0xd226, word(1, 2)), .read(0x1008, [1], raf),
+      .read(0x101b, [1, 0, cap], rawBlock), .read(0x101b, [1, cap, 1], Data([0x46])),
+      .write(0xd244, [2]),
+    ] + card([1], storage: 2)
+    steps += [
+      .rejection(0x1015, [0xd226], 0x200a), .read(0x1008, [1], jpeg),
+      .read(0x101b, [1, 0, 2], Data([0xff, 0xd8])), .read(0x1003)
+    ]
+    let channel = Replay(steps)
+    let session = diagnosticSession(channel)
+    await expect(.objectChanged) { _ = try await session.scannedPairCandidates() }
+    _ = try await session.listCameraPhotos()
+    let candidates = try await session.scannedPairCandidates()
+    let rawObject = try XCTUnwrap(candidates.first { $0.format == .raf })
+    let jpegObject = try XCTUnwrap(candidates.first { $0.format == .jpeg })
+    XCTAssertEqual(rawObject.storageID, 1)
+    XCTAssertEqual(jpegObject.storageID, 2)
+    XCTAssertEqual(rawObject.handle, jpegObject.handle)
+    await expect(.connectionLost) { try await session.download(rawObject) { _ in XCTFail() } }
+    let raw = Bytes()
+    let jpg = Bytes()
+    let rawControl = try await session.downloadGalleryCandidate(rawObject) { await raw.append($0) }
+    let jpegControl = try await session.downloadGalleryCandidate(jpegObject) { await jpg.append($0) }
+    XCTAssertEqual(rawControl, .reported(1))
+    XCTAssertEqual(jpegControl, .unsupported)
+    let rawBytes = await raw.value
+    let jpegBytes = await jpg.value
+    XCTAssertEqual(rawBytes, rawBlock + Data([0x46]))
+    XCTAssertEqual(jpegBytes, Data([0xff, 0xd8]))
+    try await session.close()
+    await expect(.connectionLost) { _ = try await session.scannedPairCandidates() }
+    let remaining = await channel.remaining
+    XCTAssertEqual(remaining, 0)
+  }
+
+  func testGalleryCandidateRejectsForeignMemberAndChangedObjectAfterUnavailableCard() async throws {
+    let raf = object("CANDIDATE.RAF", format: 0xb103, bytes: 3)
+    let changed = object("CHANGED.RAF", format: 0xb103, bytes: 3)
+    let channel = Replay(start(.xt5, "4.31") + galleryStartup + xappSetup.dropFirst() + card([1])
+      + [.read(0x1008, [1], raf), .write(0xd244, [2]), .property(0xd244, Data([2])),
+         .rejection(0x9054, [0x10000001], 0x2013), .write(0xd244, [1])] + card([1])
+      + [.property(0xd226, word(2, 2)), .read(0x1008, [1], changed), .read(0x1003)])
+    let session = diagnosticSession(channel)
+    _ = try await session.listCameraPhotos()
+    let candidates = try await session.scannedPairCandidates()
+    let member = try XCTUnwrap(candidates.first)
+    let foreign = WirelessObjectDescriptor(cameraID: member.cameraID, sessionID: UUID(),
+      storageID: member.storageID, handle: member.handle, filename: member.filename, format: member.format,
+      byteLength: member.byteLength, captureDate: member.captureDate, dimensions: member.dimensions,
+      orientation: member.orientation, reportedStorageID: member.reportedStorageID, hasThumbnail: member.hasThumbnail)
+    await expect(.objectChanged) {
+      _ = try await session.downloadGalleryCandidate(foreign) { _ in XCTFail("Foreign candidate reached sink") }
+    }
+    await expect(.objectChanged) {
+      _ = try await session.downloadGalleryCandidate(member) { _ in XCTFail("Changed candidate reached sink") }
+    }
+    try await session.close()
+    let remaining = await channel.remaining
+    XCTAssertEqual(remaining, 0)
+  }
+
+  func testGalleryCandidateAbortsOnFatalD226OrInvalidPartialObject() async throws {
+    let info = object("CANDIDATE.RAF", format: 0xb103, bytes: 3)
+    let validPrelude: [Exchange] = [.property(0xd226, word(0, 2)), .read(0x1008, [1], info)]
+    let badTransaction = Exchange(opcode: 0x101b, parameters: [1, 0, 3], payload: Data([1, 2, 3]),
+      responseTransaction: 0)
+    let cases: [([Exchange], PTPError)] = [
+      ([.rejection(0x1015, [0xd226], 0x2002)], .responseCode(0x2002)),
+      (validPrelude + [.read(0x101b, [1, 0, 3], Data([1]))], .truncatedContainer),
+      (validPrelude + [.read(0x101b, [1, 0, 3], Data([1, 2, 3, 4]))], .payloadTooLarge),
+      (validPrelude + [.rejection(0x101b, [1, 0, 3], 0x2002)], .responseCode(0x2002))
+    ]
+    for (transfer, expected) in cases + [(validPrelude + [badTransaction], .wrongTransaction(expected: 33, actual: 0))] {
+      let channel = Replay(start(.xt5, "4.31") + galleryStartup + xappSetup.dropFirst() + card([])
+        + [.write(0xd244, [2])] + card([1], storage: 2) + [.read(0x1008, [1], info)] + transfer)
+      let session = diagnosticSession(channel)
+      _ = try await session.listCameraPhotos()
+      let candidates = try await session.scannedPairCandidates()
+      let member = try XCTUnwrap(candidates.first)
+      do {
+        _ = try await session.downloadGalleryCandidate(member) { _ in }
+        XCTFail("Invalid candidate response returned success")
+      } catch let error as PTPError {
+        if case .wrongTransaction = expected, case .wrongTransaction = error {
+          // The transaction ID depends on the number of preceding setup exchanges.
+        } else {
+          XCTAssertEqual(error, expected)
+        }
+      }
+      let remaining = await channel.remaining
+      XCTAssertEqual(remaining, 0)
+    }
   }
 
   private var galleryStartup: [Exchange] {

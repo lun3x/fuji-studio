@@ -17,6 +17,8 @@ public enum WirelessIdentityTrace {
     case galleryOpen, galleryPreviewSetup, galleryModeStatus, gallerySelectedImages
     case galleryObjectListBegin, galleryObjectCount, galleryHandleList, galleryHandleValidation
     case galleryObjectInfo, galleryObjectInfoValidation, galleryCardSummary
+    case pairSelection, pairControlRead, pairPartialObject, pairFileTransfer, pairFileValidation
+    case pairValidation, pairStoragePrepare, pairPublication, pairCleanup
     case sessionCleanup, otherCommand
   }
 
@@ -63,23 +65,60 @@ public enum WirelessIdentityTrace {
   }
 
   public struct GalleryCardSummary: Sendable, Codable, Equatable {
-    public enum Status: String, Sendable, Codable { case available, unavailable }
+    public enum Status: String, Sendable, Codable { case scanning, available, unavailable }
     public let slot: UInt32
     public let totalHandles: Int?
-    public let sampledJPEG: Int
-    public let sampledRAF: Int
-    public let sampledOther: Int
-    public let status: Status
-    public let sampledCount: Int
+    public private(set) var jpegCount: Int
+    public private(set) var rafCount: Int
+    public private(set) var otherCount: Int
+    public private(set) var status: Status
+    public private(set) var scannedCount: Int
 
-    init(slot: UInt32, totalHandles: Int?, sampledJPEG: Int, sampledRAF: Int, sampledOther: Int) {
+    init(slot: UInt32, totalHandles: Int?, jpegCount: Int, rafCount: Int, otherCount: Int) {
       self.slot = slot
       self.totalHandles = totalHandles
-      self.sampledJPEG = sampledJPEG
-      self.sampledRAF = sampledRAF
-      self.sampledOther = sampledOther
-      status = totalHandles == nil ? .unavailable : .available
-      sampledCount = sampledJPEG + sampledRAF + sampledOther
+      self.jpegCount = jpegCount
+      self.rafCount = rafCount
+      self.otherCount = otherCount
+      scannedCount = jpegCount + rafCount + otherCount
+      status = Self.status(totalHandles, scannedCount)
+    }
+
+    mutating func record(_ format: WirelessObjectFormat) {
+      switch format {
+      case .jpeg: jpegCount += 1
+      case .raf: rafCount += 1
+      case .other: otherCount += 1
+      }
+      scannedCount += 1
+      status = Self.status(totalHandles, scannedCount)
+    }
+
+    private static func status(_ total: Int?, _ scanned: Int) -> Status {
+      guard let total else { return .unavailable }
+      return total == scanned ? .available : .scanning
+    }
+  }
+
+  public enum PairRole: String, Sendable, Codable { case raf, jpeg }
+
+  public enum OriginalControl: Sendable, Codable, Equatable {
+    case reported(UInt32)
+    case unsupported
+  }
+
+  public struct PairFile: Sendable, Codable, Equatable {
+    public let role: PairRole
+    public let expectedBytes: UInt64
+    public let receivedBytes: UInt64?
+    public let originalControl: OriginalControl?
+
+    public init(role: PairRole, expectedBytes: UInt64, receivedBytes: UInt64? = nil,
+                originalControl: OriginalControl? = nil) {
+      self.role = role
+      self.expectedBytes = expectedBytes
+      self.receivedBytes = receivedBytes
+      self.originalControl = originalControl
     }
   }
 
@@ -91,10 +130,12 @@ public enum WirelessIdentityTrace {
     public let responseCode: UInt16?
     public let galleryCard: GalleryCardSummary?
     public let gallerySlot: UInt32?
+    public let pairFile: PairFile?
 
     public init(
       _ stage: Stage, _ action: Action, bytes: Int? = nil, failure: Failure? = nil,
-      responseCode: UInt16? = nil, galleryCard: GalleryCardSummary? = nil, gallerySlot: UInt32? = nil
+      responseCode: UInt16? = nil, galleryCard: GalleryCardSummary? = nil, gallerySlot: UInt32? = nil,
+      pairFile: PairFile? = nil
     ) {
       self.stage = stage
       self.action = action
@@ -102,6 +143,7 @@ public enum WirelessIdentityTrace {
       self.failure = failure
       self.responseCode = responseCode
       self.galleryCard = galleryCard
+      self.pairFile = pairFile
       self.gallerySlot = gallerySlot.flatMap { (1...2).contains($0) ? $0 : nil }
     }
   }

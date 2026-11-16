@@ -160,7 +160,7 @@ struct OriginalImportValidator: Sendable {
                      longitude: lonRef == "W" ? -abs(lon) : abs(lon), altitude: altitude)
     }
 
-    private static func checkPair(_ raw: OriginalImportMetadata, _ jpeg: OriginalImportMetadata) throws {
+    static func checkPair(_ raw: OriginalImportMetadata, _ jpeg: OriginalImportMetadata) throws {
         guard raw.orientation == jpeg.orientation else { throw OriginalImportError.captureMismatch }
         if let rawTime = embeddedTimestamp(raw), let jpegTime = embeddedTimestamp(jpeg) {
             if let a = rawTime.absoluteDate, let b = jpegTime.absoluteDate {

@@ -183,7 +183,7 @@ struct ImportStagingStore: Sendable {
 }
 
 /// Count and hash bounded transfer chunks, optionally writing a new staged original.
-private actor OriginalStreamVerifier {
+actor OriginalStreamVerifier {
     private let handle: FileHandle?
     private let expected: UInt64
     private let beforeWrite: @Sendable () throws -> Void

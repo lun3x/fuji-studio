@@ -10,10 +10,19 @@ final class ManualWiFiTests: XCTestCase {
       expected: "Wi-Fi session responds. Bluetooth reports X-T5 firmware 04.31. Wi-Fi identity is unavailable.")
   }
 
-  func testGalleryRequiresManualConfirmationAndShowsSampleAfterClosure() {
+  func testGalleryRequiresManualConfirmationAndShowsCompleteCountsAfterClosure() {
+    checkGallery(downloadPair: false)
+  }
+
+  func testPairTestRequiresManualConfirmationAndShowsNoPairAfterFullScan() {
+    checkGallery(downloadPair: true)
+  }
+
+  private func checkGallery(downloadPair: Bool) {
     let app = XCUIApplication()
     app.launchArguments = ["--manual-wifi-fixture"]
     app.launchEnvironment["FUJI_FIXTURE_EMPTY_DEVICE_INFO"] = "1"
+    if downloadPair { app.launchEnvironment["FUJI_FIXTURE_JPEG_ONLY"] = "1" }
     app.launch()
     let find = app.buttons["manualWiFi.findPaired"]
     XCTAssertTrue(find.waitForExistence(timeout: 10))
@@ -28,7 +37,7 @@ final class ManualWiFiTests: XCTestCase {
 
     let confirm = app.buttons["manualWiFi.confirm"]
     XCTAssertTrue(confirm.waitForExistence(timeout: 10))
-    let list = app.buttons["manualWiFi.listPhotos"]
+    let list = app.buttons[downloadPair ? "manualWiFi.testPair" : "manualWiFi.listPhotos"]
     for _ in 0..<3 where !list.isHittable { app.swipeUp() }
     XCTAssertTrue(list.exists)
     XCTAssertFalse(list.isEnabled)
@@ -43,9 +52,14 @@ final class ManualWiFiTests: XCTestCase {
     let finished = XCTNSPredicateExpectation(predicate: completed, object: status)
     XCTAssertEqual(XCTWaiter.wait(for: [finished], timeout: 10), .completed)
     XCTAssertTrue(status.label.contains("Wi-Fi identity is unavailable"))
-    XCTAssertTrue(app.staticTexts["2 camera objects. Sampled 2: 1 JPEG, 1 RAF, 0 other."].exists)
-    XCTAssertTrue(app.staticTexts["FIXTURE.JPG"].exists)
-    XCTAssertTrue(app.staticTexts["Unavailable"].exists)
+    if downloadPair {
+      XCTAssertTrue(status.label.contains("No unambiguous JPEG+RAW pair"))
+      XCTAssertTrue(app.staticTexts["Scanned 40 of 40 objects: 40 JPEG, 0 RAF, 0 other."].exists)
+    } else {
+      XCTAssertTrue(app.staticTexts["Scanned 2 of 2 objects: 1 JPEG, 1 RAF, 0 other."].exists)
+      XCTAssertTrue(app.staticTexts["FIXTURE.JPG"].exists)
+      XCTAssertTrue(app.staticTexts["Unavailable"].exists)
+    }
   }
 
   private func checkConnection(withoutDeviceInfo: Bool, expected: String) {

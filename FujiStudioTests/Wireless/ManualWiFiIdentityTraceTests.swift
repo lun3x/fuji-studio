@@ -125,8 +125,8 @@ struct ManualWiFiIdentityTraceTests {
     let cards = try #require(attempt["galleryCards"] as? [String: [String: Any]])
     #expect(cards.count == 2)
     #expect(cards["2"]?["totalHandles"] as? Int == 40)
-    #expect(cards["2"]?["sampledCount"] as? Int == 1)
-    #expect(cards["2"]?["sampledRAF"] as? Int == 1)
+    #expect(cards["2"]?["scannedCount"] as? Int == 1)
+    #expect(cards["2"]?["rafCount"] as? Int == 1)
     #expect(cards["1"]?["status"] as? String == "unavailable")
     let failure = try #require(attempt["protocolFailure"] as? [String: Any])
     let event = try #require(failure["event"] as? [String: Any])
@@ -134,6 +134,34 @@ struct ManualWiFiIdentityTraceTests {
     let json = try String(contentsOf: file, encoding: .utf8)
     #expect(!json.contains("PRIVATE.RAF"))
     #expect(!json.contains("4294967"))
+  }
+
+  @Test func pairStagesAndLastFileCountsSurviveTraceOverflow() async throws {
+    let file = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: file) }
+    let trace = ManualWiFiIdentityTrace(url: file)
+    let observer = trace.begin(kind: .pair)
+    observer(.init(.pairSelection, .completed))
+    observer(.init(.pairControlRead, .completed,
+      pairFile: .init(role: .raf, expectedBytes: 400_000, originalControl: .reported(2))))
+    observer(.init(.pairFileValidation, .completed,
+      pairFile: .init(role: .raf, expectedBytes: 400_000, receivedBytes: 400_000)))
+    observer(.init(.pairFileTransfer, .waiting,
+      pairFile: .init(role: .jpeg, expectedBytes: 200_000, receivedBytes: 120_000)))
+    observer(.init(.pairFileTransfer, .failed, failure: .connectionLost,
+      pairFile: .init(role: .jpeg, expectedBytes: 200_000)))
+    for _ in 0..<200 { observer(.init(.socketRead, .readCompleted, bytes: 16)) }
+    observer(.init(.attempt, .failed, failure: .connectionLost))
+    let attempts = try await read(file) { self.events($0[0]).last?["sequence"] as? Int == 207 }
+    let attempt = try #require(attempts.first)
+    #expect(events(attempt).count == 160)
+    let pair = try #require(attempt["pairMilestones"] as? [String: [String: Any]])
+    let transfer = pair["jpeg.pairFileTransfer.waiting"]?["event"] as? [String: Any]
+    let progress = transfer?["pairFile"] as? [String: Any]
+    #expect(progress?["receivedBytes"] as? Int == 120_000)
+    #expect(pair["raf.pairControlRead.completed"] != nil)
+    #expect(pair["raf.pairFileValidation.completed"] != nil)
+    #expect(pair["jpeg.pairFileTransfer.failed"] != nil)
   }
 
   private func events(_ attempt: [String: Any]) -> [[String: Any]] {

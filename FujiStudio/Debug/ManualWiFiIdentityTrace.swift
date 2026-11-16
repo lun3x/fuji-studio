@@ -14,7 +14,7 @@ final class ManualWiFiIdentityTrace: Sendable {
     let event: Trace.Event
   }
 
-  enum Kind: String, Encodable { case connection, gallery }
+  enum Kind: String, Encodable { case connection, gallery, pair }
 
   struct Attempt: Encodable {
     let kind: Kind
@@ -24,6 +24,7 @@ final class ManualWiFiIdentityTrace: Sendable {
     private(set) var events: [Entry] = []
     private(set) var droppedEvents = 0
     private(set) var galleryCards: [String: Trace.GalleryCardSummary] = [:]
+    private(set) var pairMilestones: [String: Entry] = [:]
     private(set) var gallerySetup: [Entry] = []
     private var didValidateXAppAccess = false
     private(set) var protocolFailure: Entry?
@@ -41,7 +42,7 @@ final class ManualWiFiIdentityTrace: Sendable {
     private(set) var pendingSessionCleanup: Trace.Stage?
 
     enum CodingKeys: String, CodingKey {
-      case kind, ordinal, startedAt, events, droppedEvents, protocolFailure, cleanupFailure, emptyDeviceInfo, galleryCards, gallerySetup
+      case pairMilestones, kind, ordinal, startedAt, events, droppedEvents, protocolFailure, cleanupFailure, emptyDeviceInfo, galleryCards, gallerySetup
       case timerElapsed, deadline, protocolStageAtDeadline, cleanupStageAtDeadline, pendingProtocol, lastProtocolStage
       case pendingCloseSession, pendingSocket, pendingSessionCleanup
     }
@@ -56,6 +57,15 @@ final class ManualWiFiIdentityTrace: Sendable {
         event: event)
       let stage = event.stage
       switch stage {
+      case .pairSelection, .pairStoragePrepare, .pairValidation, .pairPublication, .pairCleanup:
+        pairMilestones[stage.rawValue] = entry
+        if event.action == .noData && pendingProtocol == stage { pendingProtocol = nil }
+        Self.updatePending(event, slot: &pendingProtocol)
+      case .pairControlRead, .pairFileTransfer, .pairFileValidation:
+        if let file = event.pairFile {
+          pairMilestones[file.role.rawValue + "." + stage.rawValue + "." + event.action.rawValue] = entry
+        }
+        Self.updatePending(event, slot: &pendingProtocol)
       case .identityTimerElapsed:
         timerElapsed = entry
         protocolStageAtDeadline = pendingProtocol
@@ -82,11 +92,13 @@ final class ManualWiFiIdentityTrace: Sendable {
              .closeSessionFinalHeader, .closeSessionResponseBody:
           cleanupFailure = entry
         case .galleryOpen where event.responseCode == 0x2013: break
+        case .pairControlRead where event.responseCode == 0x200a: break
+        case .pairFileTransfer where protocolFailure?.event.responseCode != nil: break
         case .attempt where protocolFailure != nil || deadline != nil: break
         default: protocolFailure = entry
         }
       }
-      if kind == .gallery {
+      if kind != .connection {
         retainGallerySetup(entry)
       }
       events.append(entry)

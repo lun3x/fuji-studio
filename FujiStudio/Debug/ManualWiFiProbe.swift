@@ -2,6 +2,7 @@
 import Foundation
 import FujiCameraCore
 import SwiftUI
+import Synchronization
 import UIKit
 
 @MainActor
@@ -43,6 +44,7 @@ final class ManualWiFiProbe {
   private let authorizeLaunch: (UUID, @escaping () -> Bool) throws -> Void
   private let makeSession: SessionFactory
   private let galleryDeadline: Duration
+  private let makePairStore: @Sendable () -> ManualWiFiPairStore
   private let startLease: StartLease
   private let record: (ManualWiFiEvent) -> Void
   private let identityTrace: ManualWiFiIdentityTrace?
@@ -66,6 +68,8 @@ final class ManualWiFiProbe {
   private(set) var registrationConfirmed = false
   private(set) var userConfirmed = false
   private(set) var galleryInProgress = false
+  private(set) var pairResult: ManualWiFiPairReceipt?
+  private(set) var scanProgress: ScanProgress?
   private(set) var galleryResult: XAppGalleryDiagnosticResult?
 
   var visiblePassword: String? { foreground && revealing ? secret : nil }
@@ -79,6 +83,7 @@ final class ManualWiFiProbe {
   var canConfirm: Bool { canSelect && handoff != nil && !userConfirmed }
   var canIdentify: Bool { canSelect && handoff != nil && userConfirmed }
   var canListPhotos: Bool { canIdentify }
+  var keepsScreenAwake: Bool { galleryInProgress && attempt != nil }
   var canCancel: Bool { attempt != nil || scanning != nil }
 
   init(
@@ -88,7 +93,8 @@ final class ManualWiFiProbe {
     authorizeLaunch: @escaping (UUID, @escaping () -> Bool) throws -> Void,
     makeSession: @escaping SessionFactory, startLease: @escaping StartLease,
     record: @escaping (ManualWiFiEvent) -> Void, identityTrace: ManualWiFiIdentityTrace? = nil,
-    galleryDeadline: Duration = .seconds(90)
+    galleryDeadline: Duration = .seconds(600),
+    makePairStore: @escaping @Sendable () -> ManualWiFiPairStore = { .init() }
   ) {
     self.bluetooth = bluetooth
     self.loadSaved = loadSaved
@@ -97,6 +103,7 @@ final class ManualWiFiProbe {
     self.authorizeLaunch = authorizeLaunch
     self.makeSession = makeSession
     self.galleryDeadline = galleryDeadline
+    self.makePairStore = makePairStore
     self.startLease = startLease
     self.record = record
     self.identityTrace = identityTrace
@@ -174,6 +181,7 @@ final class ManualWiFiProbe {
     }
     pairedNearby = []
     galleryResult = nil
+    pairResult = nil
     let replace = attempt != nil
     invalidateHandoff()
     let id = UUID()
@@ -260,7 +268,7 @@ final class ManualWiFiProbe {
     guard canConfirm else { return }
     revealing = false
     userConfirmed = true
-    update(.userConfirmed, "Network confirmed by you. Check the connection or list camera photos.")
+    update(.userConfirmed, "Network confirmed by you. Check the connection, scan all photos, or test a JPEG+RAW download.")
   }
 
   func identify() {
@@ -304,44 +312,134 @@ final class ManualWiFiProbe {
     }
   }
 
-  func listCameraPhotos() {
+  func listCameraPhotos() { runGallery(downloadPair: false) }
+
+  func testPairDownload() { runGallery(downloadPair: true) }
+
+  final class ScanProgress: Sendable {
+    struct Snapshot: Sendable {
+      var card: WirelessIdentityTrace.GalleryCardSummary?
+      var file: WirelessIdentityTrace.PairFile?
+    }
+
+    private let progress = Mutex(Snapshot())
+
+    func observe(_ event: WirelessIdentityTrace.Event) {
+      if let card = event.galleryCard {
+        progress.withLock { $0.card = card }
+      }
+      if event.stage == .pairFileTransfer, let file = event.pairFile, file.receivedBytes != nil {
+        progress.withLock { $0.file = file }
+      }
+    }
+
+    var latest: Snapshot { progress.withLock { $0 } }
+  }
+
+  private func runGallery(downloadPair: Bool) {
     guard canListPhotos, let id = attempt, let identity, let handoff else { return }
     revealing = false
     galleryResult = nil
+    pairResult = nil
     galleryInProgress = true
-    let trace = identityTrace?.begin(kind: .gallery)
-    update(.listingPhotos, "Listing camera photos… If the camera asks, confirm the connection on the camera.")
+    let progress = ScanProgress()
+    scanProgress = progress
+    let report = identityTrace?.begin(kind: downloadPair ? .pair : .gallery)
+    let trace: WirelessIdentityTrace.Observer = { event in
+      report?(event)
+      progress.observe(event)
+    }
+    let store = downloadPair ? makePairStore() : nil
+    let cleanPending = {
+      guard let store else { return }
+      do {
+        try store.cleanPending()
+        trace(.init(.pairCleanup, .completed))
+      } catch {
+        trace(.init(.pairCleanup, .failed, failure: .init(error)))
+      }
+    }
+    let expires = ContinuousClock.now.advanced(by: galleryDeadline)
+    update(.listingPhotos, "Scanning camera metadata… If the camera asks, confirm the connection on the camera.")
     operation = Task {
-      defer { galleryInProgress = false }
+      defer {
+        galleryInProgress = false
+        scanProgress = nil
+      }
       do {
         try check(id)
         let firmware = ManualWiFiEvent.firmware(identity.firmware)
         guard firmware != "unavailable" else { throw WirelessFailure.unsupportedFirmware }
         guard try await bluetooth.identity(for: identity.cameraID) == identity else { throw WirelessFailure.peerMismatch }
         try check(id)
-        let result = try await Self.runSession(identity, makeSession: makeSession, trace: trace,
-          deadline: galleryDeadline, abortOnCancellation: true) { try await $0.listCameraPhotos() }
+        let (result, receipt) = try await Self.runSession(identity, makeSession: makeSession, trace: trace,
+          deadline: ContinuousClock.now.duration(to: expires), abortOnCancellation: true) { [weak self] session in
+            let scan = try await session.listCameraPhotos()
+            guard let store else { return (scan, nil as ManualWiFiPairReceipt?) }
+            try await self?.showCompletedScan(scan, attempt: id)
+            trace(.init(.pairSelection, .waiting))
+            let candidates = try await session.scannedPairCandidates()
+            guard let pair = ManualWiFiPair.select(from: candidates, scan: scan) else {
+              trace(.init(.pairSelection, .noData))
+              return (scan, nil)
+            }
+            trace(.init(.pairSelection, .completed))
+            return (scan, try await store.stage(pair, session: session, trace: trace))
+          }
         try check(id)
         guard self.handoff == handoff, userConfirmed,
           try await bluetooth.identity(for: identity.cameraID) == identity
         else { throw WirelessFailure.peerMismatch }
         try check(id)
+        guard foreground else { throw CancellationError() }
+        guard ContinuousClock.now < expires else {
+          trace(.init(.identityDeadline, .failed, failure: .outerDeadline))
+          throw WirelessFailure.timeout(.transactionInactivity)
+        }
+        if let store, receipt != nil {
+          trace(.init(.pairPublication, .waiting))
+          do {
+            try store.publish()
+            trace(.init(.pairPublication, .completed))
+          } catch {
+            trace(.init(.pairPublication, .failed, failure: .init(error)))
+            throw error
+          }
+        }
         let provenance = result.wifiIdentityAvailable
           ? "The camera supplied Wi-Fi identity."
           : "Wi-Fi identity is unavailable."
+        cleanPending()
         galleryResult = result
-        trace?(.init(.attempt, .completed))
+        pairResult = receipt
+        let outcome: String
+        if receipt != nil {
+          outcome = "Validated one JPEG+RAW diagnostic pair in app-private storage. Camera card byte equality is unverified."
+        } else if downloadPair {
+          outcome = "No unambiguous JPEG+RAW pair was found on the available cards. No files downloaded."
+        } else {
+          outcome = "Scanned every object on the available cards."
+        }
+        trace(.init(.attempt, .completed))
         await finish(.photosListed,
-          "Gallery test finished. Bluetooth reports X-T5 firmware \(firmware). \(provenance) Connection closed after the test.",
+          "\(outcome) Bluetooth reports X-T5 firmware \(firmware). \(provenance) Connection closed after the test.",
           firmware: firmware)
       } catch {
-        trace?(.init(.attempt, .failed, failure: .init(error)))
+        cleanPending()
+        trace(.init(.attempt, .failed, failure: .init(error)))
         guard attempt == id else { return }
-        await finish(.galleryFailed, Self.failureMessage(error,
-          fallback: "Gallery test failed. Check the camera and start a new Wi-Fi handoff to retry."),
+        let failure = galleryResult == nil
+          ? "Scan incomplete. Check the camera and start a new Wi-Fi handoff to retry."
+          : "The scan completed, but the pair test failed. Start a new Wi-Fi handoff to retry."
+        await finish(.galleryFailed, Self.failureMessage(error, fallback: failure),
           failure: ManualWiFiEvent.Failure(error))
       }
     }
+  }
+
+  private func showCompletedScan(_ result: XAppGalleryDiagnosticResult, attempt id: UUID) throws {
+    try check(id)
+    galleryResult = result
   }
 
   func cancel() {
@@ -455,6 +553,10 @@ final class ManualWiFiProbe {
   private func retire(_ phase: ManualWiFiEvent.Phase, _ message: String, releaseImmediately: Bool = false) {
     let pending = operation
     pending?.cancel()
+    if galleryInProgress {
+      galleryResult = nil
+      pairResult = nil
+    }
     invalidateHandoff()
     // The watchdog leaves time for BLE teardown. The hard deadline ends the
     // assertion as soon as the attempt is invalid, even if teardown is pending.

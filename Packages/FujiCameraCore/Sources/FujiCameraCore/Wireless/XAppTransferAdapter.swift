@@ -64,6 +64,7 @@ extension CameraHostedTransferSession {
     do {
       _ = try await execute(0x9054, [0x10000001])
     } catch PTPError.responseCode(0x2013) {
+      selectedStorage = nil
       // The reference attributes StoreNotAvailable to an inaccessible slot.
       return nil
     }

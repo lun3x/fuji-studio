@@ -36,10 +36,13 @@ actor CameraHostedTransferSession: WirelessTransferSession {
   private let clientGUID: Data
   private let clientName: String
   private let sessionID = UUID()
+  #if DEBUG
+  var galleryObjects: [UInt32: [UInt32: WirelessObjectDescriptor]]?
+  #endif
   private var peer: WirelessIdentity?
   private var didOpenSession = false
   private var closing: Task<Void, Never>?
-  private var busy = false
+  var busy = false
   private var transactionID: UInt32 = 0
 
   var selectedStorage: UInt32?
@@ -134,12 +137,10 @@ actor CameraHostedTransferSession: WirelessTransferSession {
   #if DEBUG
   func abortGallery() async { await transport.close() }
 
-  func listCameraPhotos() async throws -> XAppGalleryDiagnosticResult {
+  func openGallery() async throws -> XAppConnectionDiagnosticResult {
     guard WirelessSupportPolicy().assess(model: expectedIdentity.model.rawValue, firmware: expectedIdentity.firmware)
       == .supported(.xt5)
     else { throw WirelessFailure.unsupportedFirmware }
-    try begin()
-    defer { busy = false }
     let connection = try await openXAppDiagnostic()
     if case .identified(let observed) = connection {
       guard WirelessSupportPolicy().assess(model: observed.model.rawValue, firmware: observed.firmware)
@@ -147,23 +148,7 @@ actor CameraHostedTransferSession: WirelessTransferSession {
       else { throw WirelessFailure.unsupportedFirmware }
     }
     try await checkXAppStartup()
-    let slots = try await configureXAppGalleryMode()
-    var cards: [XAppGalleryDiagnosticResult.Card] = []
-    for slot in slots {
-      transport.observeIdentity(.init(.galleryCardBegin, .completed, gallerySlot: slot))
-      let handles = try await configureXAppCard(slot)
-      var samples: [XAppGalleryDiagnosticResult.Sample] = []
-      if let handles {
-        for handle in handles.prefix(XAppGalleryDiagnosticResult.sampleLimitPerCard) {
-          let info = try await objectInfo(handle: handle, storage: slot)
-          samples.append(.init(filename: info.filename, format: info.format, byteLength: info.byteLength))
-        }
-      }
-      let card = XAppGalleryDiagnosticResult.Card(slot: slot, totalHandles: handles?.count, samples: samples)
-      transport.observeIdentity(.init(.galleryCardSummary, .completed, galleryCard: card.summary))
-      cards.append(card)
-    }
-    return .init(wifiIdentityAvailable: connection != .respondingWithoutDeviceInfo, cards: cards)
+    return connection
   }
 
   func checkConnection() async throws -> XAppConnectionDiagnosticResult {
@@ -357,7 +342,7 @@ actor CameraHostedTransferSession: WirelessTransferSession {
     }
   }
 
-  private func originalLength(_ object: WirelessObjectDescriptor) throws -> UInt32 {
+  func originalLength(_ object: WirelessObjectDescriptor) throws -> UInt32 {
     guard object.format == .raf || object.format == .jpeg,
       let length = UInt32(exactly: object.byteLength), length > 0,
       transport.partialObjectLimit > 0
@@ -365,7 +350,7 @@ actor CameraHostedTransferSession: WirelessTransferSession {
     return length
   }
 
-  private func streamMatchingObject(
+  func streamMatchingObject(
     _ object: WirelessObjectDescriptor, length: UInt32, to sink: @escaping @Sendable (Data) async throws -> Void
   ) async throws {
     try await verifyObject(object)
@@ -383,6 +368,9 @@ actor CameraHostedTransferSession: WirelessTransferSession {
 
   func close() async throws {
     if let closing { await closing.value; return }
+    #if DEBUG
+    galleryObjects = nil
+    #endif
     let shouldCloseSession = didOpenSession && !busy && !Task.isCancelled
     let close = Task {
       if shouldCloseSession {
@@ -448,13 +436,13 @@ actor CameraHostedTransferSession: WirelessTransferSession {
     else { throw WirelessFailure.unsupportedFirmware }
   }
 
-  private func begin() throws {
+  func begin() throws {
     try checkOpenOperation()
     guard !busy else { throw WirelessFailure.cameraBusy }
     busy = true
   }
 
-  private func checkOpenOperation() throws {
+  func checkOpenOperation() throws {
     try Task.checkCancellation()
     guard closing == nil else { throw WirelessFailure.connectionLost }
   }
@@ -471,7 +459,7 @@ actor CameraHostedTransferSession: WirelessTransferSession {
     guard object.matchesOriginal(fresh) else { throw WirelessFailure.objectChanged }
   }
 
-  private func objectInfo(handle: UInt32, storage: UInt32) async throws -> WirelessObjectDescriptor {
+  func objectInfo(handle: UInt32, storage: UInt32) async throws -> WirelessObjectDescriptor {
     let info = try await execute(0x1008, [handle]).data
     transport.observeIdentity(.init(.galleryObjectInfoValidation, .waiting))
     do {
@@ -517,7 +505,7 @@ actor CameraHostedTransferSession: WirelessTransferSession {
     }
   }
 
-  private func selectStorage(for storage: UInt32) async throws {
+  func selectStorage(for storage: UInt32) async throws {
     guard mode == .xApp, selectedStorage != storage else { return }
     guard try await configureXAppCard(storage) != nil else { throw WirelessFailure.unavailableStorage }
   }

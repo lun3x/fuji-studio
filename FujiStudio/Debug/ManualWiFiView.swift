@@ -8,6 +8,7 @@ struct ManualWiFiView: View {
   @Environment(\.scenePhase) private var scenePhase
   @State private var probe: ManualWiFiProbe?
   @State private var passwordCopied = false
+  @State private var previousIdleTimer: Bool?
 
   var fixture = false
 
@@ -17,11 +18,26 @@ struct ManualWiFiView: View {
         Form {
           Section {
             Text(probe.status).accessibilityIdentifier("manualWiFi.status")
-            if probe.galleryInProgress { ProgressView() }
+            if let progress = probe.scanProgress {
+              TimelineView(.periodic(from: .now, by: 0.25)) { _ in
+                let latest = progress.latest
+                if let file = latest.file, let received = file.receivedBytes {
+                  ProgressView(value: Double(received), total: Double(file.expectedBytes)) {
+                    Text("\(file.role == .raf ? "RAF" : "JPEG"): \(received.formatted()) of \(file.expectedBytes.formatted()) bytes")
+                  }
+                } else if let card = latest.card, let total = card.totalHandles {
+                  ProgressView {
+                    Text("Card \(card.slot): scanned \(card.scannedCount) of \(total)")
+                  }
+                } else {
+                  ProgressView("Opening the camera gallery…")
+                }
+              }
+            }
           } header: {
             Text("X-T5 connection diagnostic")
           } footer: {
-            Text("Temporary test for X-T5 firmware 4.30 or later. It checks the connection and can list a sample of camera metadata.")
+            Text("Temporary test for X-T5 firmware 4.30 or later. It checks the connection, scans available cards, and can test one JPEG+RAW download.")
           }
           if let result = probe.galleryResult {
             galleryResults(result)
@@ -90,10 +106,13 @@ struct ManualWiFiView: View {
               Button("Check camera connection") { probe.identify() }
                 .accessibilityIdentifier("manualWiFi.identify")
                 .disabled(!probe.canIdentify)
-              Button("List camera photos") { probe.listCameraPhotos() }
+              Button("Scan all photos") { probe.listCameraPhotos() }
                 .accessibilityIdentifier("manualWiFi.listPhotos")
                 .disabled(!probe.canListPhotos)
-              Text("If prompted, allow Local Network access. If the camera asks, confirm the connection on the camera. Listing counts camera objects and reads metadata for up to \(XAppGalleryDiagnosticResult.sampleLimitPerCard) per card. The test closes the connection when finished.")
+              Button("Test JPEG+RAW download") { probe.testPairDownload() }
+                .accessibilityIdentifier("manualWiFi.testPair")
+                .disabled(!probe.canListPhotos)
+              Text("Allow Local Network access and confirm on the camera if prompted. The scan reads all available metadata. The download test scans first, validates one pair in app-private storage, and closes the connection.")
             }
           }
           Section("Camera selection") {
@@ -144,7 +163,9 @@ struct ManualWiFiView: View {
     .task {
       #if targetEnvironment(simulator)
       let withoutDeviceInfo = ProcessInfo.processInfo.environment["FUJI_FIXTURE_EMPTY_DEVICE_INFO"] == "1"
-      let current = fixture ? ManualWiFiFixture(withoutDeviceInfo: withoutDeviceInfo).probe : ManualWiFiProbe.live()
+      let jpegOnly = ProcessInfo.processInfo.environment["FUJI_FIXTURE_JPEG_ONLY"] == "1"
+      let current = fixture ? ManualWiFiFixture(withoutDeviceInfo: withoutDeviceInfo, jpegOnly: jpegOnly).probe
+        : ManualWiFiProbe.live()
       #else
       let current = ManualWiFiProbe.live()
       #endif
@@ -153,6 +174,23 @@ struct ManualWiFiView: View {
       await current.observe()
     }
     .onChange(of: scenePhase) { _, value in probe?.sceneChanged(value) }
+    .onChange(of: probe?.keepsScreenAwake == true && scenePhase == .active) { _, running in
+      keepScreenAwake(running)
+    }
+    .onDisappear {
+      if probe?.galleryInProgress == true { probe?.cancel() }
+      keepScreenAwake(false)
+    }
+  }
+
+  private func keepScreenAwake(_ running: Bool) {
+    if running, previousIdleTimer == nil {
+      previousIdleTimer = UIApplication.shared.isIdleTimerDisabled
+      UIApplication.shared.isIdleTimerDisabled = true
+    } else if !running, let previousIdleTimer {
+      UIApplication.shared.isIdleTimerDisabled = previousIdleTimer
+      self.previousIdleTimer = nil
+    }
   }
 
   @ViewBuilder
@@ -160,7 +198,7 @@ struct ManualWiFiView: View {
     ForEach(result.cards, id: \.summary.slot) { card in
       Section {
         if let total = card.summary.totalHandles {
-          Text("\(total) camera objects. Sampled \(card.summary.sampledCount): \(card.summary.sampledJPEG) JPEG, \(card.summary.sampledRAF) RAF, \(card.summary.sampledOther) other.")
+          Text("Scanned \(card.summary.scannedCount) of \(total) objects: \(card.summary.jpegCount) JPEG, \(card.summary.rafCount) RAF, \(card.summary.otherCount) other.")
           ForEach(Array(card.samples.enumerated()), id: \.offset) { _, sample in
             LabeledContent {
               Text("\(formatLabel(sample.format)) · \(sample.byteLength.formatted()) bytes")
@@ -175,7 +213,7 @@ struct ManualWiFiView: View {
         Text("Card \(card.summary.slot)")
       } footer: {
         if let total = card.summary.totalHandles, total > 0 {
-          Text("First \(card.summary.sampledCount) of \(total) objects in camera order. Metadata limit: \(XAppGalleryDiagnosticResult.sampleLimitPerCard) per card.")
+          Text("Showing the first \(card.samples.count) of \(total) objects in camera order.")
         }
       }
     }

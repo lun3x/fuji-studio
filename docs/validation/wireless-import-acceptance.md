@@ -493,15 +493,15 @@ The user reported that the camera stayed on “Waiting for connected” and late
 showed “Not found.” This was a brief protocol response, with no confirmed
 gallery connection or independent Wi-Fi identity.
 
-The next Debug test reuses the camera-hosted session and gallery setup used
+The first Debug gallery test reused the camera-hosted session and gallery setup used
 by the adapter. After the Bluetooth firmware guard, it opens a fresh session
 and validates DeviceInfo when present, waits for XApp access, and checks
 RemoteVersion before the first gallery write. The sequence uses DF01 mode 20,
 echoes DF28, confirms each D244 card selection, and runs 9054, 9055, 9050,
 D212, D22B and 9053 in that order before reading D620 and D621. The card
-handles must agree with both counts. The test requests GetObjectInfo for at
+handles must agree with both counts. The test requested GetObjectInfo for at
 most the first 32 handles per available card, in the order returned by the
-camera. The on-screen JPEG, RAF and other counts describe only that sample.
+camera. The on-screen JPEG, RAF and other counts described that sample.
 A card with zero objects is distinct from an unavailable card (9054 returning
 StoreNotAvailable). The phone displays reported filenames, formats and sizes
 after cleanup. It does not fetch thumbnails or originals or write to Photos.
@@ -518,14 +518,51 @@ unresolved protocol difference. The implementation does not change production
 peer admission. Empty DeviceInfo is acceptable for this bounded test and
 remains inadequate to admit production transfer.
 
-For the next iPhone trial, start with a fresh Bluetooth handoff from the
-already paired Fuji iPhone destination and join the network in Settings.
-Confirm the network in the diagnostic and choose **List camera photos**.
-Use the camera's confirmation if prompted, then record what the camera
-displays during listing and after the app closes the connection. The
-diagnostic cannot verify the current SSID. The gallery deadline is 90 seconds;
-the original connection check stays at 20 seconds. The protected identity
-trace contains typed command stages, any correlated response rejection code,
-card summaries and cleanup milestones; it contains no filenames, object
-handles, credentials or raw data. No physical gallery result has been
-observed yet.
+#### Physical gallery listing on X-T5 04.31
+
+The signed iPhone diagnostic at `648de221` completed gallery setup with empty
+DeviceInfo. Card 2 returned 542 handles and the first 32 ObjectInfo datasets
+were JPEG. Card 1 returned StoreNotAvailable (0x2013) at 9054. The camera moved
+from “Waiting for connected” to a dark display and continued answering.
+CloseSession and native socket teardown completed, with 2,665 ms from the
+start of the gallery attempt to closure. This establishes metadata access to
+the available card. RAW exposure beyond the 32-object sample and independent
+Wi-Fi identity remained unverified.
+
+#### Full scan and one pair candidate on the next iPhone trial
+
+Use the existing Fuji iPhone pairing, start a new Bluetooth handoff and join
+the camera network in Settings. Confirm the join in the diagnostic, then tap
+**Test JPEG+RAW download**. **Scan all photos** performs the metadata portion
+alone. Both actions read every validated handle on available cards within the
+existing 100,000-object limit per card. The result reports full JPEG, RAF and
+other counts and distinguishes unavailable cards. The app shows at most the
+first 32 rows per card. If reading an available card fails, the scan is
+incomplete and the pair test cannot select files. The 10-minute foreground
+deadline includes socket teardown and the app keeps the screen awake during
+the operation. The connection-only check retains its 20-second deadline.
+
+The pair test uses the complete inventory to find a reciprocal, unambiguous
+pair. It prefers a same-card pair and can select a corroborated split-card
+pair. If no pair qualifies, the app closes the connection without requesting
+file bytes. Otherwise it rereads the correct slot and ObjectInfo as needed,
+then streams the RAF and JPEG serially using GetPartialObject (101B), bounded
+to 1 MiB per request. It reads D226 before each candidate and records the
+observation without changing D226 or D227.
+[Libfuji XApp transfer reference](https://github.com/petabyt/libfuji/blob/3b9932a46d025405dae505ddb624733b6ea3edd1/lib/fuji.c#L875)
+[GFX100 II firmware 2.30 transfer capture](https://github.com/epsalmond/ptpsim/blob/a2cea30d8622ba9e71d49338b0d0eda20b664689/packages/camera-config-data/fuji/gfx100ii/evidence/IMAGE_TRANSFER_FW230.md)
+
+The completed private manifest is at `Documents/ManualWiFiPair/completed/manifest.json`
+inside the diagnostic's container. It records exact lengths, SHA-256 hashes,
+camera filenames and validation evidence for the two candidate files. JPEG and
+RAF validation checks the file structure, model and capture metadata. The app
+publishes the pair after socket teardown and maintains the previous complete
+pair through a failed replacement. The shared trace reports stages, counts,
+byte totals, response codes and validation outcomes without filenames, object
+handles or file paths. No file is saved to Photos.
+
+Record the full card results, any files transferred, the observed D226 values,
+and the camera display through socket close. Compare each private SHA-256
+against the corresponding independently read SD or USB card file before
+claiming original-size byte equality. A D226 value of 2 records the reference
+control state only. A complete pair trial remains pending on the physical X-T5.

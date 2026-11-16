@@ -393,6 +393,8 @@ public actor WirelessPTPTransport: PTPTransport {
       case (0x1015, 0xd620): .galleryObjectCount
       case (0x1015, 0xd621): .galleryHandleList
       case (0x1008, _): .galleryObjectInfo
+      case (0x1015, 0xd226): .pairControlRead
+      case (0x101b, _): .pairPartialObject
       default: .otherCommand
       }
       return (stage, stage, stage, stage, stage)

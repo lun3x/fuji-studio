@@ -1,4 +1,5 @@
 #if targetEnvironment(simulator)
+import CryptoKit
 import Foundation
 import FujiCameraCore
 import Testing
@@ -51,7 +52,7 @@ struct ManualWiFiProbeTests {
     probe.listCameraPhotos()
     await probe.waitForOperation()
     #expect(await fixture.transfer.actions == [.listPhotos, .close])
-    #expect(probe.galleryResult?.cards.first?.summary.sampledCount == 2)
+    #expect(probe.galleryResult?.cards.first?.summary.scannedCount == 2)
     #expect(probe.status.contains("Wi-Fi identity is unavailable"))
     #expect(probe.status.contains("Connection closed after the test."))
     #expect(probe.handoff == nil)
@@ -59,6 +60,132 @@ struct ManualWiFiProbeTests {
     probe.connect(.saved(fixture.otherCamera))
     #expect(probe.galleryResult == nil)
     await probe.waitForOperation()
+  }
+
+  @Test func pairTestClosesWithoutDownloadWhenNoPairIsCorroborated() async {
+    let fixture = ManualWiFiFixture()
+    let probe = fixture.probe
+    await prepareHandoff(fixture)
+    probe.testPairDownload()
+    #expect(await fixture.transfer.actions.isEmpty)
+    probe.confirmJoined()
+    probe.testPairDownload()
+    await probe.waitForOperation()
+    #expect(await fixture.transfer.actions == [.listPhotos, .close])
+    #expect(probe.galleryResult?.cards.first?.summary.scannedCount == 2)
+    #expect(probe.status.contains("No unambiguous JPEG+RAW pair"))
+    #expect(probe.pairResult == nil)
+  }
+
+  @Test func publishesProtectedPairOnlyAfterCloseAndPreservesItWhenNextTestIsCancelled() async throws {
+    let files = try ImportFileFixture(location: true)
+    defer { files.cleanUp() }
+    let fixture = ManualWiFiFixture(pairRoot: files.root)
+    let probe = fixture.probe
+    await fixture.transfer.setGalleryFiles([files.object(.raf): files.raf, files.object(.jpeg): files.jpeg])
+    let close = AsyncStream<Void>.makeStream()
+    await fixture.transfer.holdGalleryClose(entered: close.continuation)
+    await prepareHandoff(fixture)
+    probe.confirmJoined()
+    probe.testPairDownload()
+    for await _ in close.stream { break }
+    let completed = files.root.appending(path: "completed")
+    let manifest = completed.appending(path: "manifest.json")
+    #expect(!FileManager.default.fileExists(atPath: manifest.path))
+    #expect(probe.pairResult == nil)
+    #expect(probe.keepsScreenAwake)
+    #expect(probe.scanProgress?.latest.file?.receivedBytes == UInt64(files.jpeg.count))
+    await fixture.transfer.releaseHeldGalleryCloseForTest()
+    await probe.waitForOperation()
+    #expect(!probe.keepsScreenAwake)
+    let result = try #require(probe.pairResult)
+    #expect(result.files.map(\.role) == [.raf, .jpeg])
+    let manifestBytes = try Data(contentsOf: manifest)
+    #expect(try JSONDecoder().decode(ManualWiFiPairReceipt.self, from: manifestBytes) == result)
+    for (file, expected) in zip(result.files, [files.raf, files.jpeg]) {
+      #expect(file.expectedBytes == UInt64(expected.count))
+      #expect(file.actualBytes == UInt64(expected.count))
+      #expect(file.sha256 == SHA256.hash(data: expected).map { String(format: "%02x", $0) }.joined())
+      #expect(try Data(contentsOf: completed.appending(path: file.relativePath)) == expected)
+      #expect(!file.relativePath.contains("DSCF"))
+      #expect(file.originalControl == .reported(2))
+    }
+    #expect(await fixture.transfer.actions == [.listPhotos, .download(.raf), .download(.jpeg), .close])
+    #expect(try FileManager.default.contentsOfDirectory(atPath: files.root.path) == ["completed"])
+
+    let retry = ManualWiFiFixture(pairRoot: files.root)
+    await retry.transfer.setGalleryFiles([files.object(.raf): files.raf, files.object(.jpeg): files.jpeg])
+    let retryClose = AsyncStream<Void>.makeStream()
+    await retry.transfer.holdGalleryClose(entered: retryClose.continuation)
+    await prepareHandoff(retry)
+    retry.probe.confirmJoined()
+    retry.probe.testPairDownload()
+    for await _ in retryClose.stream { break }
+    retry.probe.sceneChanged(.background)
+    #expect(!retry.probe.keepsScreenAwake)
+    await retry.probe.waitForOperation()
+    #expect(await retry.transfer.galleryAbortCount == 1)
+    #expect(retry.probe.pairResult == nil)
+    #expect(retry.probe.galleryResult == nil)
+    #expect(try Data(contentsOf: manifest) == manifestBytes)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: files.root.path) == ["completed"])
+
+    let replacement = ManualWiFiFixture(pairRoot: files.root)
+    await replacement.transfer.setGalleryFiles([files.object(.raf): files.raf, files.object(.jpeg): files.jpeg])
+    await prepareHandoff(replacement)
+    replacement.probe.confirmJoined()
+    replacement.probe.testPairDownload()
+    await replacement.probe.waitForOperation()
+    let replacementResult = try #require(replacement.probe.pairResult)
+    #expect(replacementResult.files.map(\.relativePath) != result.files.map(\.relativePath))
+    #expect(try FileManager.default.contentsOfDirectory(atPath: files.root.path) == ["completed"])
+    #expect(!FileManager.default.fileExists(atPath: completed.appending(path: result.files[0].relativePath).path))
+  }
+
+  @Test(arguments: ["short", "signature", "metadata", "capture"]) func failedSecondFileLeavesNoPrivatePair(fault: String) async throws {
+    let files = try ImportFileFixture(jpegDate: fault == "capture" ? "2023:01:02 03:04:05" : "2020:01:02 03:04:05")
+    defer { files.cleanUp() }
+    let fixture = ManualWiFiFixture(pairRoot: files.root)
+    var jpeg = files.jpeg
+    if fault == "short" { jpeg.removeLast() }
+    if fault == "signature" { jpeg[0] = 0 }
+    let jpegObject = files.object(.jpeg, dimensions: fault == "metadata" ? .init(width: 7, height: 4) : nil)
+    await fixture.transfer.setGalleryFiles([files.object(.raf): files.raf, jpegObject: jpeg])
+    await prepareHandoff(fixture)
+    fixture.probe.confirmJoined()
+    fixture.probe.testPairDownload()
+    await fixture.probe.waitForOperation()
+    #expect(await fixture.transfer.actions == [.listPhotos, .download(.raf), .download(.jpeg), .close])
+    #expect(fixture.probe.galleryResult?.cards.first?.summary.scannedCount == 2)
+    #expect(fixture.probe.pairResult == nil)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: files.root.path).isEmpty)
+  }
+
+  @Test func selectionUsesCorroborationAndPrefersSameCard() throws {
+    let files = try ImportFileFixture()
+    let scan = XAppGalleryDiagnosticResult(wifiIdentityAvailable: false, cards: [
+      .init(slot: 1, totalHandles: 0, samples: []), .init(slot: 2, totalHandles: 0, samples: [])
+    ])
+    let raw = files.object(.raf, filename: "SAME.RAF")
+    let mismatch = makeMate(of: raw, handle: 2, storage: 1, date: "20230102T030405")
+    let jpeg = makeMate(of: raw, handle: 3, storage: 1)
+    let duplicate = makeMate(of: raw, handle: 4, storage: 1)
+    #expect(ManualWiFiPair.select(from: [raw, mismatch], scan: scan) == nil)
+    #expect(ManualWiFiPair.select(from: [raw, jpeg, duplicate], scan: scan) == nil)
+
+    let newer = WirelessObjectDescriptor(cameraID: raw.cameraID, sessionID: raw.sessionID, storageID: 1, handle: 5,
+      directory: raw.directory, filename: "NEWER.RAF", format: .raf, byteLength: 21,
+      captureDate: "20240102T030405", dimensions: raw.dimensions)
+    let split = makeMate(of: newer, handle: 5, storage: 2)
+    #expect(ManualWiFiPair.select(from: [newer, split], scan: scan)?.jpeg == split)
+    #expect(ManualWiFiPair.select(from: [raw, mismatch, jpeg, newer, split], scan: scan)?.jpeg == jpeg)
+  }
+
+  private func makeMate(of raw: WirelessObjectDescriptor, handle: UInt32, storage: UInt32,
+                        date: String? = nil) -> WirelessObjectDescriptor {
+    .init(cameraID: raw.cameraID, sessionID: raw.sessionID, storageID: storage, handle: handle,
+      directory: raw.directory, filename: String(raw.filename.dropLast(3)) + "JPG", format: .jpeg,
+      byteLength: 31, captureDate: date ?? raw.captureDate, dimensions: raw.dimensions, orientation: raw.orientation)
   }
 
   @Test func backgroundRetiresGalleryEvenIfTheSessionReturnsLate() async {
