@@ -2,6 +2,7 @@
 import CryptoKit
 import Foundation
 import FujiCameraCore
+import Synchronization
 import Testing
 @testable import FujiStudio
 
@@ -162,6 +163,63 @@ struct ManualWiFiProbeTests {
     #expect(try FileManager.default.contentsOfDirectory(atPath: files.root.path).isEmpty)
   }
 
+  enum DiskFault: Sendable { case capacity, diskFullAfterFirstJPEGChunk }
+
+  @Test(arguments: [DiskFault.capacity, .diskFullAfterFirstJPEGChunk])
+  func diskFailurePreservesPrivatePairAndRemovesPendingFiles(fault: DiskFault) async throws {
+    let files = try ImportFileFixture()
+    defer { files.cleanUp() }
+    let sourceFiles = [files.object(.raf): files.raf, files.object(.jpeg): files.jpeg]
+    let original = ManualWiFiFixture(pairRoot: files.root)
+    await original.transfer.setGalleryFiles(sourceFiles)
+    await prepareHandoff(original)
+    original.probe.confirmJoined()
+    original.probe.testPairDownload()
+    await original.probe.waitForOperation()
+    try #require(original.probe.pairResult != nil)
+    let root = files.root
+    let manifest = root.appending(path: "completed/manifest.json")
+    let previous = try Data(contentsOf: manifest)
+
+    let retry = ManualWiFiFixture(pairRoot: root)
+    let transfer = retry.transfer
+    await transfer.setGalleryFiles(sourceFiles)
+    let writes = Mutex(0)
+    let probe = ManualWiFiProbe(
+      bluetooth: retry.bluetooth, loadSaved: { [retry.camera] },
+      findPaired: { try await retry.finder.find($0) }, password: { _ in "fixture-password" },
+      authorizeLaunch: { _, _ in },
+      makeSession: { identity, _ in await transfer.setIdentity(identity); return transfer },
+      startLease: { _ in nil }, record: { _ in },
+      makePairStore: {
+        .init(root: root, beforeWrite: {
+          let write = writes.withLock { count in
+            count += 1
+            return count
+          }
+          if fault == .diskFullAfterFirstJPEGChunk, write == 4 { throw POSIXError(.ENOSPC) }
+        }, capacity: { fault == .capacity ? 64 * 1024 * 1024 : .max })
+      })
+    probe.sceneChanged(.active)
+    await prepareHandoff(retry, using: probe)
+    probe.confirmJoined()
+    probe.testPairDownload()
+    await probe.waitForOperation()
+    #expect(probe.pairResult == nil)
+    #expect(probe.galleryResult?.cards.first?.summary.scannedCount == 2)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: root.path) == ["completed"])
+    #expect(try Data(contentsOf: manifest) == previous)
+
+    switch fault {
+    case .capacity:
+      #expect(writes.withLock { $0 } == 0)
+      #expect(await transfer.actions == [.listPhotos, .close])
+    case .diskFullAfterFirstJPEGChunk:
+      #expect(writes.withLock { $0 } == 4)
+      #expect(await transfer.actions == [.listPhotos, .download(.raf), .download(.jpeg), .close])
+    }
+  }
+
   @Test func coherentWrongCaptureCannotPassObjectInfoRevalidation() async throws {
     let previous = try ImportFileFixture()
     defer { previous.cleanUp() }
@@ -268,8 +326,8 @@ struct ManualWiFiProbeTests {
     #expect(fixture.events.last?.failure == .ptpTimeout)
   }
 
-  private func prepareHandoff(_ fixture: ManualWiFiFixture) async {
-    let probe = fixture.probe
+  private func prepareHandoff(_ fixture: ManualWiFiFixture, using override: ManualWiFiProbe? = nil) async {
+    let probe = override ?? fixture.probe
     probe.connect(.saved(fixture.camera))
     await probe.waitForOperation()
     probe.confirmRegistration()
