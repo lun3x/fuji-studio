@@ -15,8 +15,9 @@ remain on this branch as well.
 - Native Bluetooth registration, Wi-Fi launch, manual iPhone association, native
   TCP/PTP setup and JPEG gallery enumeration have worked. **Native RAW exposure
   and a successful native JPEG+RAW download have not been established.**
-- The prior full metadata trial used source revision `1885339990c5c156ac8bb15c28a981ead92dfe6c`.
-  The user forgot the phone bond and paired again. Image-viewing launch `03 00`
+- The prior full metadata trial used source revision
+  `1885339990c5c156ac8bb15c28a981ead92dfe6c`. The user forgot the phone bond and
+  paired again. Image-viewing launch `03 00`
   succeeded on its **first** acknowledged request; positive readiness followed
   about seven seconds later. No busy retry was needed in this trial.
 - The camera still returned **DF28 = 2**. Card 2 had **548** handles before and
@@ -324,22 +325,21 @@ evidence. Python, if needed, must use the project's `.venv`.
   tests 26 passed; the complete affected manual Wi-Fi UI suite passed **6/6**.
   The frozen fast run passed **913**, with two skips and zero failures in Xcode's
   grouped summary (999 parameter-expanded passes). Source review approved
-  specification, quality and integration. The complete iOS suite is still running
-  at this checkpoint, monitored by `/root/quick_gallery_count_impl` with log
-  `/tmp/fuji-quick-count-final-full.log`. That agent owns final reporting and cleanup
-  of simulator `2950EC3D-15B4-4CF9-A120-0E318768861A` and its test clones.
+  specification, quality and integration. The complete iOS suite also succeeded
+  (`/tmp/fuji-quick-count-final-full.log`).
+- `aa3f1c41`: the portable suite passed 98 XCTest and 141 Swift Testing tests.
+  The fast iOS run passed 913 with two skips. The full iOS suite passed 1,031
+  with six skips and zero failures, including all six manual Wi-Fi UI tests.
+  The isolated simulator and its test clones were removed.
 
 ### Phone state at checkpoint
 
-The signed count-check Debug app from `9fd5b43d` was built successfully, verified
-with strict codesign, installed, and launched normally on the iPhone. The exact
-bundle is `/tmp/fuji-quick-gallery-count/.build/ManualWiFi/Build/Products/Debug-iphoneos/FujiStudio.app`.
-Its installation container is `4F0B1C79-6E1B-4AB2-A482-034667FDF7B8`. The code at
-this documentation checkpoint is unchanged from that source revision. Entitlements
-were the application identifier, team identifier and development get-task-allow;
-unsupported Hotspot/Wi-Fi-info entitlements were absent. The user had put the phone
-on normal Wi-Fi for installation. The same build completed the first physical
-count trial described above.
+The signed count-check Debug app from `9fd5b43d` completed the first physical
+count trial. The iPhone now has the timing-only diagnostic from `aa3f1c41`,
+built with `FUJI_XAPP_CAPTURED_CLIENT_NAME='Fuji iPhone'` in
+`/tmp/fuji-wifi-df28.qfkNcK`. Both comparison builds passed strict codesign
+verification and were installed and launched normally. The timing-only build
+successfully reused the saved Fuji Studio pairing.
 
 ### Working conventions
 
@@ -361,9 +361,9 @@ Before relaunching after a hardware test, copy these app Documents files with
 `ManualWiFiBluetoothTrace.json`, and `ManualWiFiProbe.json`. They reset at launch.
 Discover the attached phone with `xcrun devicectl list devices`.
 
-No RVI capture is currently running: the latest capture was stopped after 3,499
-packets with zero kernel drops, and `rvi0` was removed. Start a fresh bounded capture
-before the next packet-level trial if needed. Use the completed count as the
-baseline for comparison of pre-TCP and retained camera state. Keep the existing
-Fuji Studio pairing for native trials and record the DF28 value the camera offers.
-Use changes in negotiation or inventory to decide when to repeat a full scan.
+The timing comparison's RVI capture ended with 184 packets and zero kernel
+drops. `rvi0` was removed afterward. Use the timing-only run as the native
+baseline for the Bluetooth comparison, with a new bounded TCP capture for
+timestamp correlation. Keep the existing Fuji Studio pairing for the native
+trace and record the DF28 value offered. Use changes in negotiation or inventory
+to decide when to repeat a full scan.
