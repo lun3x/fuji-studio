@@ -160,16 +160,22 @@ struct OriginalImportValidator: Sendable {
                      longitude: lonRef == "W" ? -abs(lon) : abs(lon), altitude: altitude)
     }
 
+    #if DEBUG
+    static func checkDiagnosticCaptureTime(_ metadata: OriginalImportMetadata,
+                                           object: WirelessObjectDescriptor) throws {
+        guard let reported = CameraCaptureTimestamp(object.captureDate),
+              let embedded = embeddedTimestamp(metadata),
+              reported.agreesForCapture(with: embedded) else {
+            throw OriginalImportError.captureMismatch
+        }
+    }
+    #endif
+
     static func checkPair(_ raw: OriginalImportMetadata, _ jpeg: OriginalImportMetadata) throws {
         guard raw.orientation == jpeg.orientation else { throw OriginalImportError.captureMismatch }
-        if let rawTime = embeddedTimestamp(raw), let jpegTime = embeddedTimestamp(jpeg) {
-            if let a = rawTime.absoluteDate, let b = jpegTime.absoluteDate {
-                guard abs(a.timeIntervalSince(b)) < 1 else { throw OriginalImportError.captureMismatch }
-            } else {
-                guard rawTime.wallTime.prefix(15) == jpegTime.wallTime.prefix(15) else {
-                    throw OriginalImportError.captureMismatch
-                }
-            }
+        if let rawTime = embeddedTimestamp(raw), let jpegTime = embeddedTimestamp(jpeg),
+           !rawTime.agreesForCapture(with: jpegTime) {
+            throw OriginalImportError.captureMismatch
         }
         if let a = raw.location, let b = jpeg.location {
             guard abs(a.latitude - b.latitude) < 0.00001, abs(a.longitude - b.longitude) < 0.00001 else {
@@ -180,6 +186,13 @@ struct OriginalImportValidator: Sendable {
 }
 
 private extension CameraCaptureTimestamp {
+    func agreesForCapture(with other: Self) -> Bool {
+        if let first = absoluteDate, let second = other.absoluteDate {
+            return abs(first.timeIntervalSince(second)) < 1
+        }
+        return wallTime.prefix(15) == other.wallTime.prefix(15)
+    }
+
     var absoluteDate: Date? {
         // A wall clock without a reliable offset cannot be converted to an absolute date.
         guard let offset, offset != "-0000" else { return nil }

@@ -555,7 +555,8 @@ observation without changing D226 or D227.
 The completed private manifest is at `Documents/ManualWiFiPair/completed/manifest.json`
 inside the diagnostic's container. It records exact lengths, SHA-256 hashes,
 camera filenames and validation evidence for the two candidate files. JPEG and
-RAF validation checks the file structure, model and capture metadata. The app
+RAF validation checks the file structure, model, and agreement of the embedded
+capture times with the selected ObjectInfo timestamps. The app
 publishes the pair after socket teardown and maintains the previous complete
 pair through a failed replacement. The shared trace reports stages, counts,
 byte totals, response codes and validation outcomes without filenames, object

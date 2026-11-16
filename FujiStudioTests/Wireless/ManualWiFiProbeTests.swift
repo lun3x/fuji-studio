@@ -78,7 +78,8 @@ struct ManualWiFiProbeTests {
   }
 
   @Test func publishesProtectedPairOnlyAfterCloseAndPreservesItWhenNextTestIsCancelled() async throws {
-    let files = try ImportFileFixture(location: true)
+    let files = try ImportFileFixture(jpegOffset: "+01:00", rawOffset: "+01:00",
+      objectDate: "20200102T020405Z", location: true)
     defer { files.cleanUp() }
     let fixture = ManualWiFiFixture(pairRoot: files.root)
     let probe = fixture.probe
@@ -159,6 +160,33 @@ struct ManualWiFiProbeTests {
     #expect(fixture.probe.galleryResult?.cards.first?.summary.scannedCount == 2)
     #expect(fixture.probe.pairResult == nil)
     #expect(try FileManager.default.contentsOfDirectory(atPath: files.root.path).isEmpty)
+  }
+
+  @Test func coherentWrongCaptureCannotPassObjectInfoRevalidation() async throws {
+    let previous = try ImportFileFixture()
+    defer { previous.cleanUp() }
+    let original = ManualWiFiFixture(pairRoot: previous.root)
+    await original.transfer.setGalleryFiles([previous.object(.raf): previous.raf, previous.object(.jpeg): previous.jpeg])
+    await prepareHandoff(original)
+    original.probe.confirmJoined()
+    original.probe.testPairDownload()
+    await original.probe.waitForOperation()
+    try #require(original.probe.pairResult != nil)
+    let manifest = previous.root.appending(path: "completed/manifest.json")
+    let previousManifest = try Data(contentsOf: manifest)
+
+    let files = try ImportFileFixture(objectDate: "20230102T030405")
+    let fixture = ManualWiFiFixture(pairRoot: previous.root)
+    await fixture.transfer.setGalleryFiles([files.object(.raf): files.raf, files.object(.jpeg): files.jpeg])
+    await prepareHandoff(fixture)
+    fixture.probe.confirmJoined()
+    fixture.probe.testPairDownload()
+    await fixture.probe.waitForOperation()
+    #expect(fixture.probe.galleryResult?.cards.first?.summary.scannedCount == 2)
+    #expect(fixture.probe.pairResult == nil)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: previous.root.path) == ["completed"])
+    #expect(try Data(contentsOf: manifest) == previousManifest)
+    #expect(await fixture.transfer.actions == [.listPhotos, .download(.raf), .close])
   }
 
   @Test func selectionUsesCorroborationAndPrefersSameCard() throws {

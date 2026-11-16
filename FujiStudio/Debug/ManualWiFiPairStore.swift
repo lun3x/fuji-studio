@@ -109,9 +109,6 @@ struct ManualWiFiPairStore: Sendable {
     trace?(.init(.pairValidation, .waiting))
     do {
       try Task.checkCancellation()
-      guard raf.metadata.captureWallTime != nil, jpeg.metadata.captureWallTime != nil else {
-        throw OriginalImportError.invalidMetadata
-      }
       try OriginalImportValidator.checkPair(raf.metadata, jpeg.metadata)
       let receipt = ManualWiFiPairReceipt(files: [raf, jpeg])
       let manifest = disk.root.appending(path: "manifest.json", directoryHint: .notDirectory)
@@ -198,6 +195,7 @@ struct ManualWiFiPairStore: Sendable {
       guard metadata.cameraModel == WirelessCameraModel.xt5.rawValue else {
         throw OriginalImportError.captureMismatch
       }
+      try OriginalImportValidator.checkDiagnosticCaptureTime(metadata, object: object)
       trace?(.init(stage, .completed, pairFile: progress))
       return .init(role: role, relativePath: name, cameraFilename: object.filename, expectedBytes: expected,
                    actualBytes: expected, sha256: hash, metadata: metadata, originalControl: control)
