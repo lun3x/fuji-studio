@@ -560,7 +560,8 @@ extension ManualWiFiProbe {
     let clientID = defaults.string(forKey: "clientID").flatMap(UUID.init(uuidString:)) ?? UUID()
     defaults.set(clientID.uuidString, forKey: "clientID")
     let guid = withUnsafeBytes(of: clientID.uuid) { Data($0) }
-    let driver = ManualWiFiBluetoothDriver()
+    let bluetoothTrace = ManualWiFiBluetoothTrace.live()
+    let driver = ManualWiFiBluetoothDriver(trace: bluetoothTrace.append)
     let report = ManualWiFiReport()
     return ManualWiFiProbe(
       bluetooth: NativeBluetoothGateway(store: store, driver: driver),

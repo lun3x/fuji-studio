@@ -433,3 +433,19 @@ verified, installed and launched. The standard command's iPhone hardware
 outcome is pending. The full simulator suite at the earlier `32672108` passed
 989 tests with zero failures and six skips (1,058 expanded passing instances).
 The task simulator and its test clones were removed after validation.
+
+On 2026-11-16, the signed manual diagnostic at `81d9a731` found the saved
+X-T5 using its reconnect advertisement. Bluetooth reconnected and reported
+firmware `04.31` at 09:31:40 UTC. The user confirmed the phone registration
+at 09:31:48 UTC. The standard activation phase began at 09:31:49 UTC and
+ended with `wifiReadinessTimeout` at 09:32:04 UTC. The camera remained on its
+normal shooting display. The phone did not reach manual WiFi handoff or PTP
+identity verification.
+
+The phase report records the requested launch mode and final timeout. The
+Debug-only `ManualWiFiBluetoothTrace.json` in Documents records protected,
+bounded evidence for the next trial, including the known subscriptions,
+password-read milestones, guarded standard-write submission, write
+acknowledgement, and readiness notification classifications and lengths.
+The trace starts fresh with the manual diagnostic and excludes identifiers,
+credentials, and raw notification data.
