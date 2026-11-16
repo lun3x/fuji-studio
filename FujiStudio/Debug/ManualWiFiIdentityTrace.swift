@@ -21,6 +21,7 @@ final class ManualWiFiIdentityTrace: Sendable {
     private(set) var events: [Entry] = []
     private(set) var droppedEvents = 0
     private(set) var protocolFailure: Entry?
+    private(set) var emptyDeviceInfo: Entry?
     private(set) var cleanupFailure: Entry?
     private(set) var timerElapsed: Entry?
     private(set) var deadline: Entry?
@@ -34,7 +35,7 @@ final class ManualWiFiIdentityTrace: Sendable {
     private(set) var pendingSessionCleanup: Trace.Stage?
 
     enum CodingKeys: String, CodingKey {
-      case ordinal, startedAt, events, droppedEvents, protocolFailure, cleanupFailure
+      case ordinal, startedAt, events, droppedEvents, protocolFailure, cleanupFailure, emptyDeviceInfo
       case timerElapsed, deadline, protocolStageAtDeadline, cleanupStageAtDeadline, pendingProtocol, lastProtocolStage
       case pendingCloseSession, pendingSocket, pendingSessionCleanup
     }
@@ -54,6 +55,7 @@ final class ManualWiFiIdentityTrace: Sendable {
         protocolStageAtDeadline = pendingProtocol
         cleanupStageAtDeadline = pendingSocket ?? pendingCloseSession ?? pendingSessionCleanup
       case .identityDeadline: deadline = entry
+      case .deviceInfoValidation where event.action == .noData && event.bytes == 0: emptyDeviceInfo = entry
       case .identityResult, .identityCancellation: break
       case .socketClose: Self.updatePending(event, slot: &pendingSocket)
       case .sessionCleanup: Self.updatePending(event, slot: &pendingSessionCleanup)
@@ -75,7 +77,7 @@ final class ManualWiFiIdentityTrace: Sendable {
       }
       events.append(entry)
       if events.count > 160 {
-        // Always retain the start, with separate slots for failures and the outer deadline.
+        // Retain the start, with separate slots for empty DeviceInfo, failures and the deadline.
         events.remove(at: 1)
         droppedEvents += 1
       }
