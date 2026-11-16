@@ -44,6 +44,48 @@ struct ManualWiFiBluetoothDriverTests {
     ])
   }
 
+  @Test(arguments: [false, true]) func onlyAdvancesIdentityAfterBothReferenceAppFlagsAreAcknowledged(fails: Bool) {
+    let native = Driver()
+    var recorded: [ManualWiFiBluetoothTrace.Event] = []
+    let driver = ManualWiFiBluetoothDriver(
+      native: native, trace: { _, event in recorded.append(event) }, writesReferenceAppFlags: true)
+    let flags = [
+      BLEGATTCharacteristic(service: "1111", characteristic: "caedb497-83bf-482c-91ef-91cf6f1216ff"),
+      BLEGATTCharacteristic(service: "2222", characteristic: "98934b2c-756c-4632-aa2f-dcba1bfec824"),
+    ]
+    let session = UUID()
+    var acknowledgments: [BLEGATTCharacteristic] = []
+    driver.eventHandler = { event in
+      if case .protocolEvent(session, .wrote(let characteristic)) = event {
+        acknowledgments.append(characteristic)
+      }
+    }
+    driver.connect(peripheralID: UUID(), session: session)
+    native.eventHandler?(.peerModel(session, "X-T5"))
+    native.eventHandler?(.protocolEvent(session, .services(Set(flags + [identification]))))
+    driver.perform(.write(identification, Data("Fuji Studio".utf8), .identify), session: session)
+    native.eventHandler?(.protocolEvent(session, .wrote(identification)))
+    native.eventHandler?(.protocolEvent(UUID(), .wrote(flags[0])))
+    #expect(native.actions == [
+      .write(identification, Data("Fuji iPhone".utf8), .identify), .write(flags[0], Data([1]), .identify),
+    ])
+    native.eventHandler?(.protocolEvent(session, .wrote(flags[0])))
+    #expect(native.actions.last == .write(flags[1], Data([1]), .identify))
+    #expect(acknowledgments.isEmpty)
+    if fails {
+      native.eventHandler?(.protocolEvent(session, .failed(flags[1], .unsupportedProtocol)))
+      #expect(acknowledgments.isEmpty)
+      #expect(recorded.contains(.appFlagFailed(ordinal: 2, .init(WirelessFailure.unsupportedProtocol))))
+    } else {
+      native.eventHandler?(.protocolEvent(session, .wrote(flags[1])))
+      #expect(acknowledgments == [identification])
+      #expect(recorded.suffix(4) == [
+        .appFlagSubmitted(ordinal: 1), .appFlagAcknowledged(ordinal: 1),
+        .appFlagSubmitted(ordinal: 2), .appFlagAcknowledged(ordinal: 2),
+      ])
+    }
+  }
+
   @Test func submitsImageViewingOnlyForTheOrderedSelectedSession() throws {
     let native = Driver()
     let driver = ManualWiFiBluetoothDriver(native: native)

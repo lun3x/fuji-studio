@@ -806,7 +806,10 @@ extension ManualWiFiProbe {
     let defaults = UserDefaults(suiteName: suite)!
     let store = KeychainCameraStore(defaults: defaults, service: suite)
     let bluetoothTrace = ManualWiFiBluetoothTrace.live()
-    let driver = ManualWiFiBluetoothDriver(trace: bluetoothTrace.append)
+    let writesReferenceAppFlags = Bundle.main.object(forInfoDictionaryKey: "FujiXT5ReferenceAppFlags") as? Bool == true
+    let driver = ManualWiFiBluetoothDriver(
+      native: CoreBluetoothDriver(discoverAllServices: writesReferenceAppFlags), trace: bluetoothTrace.append,
+      writesReferenceAppFlags: writesReferenceAppFlags)
     let report = ManualWiFiReport()
     let capturedClientName = Bundle.main.object(forInfoDictionaryKey: "FujiCapturedXAppClientName") as? String
     return ManualWiFiProbe(

@@ -11,10 +11,15 @@ fi
 spec=$(mktemp "$PWD/.manual-wifi-project.XXXXXX")
 capturePlist=
 trap 'rm -f "$spec"; if [[ -n "$capturePlist" ]]; then rm -f "$capturePlist"; fi' EXIT
-if [[ -n ${FUJI_XAPP_CAPTURED_CLIENT_NAME:-} ]]; then
+if [[ -n ${FUJI_XAPP_CAPTURED_CLIENT_NAME:-} || ${FUJI_XT5_REFERENCE_APP_FLAGS:-0} == 1 ]]; then
   capturePlist=$(mktemp "$PWD/.manual-wifi-info.XXXXXX")
   cp Config/FujiStudio-Info.plist "$capturePlist"
-  plutil -insert FujiCapturedXAppClientName -string "$FUJI_XAPP_CAPTURED_CLIENT_NAME" "$capturePlist"
+  if [[ -n ${FUJI_XAPP_CAPTURED_CLIENT_NAME:-} ]]; then
+    plutil -insert FujiCapturedXAppClientName -string "$FUJI_XAPP_CAPTURED_CLIENT_NAME" "$capturePlist"
+  fi
+  if [[ ${FUJI_XT5_REFERENCE_APP_FLAGS:-0} == 1 ]]; then
+    plutil -insert FujiXT5ReferenceAppFlags -bool YES "$capturePlist"
+  fi
 fi
 awk -v capturePlist="${capturePlist##*/}" '
   /^name: / { print "name: FujiManualWiFi"; next }

@@ -12,6 +12,11 @@ final class ManualWiFiBluetoothDriver: BluetoothPeripheralDriver {
     service: "123d8f06-62a1-4935-9322-833c531ee225",
     characteristic: "85b9163e-62d1-49ff-a6f5-054b4630d4a1")
   private static let maximumLaunchWrites = 3
+  // X-T5 4.31 reference setup, mjanssen/fujifilm-camera-protocol-data, section 3.1.
+  private static let appFlagUUIDs = [
+    "caedb497-83bf-482c-91ef-91cf6f1216ff",
+    "98934b2c-756c-4632-aa2f-dcba1bfec824",
+  ]
 
   private enum ImageViewing {
     case awaitingAcknowledgment(ordinal: Int, earlyStatus: Data?)
@@ -22,6 +27,7 @@ final class ManualWiFiBluetoothDriver: BluetoothPeripheralDriver {
 
   private let native: any BluetoothPeripheralDriver
   private let trace: (Int, ManualWiFiBluetoothTrace.Event) -> Void
+  private let writesReferenceAppFlags: Bool
   private let scheduleRetry: RetryScheduler
   private var link: (peripheralID: UUID, session: UUID, verifiedXT5: Bool)?
   private var activationGuard: ProbeImageViewingLaunch?
@@ -31,16 +37,20 @@ final class ManualWiFiBluetoothDriver: BluetoothPeripheralDriver {
   // A terminal disconnect can arrive after the forwarding link has been cleared.
   private var traceSession: UUID?
   private var pendingSubscription: ManualWiFiBluetoothTrace.Subscription?
+  private var appFlags: [BLEGATTCharacteristic] = []
+  private var pendingAppFlag: (index: Int, characteristic: BLEGATTCharacteristic)?
   private var readinessSamples: [ManualWiFiBluetoothTrace.Readiness: Int] = [:]
   var eventHandler: ((BluetoothDriverEvent) -> Void)?
 
   init(
     native: any BluetoothPeripheralDriver = CoreBluetoothDriver(),
     trace: @escaping (Int, ManualWiFiBluetoothTrace.Event) -> Void = { _, _ in },
+    writesReferenceAppFlags: Bool = false,
     scheduleRetry: @escaping RetryScheduler = ManualWiFiBluetoothDriver.scheduleOnMainActor
   ) {
     self.native = native
     self.trace = trace
+    self.writesReferenceAppFlags = writesReferenceAppFlags
     self.scheduleRetry = scheduleRetry
     native.eventHandler = { [weak self] in self?.receive($0) }
   }
@@ -63,6 +73,8 @@ final class ManualWiFiBluetoothDriver: BluetoothPeripheralDriver {
 
   func connect(peripheralID: UUID, session: UUID) {
     resetActivation()
+    appFlags = []
+    pendingAppFlag = nil
     link = (peripheralID, session, false)
     attempt += 1
     traceSession = session
@@ -135,6 +147,7 @@ final class ManualWiFiBluetoothDriver: BluetoothPeripheralDriver {
       return
     case .protocolEvent(let session, let protocolEvent):
       traceProtocolEvent(protocolEvent)
+      if writesReferenceAppFlags, handleAppFlagSetup(protocolEvent, session: session) { return }
       if let activationGuard {
         guard isCurrent(activationGuard, session: session) else {
           rejectActivation(.peerMismatch, session: session)
@@ -149,6 +162,55 @@ final class ManualWiFiBluetoothDriver: BluetoothPeripheralDriver {
     default: break
     }
     forward(event)
+  }
+
+  /// Hold the identity-write callback until both reference flag writes complete.
+  private func handleAppFlagSetup(_ event: BLEProtocolEvent, session: UUID) -> Bool {
+    switch event {
+    case .services(let characteristics):
+      guard link?.verifiedXT5 == true else {
+        eventHandler?(.linkFailed(session, .peerMismatch))
+        return true
+      }
+      appFlags = []
+      for (index, uuid) in Self.appFlagUUIDs.enumerated() {
+        let matches = characteristics.filter { $0.characteristic == uuid }
+        guard matches.count == 1, let flag = matches.first else {
+          trace(attempt, .appFlagUnavailable(ordinal: index + 1))
+          eventHandler?(.linkFailed(session, .unsupportedProtocol))
+          return true
+        }
+        appFlags.append(flag)
+      }
+      return false
+    case .wrote(Self.identification) where !appFlags.isEmpty:
+      writeAppFlag(at: 0, session: session)
+      return true
+    case .wrote(let characteristic):
+      guard let pendingAppFlag, pendingAppFlag.characteristic == characteristic else { return false }
+      let index = pendingAppFlag.index
+      trace(attempt, .appFlagAcknowledged(ordinal: index + 1))
+      if index + 1 < appFlags.count {
+        writeAppFlag(at: index + 1, session: session)
+      } else {
+        self.pendingAppFlag = nil
+        forward(.protocolEvent(session, .wrote(Self.identification)))
+      }
+      return true
+    case .failed(let characteristic, let failure):
+      guard let pendingAppFlag, pendingAppFlag.characteristic == characteristic else { return false }
+      self.pendingAppFlag = nil
+      trace(attempt, .appFlagFailed(ordinal: pendingAppFlag.index + 1, .init(failure)))
+      return false
+    default: return false
+    }
+  }
+
+  private func writeAppFlag(at index: Int, session: UUID) {
+    let characteristic = appFlags[index]
+    pendingAppFlag = (index, characteristic)
+    trace(attempt, .appFlagSubmitted(ordinal: index + 1))
+    native.perform(.write(characteristic, Data([0x01]), .identify), session: session)
   }
 
   private func forward(_ event: BluetoothDriverEvent) {
@@ -316,6 +378,8 @@ final class ManualWiFiBluetoothDriver: BluetoothPeripheralDriver {
   private func clear(_ session: UUID) {
     guard link?.session == session else { return }
     link = nil
+    appFlags = []
+    pendingAppFlag = nil
     resetActivation()
   }
 }

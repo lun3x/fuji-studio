@@ -20,6 +20,7 @@ final class CoreBluetoothDriver: NSObject, BluetoothPeripheralDriver,
   private var connections = CoreBluetoothConnections<CBCentralManager, CBPeripheral>()
   private var central: CBCentralManager? { connections.manager }
   private var active: Link?
+  private let discoverAllServices: Bool
 
   #if DEBUG
   var observePairing: ((String) -> Void)?
@@ -38,6 +39,11 @@ final class CoreBluetoothDriver: NSObject, BluetoothPeripheralDriver,
     "180a",
   ].map(CBUUID.init(string:))
   private static let modelNumber = BLEGATTCharacteristic(service: "180a", characteristic: "2a24")
+
+  init(discoverAllServices: Bool = false) {
+    self.discoverAllServices = discoverAllServices
+    super.init()
+  }
 
   func start(allowPermissionPrompt: Bool) throws {
     switch CBManager.authorization {
@@ -226,7 +232,7 @@ final class CoreBluetoothDriver: NSObject, BluetoothPeripheralDriver,
     #if DEBUG
     observePairing?("BLE link connected; discovering services")
     #endif
-    peripheral.discoverServices(Self.pairingServices)
+    peripheral.discoverServices(discoverAllServices ? nil : Self.pairingServices)
   }
 
   func centralManager(

@@ -64,6 +64,10 @@ final class ManualWiFiBluetoothTrace {
   enum Event: Encodable, Equatable {
     case connectionRequested
     case peerModel(PeerModel)
+    case appFlagUnavailable(ordinal: Int)
+    case appFlagSubmitted(ordinal: Int)
+    case appFlagAcknowledged(ordinal: Int)
+    case appFlagFailed(ordinal: Int, ManualWiFiEvent.Failure)
     case subscription(Subscription, SubscriptionResult)
     case activationAuthorized
     case activationRejected(ManualWiFiEvent.Failure)

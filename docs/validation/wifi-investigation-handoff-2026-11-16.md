@@ -166,6 +166,39 @@ Apple's [Bluetooth for iOS/iPadOS profile](https://developer.apple.com/feedback-
 and [PacketLogger live capture](https://developer.apple.com/videos/play/wwdc2019/901/)
 provide the Bluetooth evidence missing from the TCP-only RVI traces.
 
+### Independent X-T5 reference
+
+[Marnix Janssen's tests on X-T5 4.31](https://github.com/mjanssen/fujifilm-camera-protocol-data/blob/853e3647cafbdf56c6a920887bf5553c823d8aad/x-t5.md#31-pairing-and-session-setup)
+document two BLE writes of `01` immediately after the client name. Fuji Studio
+previously advanced from the name write to SSID and notification setup without
+writing either flag. This is a concrete difference before the camera's first
+TCP reply. The reference gives neither the flags' meanings nor the DF28 value
+observed during its successful JPEG and RAF transfers.
+
+Build the controlled count probe with `FUJI_XT5_REFERENCE_APP_FLAGS=1` and
+`FUJI_XAPP_CAPTURED_CLIENT_NAME='Fuji iPhone'` using `Scripts/build-manual-wifi.sh`.
+This Debug build discovers the flags by characteristic UUID across services.
+It writes `01` to `CAEDB497-83BF-482C-91EF-91CF6F1216FF` and then
+`98934B2C-756C-4632-AA2F-DCBA1BFEC824`, waiting for each acknowledgment before
+continuing. Missing or rejected flags stop the attempt and are recorded by
+ordinal. Use the saved pairing, match the prior TCP timing control, and run
+**Check photo counts**. Compare both flag acknowledgments, the camera's first
+D212 reply, the offered DF28, and the validated inventories. The first physical
+flags trial is pending.
+
+The reference also NUL-terminates the BLE name, configures more notification
+services, answers the camera's clock request, reads AP status before launch,
+and periodically reads a BLE keep-alive characteristic. Those are separate
+differences for a subsequent trial. Preserve the current handshake for the
+two-flag comparison.
+
+For original transfers, the [same reference](https://github.com/mjanssen/fujifilm-camera-protocol-data/blob/853e3647cafbdf56c6a920887bf5553c823d8aad/x-t5.md#4-wi-fi-photo-browsing-and-import)
+sets `D226 = 0` then `D227 = 1`, refreshes ObjectInfo, and reads `D235` before
+sending bounded `101B` requests. The current X-T5 diagnostic uses `D226 = 2`,
+which an earlier XApp capture used to fetch a full JPEG. Validate the reference's
+original-transfer sequence after RAF handles are visible. The camera selects
+DF28 before either original-transfer sequence is used.
+
 Native gallery configuration confirms D244 per slot, uses `9054 [10000001]`,
 `9055 [10000001]`, `9050`, D212, D22B, and then `9053 [0,30000]`, D212, D620, D621.
 It validates the cold inventory before applying the filter and refreshing again.
