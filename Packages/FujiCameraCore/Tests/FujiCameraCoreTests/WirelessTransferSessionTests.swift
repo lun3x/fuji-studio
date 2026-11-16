@@ -5,6 +5,29 @@ import XCTest
 @testable import FujiCameraCore
 
 final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
+  func testXAppInitializationWritesTheConfiguredClientNameAndPreservesTheDefault() async throws {
+    let camera = identity(.xt5)
+    let guid = Data(0..<16)
+    let standard = Replay(start(.xt5, "4.31") + [.read(0x1003)])
+    let manual = Replay(start(.xt5, "4.31") + [.read(0x1003)])
+    let standardSession = XAppTransferAdapter.makeSession(
+      transport: .init(channel: standard), expectedIdentity: camera, clientGUID: guid)
+    let manualSession = XAppTransferAdapter.makeSession(
+      transport: .init(channel: manual), expectedIdentity: camera, clientGUID: guid, clientName: "Fuji iPhone")
+
+    for (session, channel, name) in [
+      (standardSession, standard, "Fuji Studio"), (manualSession, manual, "Fuji iPhone"),
+    ] {
+      _ = try await session.open()
+      let frame = await channel.initializationRequest
+      let nameBytes = try XCTUnwrap(name.data(using: .utf16LittleEndian))
+      let expected = word(82) + word(1) + word(0x8f53e4f2) + guid + nameBytes
+        + Data(repeating: 0, count: 54 - nameBytes.count)
+      XCTAssertEqual(frame, expected)
+      try await session.close()
+    }
+  }
+
   func testAutoSaveRejectsTruncatedOrDifferentPeerBeforeInventory() async throws {
     for serial in ["", "other"] {
       let channel = Replay(start(.xe3, "1.32", serial: serial) + [.read(0x1003)])
@@ -594,6 +617,7 @@ private actor Replay: WirelessByteChannel {
   private var objectReads = 0
   private(set) var sizeControls: [UInt8] = []
   private(set) var operations: [UInt16] = []
+  private(set) var initializationRequest: Data?
   var remaining: Int { exchanges.count }
 
   init(
@@ -608,6 +632,7 @@ private actor Replay: WirelessByteChannel {
   func write(_ data: Data) async throws {
     guard initialized else {
       initialized = true
+      initializationRequest = data
       let name = Data("Fixture".utf16.flatMap { [UInt8(truncatingIfNeeded: $0), UInt8($0 >> 8)] } + [0, 0])
       buffer = word(UInt32(28 + name.count)) + word(2) + Data(repeating: 0, count: 20) + name
       return

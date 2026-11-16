@@ -2,10 +2,12 @@ import Foundation
 
 public enum XAppTransferAdapter {
   public static func makeSession(
-    transport: WirelessPTPTransport, expectedIdentity: WirelessIdentity, clientGUID: Data
+    transport: WirelessPTPTransport, expectedIdentity: WirelessIdentity, clientGUID: Data,
+    clientName: String? = nil
   ) -> any WirelessTransferSession {
     CameraHostedTransferSession(
-      transport: transport, expectedIdentity: expectedIdentity, mode: .xApp, clientGUID: clientGUID)
+      transport: transport, expectedIdentity: expectedIdentity, mode: .xApp,
+      clientGUID: clientGUID, clientName: clientName)
   }
 }
 

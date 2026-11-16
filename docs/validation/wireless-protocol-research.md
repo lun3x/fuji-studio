@@ -106,6 +106,19 @@ different original-size controls in the two transfer modes. Its mode-selection
 heuristic remains explicitly provisional. The presence of generic object
 download code does not prove RAF exposure on an X-E3.
 
+In the pinned BLE-to-WiFi path, libfuji writes the configured client name in
+[bluetooth.c](https://github.com/petabyt/libfuji/blob/3b9932a46d025405dae505ddb624733b6ea3edd1/lib/bluetooth.c#L375-L390),
+passes that same name into setup in
+[module.c](https://github.com/petabyt/libfuji/blob/3b9932a46d025405dae505ddb624733b6ea3edd1/lib/module.c#L212-L258),
+and serializes it in the TCP initializer in
+[fuji.c](https://github.com/petabyt/libfuji/blob/3b9932a46d025405dae505ddb624733b6ea3edd1/lib/fuji.c#L587-L620).
+The manual iPhone probe now uses its BLE destination name, `Fuji iPhone`, in
+both places. Previously, the X-T5 4.31 trial wrote the initializer with
+`Fuji Studio` and received no response bytes before its identity deadline. The
+next hardware trial needs to check whether the camera sends the initialization
+ACK with the shared name. The source comparison establishes name reuse;
+whether the mismatch caused that timeout remains unverified.
+
 [Issue 7](https://github.com/petabyt/libfuji/issues/7) provides a concrete X-E5
 1.12 BLE pairing and WiFi association report, followed by a PTP connection
 failure. The author later attributed it to an Android permission. It confirms

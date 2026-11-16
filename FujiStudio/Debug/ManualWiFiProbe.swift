@@ -589,6 +589,7 @@ extension ManualWiFiProbe {
     let clientID = defaults.string(forKey: "clientID").flatMap(UUID.init(uuidString:)) ?? UUID()
     defaults.set(clientID.uuidString, forKey: "clientID")
     let guid = withUnsafeBytes(of: clientID.uuid) { Data($0) }
+    let clientName = ManualWiFiBluetoothDriver.phoneDestinationName
     let bluetoothTrace = ManualWiFiBluetoothTrace.live()
     let driver = ManualWiFiBluetoothDriver(trace: bluetoothTrace.append)
     let report = ManualWiFiReport()
@@ -601,7 +602,8 @@ extension ManualWiFiProbe {
       makeSession: { identity, trace in
         let channel = try await NetworkByteChannel.connect(to: .cameraHosted(mode: .xApp), identityTrace: trace)
         return XAppTransferAdapter.makeSession(
-          transport: WirelessPTPTransport(channel: channel, identityTrace: trace), expectedIdentity: identity, clientGUID: guid)
+          transport: WirelessPTPTransport(channel: channel, identityTrace: trace),
+          expectedIdentity: identity, clientGUID: guid, clientName: clientName)
       },
       startLease: { expire in
         let app = UIApplication.shared

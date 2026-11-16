@@ -34,6 +34,7 @@ actor CameraHostedTransferSession: WirelessTransferSession {
   let expectedIdentity: WirelessIdentity
   let mode: WirelessMode
   private let clientGUID: Data
+  private let clientName: String
   private let sessionID = UUID()
   private var peer: WirelessIdentity?
   private var didOpenSession = false
@@ -57,12 +58,13 @@ actor CameraHostedTransferSession: WirelessTransferSession {
 
   init(
     transport: WirelessPTPTransport, expectedIdentity: WirelessIdentity, mode: WirelessMode,
-    clientGUID: Data
+    clientGUID: Data, clientName: String? = nil
   ) {
     self.transport = transport
     self.expectedIdentity = expectedIdentity
     self.mode = mode
     self.clientGUID = clientGUID
+    self.clientName = clientName ?? "Fuji Studio"
   }
 
   func open() async throws -> WirelessIdentity {
@@ -77,7 +79,7 @@ actor CameraHostedTransferSession: WirelessTransferSession {
     defer { busy = false }
     do {
       let request = try FujiWirelessFrameDecoder.initializationRequest(
-        clientName: "Fuji Studio", clientGUID: clientGUID)
+        clientName: clientName, clientGUID: clientGUID)
       _ = try await transport.initialize(request)
       // The pinned libfuji camera-hosted implementation waits 50 ms after the ACK.
       transport.observeIdentity(.init(.openSessionDelay, .waiting))
