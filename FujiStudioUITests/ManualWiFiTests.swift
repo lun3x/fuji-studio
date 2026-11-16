@@ -24,9 +24,14 @@ final class ManualWiFiTests: XCTestCase {
 
     let reveal = app.buttons["manualWiFi.reveal"]
     XCTAssertTrue(reveal.waitForExistence(timeout: 10))
-    XCTAssertFalse(app.staticTexts["manualWiFi.password"].exists)
+    let password = app.buttons["manualWiFi.password"]
+    XCTAssertFalse(password.exists)
     reveal.tap()
-    XCTAssertTrue(app.staticTexts["manualWiFi.password"].exists)
+    XCTAssertTrue(password.exists)
+    XCTAssertEqual(password.value as? String, "fixture-password")
+    XCTAssertFalse(app.staticTexts["manualWiFi.passwordCopied"].exists)
+    password.tap()
+    XCTAssertTrue(app.staticTexts["manualWiFi.passwordCopied"].exists)
 
     let identify = app.buttons["manualWiFi.identify"]
     let confirm = app.buttons["manualWiFi.confirm"]
@@ -39,7 +44,8 @@ final class ManualWiFiTests: XCTestCase {
 
     let status = app.staticTexts.matching(NSPredicate(format: "label == %@", "X-T5 identified. Firmware 04.31.")).firstMatch
     XCTAssertTrue(status.waitForExistence(timeout: 10))
-    XCTAssertFalse(app.staticTexts["manualWiFi.password"].exists)
+    XCTAssertFalse(password.exists)
+    XCTAssertFalse(app.staticTexts["manualWiFi.passwordCopied"].exists)
   }
 
   func testPairingInstructionsAppearOnlyInTheNewCameraFlow() {

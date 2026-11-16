@@ -1,9 +1,12 @@
 #if DEBUG
 import SwiftUI
+import UIKit
+import UniformTypeIdentifiers
 
 struct ManualWiFiView: View {
   @Environment(\.scenePhase) private var scenePhase
   @State private var probe: ManualWiFiProbe?
+  @State private var passwordCopied = false
 
   var fixture = false
 
@@ -43,9 +46,30 @@ struct ManualWiFiView: View {
                 .privacySensitive()
               if let password = probe.visiblePassword {
                 LabeledContent("Password") {
-                  Text(password).accessibilityIdentifier("manualWiFi.password")
+                  Button {
+                    guard scenePhase == .active, probe.visiblePassword == password else { return }
+                    UIPasteboard.general.setItems(
+                      [[UTType.utf8PlainText.identifier: password]],
+                      options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(5 * 60)]
+                    )
+                    passwordCopied = true
+                    AccessibilityNotification.Announcement("Password copied").post()
+                  } label: {
+                    Label(password, systemImage: "document.on.document")
+                      .labelStyle(.titleAndIcon)
+                  }
+                  .buttonStyle(.borderless)
+                  .accessibilityLabel("Copy password")
+                  .accessibilityValue(Text(password))
+                  .accessibilityHint("Copies the Wi-Fi password to the clipboard")
+                  .accessibilityIdentifier("manualWiFi.password")
                 }
                 .privacySensitive()
+                if passwordCopied {
+                  Text("Copied")
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("manualWiFi.passwordCopied")
+                }
               }
               Button(probe.visiblePassword == nil ? "Reveal password" : "Hide password") {
                 probe.revealPassword()
@@ -96,6 +120,7 @@ struct ManualWiFiView: View {
             }
           }
         }
+        .onChange(of: probe.visiblePassword != nil) { _, _ in passwordCopied = false }
         .navigationTitle("Fuji Manual WiFi")
         .toolbar {
           if probe.canCancel {
