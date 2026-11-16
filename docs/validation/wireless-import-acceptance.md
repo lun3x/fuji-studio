@@ -715,3 +715,25 @@ declaring success. The official JPEG transfer establishes the mode and
 metadata change for that JPEG. Fuji Studio's combined sequence, physical
 RAF download, and equality to independently read card bytes still await
 validation.
+
+#### Image-viewing activation trial
+
+A fresh XApp capture on the X-T5 starts with OpenSession, the first D212
+event batch, DF01 set to 20, then a DF28 read and echo. The earlier
+native session follows the same command prefix but the camera offers
+version 2; XApp gets version 3 and a gallery of 1,239 objects (548 JPEG,
+619 RAW, and 72 others). The native gallery contains the same 548 JPEGs.
+The sessions already differ before the DF28 write, and the captures do
+not establish why the native gallery omitted RAW.
+
+The manual Debug diagnostic now requests image viewing with BLE
+`03 00`. It waits for the write acknowledgment before acting on busy,
+allows at most three writes with 200 ms between busy and retry, and
+still requires the camera's positive readiness notification. The
+[FujiBridge mode mapping and retry](https://github.com/Th0rgal/fuji-bridge/blob/38fc4275574c2016a1f13ece13496b0ad1e9b452/FujiBridge/FujiBluetooth.swift#L198-L226)
+and [Dial In's X100VI trial](https://github.com/maam00/dialin-tools/blob/848a651c926a44c6f7b5bc1d1f44b27e8a50b959/ios/DialInCamera/Sources/DialInCamera/Import/FujiWifiWake.swift)
+support this change, but successful image viewing and RAW visibility
+still need physical X-T5 validation. In the next trial, record the
+actual BLE write ordinals and readiness results, then compare the
+first D212 batch, the offered DF28 value, and the JPEG and RAW counts.
+The test leaves TCP initialization, timing, and negotiation unchanged.

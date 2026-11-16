@@ -44,7 +44,7 @@ struct ManualWiFiBluetoothDriverTests {
     ])
   }
 
-  @Test func forwardsOnlyTheOrderedStandardActivationForTheSelectedSession() throws {
+  @Test func submitsImageViewingOnlyForTheOrderedSelectedSession() throws {
     let native = Driver()
     let driver = ManualWiFiBluetoothDriver(native: native)
     let peripheral = UUID()
@@ -54,18 +54,18 @@ struct ManualWiFiBluetoothDriverTests {
       ProbeImageViewingLaunch.launch, Data([0x04, 0x00]), .activateWiFi)
     driver.connect(peripheralID: peripheral, session: session)
     native.eventHandler?(.peerModel(session, "X-T5"))
-    try driver.beginStandardActivation(peripheralID: peripheral) { true }
+    try driver.beginImageViewingActivation(peripheralID: peripheral) { true }
     driver.perform(password, session: session)
     native.eventHandler?(.protocolEvent(UUID(), .read(ProbeImageViewingLaunch.password, Data())))
     #expect(native.actions == [password])
     native.eventHandler?(.protocolEvent(session, .read(ProbeImageViewingLaunch.password, Data())))
     driver.perform(standard, session: UUID())
     driver.perform(standard, session: session)
-    #expect(native.actions == [password, standard])
+    #expect(native.actions == [password, .write(ProbeImageViewingLaunch.launch, Data([3, 0]), .activateWiFi)])
 
     driver.disconnect(session: session)
     driver.perform(standard, session: session)
-    #expect(native.actions == [password, standard])
+    #expect(native.actions == [password, .write(ProbeImageViewingLaunch.launch, Data([3, 0]), .activateWiFi)])
   }
 
   @Test(arguments: [false, true]) func rejectsActivationWithoutCurrentOrderedHandshake(selectionExpires: Bool) throws {
@@ -77,7 +77,7 @@ struct ManualWiFiBluetoothDriverTests {
     var current = true
     driver.connect(peripheralID: peripheral, session: session)
     native.eventHandler?(.peerModel(session, "X-T5"))
-    try driver.beginStandardActivation(peripheralID: peripheral) { current }
+    try driver.beginImageViewingActivation(peripheralID: peripheral) { current }
     driver.perform(password, session: session)
     if selectionExpires {
       native.eventHandler?(.protocolEvent(session, .read(ProbeImageViewingLaunch.password, Data())))
@@ -107,7 +107,7 @@ struct ManualWiFiBluetoothDriverTests {
     native.eventHandler?(.peerModel(session, "FF220001"))
     driver.perform(.subscribe(readiness), session: session)
     native.eventHandler?(.protocolEvent(session, .subscribed(readiness)))
-    try driver.beginStandardActivation(peripheralID: peripheral) { true }
+    try driver.beginImageViewingActivation(peripheralID: peripheral) { true }
     driver.perform(password, session: session)
     native.eventHandler?(.protocolEvent(UUID(), .read(ProbeImageViewingLaunch.password, Data())))
     native.eventHandler?(.protocolEvent(session, .read(ProbeImageViewingLaunch.password, Data("secret123".utf8))))
@@ -118,12 +118,12 @@ struct ManualWiFiBluetoothDriverTests {
     native.eventHandler?(.protocolEvent(UUID(), .wrote(ProbeImageViewingLaunch.launch)))
     if acknowledged { native.eventHandler?(.protocolEvent(session, .wrote(ProbeImageViewingLaunch.launch))) }
 
-    #expect(native.actions == [.subscribe(readiness), password, standard])
-    #expect(forwarded == Array(repeating: session, count: acknowledged ? 6 : 5))
+    #expect(native.actions == [.subscribe(readiness), password, .write(ProbeImageViewingLaunch.launch, Data([3, 0]), .activateWiFi)])
+    #expect(forwarded == Array(repeating: session, count: acknowledged ? 4 : 2))
     var expected: [ManualWiFiBluetoothTrace.Event] = [
       .connectionRequested, .peerModel(.xt5), .subscription(.readiness, .requested),
       .subscription(.readiness, .accepted), .activationAuthorized, .passwordReadRequested,
-      .passwordReadCompleted, .standard04Submitted, .readiness(.positive, length: 2),
+      .passwordReadCompleted, .imageViewing03Submitted(ordinal: 1), .readiness(.positive, length: 2),
       .readiness(.negative, length: 1), .readiness(.unrecognized, length: 1)
     ]
     if acknowledged { expected.append(.launchWriteAcknowledged) }
@@ -156,7 +156,7 @@ struct ManualWiFiBluetoothDriverTests {
     driver.perform(.subscribe(geotag), session: session)
     native.eventHandler?(.protocolEvent(session, .failed(geotag, .unsupportedProtocol)))
     native.eventHandler?(.peerModel(session, "X-T5"))
-    try driver.beginStandardActivation(peripheralID: peripheral) { true }
+    try driver.beginImageViewingActivation(peripheralID: peripheral) { true }
     driver.perform(alternate, session: session)
     native.eventHandler?(.disconnected(session, .connectionLost))
 
@@ -189,7 +189,7 @@ struct ManualWiFiBluetoothDriverTests {
     driver.connect(peripheralID: peripheral, session: session)
     native.eventHandler?(.peerModel(session, "private-camera-name"))
     native.eventHandler?(.peerModel(session, "FF220001"))
-    try driver.beginStandardActivation(peripheralID: peripheral) { true }
+    try driver.beginImageViewingActivation(peripheralID: peripheral) { true }
     driver.perform(.read(ProbeImageViewingLaunch.password), session: session)
     native.eventHandler?(.protocolEvent(session, .read(ProbeImageViewingLaunch.password, Data("private-password".utf8))))
     driver.perform(.write(ProbeImageViewingLaunch.launch, Data([4, 0]), .activateWiFi), session: session)
@@ -216,6 +216,225 @@ struct ManualWiFiBluetoothDriverTests {
     }
     _ = ManualWiFiBluetoothTrace(file: file)
     #expect(try String(contentsOf: file, encoding: .utf8) == "[]")
+  }
+
+  @Test func earlyDuplicateBusyWaitsForAcknowledgmentAndTwoRetriesCanReachReady() throws {
+    let flow = try LaunchFlow()
+    flow.notify([0, 0])
+    flow.notify([0])
+    #expect(flow.timer.requests.isEmpty)
+    #expect(flow.failures.isEmpty)
+    #expect(flow.native.actions == [flow.passwordRead, flow.imageViewing])
+    flow.acknowledge()
+    flow.notify([0])
+    try #require(flow.timer.requests.map(\.delay) == [.milliseconds(200)])
+    #expect(flow.failures.isEmpty)
+    flow.timer.fire(0)
+    flow.acknowledge()
+    flow.notify([0])
+    try #require(flow.timer.requests.map(\.delay) == [.milliseconds(200), .milliseconds(200)])
+    flow.timer.fire(1)
+    flow.notify([1, 42])
+    #expect(!flow.ready)
+    flow.acknowledge()
+    #expect(flow.ready)
+    #expect(flow.failures.isEmpty)
+    #expect(flow.native.actions == [flow.passwordRead, flow.imageViewing, flow.imageViewing, flow.imageViewing])
+    #expect(flow.trace.filter {
+      if case .readiness(.negative, length: _) = $0 { return true }
+      return false
+    }.count == 4)
+    #expect(flow.trace.filter {
+      switch $0 {
+      case .imageViewing03Submitted, .imageViewingRetryScheduled: return true
+      default: return false
+      }
+    } == [.imageViewing03Submitted(ordinal: 1), .imageViewingRetryScheduled(ordinal: 2),
+      .imageViewing03Submitted(ordinal: 2), .imageViewingRetryScheduled(ordinal: 3),
+      .imageViewing03Submitted(ordinal: 3)])
+  }
+
+  @Test func thirdBusyFailsThroughProfileOnlyAfterItsAcknowledgment() throws {
+    let flow = try LaunchFlow()
+    for index in 0..<2 {
+      flow.acknowledge()
+      flow.notify([0])
+      try #require(flow.timer.requests.count == index + 1)
+      flow.timer.fire(index)
+    }
+    flow.notify([0])
+    flow.notify([0])
+    #expect(flow.failures.isEmpty)
+    flow.acknowledge()
+    #expect(flow.failures == [.cameraBusy])
+    #expect(flow.trace.last == .imageViewingRetriesExhausted)
+    #expect(flow.timer.requests.count == 2)
+    #expect(flow.native.actions == [flow.passwordRead, flow.imageViewing, flow.imageViewing, flow.imageViewing])
+    #expect(!flow.ready)
+  }
+
+  @Test func cachedBusyProgressAndUnknownBytesCannotScheduleOrSucceed() throws {
+    let flow = try LaunchFlow(launchImmediately: false)
+    flow.notify([0, 0])
+    flow.launch()
+    flow.acknowledge()
+    for bytes: [UInt8] in [[2, 128], [9], [], [0, 0, 0], [1, 0, 0]] { flow.notify(bytes) }
+    #expect(flow.trace.contains(.readiness(.launching, length: 2)))
+    #expect(flow.timer.requests.isEmpty)
+    #expect(flow.failures.isEmpty)
+    #expect(!flow.ready)
+    #expect(flow.native.actions == [flow.passwordRead, flow.imageViewing])
+  }
+
+  @Test func readyDuringDelayCancelsRetryAndIgnoresLateTimer() throws {
+    let flow = try LaunchFlow()
+    flow.acknowledge()
+    flow.notify([0])
+    let request = try #require(flow.timer.requests.first)
+    flow.notify([1])
+    #expect(flow.ready)
+    #expect(flow.failures.isEmpty)
+    #expect(request.cancelled)
+    flow.timer.fire(0)
+    #expect(flow.native.actions == [flow.passwordRead, flow.imageViewing])
+  }
+
+  enum Interruption: CaseIterable {
+    case cancel, disconnected, replacement, reconnect, failedWrite, linkFailure, changedModel
+  }
+
+  @Test(arguments: Interruption.allCases) func interruptedDelayCannotWriteAgain(interruption: Interruption) throws {
+    let flow = try LaunchFlow()
+    flow.acknowledge()
+    flow.notify([0])
+    let request = try #require(flow.timer.requests.first)
+    switch interruption {
+    case .cancel: flow.driver.disconnect(session: flow.session)
+    case .disconnected: flow.native.eventHandler?(.disconnected(flow.session, .connectionLost))
+    case .replacement: flow.current = false
+    case .reconnect:
+      flow.driver.connect(peripheralID: flow.peripheral, session: UUID())
+    case .failedWrite: flow.emit(.failed(ProbeImageViewingLaunch.launch, .connectionLost))
+    case .linkFailure: flow.native.eventHandler?(.linkFailed(flow.session, .connectionLost))
+    case .changedModel: flow.native.eventHandler?(.peerModel(flow.session, "X-E3"))
+    }
+    flow.timer.fire(0)
+    #expect(request.cancelled)
+    #expect(flow.native.actions == [flow.passwordRead, flow.imageViewing])
+    #expect(!flow.ready)
+  }
+
+  @Test func previousSessionBusyAndAcknowledgmentCannotTriggerCurrentRetry() throws {
+    let flow = try LaunchFlow()
+    let stale = UUID()
+    flow.native.eventHandler?(.protocolEvent(stale, .notification(flow.readiness, Data([0, 0]))))
+    flow.native.eventHandler?(.protocolEvent(stale, .wrote(ProbeImageViewingLaunch.launch)))
+    flow.acknowledge()
+    #expect(flow.timer.requests.isEmpty)
+    #expect(flow.failures.isEmpty)
+    #expect(flow.native.actions == [flow.passwordRead, flow.imageViewing])
+  }
+
+  @MainActor
+  private final class RetryTimer {
+    final class Request {
+      let delay: Duration
+      let body: @MainActor () -> Void
+      var cancelled = false
+
+      init(delay: Duration, body: @escaping @MainActor () -> Void) {
+        self.delay = delay
+        self.body = body
+      }
+    }
+
+    var requests: [Request] = []
+
+    func schedule(_ delay: Duration, _ body: @escaping @MainActor () -> Void) -> () -> Void {
+      let request = Request(delay: delay, body: body)
+      requests.append(request)
+      return { request.cancelled = true }
+    }
+
+    func fire(_ index: Int) {
+      // Deliver even a cancelled callback to exercise the driver's stale-work guard.
+      requests[index].body()
+    }
+  }
+
+  @MainActor
+  private final class LaunchFlow {
+    let native = Driver()
+    let timer = RetryTimer()
+    let peripheral = UUID()
+    let session = UUID()
+    let readiness = ManualWiFiBluetoothTrace.Subscription.readiness.characteristic
+    let passwordRead = BLEProtocolAction.read(ProbeImageViewingLaunch.password)
+    let imageViewing = BLEProtocolAction.write(ProbeImageViewingLaunch.launch, Data([3, 0]), .activateWiFi)
+    var current = true
+    var ready = false
+    var failures: [WirelessFailure] = []
+    var trace: [ManualWiFiBluetoothTrace.Event] = []
+    private var profile = XT5BLEProfile()
+    lazy var driver = ManualWiFiBluetoothDriver(
+      native: native, trace: { [weak self] _, event in self?.trace.append(event) },
+      scheduleRetry: timer.schedule)
+
+    init(launchImmediately: Bool = true) throws {
+      let secure = BLEGATTCharacteristic(
+        service: "123d8f06-62a1-4935-9322-833c531ee225",
+        characteristic: "f557d96b-8284-4667-8793-b971c1deca2a")
+      let identity = BLEGATTCharacteristic(
+        service: secure.service, characteristic: "85b9163e-62d1-49ff-a6f5-054b4630d4a1")
+      let configuration = ManualWiFiBluetoothTrace.Subscription.configuration.characteristic
+      let geotag = ManualWiFiBluetoothTrace.Subscription.geotag.characteristic
+      let ssid = ManualWiFiBluetoothTrace.Subscription.ssid.characteristic
+      for event: BLEProtocolEvent in [
+        .services([secure, identity, readiness, configuration, geotag, ssid,
+          ProbeImageViewingLaunch.password, ProbeImageViewingLaunch.launch]),
+        .read(secure, Data([0, 0, 0, 0])), .wrote(secure), .wrote(identity),
+        .read(ssid, Data("test-network".utf8)), .subscribed(readiness),
+        .subscribed(configuration), .subscribed(geotag), .subscribed(ssid),
+      ] {
+        _ = try profile.receive(event)
+      }
+      driver.connect(peripheralID: peripheral, session: session)
+      native.eventHandler?(.peerModel(session, "X-T5"))
+      driver.eventHandler = { [weak self] event in
+        guard let self else { return }
+        switch event {
+        case .protocolEvent(self.session, let event): self.advance(event)
+        case .linkFailed(self.session, let failure): self.failures.append(failure)
+        default: break
+        }
+      }
+      try driver.beginImageViewingActivation(peripheralID: peripheral) { [weak self] in self?.current == true }
+      advance(.activateWiFi)
+      if launchImmediately { launch() }
+    }
+
+    func launch() {
+      emit(.read(ProbeImageViewingLaunch.password, Data("example-secret".utf8)))
+    }
+
+    func notify(_ bytes: [UInt8]) { emit(.notification(readiness, Data(bytes))) }
+
+    func acknowledge() { emit(.wrote(ProbeImageViewingLaunch.launch)) }
+
+    func emit(_ event: BLEProtocolEvent) { native.eventHandler?(.protocolEvent(session, event)) }
+
+    private func advance(_ event: BLEProtocolEvent) {
+      do {
+        for action in try profile.receive(event) {
+          if case .wifiReady = action { ready = true; continue }
+          driver.perform(action, session: session)
+        }
+      } catch let failure as WirelessFailure {
+        failures.append(failure)
+      } catch {
+        Issue.record(error)
+      }
+    }
   }
 
   private final class Driver: BluetoothPeripheralDriver {

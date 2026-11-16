@@ -233,7 +233,7 @@ final class ManualWiFiProbe {
     guard canStartWiFi, let id = attempt, let linkedCamera else { return }
     let observed = linkedCamera.identity
     let firmware = ManualWiFiEvent.firmware(observed.firmware)
-    update(.activating, "Starting the camera Wi-Fi network…", firmware: firmware, linkMode: linkedCamera.mode)
+    update(.activating, "Starting camera Wi-Fi for image viewing…", firmware: firmware, linkMode: linkedCamera.mode)
     operation = Task {
       do {
         try check(id)
@@ -672,7 +672,7 @@ struct ManualWiFiEvent: Encodable {
   }
 
   enum LinkMode: String, Encodable { case pair, reconnect }
-  enum LaunchMode: String, Encodable { case standard }
+  enum LaunchMode: String, Encodable { case imageViewing }
 
   enum Failure: String, Encodable {
     case wifiReadinessTimeout, tcpSetupTimeout, ptpTimeout, bluetoothPermission, localNetworkPermission
@@ -711,7 +711,7 @@ struct ManualWiFiEvent: Encodable {
     self.failure = failure
     self.linkMode = linkMode
     self.launchMode = switch phase {
-    case .activating, .ready, .activationFailed: .standard
+    case .activating, .ready, .activationFailed: .imageViewing
     default: nil
     }
   }
@@ -788,7 +788,7 @@ extension ManualWiFiProbe {
       loadSaved: { try await store.cameras() },
       findPaired: { try await ManualPairedCameraFinder(saved: $0).find() },
       password: { try await store.password(for: $0) },
-      authorizeLaunch: { try driver.beginStandardActivation(peripheralID: $0, selectionIsCurrent: $1) },
+      authorizeLaunch: { try driver.beginImageViewingActivation(peripheralID: $0, selectionIsCurrent: $1) },
       makeSession: { identity, trace in
         let channel = try await NetworkByteChannel.connect(to: .cameraHosted(mode: .xApp), identityTrace: trace)
         return try await makeGallerySession(channel: channel, expectedIdentity: identity, trace: trace)

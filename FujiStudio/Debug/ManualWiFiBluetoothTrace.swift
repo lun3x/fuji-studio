@@ -45,10 +45,14 @@ final class ManualWiFiBluetoothTrace {
   }
 
   enum Readiness: String, Encodable {
-    case positive, negative, unrecognized
+    case positive, negative, launching, unrecognized
 
     init(_ bytes: Data) {
-      // Same status rule as FujiBLEHandshake. The trace only stores the class and length.
+      // Keep the profile's positive/busy rule and give the manual launch-in-progress signal its own label.
+      if bytes == Data([0x02, 0x80]) {
+        self = .launching
+        return
+      }
       switch (bytes.count, bytes.first) {
       case (1...2, 1?): self = .positive
       case (1...2, 0?): self = .negative
@@ -66,7 +70,9 @@ final class ManualWiFiBluetoothTrace {
     case passwordReadRequested
     case passwordReadCompleted
     case passwordReadFailed(ManualWiFiEvent.Failure)
-    case standard04Submitted
+    case imageViewing03Submitted(ordinal: Int)
+    case imageViewingRetryScheduled(ordinal: Int)
+    case imageViewingRetriesExhausted
     case launchWriteAcknowledged
     case launchWriteFailed(ManualWiFiEvent.Failure)
     case readiness(Readiness, length: Int)

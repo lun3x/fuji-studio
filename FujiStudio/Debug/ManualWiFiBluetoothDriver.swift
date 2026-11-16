@@ -5,15 +5,28 @@ import FujiCameraCore
 /// The normal profile still owns authentication, firmware and the readiness notification.
 @MainActor
 final class ManualWiFiBluetoothDriver: BluetoothPeripheralDriver {
+  typealias RetryScheduler = @MainActor (Duration, @escaping @MainActor () -> Void) -> () -> Void
+
   static let phoneDestinationName = "Fuji iPhone"
   private static let identification = BLEGATTCharacteristic(
     service: "123d8f06-62a1-4935-9322-833c531ee225",
     characteristic: "85b9163e-62d1-49ff-a6f5-054b4630d4a1")
+  private static let maximumLaunchWrites = 3
+
+  private enum ImageViewing {
+    case awaitingAcknowledgment(ordinal: Int, earlyStatus: Data?)
+    case awaitingReadiness(ordinal: Int)
+    case delaying(nextOrdinal: Int, token: UUID)
+    case finished
+  }
 
   private let native: any BluetoothPeripheralDriver
   private let trace: (Int, ManualWiFiBluetoothTrace.Event) -> Void
+  private let scheduleRetry: RetryScheduler
   private var link: (peripheralID: UUID, session: UUID, verifiedXT5: Bool)?
   private var activationGuard: ProbeImageViewingLaunch?
+  private var imageViewing: ImageViewing?
+  private var cancelRetry: (() -> Void)?
   private var attempt = 0
   // A terminal disconnect can arrive after the forwarding link has been cleared.
   private var traceSession: UUID?
@@ -23,14 +36,16 @@ final class ManualWiFiBluetoothDriver: BluetoothPeripheralDriver {
 
   init(
     native: any BluetoothPeripheralDriver = CoreBluetoothDriver(),
-    trace: @escaping (Int, ManualWiFiBluetoothTrace.Event) -> Void = { _, _ in }
+    trace: @escaping (Int, ManualWiFiBluetoothTrace.Event) -> Void = { _, _ in },
+    scheduleRetry: @escaping RetryScheduler = ManualWiFiBluetoothDriver.scheduleOnMainActor
   ) {
     self.native = native
     self.trace = trace
+    self.scheduleRetry = scheduleRetry
     native.eventHandler = { [weak self] in self?.receive($0) }
   }
 
-  func beginStandardActivation(peripheralID: UUID, selectionIsCurrent: @escaping () -> Bool) throws {
+  func beginImageViewingActivation(peripheralID: UUID, selectionIsCurrent: @escaping () -> Bool) throws {
     guard let link, link.peripheralID == peripheralID, link.verifiedXT5,
       selectionIsCurrent(), activationGuard == nil
     else {
@@ -47,7 +62,7 @@ final class ManualWiFiBluetoothDriver: BluetoothPeripheralDriver {
   func discardDiscoveries() { native.discardDiscoveries() }
 
   func connect(peripheralID: UUID, session: UUID) {
-    activationGuard = nil
+    resetActivation()
     link = (peripheralID, session, false)
     attempt += 1
     traceSession = session
@@ -103,6 +118,10 @@ final class ManualWiFiBluetoothDriver: BluetoothPeripheralDriver {
       case nil: model == nil ? .unavailable : .unrecognized
       }
       trace(attempt, .peerModel(label))
+      if known != .xt5, activationGuard != nil {
+        rejectActivation(.peerMismatch, session: session)
+        return
+      }
     case .linkFailed(let session, let failure):
       if traceSession == session { trace(attempt, .linkFailed(.init(failure))) }
       clear(session)
@@ -114,15 +133,104 @@ final class ManualWiFiBluetoothDriver: BluetoothPeripheralDriver {
       clear(session)
     case .protocolEvent(let session, _) where link?.session != session:
       return
+    case .protocolEvent(let session, let protocolEvent):
+      traceProtocolEvent(protocolEvent)
+      if let activationGuard {
+        guard isCurrent(activationGuard, session: session) else {
+          rejectActivation(.peerMismatch, session: session)
+          return
+        }
+        if case .failed = protocolEvent {
+          clear(session)
+        } else if consumeImageViewingEvent(protocolEvent, session: session) {
+          return
+        }
+      }
     default: break
     }
+    forward(event)
+  }
+
+  private func forward(_ event: BluetoothDriverEvent) {
     if var guardedLaunch = activationGuard {
       let decision = guardedLaunch.receive(event)
       activationGuard = guardedLaunch
       guard handle(decision, session: guardedLaunch.session) else { return }
     }
-    if case .protocolEvent(_, let protocolEvent) = event { traceProtocolEvent(protocolEvent) }
     eventHandler?(event)
+  }
+
+  private func consumeImageViewingEvent(_ event: BLEProtocolEvent, session: UUID) -> Bool {
+    let readiness = ManualWiFiBluetoothTrace.Subscription.readiness.characteristic
+    switch event {
+    case .wrote(ProbeImageViewingLaunch.launch):
+      guard let imageViewing else { return false }
+      guard case .awaitingAcknowledgment(let ordinal, let earlyStatus) = imageViewing else { return true }
+      self.imageViewing = .awaitingReadiness(ordinal: ordinal)
+      // The profile issued one write and expects a single acknowledgement.
+      if ordinal == 1 { forward(.protocolEvent(session, event)) }
+      if let earlyStatus, link?.session == session {
+        receiveReadiness(earlyStatus, characteristic: readiness, session: session)
+      }
+      return true
+    case .notification(readiness, let bytes):
+      receiveReadiness(bytes, characteristic: readiness, session: session)
+      return true
+    default: return false
+    }
+  }
+
+  private func receiveReadiness(_ bytes: Data, characteristic: BLEGATTCharacteristic, session: UUID) {
+    let status = ManualWiFiBluetoothTrace.Readiness(bytes)
+    switch (imageViewing, status) {
+    case (.awaitingAcknowledgment(let ordinal, let earlyStatus), .positive):
+      if earlyStatus?.first != 1 {
+        imageViewing = .awaitingAcknowledgment(ordinal: ordinal, earlyStatus: bytes)
+      }
+    case (.awaitingAcknowledgment(let ordinal, nil), .negative):
+      imageViewing = .awaitingAcknowledgment(ordinal: ordinal, earlyStatus: bytes)
+    case (.awaitingReadiness, .positive), (.delaying, .positive):
+      imageViewing = .finished
+      cancelPendingRetry()
+      forward(.protocolEvent(session, .notification(characteristic, bytes)))
+    case (.awaitingReadiness(let ordinal), .negative):
+      if ordinal == Self.maximumLaunchWrites {
+        imageViewing = .finished
+        trace(attempt, .imageViewingRetriesExhausted)
+        forward(.protocolEvent(session, .notification(characteristic, bytes)))
+      } else {
+        waitToRetry(ordinal: ordinal + 1, session: session)
+      }
+    default: break
+    }
+  }
+
+  private func waitToRetry(ordinal: Int, session: UUID) {
+    let token = UUID()
+    imageViewing = .delaying(nextOrdinal: ordinal, token: token)
+    trace(attempt, .imageViewingRetryScheduled(ordinal: ordinal))
+    cancelRetry = scheduleRetry(.milliseconds(200)) { [weak self] in
+      guard let self, case .delaying(let ordinal, let pendingToken) = self.imageViewing,
+        pendingToken == token, let activationGuard = self.activationGuard
+      else { return }
+      guard self.isCurrent(activationGuard, session: session) else {
+        self.rejectActivation(.peerMismatch, session: session)
+        return
+      }
+      self.cancelRetry = nil
+      self.submitImageViewing(ordinal: ordinal, session: session)
+    }
+  }
+
+  private static func scheduleOnMainActor(
+    _ delay: Duration, _ callback: @escaping @MainActor () -> Void
+  ) -> () -> Void {
+    let task = Task { @MainActor in
+      do { try await Task.sleep(for: delay) } catch { return }
+      guard !Task.isCancelled else { return }
+      callback()
+    }
+    return { task.cancel() }
   }
 
   private func traceProtocolEvent(_ event: BLEProtocolEvent) {
@@ -168,22 +276,47 @@ final class ManualWiFiBluetoothDriver: BluetoothPeripheralDriver {
     case .ignore:
       break
     case .submitImageViewing:
-      // The shared guard recognized the profile's standard launch write.
       readinessSamples = [:]
-      trace(attempt, .standard04Submitted)
-      return true
+      submitImageViewing(ordinal: 1, session: session)
     case .reject(let failure):
-      trace(attempt, .activationRejected(.init(failure)))
-      clear(session)
-      eventHandler?(.linkFailed(session, failure))
+      rejectActivation(failure, session: session)
     }
     return false
+  }
+
+  private func submitImageViewing(ordinal: Int, session: UUID) {
+    imageViewing = .awaitingAcknowledgment(ordinal: ordinal, earlyStatus: nil)
+    trace(attempt, .imageViewing03Submitted(ordinal: ordinal))
+    native.perform(.write(ProbeImageViewingLaunch.launch, Data([0x03, 0x00]), .activateWiFi), session: session)
+  }
+
+  private func isCurrent(_ guardState: ProbeImageViewingLaunch, session: UUID) -> Bool {
+    link?.session == session && link?.verifiedXT5 == true && guardState.session == session
+      && guardState.selectionIsCurrent()
+  }
+
+  private func rejectActivation(_ failure: WirelessFailure, session: UUID) {
+    trace(attempt, .activationRejected(.init(failure)))
+    clear(session)
+    eventHandler?(.linkFailed(session, failure))
+  }
+
+  private func cancelPendingRetry() {
+    let cancel = cancelRetry
+    cancelRetry = nil
+    cancel?()
+  }
+
+  private func resetActivation() {
+    activationGuard = nil
+    imageViewing = nil
+    cancelPendingRetry()
   }
 
   private func clear(_ session: UUID) {
     guard link?.session == session else { return }
     link = nil
-    activationGuard = nil
+    resetActivation()
   }
 }
 #endif
