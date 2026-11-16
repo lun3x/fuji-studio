@@ -107,10 +107,43 @@ socket already reads 3. No missing earlier PTP command was found on that socket.
 The capture was restricted to TCP 55740 and does not rule out other network or
 Bluetooth setup.
 
-Timing remains an untested variable: XApp waited about 205–207 ms after OpenSession
-ACK before D212; native waited about 1 ms. In the fresh XApp trace, D212 ACK to
-DF01 request was about 392 ms, versus about 1 ms native. These are observations,
-not proof of a required delay. No arbitrary delay or forced DF28 = 3 was added.
+### Matching the first XApp socket
+
+A byte comparison of `xapp-fresh.pcapng` and `fuji-image-viewing.pcapng` found
+identical outbound PTP command and data frames up through the DF28 read. The
+82-byte opening request had the same first 28 bytes, including the local IPv4.
+Its remaining 54 bytes contained different zero-padded UTF-16LE client names.
+The camera's initialization reply matched and its first D212 reply already
+differed, before DF01 or the DF28 read.
+
+| Before the DF28 reply | Fresh XApp | Fuji Studio baseline |
+| --- | ---: | ---: |
+| Initialization reply to OpenSession command | 11 ms | 54 ms |
+| OpenSession reply to D212 command | 207 ms | 2 ms |
+| D212 reply to DF01 command | 392 ms | 1 ms |
+| DF01 reply to DF28 command | 1 ms | 1 ms |
+| First D212 `D220` | 0 | 1 |
+| First D212 `D222` and `D401` | 0 | 548 |
+| DF28 reply | 3 | 2 |
+
+The older XApp capture's second socket returned D220 = 1 and D222/D401 = 1,227,
+then offered version 3 with only 1 ms from the D212 reply to the DF01 command.
+That prior socket demonstrates that D220 = 1 can coexist with version 3 and
+that a 392 ms wait is unnecessary in at least one already-active XApp session.
+
+The signed manual Debug build can set `FUJI_XAPP_CAPTURED_CLIENT_NAME` when
+running `Scripts/build-manual-wifi.sh`. The supplied name goes into the TCP
+opening frame and enables the measured 11/207/392 ms response-to-command delays
+for gallery actions. The build keeps the saved Fuji Studio BLE registration.
+Pass `Fuji iPhone` as the value to test timing with the registered TCP name.
+
+In the first comparison run at 17:49:20 UTC on November 16, the saved Fuji Studio
+pairing reconnected and the camera acknowledged the first BLE `03 00`. The new
+TCP opening frame matched all 82 bytes of XApp's captured frame. The X-T5 ACKed
+the bytes at TCP level and sent no initialization payload. The app timed out
+waiting for the header after 32 seconds and closed the socket. This happened
+before OpenSession, so the run exercised the XApp name under the Fuji Studio
+pairing and yielded no evidence about the planned timing changes or DF28.
 
 Native gallery configuration confirms D244 per slot, uses `9054 [10000001]`,
 `9055 [10000001]`, `9050`, D212, D22B, and then `9053 [0,30000]`, D212, D620, D621.
@@ -245,6 +278,7 @@ Do not delete these workspaces while the investigation continues:
 | `/tmp/fuji-gallery-negotiation/.superpowers/negotiation` | Protocol audit, implementation briefs, reports and reviews for launch/parser changes. |
 | `/tmp/fuji-quick-gallery-count/.superpowers/count` | Count feature brief, progress, report, diff and review. |
 | `/tmp/fuji-iphone-count-evidence.vPwfCE` | iPhone Bluetooth, probe and identity traces for the first physical count trial and preceding retries. |
+| `/tmp/fuji-iphone-df28-evidence.C7FRKj` | USB RVI packet capture and app traces for the TCP startup comparison. |
 
 macOS tcpdump sometimes prepended a 24-byte classic PCAP header before PCAPNG;
 normalization strips it only when the PCAPNG magic is present at byte 24.

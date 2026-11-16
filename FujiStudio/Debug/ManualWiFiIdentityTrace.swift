@@ -128,7 +128,8 @@ final class ManualWiFiIdentityTrace: Sendable {
       case .xAppEventsRead:
         // Startup may poll repeatedly; retain only the event-list reads after access.
         guard didValidateXAppAccess else { return }
-      case .manualCapturedInitializationProfile, .xAppVersionRead, .xAppVersionValidation,
+      case .manualCapturedInitializationProfile, .manualCapturedGalleryStartup, .openSessionDelay,
+           .openSessionResponseBody, .xAppVersionRead, .xAppVersionValidation,
            .galleryModeWrite, .galleryVersionRead, .galleryVersionValidation, .galleryVersionWrite,
            .galleryCardBegin, .galleryCardUnavailable, .galleryStorageWrite, .galleryStorageRead, .galleryStorageConfirmation,
            .galleryOpen, .galleryPreviewSetup, .galleryModeStatus, .gallerySelectedImages,

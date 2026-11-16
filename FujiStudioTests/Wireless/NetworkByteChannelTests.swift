@@ -9,17 +9,17 @@ import XCTest
 final class NetworkByteChannelTests: XCTestCase, @unchecked Sendable {
   #if DEBUG
   func testManualGalleryInitializationUsesTheConnectedIPv4() async throws {
-    let cases: [(String, [UInt8])] = [
-      ("192.168.0.149", [0x95, 0x00, 0xa8, 0xc0]),
-      ("10.23.45.67", [0x43, 0x2d, 0x17, 0x0a]),
+    let cases: [(String, [UInt8], String?)] = [
+      ("192.168.0.149", [0x95, 0x00, 0xa8, 0xc0], nil),
+      ("10.23.45.67", [0x43, 0x2d, 0x17, 0x0a], "iPhone-0000"),
     ]
-    for (ip, addressBytes) in cases {
+    for (ip, addressBytes, capturedName) in cases {
       let address = try XCTUnwrap(IPv4Address(ip))
       let driver = TestConnection(localEndpoint: .hostPort(host: .ipv4(address), port: 49152))
       let channel = try await connected(driver)
       let session = try await ManualWiFiProbe.makeGallerySession(
         channel: channel, expectedIdentity: .init(cameraID: .init(), model: .xt5, firmware: "4.31"),
-        trace: nil)
+        trace: nil, capturedClientName: capturedName)
       let listing = Task { try await session.listCameraPhotos() }
       defer { listing.cancel() }
       try await eventually { driver.written != nil }
@@ -28,7 +28,8 @@ final class NetworkByteChannelTests: XCTestCase, @unchecked Sendable {
       XCTAssertEqual(Data(frame[12..<28]), Data([
         0xad, 0xa5, 0x48, 0x5d, 0x87, 0xb2, 0x7f, 0x0b, 0xd3, 0xd5, 0xde, 0xd0,
       ] + addressBytes))
-      XCTAssertEqual(Data(frame[28..<50]), Data("Fuji iPhone".utf16.flatMap { [UInt8($0), 0] }))
+      let name = Data((capturedName ?? "Fuji iPhone").utf16.flatMap { [UInt8($0), 0] })
+      XCTAssertEqual(Data(frame[28...]), name + Data(repeating: 0, count: 54 - name.count))
       await session.abortGallery()
       _ = await listing.result
     }

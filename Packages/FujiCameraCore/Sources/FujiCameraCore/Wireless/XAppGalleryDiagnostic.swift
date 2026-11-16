@@ -286,11 +286,11 @@ extension CameraHostedTransferSession {
 extension XAppTransferAdapter {
   public static func makeGalleryDiagnostic(
     transport: WirelessPTPTransport, expectedIdentity: WirelessIdentity, clientGUID: Data,
-    clientName: String
+    clientName: String, replayCapturedStartup: Bool = false
   ) -> any XAppGalleryDiagnostic {
     CameraHostedTransferSession(
       transport: transport, expectedIdentity: expectedIdentity, mode: .xApp,
-      clientGUID: clientGUID, clientName: clientName)
+      clientGUID: clientGUID, clientName: clientName, replayCapturedGalleryTiming: replayCapturedStartup)
   }
 }
 #endif

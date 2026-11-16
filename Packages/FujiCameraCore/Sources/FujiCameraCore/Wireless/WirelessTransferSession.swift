@@ -35,6 +35,7 @@ actor CameraHostedTransferSession: WirelessTransferSession {
   let mode: WirelessMode
   private let clientGUID: Data
   private let clientName: String
+  private let replayCapturedGalleryTiming: Bool
   private let sessionID = UUID()
   #if DEBUG
   var galleryObjects: [UInt32: [UInt32: WirelessObjectDescriptor]]?
@@ -64,13 +65,14 @@ actor CameraHostedTransferSession: WirelessTransferSession {
 
   init(
     transport: WirelessPTPTransport, expectedIdentity: WirelessIdentity, mode: WirelessMode,
-    clientGUID: Data, clientName: String? = nil
+    clientGUID: Data, clientName: String? = nil, replayCapturedGalleryTiming: Bool = false
   ) {
     self.transport = transport
     self.expectedIdentity = expectedIdentity
     self.mode = mode
     self.clientGUID = clientGUID
     self.clientName = clientName ?? "Fuji Studio"
+    self.replayCapturedGalleryTiming = replayCapturedGalleryTiming
   }
 
   func open() async throws -> WirelessIdentity {
@@ -92,7 +94,7 @@ actor CameraHostedTransferSession: WirelessTransferSession {
     return observed
   }
 
-  private func startSession() async throws {
+  private func startSession(openDelay: Duration = .milliseconds(50)) async throws {
     let request = try FujiWirelessFrameDecoder.initializationRequest(
       clientName: clientName, clientGUID: clientGUID)
     do {
@@ -100,10 +102,10 @@ actor CameraHostedTransferSession: WirelessTransferSession {
     } catch PTPError.authorizationDenied {
       throw WirelessFailure.authentication
     }
-    // The pinned libfuji camera-hosted implementation waits 50 ms after the ACK.
+    // The default is the pinned libfuji delay after the initialization ACK.
     transport.observeIdentity(.init(.openSessionDelay, .waiting))
     do {
-      try await Task.sleep(for: .milliseconds(50))
+      try await Task.sleep(for: openDelay)
     } catch {
       transport.observeIdentity(.init(.openSessionDelay, .failed, failure: .init(error)))
       throw error
@@ -148,6 +150,15 @@ actor CameraHostedTransferSession: WirelessTransferSession {
       == .supported(.xt5)
     else { throw WirelessFailure.unsupportedFirmware }
     guard mode == .xApp else { throw WirelessFailure.unsupportedProtocol }
+    if replayCapturedGalleryTiming {
+      // First XApp socket on X-T5 04.31, measured from each response to the next command.
+      transport.observeIdentity(.init(.manualCapturedGalleryStartup, .completed))
+      try await startSession(openDelay: .milliseconds(11))
+      try await Task.sleep(for: .milliseconds(207))
+      try await checkXAppStartup(validatesRemoteVersion: false)
+      try await Task.sleep(for: .milliseconds(392))
+      return
+    }
     try await startSession()
     try await checkXAppStartup(validatesRemoteVersion: false)
   }

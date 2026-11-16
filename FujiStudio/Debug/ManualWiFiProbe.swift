@@ -776,7 +776,7 @@ private final class ManualWiFiReport {
 extension ManualWiFiProbe {
   static func makeGallerySession(
     channel: NetworkByteChannel, expectedIdentity: WirelessIdentity,
-    trace: WirelessIdentityTrace.Observer?
+    trace: WirelessIdentityTrace.Observer?, capturedClientName: String? = nil
   ) async throws -> any XAppGalleryDiagnostic {
     let clientGUID: Data
     do {
@@ -789,7 +789,8 @@ extension ManualWiFiProbe {
     return XAppTransferAdapter.makeGalleryDiagnostic(
       transport: WirelessPTPTransport(channel: channel, identityTrace: trace),
       expectedIdentity: expectedIdentity, clientGUID: clientGUID,
-      clientName: ManualWiFiBluetoothDriver.phoneDestinationName)
+      clientName: capturedClientName ?? ManualWiFiBluetoothDriver.phoneDestinationName,
+      replayCapturedStartup: capturedClientName != nil)
   }
 
   private static func manualInitializationGUID(localIPv4Bytes: Data?) throws -> Data {
@@ -807,6 +808,7 @@ extension ManualWiFiProbe {
     let bluetoothTrace = ManualWiFiBluetoothTrace.live()
     let driver = ManualWiFiBluetoothDriver(trace: bluetoothTrace.append)
     let report = ManualWiFiReport()
+    let capturedClientName = Bundle.main.object(forInfoDictionaryKey: "FujiCapturedXAppClientName") as? String
     return ManualWiFiProbe(
       bluetooth: NativeBluetoothGateway(store: store, driver: driver),
       loadSaved: { try await store.cameras() },
@@ -815,7 +817,8 @@ extension ManualWiFiProbe {
       authorizeLaunch: { try driver.beginImageViewingActivation(peripheralID: $0, selectionIsCurrent: $1) },
       makeSession: { identity, trace in
         let channel = try await NetworkByteChannel.connect(to: .cameraHosted(mode: .xApp), identityTrace: trace)
-        return try await makeGallerySession(channel: channel, expectedIdentity: identity, trace: trace)
+        return try await makeGallerySession(
+          channel: channel, expectedIdentity: identity, trace: trace, capturedClientName: capturedClientName)
       },
       startLease: { expire in
         let app = UIApplication.shared

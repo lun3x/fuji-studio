@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import Synchronization
 import XCTest
 
 @testable import FujiCameraCore
@@ -359,6 +360,37 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
     let closed = await channel.closed
     XCTAssertEqual(remaining, 0)
     XCTAssertTrue(closed)
+  }
+
+  func testPhotoCountsReplayCapturedGalleryStartupTiming() async throws {
+    let unavailable: [Exchange] = [
+      .property(0xd244, Data([2])), .rejection(0x9054, [0x10000001], 0x2013),
+    ]
+    let channel = Replay(galleryStartup + card([1]) + [.write(0xd244, [2])] + unavailable + [.read(0x1003)])
+    let times = Mutex([(WirelessIdentityTrace.Event, ContinuousClock.Instant)]())
+    let session = XAppTransferAdapter.makeGalleryDiagnostic(
+      transport: .init(channel: channel, identityTrace: { event in
+        times.withLock { $0.append((event, .now)) }
+      }), expectedIdentity: identity(.xt5), clientGUID: Data(repeating: 1, count: 16),
+      clientName: "iPhone-0000", replayCapturedStartup: true)
+
+    let counts = try await session.checkPhotoCounts()
+    XCTAssertEqual(counts.cards.map(\.totalHandles), [1, nil])
+    try await session.close()
+    let remaining = await channel.remaining
+    XCTAssertEqual(remaining, 0)
+
+    let observed = times.withLock { $0 }
+    let gaps: [(WirelessIdentityTrace.Stage, WirelessIdentityTrace.Stage, Duration)] = [
+      (.initializationACK, .openSessionWrite, .milliseconds(11)),
+      (.openSessionResponseBody, .xAppEventsRead, .milliseconds(207)),
+      (.xAppAccess, .galleryModeWrite, .milliseconds(392)),
+    ]
+    for (response, nextCommand, delay) in gaps {
+      let responseTime = try XCTUnwrap(observed.first { $0.0.stage == response && $0.0.action == .completed }?.1)
+      let commandTime = try XCTUnwrap(observed.first { $0.0.stage == nextCommand && $0.0.action == .waiting }?.1)
+      XCTAssertGreaterThanOrEqual(responseTime.duration(to: commandTime), delay)
+    }
   }
 
   func testGalleryDistinguishesEmptyAndUnavailableCards() async throws {

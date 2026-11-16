@@ -9,10 +9,17 @@ fi
 
 # XcodeGen generates this project without the product's signing capabilities.
 spec=$(mktemp "$PWD/.manual-wifi-project.XXXXXX")
-trap 'rm -f "$spec"' EXIT
-awk '
+capturePlist=
+trap 'rm -f "$spec"; if [[ -n "$capturePlist" ]]; then rm -f "$capturePlist"; fi' EXIT
+if [[ -n ${FUJI_XAPP_CAPTURED_CLIENT_NAME:-} ]]; then
+  capturePlist=$(mktemp "$PWD/.manual-wifi-info.XXXXXX")
+  cp Config/FujiStudio-Info.plist "$capturePlist"
+  plutil -insert FujiCapturedXAppClientName -string "$FUJI_XAPP_CAPTURED_CLIENT_NAME" "$capturePlist"
+fi
+awk -v capturePlist="${capturePlist##*/}" '
   /^name: / { print "name: FujiManualWiFi"; next }
   /CODE_SIGN_ENTITLEMENTS:/ { next }
+  /^[[:space:]]+INFOPLIST_FILE:/ && capturePlist != "" { print "        INFOPLIST_FILE: " capturePlist; next }
   /INFOPLIST_KEY_NSLocalNetworkUsageDescription:/ {
     print "        INFOPLIST_KEY_NSLocalNetworkUsageDescription: Fuji Manual WiFi uses your local network to identify the selected Fujifilm camera."
     next
