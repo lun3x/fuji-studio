@@ -2,8 +2,18 @@ import XCTest
 
 final class ManualWiFiTests: XCTestCase {
   func testIdentityRequiresManualWiFiConfirmation() {
+    checkConnection(withoutDeviceInfo: false, expected: "X-T5 identified. Firmware 04.31.")
+  }
+
+  func testRespondingSessionShowsBluetoothProvenance() {
+    checkConnection(withoutDeviceInfo: true,
+      expected: "Wi-Fi session responds. Bluetooth reports X-T5 firmware 04.31. Wi-Fi identity is unavailable.")
+  }
+
+  private func checkConnection(withoutDeviceInfo: Bool, expected: String) {
     let app = XCUIApplication()
     app.launchArguments = ["--manual-wifi-fixture"]
+    if withoutDeviceInfo { app.launchEnvironment["FUJI_FIXTURE_EMPTY_DEVICE_INFO"] = "1" }
     app.launch()
 
     let find = app.buttons["manualWiFi.findPaired"]
@@ -42,7 +52,7 @@ final class ManualWiFiTests: XCTestCase {
     XCTAssertTrue(identify.isEnabled)
     identify.tap()
 
-    let status = app.staticTexts.matching(NSPredicate(format: "label == %@", "X-T5 identified. Firmware 04.31.")).firstMatch
+    let status = app.staticTexts.matching(NSPredicate(format: "label == %@", expected)).firstMatch
     XCTAssertTrue(status.waitForExistence(timeout: 10))
     XCTAssertFalse(password.exists)
     XCTAssertFalse(app.staticTexts["manualWiFi.passwordCopied"].exists)

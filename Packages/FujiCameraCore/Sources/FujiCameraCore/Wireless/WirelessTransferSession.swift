@@ -77,52 +77,84 @@ actor CameraHostedTransferSession: WirelessTransferSession {
     if let peer, closing == nil { return peer }
     try begin()
     defer { busy = false }
+    try await startSession()
+    let data = try await execute(0x1001).data
+    let (device, observed) = try validateDeviceInfo(data)
+    declaresJPEGOnly = mode == .phone && !device.imageFormats.isEmpty
+      && !device.imageFormats.contains(0xb103)
+    peer = observed
+    return observed
+  }
+
+  private func startSession() async throws {
+    let request = try FujiWirelessFrameDecoder.initializationRequest(
+      clientName: clientName, clientGUID: clientGUID)
     do {
-      let request = try FujiWirelessFrameDecoder.initializationRequest(
-        clientName: clientName, clientGUID: clientGUID)
       _ = try await transport.initialize(request)
-      // The pinned libfuji camera-hosted implementation waits 50 ms after the ACK.
-      transport.observeIdentity(.init(.openSessionDelay, .waiting))
-      do {
-        try await Task.sleep(for: .milliseconds(50))
-      } catch {
-        transport.observeIdentity(.init(.openSessionDelay, .failed, failure: .init(error)))
-        throw error
-      }
-      transport.observeIdentity(.init(.openSessionDelay, .completed))
-      _ = try await execute(0x1002, [1])
-      didOpenSession = true
-      let device: FujiDeviceInfo
-      let evidence: WirelessProtocolPeerKey?
-      do {
-        let data = try await execute(0x1001).data
-        transport.observeIdentity(.init(.deviceInfoValidation, .waiting))
-        (device, evidence) = try PTPDatasets.wirelessDeviceInfo(data)
-      } catch is PTPDatasetError {
-        transport.observeIdentity(.init(.deviceInfoValidation, .failed, failure: .malformedData))
-        throw WirelessFailure.malformedData
-      }
-      guard device.manufacturer.uppercased() == "FUJIFILM",
-        device.model == expectedIdentity.model.rawValue
-      else {
-        transport.observeIdentity(.init(.deviceInfoValidation, .failed, failure: .peerMismatch))
-        throw WirelessFailure.peerMismatch
-      }
-      if mode == .autoSave, evidence != expectedIdentity.protocolPeerKey {
-        throw WirelessFailure.peerMismatch
-      }
-      let observed = WirelessIdentity(
-        cameraID: expectedIdentity.cameraID, model: expectedIdentity.model,
-        firmware: device.firmware.isEmpty ? nil : device.firmware, protocolPeerKey: evidence)
-      declaresJPEGOnly = mode == .phone && !device.imageFormats.isEmpty
-        && !device.imageFormats.contains(0xb103)
-      peer = observed
-      transport.observeIdentity(.init(.deviceInfoValidation, .completed))
-      return observed
     } catch PTPError.authorizationDenied {
       throw WirelessFailure.authentication
     }
+    // The pinned libfuji camera-hosted implementation waits 50 ms after the ACK.
+    transport.observeIdentity(.init(.openSessionDelay, .waiting))
+    do {
+      try await Task.sleep(for: .milliseconds(50))
+    } catch {
+      transport.observeIdentity(.init(.openSessionDelay, .failed, failure: .init(error)))
+      throw error
+    }
+    transport.observeIdentity(.init(.openSessionDelay, .completed))
+    _ = try await execute(0x1002, [1])
+    didOpenSession = true
   }
+
+  private func validateDeviceInfo(_ data: Data) throws -> (FujiDeviceInfo, WirelessIdentity) {
+    transport.observeIdentity(.init(.deviceInfoValidation, .waiting))
+    let device: FujiDeviceInfo
+    let evidence: WirelessProtocolPeerKey?
+    do {
+      (device, evidence) = try PTPDatasets.wirelessDeviceInfo(data)
+    } catch is PTPDatasetError {
+      transport.observeIdentity(.init(.deviceInfoValidation, .failed, failure: .malformedData))
+      throw WirelessFailure.malformedData
+    }
+    guard device.manufacturer.uppercased() == "FUJIFILM",
+      device.model == expectedIdentity.model.rawValue,
+      mode != .autoSave || evidence == expectedIdentity.protocolPeerKey
+    else {
+      transport.observeIdentity(.init(.deviceInfoValidation, .failed, failure: .peerMismatch))
+      throw WirelessFailure.peerMismatch
+    }
+    let observed = WirelessIdentity(
+      cameraID: expectedIdentity.cameraID, model: expectedIdentity.model,
+      firmware: device.firmware.isEmpty ? nil : device.firmware, protocolPeerKey: evidence)
+    transport.observeIdentity(.init(.deviceInfoValidation, .completed))
+    return (device, observed)
+  }
+
+  #if DEBUG
+  func checkConnection() async throws -> XAppConnectionDiagnosticResult {
+    guard mode == .xApp, expectedIdentity.model == .xt5 else {
+      throw WirelessFailure.unsupportedProtocol
+    }
+    try begin()
+    defer { busy = false }
+    try await startSession()
+    let command = try commandFor(0x1001, [], whileClosing: false)
+    let (reply, receivedDataContainer) = try await transport.executeWithDataPhase(command)
+    try checkOpenOperation()
+    if !reply.data.isEmpty {
+      let (_, identity) = try validateDeviceInfo(reply.data)
+      return .identified(identity)
+    }
+    guard receivedDataContainer, reply.parameters.isEmpty else {
+      transport.observeIdentity(.init(.deviceInfoValidation, .failed, failure: .malformedData))
+      throw WirelessFailure.malformedData
+    }
+    transport.observeIdentity(.init(.deviceInfoValidation, .noData, bytes: 0))
+    try await checkXAppStartup()
+    return .respondingWithoutDeviceInfo
+  }
+  #endif
 
   func capabilities() throws -> WirelessCapabilities {
     try requireAdmission()

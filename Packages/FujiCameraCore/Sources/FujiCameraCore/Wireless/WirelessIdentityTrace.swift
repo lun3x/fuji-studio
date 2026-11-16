@@ -10,7 +10,7 @@ public enum WirelessIdentityTrace {
     case openSessionDelay
     case openSessionWrite, openSessionHeader, openSessionData, openSessionFinalHeader, openSessionResponseBody
     case getDeviceInfoWrite, getDeviceInfoHeader, getDeviceInfoData, getDeviceInfoFinalHeader, getDeviceInfoResponseBody
-    case deviceInfoValidation
+    case deviceInfoValidation, xAppEventsRead, xAppAccess, xAppVersionRead, xAppVersionValidation
     case closeSessionWrite, closeSessionHeader, closeSessionData, closeSessionFinalHeader, closeSessionResponseBody
     case sessionCleanup, otherCommand
   }

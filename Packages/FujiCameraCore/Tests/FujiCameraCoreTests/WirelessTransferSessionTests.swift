@@ -28,6 +28,130 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
     }
   }
 
+  #if DEBUG
+  func testManualXAppDiagnosticAcceptsExactEmptyDeviceInfoWithReadOnlyStartup() async throws {
+    let channel = Replay([.read(0x1002, [1]), .emptyDeviceInfo,
+      .property(0xd212, events()), .property(0xd212, events([(0xdf00, 0)])),
+      .property(0xd212, events([(0xdf00, 6)])), .property(0xdf24, word(0x2000b)),
+      .read(0x1003)])
+    let session = CameraHostedTransferSession(
+      transport: .init(channel: channel), expectedIdentity: identity(.xt5), mode: .xApp,
+      clientGUID: Data(repeating: 1, count: 16))
+    let result = try await session.checkConnection()
+    XCTAssertEqual(result, .respondingWithoutDeviceInfo)
+    await expect(.connectionLost) { _ = try await session.capabilities() }
+    await expect(.connectionLost) { _ = try await session.enumerate() }
+    try await session.close()
+    let remaining = await channel.remaining
+    XCTAssertEqual(remaining, 0)
+  }
+  func testManualXAppDiagnosticKeepsValidDeviceInfoWithoutAdmittingTransfer() async throws {
+    let channel = Replay(start(.xt5, "4.31") + [.read(0x1003)])
+    let camera = identity(.xt5)
+    let session = diagnosticSession(channel, camera: camera)
+    let result = try await session.checkConnection()
+    guard case .identified(let peer) = result else { return XCTFail("DeviceInfo identity was lost") }
+    XCTAssertEqual(peer.model, .xt5)
+    XCTAssertEqual(peer.firmware, "4.31")
+    XCTAssertEqual(peer.cameraID, camera.cameraID)
+    await expect(.connectionLost) { _ = try await session.capabilities() }
+    try await session.close()
+    let remaining = await channel.remaining
+    XCTAssertEqual(remaining, 0)
+  }
+
+  func testManualXAppDiagnosticRejectsUnprovenEmptyAndMalformedDeviceInfo() async throws {
+    for step in [Exchange.read(0x1001), .read(0x1001, [], Data([1]))] {
+      let channel = Replay([.read(0x1002, [1]), step, .read(0x1003)])
+      let session = diagnosticSession(channel)
+      await expect(.malformedData) { _ = try await session.checkConnection() }
+      try await session.close()
+      let remaining = await channel.remaining
+      XCTAssertEqual(remaining, 0)
+    }
+    let channel = Replay(start(.xe3, "1.32") + [.read(0x1003)])
+    let session = diagnosticSession(channel)
+    await expect(.peerMismatch) { _ = try await session.checkConnection() }
+    try await session.close()
+    let remaining = await channel.remaining
+    XCTAssertEqual(remaining, 0)
+  }
+
+  func testManualXAppDiagnosticRejectsInvalidWireRepliesBeforeReadingProperties() async throws {
+    var wrongID = Exchange.emptyDeviceInfo
+    wrongID.responseTransaction = 3
+    var wrongCode = Exchange.emptyDeviceInfo
+    wrongCode.dataCode = 0x1008
+    var rejected = Exchange.emptyDeviceInfo
+    rejected.response = 0x2002
+    for (step, failure) in [
+      (wrongID, PTPError.wrongTransaction(expected: 2, actual: 3)),
+      (wrongCode, .invalidOpcode(0x1008)),
+      (rejected, .responseCode(0x2002)),
+    ] {
+      let cleanup: [Exchange] = step.response == 0x2002 ? [.read(0x1003)] : []
+      let channel = Replay([.read(0x1002, [1]), step] + cleanup)
+      let session = diagnosticSession(channel)
+      do {
+        _ = try await session.checkConnection()
+        XCTFail("Invalid wire response was accepted")
+      } catch { XCTAssertEqual(error as? PTPError, failure) }
+      try await session.close()
+      let remaining = await channel.remaining
+      XCTAssertEqual(remaining, 0)
+    }
+  }
+
+  func testManualXAppDiagnosticRejectsUnexpectedAccessStateAndRemoteVersion() async throws {
+    for (checks, failure) in [
+      ([Exchange.property(0xd212, events([(0xdf00, 3)]))], WirelessFailure.unsupportedProtocol),
+      ([.property(0xd212, events([(0xdf00, 6)])), .property(0xdf24, word(0x20006))], .unsupportedProtocol),
+      ([.property(0xd212, events([(0xdf00, 6)])), .property(0xdf24, word(0x2000d))], .unsupportedProtocol),
+      ([.property(0xd212, events([(0xdf00, 6)])), .property(0xdf24, word(0x000b, 2))], .malformedData),
+    ] {
+      let channel = Replay([.read(0x1002, [1]), .emptyDeviceInfo] + checks + [.read(0x1003)])
+      let session = diagnosticSession(channel)
+      await expect(failure) { _ = try await session.checkConnection() }
+      try await session.close()
+      let remaining = await channel.remaining
+      XCTAssertEqual(remaining, 0)
+    }
+  }
+
+  func testManualXAppDiagnosticCancellationDuringAccessWaitClosesSocket() async throws {
+    let channel = Replay([.read(0x1002, [1]), .emptyDeviceInfo,
+      .property(0xd212, events()), .read(0x1003)])
+    let (waiting, signal) = AsyncStream<Void>.makeStream()
+    let session = diagnosticSession(channel) { event in
+      if event.stage == .xAppAccess && event.action == .waiting { signal.yield() }
+    }
+    let probe = Task {
+      defer { signal.finish() }
+      return try await session.checkConnection()
+    }
+    for await _ in waiting { break }
+    probe.cancel()
+    do {
+      _ = try await probe.value
+      XCTFail("A cancelled diagnostic returned a result")
+    } catch is CancellationError {}
+    try await session.close()
+    let remaining = await channel.remaining
+    let closed = await channel.closed
+    XCTAssertEqual(remaining, 0)
+    XCTAssertTrue(closed)
+  }
+
+  private func diagnosticSession(
+    _ channel: Replay, camera: WirelessIdentity? = nil,
+    trace: WirelessIdentityTrace.Observer? = nil
+  ) -> CameraHostedTransferSession {
+    CameraHostedTransferSession(
+      transport: .init(channel: channel, identityTrace: trace),
+      expectedIdentity: camera ?? identity(.xt5), mode: .xApp, clientGUID: Data(repeating: 1, count: 16))
+  }
+  #endif
+
   func testAutoSaveRejectsTruncatedOrDifferentPeerBeforeInventory() async throws {
     for serial in ["", "other"] {
       let channel = Replay(start(.xe3, "1.32", serial: serial) + [.read(0x1003)])
@@ -576,6 +700,11 @@ private struct Exchange: Sendable {
   var outbound: Data? = nil
   var response: UInt16 = 0x2001
   var payload: Data = Data()
+  var sendsEmptyData = false
+  var dataCode: UInt16?
+  var responseTransaction: UInt32?
+
+  static var emptyDeviceInfo: Self { .init(opcode: 0x1001, parameters: [], sendsEmptyData: true) }
 
   static func read(_ opcode: UInt16, _ parameters: [UInt32] = [], _ payload: Data = Data()) -> Self {
     .init(opcode: opcode, parameters: parameters, payload: payload)
@@ -617,6 +746,7 @@ private actor Replay: WirelessByteChannel {
   private var objectReads = 0
   private(set) var sizeControls: [UInt8] = []
   private(set) var operations: [UInt16] = []
+  private(set) var closed = false
   private(set) var initializationRequest: Data?
   var remaining: Int { exchanges.count }
 
@@ -702,9 +832,11 @@ private actor Replay: WirelessByteChannel {
   }
 
   private func respond(_ step: Exchange) {
-    if !step.payload.isEmpty { buffer += frame(2, step.opcode, transaction, step.payload) }
+    if !step.payload.isEmpty || step.sendsEmptyData {
+      buffer += frame(2, step.dataCode ?? step.opcode, transaction, step.payload)
+    }
     let count = step.opcode == 0x101b ? word(UInt32(step.payload.count)) : Data()
-    buffer += frame(3, step.response, transaction, count)
+    buffer += frame(3, step.response, step.responseTransaction ?? transaction, count)
     transaction += 1
   }
 
@@ -723,7 +855,7 @@ private actor Replay: WirelessByteChannel {
     return result
   }
 
-  func close() async {}
+  func close() async { closed = true }
 }
 
 private actor Bytes {
@@ -753,3 +885,4 @@ private func occupySession(
   entered.finish()
   XCTAssertEqual(resume.wait(timeout: .now() + 5), .success)
 }
+

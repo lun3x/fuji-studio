@@ -56,24 +56,36 @@ public actor WirelessPTPTransport: PTPTransport {
   }
 
   public func execute(_ command: PTPCommand, data: Data?) async throws -> PTPReply {
-    try await transact(command, outgoing: data, expectedBytes: nil, sink: nil)
+    try await transact(command, outgoing: data, expectedBytes: nil, sink: nil).reply
   }
+
+  #if DEBUG
+  func executeWithDataPhase(_ command: PTPCommand) async throws -> (PTPReply, Bool) {
+    let result = try await transact(command, outgoing: nil, expectedBytes: nil, sink: nil)
+    return (result.reply, result.receivedDataContainer)
+  }
+  #endif
 
   public func receive(
     _ command: PTPCommand, expectedBytes: UInt64,
     sink: @escaping @Sendable (Data) async throws -> Void
   ) async throws -> PTPReply {
-    try await transact(command, outgoing: nil, expectedBytes: expectedBytes, sink: sink)
+    try await transact(command, outgoing: nil, expectedBytes: expectedBytes, sink: sink).reply
   }
 
   public func close() async {
     await terminate(PTPError.notConnected)
   }
 
+  private struct TransactionReply: Sendable {
+    let reply: PTPReply
+    let receivedDataContainer: Bool
+  }
+
   private func transact(
     _ command: PTPCommand, outgoing: Data?, expectedBytes: UInt64?,
     sink: (@Sendable (Data) async throws -> Void)?
-  ) async throws -> PTPReply {
+  ) async throws -> TransactionReply {
     try ensureIdle()
     guard initialized else { throw PTPError.notConnected }
     if let lastTransaction, command.transactionID <= lastTransaction {
@@ -91,8 +103,8 @@ public actor WirelessPTPTransport: PTPTransport {
     guard sink == nil || inventory == nil else { throw PTPError.invalidParameters }
 
     let id = beginOperation()
-    let result: Result<PTPReply, PTPError> = try await run(id) { transport in
-      let stages = transport.identityTrace.map { _ in TraceCommand(command.opcode) }
+    let result: Result<TransactionReply, PTPError> = try await run(id) { transport in
+      let stages = transport.identityTrace.map { _ in TraceCommand(command) }
       transport.lastTransaction = command.transactionID
       transport.waitForTrace(stages?.write)
       try await transport.write(encoded)
@@ -108,7 +120,8 @@ public actor WirelessPTPTransport: PTPTransport {
       var (header, bytes) = try await transport.readHeader(for: command)
       var payload = Data()
       var receivedBytes: UInt64 = 0
-      if header.type == 2 {
+      let receivedDataContainer = header.type == 2
+      if receivedDataContainer {
         transport.waitForTrace(stages?.data)
         guard outgoing == nil else { throw PTPError.unexpectedContainerType(header.type) }
         receivedBytes = UInt64(header.payloadLength)
@@ -139,7 +152,7 @@ public actor WirelessPTPTransport: PTPTransport {
           guard count <= Self.maximumObjectsPerStorage else { throw PTPError.payloadTooLarge }
         }
         transport.finishTrace()
-        return .success(reply)
+        return .success(.init(reply: reply, receivedDataContainer: receivedDataContainer))
       } catch let PTPError.responseCode(code) {
         transport.finishTrace(failure: .rejected)
         // A complete, correlated rejection consumed its response. The socket is synchronized.
@@ -348,14 +361,18 @@ public actor WirelessPTPTransport: PTPTransport {
     typealias Stage = WirelessIdentityTrace.Stage
     let write, header, data, finalHeader, responseBody: Stage
 
-    init(_ opcode: UInt16) {
-      (write, header, data, finalHeader, responseBody) = switch opcode {
-      case 0x1002:
+    init(_ command: PTPCommand) {
+      (write, header, data, finalHeader, responseBody) = switch (command.opcode, command.parameters.first) {
+      case (0x1002, _):
         (.openSessionWrite, .openSessionHeader, .openSessionData, .openSessionFinalHeader, .openSessionResponseBody)
-      case 0x1001:
+      case (0x1001, _):
         (.getDeviceInfoWrite, .getDeviceInfoHeader, .getDeviceInfoData, .getDeviceInfoFinalHeader, .getDeviceInfoResponseBody)
-      case 0x1003:
+      case (0x1003, _):
         (.closeSessionWrite, .closeSessionHeader, .closeSessionData, .closeSessionFinalHeader, .closeSessionResponseBody)
+      case (0x1015, 0xd212):
+        (.xAppEventsRead, .xAppEventsRead, .xAppEventsRead, .xAppEventsRead, .xAppEventsRead)
+      case (0x1015, 0xdf24):
+        (.xAppVersionRead, .xAppVersionRead, .xAppVersionRead, .xAppVersionRead, .xAppVersionRead)
       default:
         (.otherCommand, .otherCommand, .otherCommand, .otherCommand, .otherCommand)
       }

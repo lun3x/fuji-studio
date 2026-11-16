@@ -449,3 +449,37 @@ password-read milestones, guarded standard-write submission, write
 acknowledgement, and readiness notification classifications and lengths.
 The trace starts fresh with the manual diagnostic and excludes identifiers,
 credentials, and raw notification data.
+
+### Empty DeviceInfo during the manual iPhone connection check
+
+The next physical trace reached the camera's PTP socket, received a 68-byte
+initialization acknowledgement and opened a session. The GetDeviceInfo
+transaction consumed a 12-byte data header and a 12-byte success response.
+The trace shows the data and final response phases completed before the
+dataset parser rejected the zero-byte payload. The ACK size does not
+identify the camera. Libgphoto2 documents this empty data phase for Fuji Wi-Fi
+on an X-T4 and substitutes a driver dataset. Fuji Studio only reports fields
+it received from the relevant link.
+[Libgphoto2 Fuji Wi-Fi data handler](https://github.com/gphoto/libgphoto2/blob/31a2f4089f19aec6caca7920b03e3eb7a251c5b6/camlibs/ptp2/fujiptpip.c#L503-L540)
+
+After this exact empty-success result, the Debug manual check reads D212
+(EventsList) and polls every 100 ms until DF00 reports access state 6.
+It verifies a four-byte DF24 (RemoteVersion) in the supported XApp range
+`0x20007...0x2000c`. The startup checks use the core's 30-second budget
+and remain subject to the manual check's existing 20-second deadline.
+Pinned libfuji polls D212 and reads DF24 after opening the session.
+Its public X-T5 log shows DF00 = 6 and DF24 = `0x2000b`, with camera firmware
+unspecified. On the 04.31 body, the startup sequence and any later availability
+of standard DeviceInfo still require physical evidence.
+[Libfuji camera-hosted setup](https://github.com/petabyt/libfuji/blob/3b9932a46d025405dae505ddb624733b6ea3edd1/lib/fuji.c#L399-L501)
+[Libfuji X-T5 capture](https://github.com/petabyt/libfuji/blob/3b9932a46d025405dae505ddb624733b6ea3edd1/docs/testsuite/fudge-log-x5.txt#L5-L85)
+
+For the next trial, use the paired X-T5, verify Fuji iPhone on the camera,
+join the camera network in Settings, then choose **Check camera connection**.
+If DeviceInfo is available, expect the existing identified result. If the
+camera answers with the empty dataset and passes both startup checks, expect
+`sessionResponding`, Bluetooth-sourced model and firmware, and Wi-Fi identity
+unavailable. Confirm the zero-byte DeviceInfo milestone, access and version
+validation, and socket cleanup in the bounded trace. The check issues no
+gallery writes, inventory requests, or photo operations. Independent Wi-Fi
+identity and transfer admission still require validated DeviceInfo.

@@ -17,9 +17,9 @@ struct ManualWiFiView: View {
           Section {
             Text(probe.status).accessibilityIdentifier("manualWiFi.status")
           } header: {
-            Text("X-T5 identity diagnostic")
+            Text("X-T5 connection diagnostic")
           } footer: {
-            Text("Temporary test for X-T5 firmware 4.30 or later. It reads the model and firmware without transferring photos.")
+            Text("Temporary test for X-T5 firmware 4.30 or later. It checks the Wi-Fi connection without transferring photos.")
           }
           if let mode = probe.registrationMode {
             Section("Check registration on the camera") {
@@ -82,10 +82,10 @@ struct ManualWiFiView: View {
               .accessibilityIdentifier("manualWiFi.confirm")
               .disabled(!probe.canConfirm)
               Text("You confirm the network. This diagnostic cannot check its name in iOS.")
-              Button("Test camera identity") { probe.identify() }
+              Button("Check camera connection") { probe.identify() }
                 .accessibilityIdentifier("manualWiFi.identify")
                 .disabled(!probe.canIdentify)
-              Text("If prompted, allow Local Network access. The result verifies the model and firmware reported over Wi-Fi.")
+              Text("If prompted, allow Local Network access. The result shows whether the camera answered and whether it supplied identity over Wi-Fi.")
             }
           }
           Section("Camera selection") {
@@ -135,7 +135,8 @@ struct ManualWiFiView: View {
     }
     .task {
       #if targetEnvironment(simulator)
-      let current = fixture ? ManualWiFiFixture().probe : ManualWiFiProbe.live()
+      let withoutDeviceInfo = ProcessInfo.processInfo.environment["FUJI_FIXTURE_EMPTY_DEVICE_INFO"] == "1"
+      let current = fixture ? ManualWiFiFixture(withoutDeviceInfo: withoutDeviceInfo).probe : ManualWiFiProbe.live()
       #else
       let current = ManualWiFiProbe.live()
       #endif

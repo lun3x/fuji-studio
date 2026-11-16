@@ -14,16 +14,17 @@ final class ManualWiFiFixture {
   let camera = SavedCamera(id: WirelessCameraID(), peripheralID: UUID(), model: .xt5, displayName: "Fixture X-T5")
   let otherCamera = SavedCamera(id: WirelessCameraID(), peripheralID: UUID(), model: .xt5, displayName: "Alternate X-T5")
   let bluetooth = Bluetooth()
-  let transfer = Transfer()
+  let transfer: Transfer
   let finder = SavedFinder()
   private let lease: Lease
   let probe: ManualWiFiProbe
 
-  init() {
+  init(withoutDeviceInfo: Bool = false) {
     let cameras = [camera, otherCamera]
     let lease = Lease()
     self.lease = lease
-    let transfer = self.transfer
+    let transfer = Transfer(withoutDeviceInfo: withoutDeviceInfo)
+    self.transfer = transfer
     let finder = self.finder
     probe = ManualWiFiProbe(
       bluetooth: bluetooth, loadSaved: { cameras },
@@ -119,41 +120,25 @@ final class ManualWiFiFixture {
     }
   }
 
-  actor Transfer: WirelessTransferSession {
-    enum Action { case open, close, transfer }
+  actor Transfer: XAppConnectionDiagnostic {
+    enum Action { case open, close }
 
     private var identity: WirelessIdentity?
+    private let withoutDeviceInfo: Bool
     private(set) var actions: [Action] = []
+
+    init(withoutDeviceInfo: Bool) { self.withoutDeviceInfo = withoutDeviceInfo }
 
     func setIdentity(_ identity: WirelessIdentity) { self.identity = identity }
 
-    func open() throws -> WirelessIdentity {
+    func checkConnection() throws -> XAppConnectionDiagnosticResult {
       actions.append(.open)
       guard let identity else { throw WirelessFailure.peerMismatch }
-      return identity
+      return withoutDeviceInfo ? .respondingWithoutDeviceInfo : .identified(identity)
     }
 
     func close() { actions.append(.close) }
 
-    func capabilities() throws -> WirelessCapabilities {
-      actions.append(.transfer)
-      throw WirelessFailure.unsupportedProtocol
-    }
-
-    func enumerate() throws -> AsyncThrowingStream<WirelessInventoryBatch, Error> {
-      actions.append(.transfer)
-      throw WirelessFailure.unsupportedProtocol
-    }
-
-    func thumbnail(_ object: WirelessObjectDescriptor) throws -> Data {
-      actions.append(.transfer)
-      throw WirelessFailure.unsupportedProtocol
-    }
-
-    func download(_ object: WirelessObjectDescriptor, to sink: @escaping @Sendable (Data) async throws -> Void) throws {
-      actions.append(.transfer)
-      throw WirelessFailure.unsupportedProtocol
-    }
   }
 }
 #endif

@@ -31,7 +31,7 @@ final class ManualWiFiProbe {
     let mode: ManualWiFiEvent.LinkMode
   }
 
-  typealias SessionFactory = @Sendable (WirelessIdentity, WirelessIdentityTrace.Observer?) async throws -> any WirelessTransferSession
+  typealias SessionFactory = @Sendable (WirelessIdentity, WirelessIdentityTrace.Observer?) async throws -> any XAppConnectionDiagnostic
   enum LeaseExpiration { case watchdog, hardDeadline }
 
   typealias StartLease = (@escaping @MainActor (LeaseExpiration) -> Void) -> (() -> Void)?
@@ -253,33 +253,44 @@ final class ManualWiFiProbe {
     guard canConfirm else { return }
     revealing = false
     userConfirmed = true
-    update(.userConfirmed, "Network confirmed by you. Run the camera identity test.")
+    update(.userConfirmed, "Network confirmed by you. Check the camera connection.")
   }
 
   func identify() {
     guard canIdentify, let id = attempt, let identity, let handoff else { return }
     revealing = false
     let trace = identityTrace?.begin()
-    update(.identifying, "Reading the camera model and firmware over Wi-Fi…")
+    update(.identifying, "Checking the camera connection over Wi-Fi…")
     operation = Task {
       do {
         try check(id)
         guard try await bluetooth.identity(for: identity.cameraID) == identity else { throw WirelessFailure.peerMismatch }
         try check(id)
-        let observed = try await Self.readIdentity(identity, makeSession: makeSession, trace: trace)
+        let observed = try await Self.checkConnection(identity, makeSession: makeSession, trace: trace)
         try check(id)
         guard self.handoff == handoff, userConfirmed,
-          try await bluetooth.identity(for: identity.cameraID) == identity,
-          observed.model == .xt5 else { throw WirelessFailure.peerMismatch }
+          try await bluetooth.identity(for: identity.cameraID) == identity
+        else { throw WirelessFailure.peerMismatch }
         try check(id)
-        let firmware = ManualWiFiEvent.firmware(observed.firmware)
-        guard firmware != "unavailable" else { throw WirelessFailure.unsupportedFirmware }
-        trace?(.init(.attempt, .completed))
-        await finish(.identified, "X-T5 identified. Firmware \(firmware).", firmware: firmware)
+        switch observed {
+        case .identified(let wifiIdentity):
+          guard wifiIdentity.model == .xt5 else { throw WirelessFailure.peerMismatch }
+          let firmware = ManualWiFiEvent.firmware(wifiIdentity.firmware)
+          guard firmware != "unavailable" else { throw WirelessFailure.unsupportedFirmware }
+          trace?(.init(.attempt, .completed))
+          await finish(.identified, "X-T5 identified. Firmware \(firmware).", firmware: firmware)
+        case .respondingWithoutDeviceInfo:
+          let firmware = ManualWiFiEvent.firmware(identity.firmware)
+          guard firmware != "unavailable" else { throw WirelessFailure.unsupportedFirmware }
+          trace?(.init(.attempt, .completed))
+          await finish(.sessionResponding,
+            "Wi-Fi session responds. Bluetooth reports X-T5 firmware \(firmware). Wi-Fi identity is unavailable.",
+            firmware: firmware)
+        }
       } catch {
         trace?(.init(.attempt, .failed, failure: .init(error)))
         guard attempt == id else { return }
-        await finish(.identityFailed, Self.failureMessage(error, fallback: "Identity test failed. Check the camera network in Settings and retry."),
+        await finish(.identityFailed, Self.failureMessage(error, fallback: "Connection check failed. Check the camera network in Settings and retry."),
           failure: ManualWiFiEvent.Failure(error))
       }
     }
@@ -446,18 +457,18 @@ final class ManualWiFiProbe {
 
   private struct IdentityDeadlineReached: Error {}
 
-  private static func readIdentity(
+  private static func checkConnection(
     _ expected: WirelessIdentity, makeSession: @escaping SessionFactory,
     trace: WirelessIdentityTrace.Observer?
-  ) async throws -> WirelessIdentity {
+  ) async throws -> XAppConnectionDiagnosticResult {
     try await withTaskCancellationHandler {
-      try await withThrowingTaskGroup(of: WirelessIdentity.self) { group in
+      try await withThrowingTaskGroup(of: XAppConnectionDiagnosticResult.self) { group in
         group.addTask {
           let session = try await makeSession(expected, trace)
-          let result: Result<WirelessIdentity, Error>
+          let result: Result<XAppConnectionDiagnosticResult, Error>
           do {
             try Task.checkCancellation()
-            result = .success(try await session.open())
+            result = .success(try await session.checkConnection())
           } catch {
             result = .failure(error)
           }
@@ -478,9 +489,9 @@ final class ManualWiFiProbe {
         }
         defer { group.cancelAll() }
         do {
-          guard let identity = try await group.next() else { throw WirelessFailure.connectionLost }
+          guard let result = try await group.next() else { throw WirelessFailure.connectionLost }
           trace?(.init(.identityResult, .completed))
-          return identity
+          return result
         } catch is IdentityDeadlineReached {
           trace?(.init(.identityDeadline, .failed, failure: .outerDeadline))
           throw WirelessFailure.timeout(.transactionInactivity)
@@ -499,7 +510,7 @@ struct ManualWiFiEvent: Encodable {
   enum Phase: String, Encodable {
     case findingPaired, pairedFound, pairedNotFound, pairedAmbiguous
     case discovering, authenticating, bluetoothLinked, bluetoothFailed, registrationConfirmed, activating, activationFailed
-    case ready, confirmationRequired, userConfirmed, identifying, identified, identityFailed
+    case ready, confirmationRequired, userConfirmed, identifying, identified, sessionResponding, identityFailed
     case cancelled, leftDuringOperation, leaseExpired, bluetoothLost
   }
 
@@ -601,7 +612,7 @@ extension ManualWiFiProbe {
       authorizeLaunch: { try driver.beginStandardActivation(peripheralID: $0, selectionIsCurrent: $1) },
       makeSession: { identity, trace in
         let channel = try await NetworkByteChannel.connect(to: .cameraHosted(mode: .xApp), identityTrace: trace)
-        return XAppTransferAdapter.makeSession(
+        return XAppTransferAdapter.makeConnectionDiagnostic(
           transport: WirelessPTPTransport(channel: channel, identityTrace: trace),
           expectedIdentity: identity, clientGUID: guid, clientName: clientName)
       },

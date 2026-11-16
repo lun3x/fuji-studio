@@ -14,8 +14,7 @@ public enum XAppTransferAdapter {
 extension CameraHostedTransferSession {
   // Sequence based on libfuji 3b9932a and the GFX100 II 2.30 XApp gallery capture.
   func configureXApp() async throws -> [UInt32] {
-    let version = try await readScalar(0xdf24)
-    guard (0x20007...0x2000c).contains(version) else { throw WirelessFailure.unsupportedProtocol }
+    try await requireXAppRemoteVersion()
     try await setProperty(0xdf01, 20, width: 2)
     let galleryVersion = try await readScalar(0xdf28)
     guard (1...3).contains(galleryVersion) else { throw WirelessFailure.unsupportedProtocol }
@@ -24,6 +23,11 @@ extension CameraHostedTransferSession {
     guard storage == 1 || storage == 2 else { throw WirelessFailure.unsupportedProtocol }
     selectedStorage = storage
     return [storage, storage == 1 ? 2 : 1]
+  }
+
+  private func requireXAppRemoteVersion() async throws {
+    let version = try await readScalar(0xdf24)
+    guard (0x20007...0x2000c).contains(version) else { throw WirelessFailure.unsupportedProtocol }
   }
 
   func observesXAppOriginalSize() async throws -> Bool {
@@ -71,3 +75,68 @@ extension CameraHostedTransferSession {
     return handles
   }
 }
+
+#if DEBUG
+public enum XAppConnectionDiagnosticResult: Sendable, Equatable {
+  case identified(WirelessIdentity)
+  case respondingWithoutDeviceInfo
+}
+
+public protocol XAppConnectionDiagnostic: Sendable {
+  func checkConnection() async throws -> XAppConnectionDiagnosticResult
+  /// Return only after the native socket has closed.
+  func close() async throws
+}
+
+extension XAppTransferAdapter {
+  public static func makeConnectionDiagnostic(
+    transport: WirelessPTPTransport, expectedIdentity: WirelessIdentity, clientGUID: Data,
+    clientName: String
+  ) -> any XAppConnectionDiagnostic {
+    CameraHostedTransferSession(
+      transport: transport, expectedIdentity: expectedIdentity, mode: .xApp,
+      clientGUID: clientGUID, clientName: clientName)
+  }
+}
+
+extension CameraHostedTransferSession: XAppConnectionDiagnostic {
+  // From the pinned libfuji XApp setup and X-T5 trace. This check ends before any gallery writes.
+  func checkXAppStartup() async throws {
+    try await withThrowingTaskGroup(of: Void.self) { group in
+      group.addTask { try await self.readXAppStartup() }
+      group.addTask {
+        try await Task.sleep(for: WirelessLimits.transactionInactivity)
+        throw WirelessFailure.timeout(.transactionInactivity)
+      }
+      defer { group.cancelAll() }
+      _ = try await group.next()
+    }
+    try Task.checkCancellation()
+  }
+
+  private func readXAppStartup() async throws {
+    do {
+      while true {
+        let state = try await readEvents()[0xdf00]
+        if let state, state != 0 {
+          guard state == 6 else { throw WirelessFailure.unsupportedProtocol }
+          break
+        }
+        transport.observeIdentity(.init(.xAppAccess, .waiting))
+        try await Task.sleep(for: .milliseconds(100))
+      }
+      transport.observeIdentity(.init(.xAppAccess, .completed))
+    } catch {
+      transport.observeIdentity(.init(.xAppAccess, .failed, failure: .init(error)))
+      throw error
+    }
+    do {
+      try await requireXAppRemoteVersion()
+      transport.observeIdentity(.init(.xAppVersionValidation, .completed))
+    } catch {
+      transport.observeIdentity(.init(.xAppVersionValidation, .failed, failure: .init(error)))
+      throw error
+    }
+  }
+}
+#endif

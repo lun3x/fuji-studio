@@ -12,8 +12,8 @@ struct ManualWiFiProbeTests {
     #expect(FixtureEnvironment.route(arguments: [], unitHost: true, manualWiFi: true) == .unitHost)
   }
 
-  @Test func closesIdentitySessionWithoutAnyTransfer() async throws {
-    let fixture = ManualWiFiFixture()
+  @Test(arguments: [false, true]) func closesConnectionCheckAndReportsEvidence(withoutDeviceInfo: Bool) async {
+    let fixture = ManualWiFiFixture(withoutDeviceInfo: withoutDeviceInfo)
     let probe = fixture.probe
     probe.connect(.saved(fixture.camera))
     await probe.waitForOperation()
@@ -28,7 +28,16 @@ struct ManualWiFiProbeTests {
     probe.identify()
     await probe.waitForOperation()
     #expect(await fixture.transfer.actions == [.open, .close])
-    #expect(probe.status == "X-T5 identified. Firmware 04.31.")
+    if withoutDeviceInfo {
+      #expect(probe.status == "Wi-Fi session responds. Bluetooth reports X-T5 firmware 04.31. Wi-Fi identity is unavailable.")
+      #expect(fixture.events.last?.phase == .sessionResponding)
+    } else {
+      #expect(probe.status == "X-T5 identified. Firmware 04.31.")
+      #expect(fixture.events.last?.phase == .identified)
+    }
+    #expect(await fixture.bluetooth.disconnectCount == 1)
+    #expect(!probe.userConfirmed)
+    #expect(probe.visiblePassword == nil)
     #expect(probe.handoff == nil)
   }
 
