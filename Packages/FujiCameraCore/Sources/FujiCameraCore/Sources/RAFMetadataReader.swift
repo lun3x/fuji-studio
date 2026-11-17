@@ -4,6 +4,29 @@ import ImageIO
 
 /// Parses RAF framing and its small metadata blocks; never asks Core Image to decode RAW pixels.
 public struct RAFMetadataReader: Sendable {
+  public enum Issue: String, Codable, Sendable {
+    case invalidFileSize = "Invalid RAF file size"
+    case truncatedBlock = "Truncated RAF block"
+    case truncatedHeader = "Truncated RAF header"
+    case invalidSignature = "Missing RAF signature or truncated header"
+    case missingCameraModel = "Missing camera model"
+    case invalidPayloadBounds = "Invalid RAW payload bounds"
+    case overlappingSections = "Overlapping RAF sections"
+    case embeddedJPEGExceedsLimit = "Embedded JPEG metadata exceeds inspection limits"
+    case invalidEmbeddedCameraMetadata = "Missing or inconsistent embedded camera metadata"
+    case invalidOrientation = "Invalid orientation"
+    case truncatedDirectory = "Truncated RAF directory"
+    case invalidDirectoryCount = "Invalid RAF directory count"
+    case truncatedTagHeader = "Truncated RAF tag"
+    case truncatedTagData = "Truncated RAF tag data"
+    case invalidGeometryTag = "Invalid geometry tag"
+    case invalidRecordedGeometry = "Missing or inconsistent recorded geometry"
+    case inconsistentSensorGeometry = "Inconsistent sensor geometry"
+    case invalidBlockBounds = "Invalid RAF block bounds"
+
+    fileprivate var error: ResourceError { .invalidRAF(rawValue) }
+  }
+
   public func prepare(_ resource: LocalResource) throws -> PreparedRAW {
     let checksum = try ResourceChecksum.sha256(resource.fileURL)
     guard checksum == resource.checksum else { throw ResourceError.checksumMismatch }
@@ -26,12 +49,12 @@ public struct RAFMetadataReader: Sendable {
     let handle = try FileHandle(forReadingFrom: url)
     defer { try? handle.close() }
     guard let size = Int(exactly: try handle.seekToEnd()) else {
-      throw ResourceError.invalidRAF("Invalid RAF file size")
+      throw Issue.invalidFileSize.error
     }
     return try parse(fileByteCount: size, maximumJPEGBytes: 32 * 1024 * 1024) { range in
       try handle.seek(toOffset: UInt64(range.lowerBound))
       guard let bytes = try handle.read(upToCount: range.count), bytes.count == range.count else {
-        throw ResourceError.invalidRAF("Truncated RAF block")
+        throw Issue.truncatedBlock.error
       }
       return bytes
     }
@@ -49,20 +72,20 @@ public struct RAFMetadataReader: Sendable {
   private func parse(fileByteCount: Int, maximumJPEGBytes: Int, read: (Range<Int>) throws -> Data) throws
     -> (metadata: RAWMetadata, embeddedJPEGProperties: [String: Any])
   {
-    guard fileByteCount >= 112 else { throw ResourceError.invalidRAF("Truncated RAF header") }
+    guard fileByteCount >= 112 else { throw Issue.truncatedHeader.error }
     let data = try read(0..<112)
     guard Array(data.prefix(16)) == Array("FUJIFILMCCD-RAW ".utf8) else {
-      throw ResourceError.invalidRAF("Missing RAF signature or truncated header")
+      throw Issue.invalidSignature.error
     }
     let model = String(decoding: data[28..<60].prefix { $0 != 0 }, as: UTF8.self)
       .trimmingCharacters(in: .whitespaces)
-    guard !model.isEmpty else { throw ResourceError.invalidRAF("Missing camera model") }
+    guard !model.isEmpty else { throw Issue.missingCameraModel.error }
     let payloadOffset = integer(data, 100, 4)
     let payloadLength = integer(data, 104, 4)
     guard payloadOffset >= 112, payloadOffset <= fileByteCount,
       payloadLength > 0, payloadLength <= fileByteCount - payloadOffset
     else {
-      throw ResourceError.invalidRAF("Invalid RAW payload bounds")
+      throw Issue.invalidPayloadBounds.error
     }
     let jpegRange = try section(data, offsetField: 84, lengthField: 88, fileByteCount: fileByteCount)
     let directoryRange = try section(data, offsetField: 92, lengthField: 96, fileByteCount: fileByteCount)
@@ -70,10 +93,10 @@ public struct RAFMetadataReader: Sendable {
     guard !jpegRange.overlaps(directoryRange), !jpegRange.overlaps(payloadRange),
       !directoryRange.overlaps(payloadRange)
     else {
-      throw ResourceError.invalidRAF("Overlapping RAF sections")
+      throw Issue.overlappingSections.error
     }
     guard jpegRange.count <= maximumJPEGBytes else {
-      throw ResourceError.invalidRAF("Embedded JPEG metadata exceeds inspection limits")
+      throw Issue.embeddedJPEGExceedsLimit.error
     }
     let jpeg = try read(jpegRange)
     guard
@@ -84,12 +107,12 @@ public struct RAFMetadataReader: Sendable {
       let exifModel = tiff[kCGImagePropertyTIFFModel as String] as? String,
       exifModel.trimmingCharacters(in: .whitespacesAndNewlines) == model
     else {
-      throw ResourceError.invalidRAF("Missing or inconsistent embedded camera metadata")
+      throw Issue.invalidEmbeddedCameraMetadata.error
     }
     let orientation =
       (properties[kCGImagePropertyOrientation as String] as? NSNumber)?.intValue ?? 1
     guard (1...8).contains(orientation) else {
-      throw ResourceError.invalidRAF("Invalid orientation")
+      throw Issue.invalidOrientation.error
     }
     let captureDynamicRange: Int?
     if case .integer(let value)? = (try? FujiJPEGMetadataReader.read(jpeg))?.rendering[.dynamicRange] {
@@ -99,24 +122,24 @@ public struct RAFMetadataReader: Sendable {
     }
     // At most 255 tags, each with a 16-bit length and a four-byte header.
     let directory = try read(directoryRange.prefix(4 + 255 * (Int(UInt16.max) + 4)))
-    guard directory.count >= 4 else { throw ResourceError.invalidRAF("Truncated RAF directory") }
+    guard directory.count >= 4 else { throw Issue.truncatedDirectory.error }
     let count = integer(directory, 0, 4)
-    guard count < 256 else { throw ResourceError.invalidRAF("Invalid RAF directory count") }
+    guard count < 256 else { throw Issue.invalidDirectoryCount.error }
     var cursor = 4
     var tags: [Int: [Int]] = [:]
     for _ in 0..<count {
       guard cursor <= directory.count - 4 else {
-        throw ResourceError.invalidRAF("Truncated RAF tag")
+        throw Issue.truncatedTagHeader.error
       }
       let tag = integer(directory, cursor, 2)
       let length = integer(directory, cursor + 2, 2)
       cursor += 4
       guard length <= directory.count - cursor else {
-        throw ResourceError.invalidRAF("Truncated RAF tag data")
+        throw Issue.truncatedTagData.error
       }
       if [0x100, 0x110, 0x111, 0x115].contains(tag) {
         guard length == 4, tags[tag] == nil else {
-          throw ResourceError.invalidRAF("Invalid geometry tag")
+          throw Issue.invalidGeometryTag.error
         }
         tags[tag] = [integer(directory, cursor, 2), integer(directory, cursor + 2, 2)]
       }
@@ -127,11 +150,11 @@ public struct RAFMetadataReader: Sendable {
       full.allSatisfy({ $0 > 0 }), crop.allSatisfy({ $0 > 0 }), aspect.allSatisfy({ $0 > 0 }),
       origin[0] + crop[0] <= full[0], origin[1] + crop[1] <= full[1]
     else {
-      throw ResourceError.invalidRAF("Missing or inconsistent recorded geometry")
+      throw Issue.invalidRecordedGeometry.error
     }
     let sensor = try RAFSensorMetadata.read(offset: payloadOffset, length: payloadLength, bytes: read)
     if let sensor, sensor.width != full[1] || sensor.height != full[0] {
-      throw ResourceError.invalidRAF("Inconsistent sensor geometry")
+      throw Issue.inconsistentSensorGeometry.error
     }
     let compression: RAFCompression? =
       data[108..<111].allSatisfy { $0 == 0 }
@@ -157,7 +180,7 @@ public struct RAFMetadataReader: Sendable {
     let offset = integer(data, offsetField, 4)
     let length = integer(data, lengthField, 4)
     guard offset >= 112, offset <= fileByteCount, length > 0, length <= fileByteCount - offset else {
-      throw ResourceError.invalidRAF("Invalid RAF block bounds")
+      throw Issue.invalidBlockBounds.error
     }
     return offset..<(offset + length)
   }

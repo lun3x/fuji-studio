@@ -4,7 +4,8 @@ import ImageIO
 import UniformTypeIdentifiers
 
 enum OriginalImportError: Error, Equatable, Sendable {
-    case invalidSelection, invalidSignature, invalidMetadata, dimensionsMismatch, captureMismatch
+    case invalidSelection, captureMismatch
+    case validation(WirelessIdentityTrace.ValidationCheck)
 }
 
 struct OriginalImportValidator: Sendable {
@@ -69,7 +70,8 @@ struct OriginalImportValidator: Sendable {
             model = raw.metadata.cameraModel
             // ObjectInfo can describe either the visible frame or the full sensor container.
             guard object.dimensions == dimensions || object.dimensions == raw.metadata.containerGeometry else {
-                throw OriginalImportError.dimensionsMismatch
+                throw OriginalImportError.validation(.dimensions(
+                    reported: object.dimensions, recorded: dimensions, container: raw.metadata.containerGeometry))
             }
         case .jpeg:
             properties = try jpegProperties(file: file, length: object.byteLength)
@@ -77,21 +79,28 @@ struct OriginalImportValidator: Sendable {
                   let height = integer(properties[kCGImagePropertyPixelHeight as String]), height > 0,
                   let tiff = properties[kCGImagePropertyTIFFDictionary as String] as? [String: Any],
                   let modelValue = tiff[kCGImagePropertyTIFFModel as String] as? String else {
-                throw OriginalImportError.invalidMetadata
+                throw OriginalImportError.validation(.jpegMetadata)
             }
             dimensions = .init(width: width, height: height)
             orientation = integer(properties[kCGImagePropertyOrientation as String]) ?? 1
             model = modelValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard object.dimensions == dimensions else { throw OriginalImportError.dimensionsMismatch }
+            guard object.dimensions == dimensions else {
+                throw OriginalImportError.validation(.dimensions(
+                    reported: object.dimensions, recorded: dimensions, container: nil))
+            }
         case .other: throw ImportStagingError.unsupportedFormat
         }
         let tiff = properties[kCGImagePropertyTIFFDictionary as String] as? [String: Any]
         let make = (tiff?[kCGImagePropertyTIFFMake as String] as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
         // RAF's container also carries the model. For a standalone JPEG require its Fuji make.
-        guard !model.isEmpty, make == "FUJIFILM" || (make == nil && object.format == .raf),
-              (1...8).contains(orientation), object.orientation == nil || object.orientation == orientation else {
-            throw OriginalImportError.invalidMetadata
+        guard !model.isEmpty else { throw OriginalImportError.validation(.cameraModel) }
+        guard make == "FUJIFILM" || (make == nil && object.format == .raf) else {
+            throw OriginalImportError.validation(.cameraMake)
+        }
+        guard (1...8).contains(orientation) else { throw OriginalImportError.validation(.orientationRange) }
+        if let reported = object.orientation, reported != orientation {
+            throw OriginalImportError.validation(.orientation(reported: reported, embedded: orientation))
         }
         let timestamp = exifTimestamp(properties)
         return .init(cameraModel: model, dimensions: dimensions, orientation: orientation,
@@ -100,10 +109,12 @@ struct OriginalImportValidator: Sendable {
     }
 
     private static func jpegProperties(file: URL, length: UInt64) throws -> [String: Any] {
-        guard length > 4 else { throw OriginalImportError.invalidSignature }
+        guard length > 4 else { throw OriginalImportError.validation(.jpegStructure) }
         let handle = try FileHandle(forReadingFrom: file)
         defer { try? handle.close() }
-        guard try handle.read(upToCount: 2) == Data([0xff, 0xd8]) else { throw OriginalImportError.invalidSignature }
+        guard try handle.read(upToCount: 2) == Data([0xff, 0xd8]) else {
+            throw OriginalImportError.validation(.jpegStructure)
+        }
         try handle.seek(toOffset: length - 2)
         guard try handle.read(upToCount: 2) == Data([0xff, 0xd9]),
               let source = CGImageSourceCreateWithURL(file as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
@@ -112,7 +123,7 @@ struct OriginalImportValidator: Sendable {
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any],
               CGImageSourceGetStatus(source) == .statusComplete,
               CGImageSourceGetStatusAtIndex(source, 0) == .statusComplete else {
-            throw OriginalImportError.invalidSignature
+            throw OriginalImportError.validation(.jpegStructure)
         }
         return properties
     }
@@ -163,23 +174,27 @@ struct OriginalImportValidator: Sendable {
     #if DEBUG
     static func checkDiagnosticCaptureTime(_ metadata: OriginalImportMetadata,
                                            object: WirelessObjectDescriptor) throws {
-        guard let reported = CameraCaptureTimestamp(object.captureDate),
-              let embedded = embeddedTimestamp(metadata),
-              reported.agreesForCapture(with: embedded) else {
-            throw OriginalImportError.captureMismatch
+        guard let reported = CameraCaptureTimestamp(object.captureDate) else {
+            throw OriginalImportError.validation(.objectInfoCaptureTimeMissingOrInvalid)
+        }
+        guard let embedded = embeddedTimestamp(metadata) else {
+            throw OriginalImportError.validation(.embeddedCaptureTimeMissingOrInvalid)
+        }
+        guard reported.agreesForCapture(with: embedded) else {
+            throw OriginalImportError.validation(.captureTimeMismatch)
         }
     }
     #endif
 
     static func checkPair(_ raw: OriginalImportMetadata, _ jpeg: OriginalImportMetadata) throws {
-        guard raw.orientation == jpeg.orientation else { throw OriginalImportError.captureMismatch }
+        guard raw.orientation == jpeg.orientation else { throw OriginalImportError.validation(.pairOrientation) }
         if let rawTime = embeddedTimestamp(raw), let jpegTime = embeddedTimestamp(jpeg),
            !rawTime.agreesForCapture(with: jpegTime) {
-            throw OriginalImportError.captureMismatch
+            throw OriginalImportError.validation(.pairCaptureTime)
         }
         if let a = raw.location, let b = jpeg.location {
             guard abs(a.latitude - b.latitude) < 0.00001, abs(a.longitude - b.longitude) < 0.00001 else {
-                throw OriginalImportError.captureMismatch
+                throw OriginalImportError.validation(.pairLocation)
             }
         }
     }

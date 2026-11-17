@@ -409,10 +409,17 @@ evidence. Python, if needed, must use the project's `.venv`.
 ### Phone state at checkpoint
 
 The iPhone has the signed manual Debug diagnostic with both BLE app flags and
-the corrected short-read handling. It passed strict codesign verification and
-was installed and launched normally. The first physical download on the earlier
-app-flag build stopped during RAF transfer. The corrected transfer still needs
-a physical rerun. The current iPhone Release provisioning profile lacks the
+the corrected short-read handling. On November 17, the corrected transport
+received all 40,011,808 expected RAF bytes. The first file then failed
+validation, before the JPEG transfer or pair validation could start. The
+camera acknowledged D226 restoration and CloseSession, and the pending
+file was removed. The trace recorded the validation error as `other`.
+
+The updated signed diagnostic records the failed validation check in
+`validationCheck`, with bounded geometry or orientation values when relevant.
+It passed strict codesign verification and was installed and launched normally.
+The rerun uses a USB TCP trace to reconstruct the transferred object if the
+validation requires further analysis. The current iPhone Release provisioning profile lacks the
 Hotspot Configuration and Access Wi-Fi Information entitlements, so Xcode
 could not sign the production app for this phone.
 
@@ -437,6 +444,6 @@ Before relaunching after a hardware test, copy these app Documents files with
 Discover the attached phone with `xcrun devicectl list devices`.
 
 The successful count capture ended with 196 packets and zero kernel drops.
-The corrected-transfer capture window expired before a retry and `rvi0` was
-removed. Use the saved Fuji Studio pairing on the installed manual build for
-the next physical download and read back its completed pair receipt.
+Use the saved Fuji Studio pairing on the installed manual build for the next
+physical download. Read the failed validation check or the completed pair
+receipt, depending on the outcome.

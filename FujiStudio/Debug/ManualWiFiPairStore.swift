@@ -118,7 +118,7 @@ struct ManualWiFiPairStore: Sendable {
       trace?(.init(.pairValidation, .completed))
       return receipt
     } catch {
-      trace?(.init(.pairValidation, .failed, failure: .init(error)))
+      trace?(.init(.pairValidation, .failed, failure: .init(error), validationCheck: Self.validationCheck(error)))
       throw error
     }
   }
@@ -193,16 +193,28 @@ struct ManualWiFiPairStore: Sendable {
       trace?(.init(stage, .waiting, pairFile: progress))
       let metadata = try OriginalImportValidator.inspect(file: file, object: object)
       guard metadata.cameraModel == WirelessCameraModel.xt5.rawValue else {
-        throw OriginalImportError.captureMismatch
+        throw OriginalImportError.validation(.cameraModel)
       }
       try OriginalImportValidator.checkDiagnosticCaptureTime(metadata, object: object)
       trace?(.init(stage, .completed, pairFile: progress))
       return .init(role: role, relativePath: name, cameraFilename: object.filename, expectedBytes: expected,
                    actualBytes: expected, sha256: hash, metadata: metadata, originalControl: control)
     } catch {
-      trace?(.init(stage, .failed, failure: .init(error), pairFile: .init(role: role, expectedBytes: expected)))
+      let validationCheck = stage == .pairFileValidation ? Self.validationCheck(error) : nil
+      trace?(.init(stage, .failed, failure: .init(error), pairFile: .init(role: role, expectedBytes: expected),
+        validationCheck: validationCheck))
       throw error
     }
+  }
+
+  private static func validationCheck(_ error: any Error) -> WirelessIdentityTrace.ValidationCheck? {
+    if error is CancellationError { return nil }
+    if case OriginalImportError.validation(let check) = error { return check }
+    if case ResourceError.invalidRAF(let reason) = error, let issue = RAFMetadataReader.Issue(rawValue: reason) {
+      return .rafMetadata(issue)
+    }
+    if error is CocoaError || error is POSIXError { return .fileRead }
+    return .unknown
   }
 }
 #endif

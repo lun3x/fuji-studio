@@ -118,6 +118,16 @@ public enum WirelessIdentityTrace {
 
   public enum PairRole: String, Sendable, Codable { case raf, jpeg }
 
+  public enum ValidationCheck: Sendable, Codable, Equatable {
+    case rafMetadata(RAFMetadataReader.Issue)
+    case jpegStructure, jpegMetadata, cameraMake, cameraModel, orientationRange
+    case dimensions(reported: PixelSize?, recorded: PixelSize, container: PixelSize?)
+    case orientation(reported: Int, embedded: Int)
+    case objectInfoCaptureTimeMissingOrInvalid, embeddedCaptureTimeMissingOrInvalid, captureTimeMismatch
+    case pairOrientation, pairCaptureTime, pairLocation
+    case fileRead, unknown
+  }
+
   public enum OriginalControl: Sendable, Codable, Equatable {
     case reported(UInt32)
     case unsupported
@@ -150,12 +160,14 @@ public enum WirelessIdentityTrace {
     public let galleryOriginalMode: GalleryOriginalMode?
     public let galleryVersion: GalleryVersion?
     public let galleryHandleCount: UInt32?
+    public let validationCheck: ValidationCheck?
 
     public init(
       _ stage: Stage, _ action: Action, bytes: Int? = nil, failure: Failure? = nil,
       responseCode: UInt16? = nil, galleryCard: GalleryCardSummary? = nil, gallerySlot: UInt32? = nil,
       pairFile: PairFile? = nil, galleryOriginalMode: GalleryOriginalMode? = nil,
-      galleryVersion: GalleryVersion? = nil, galleryHandleCount: UInt32? = nil
+      galleryVersion: GalleryVersion? = nil, galleryHandleCount: UInt32? = nil,
+      validationCheck: ValidationCheck? = nil
     ) {
       self.stage = stage
       self.action = action
@@ -167,6 +179,7 @@ public enum WirelessIdentityTrace {
       self.galleryOriginalMode = galleryOriginalMode
       self.gallerySlot = gallerySlot.flatMap { (1...2).contains($0) ? $0 : nil }
       self.galleryVersion = galleryVersion
+      self.validationCheck = validationCheck
       self.galleryHandleCount = self.gallerySlot == nil ? nil : galleryHandleCount.flatMap {
         $0 <= WirelessPTPTransport.maximumObjectsPerStorage ? $0 : nil
       }

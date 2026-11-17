@@ -301,6 +301,32 @@ struct ManualWiFiProbeTests {
     #expect(await fixture.transfer.actions == [.listPhotos, .download(.raf), .close])
   }
 
+  @Test(arguments: [false, true]) func recordsWhichRAFValidationCheckFailed(corruptSignature: Bool) async throws {
+    let files = try ImportFileFixture(objectDate: "20230102T030405")
+    defer { files.cleanUp() }
+    let transfer = ManualWiFiFixture.Transfer(withoutDeviceInfo: false, jpegOnly: false)
+    let pair = ManualWiFiPair(raf: files.object(.raf), jpeg: files.object(.jpeg))
+    var raf = files.raf
+    if corruptSignature { raf[0] = 0 }
+    await transfer.setGalleryFiles([pair.raf: raf, pair.jpeg: files.jpeg])
+    let trace = Mutex([WirelessIdentityTrace.Event]())
+    let store = ManualWiFiPairStore(root: files.root, capacity: { .max })
+    await #expect(throws: (any Error).self) {
+      _ = try await store.stage(pair, session: transfer) { event in
+        trace.withLock { $0.append(event) }
+      }
+    }
+    let failed = trace.withLock { $0.last }
+    let check: WirelessIdentityTrace.ValidationCheck = corruptSignature
+      ? .rafMetadata(.invalidSignature) : .captureTimeMismatch
+    #expect(failed?.stage == .pairFileValidation)
+    #expect(failed?.action == .failed)
+    #expect(failed?.pairFile?.role == .raf)
+    #expect(failed?.validationCheck == check)
+    #expect(await transfer.actions == [.download(.raf)])
+    try store.cleanPending()
+  }
+
   @Test func selectionUsesCorroborationAndPrefersSameCard() throws {
     let files = try ImportFileFixture()
     let scan = XAppGalleryDiagnosticResult(wifiIdentityAvailable: false, cards: [
