@@ -56,8 +56,16 @@ class AppFlowTestCase: XCTestCase {
 
     func shot(_ app: XCUIApplication, _ name: String) {
         let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = name; shot.lifetime = .keepAlways; add(shot)
-        let export = app.buttons["workspace.export"]
-        let bounds = XCTAttachment(string: "Status \(app.buttons["app.status"].frame); Recipe \(app.buttons["recipe.control"].frame); Export \(export.exists ? String(describing: export.frame) : "hidden"); Grid \(app.collectionViews["photoGrid"].frame)")
+        func frame(_ element: XCUIElement) -> String {
+            element.exists ? String(describing: element.frame) : "hidden"
+        }
+        let bounds = XCTAttachment(string: """
+            Status \(frame(app.buttons["app.status"]))
+            Recipe \(frame(app.buttons["recipe.control"]))
+            Save to Phone \(frame(app.buttons["cameraTray.save"]))
+            Export \(frame(app.buttons["workspace.export"]))
+            Grid \(frame(app.collectionViews["photoGrid"]))
+            """)
         bounds.name = name + " bounds"; bounds.lifetime = .keepAlways; add(bounds)
     }
 
