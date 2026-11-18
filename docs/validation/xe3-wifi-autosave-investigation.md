@@ -13,6 +13,8 @@ The original's EXIF Software field reads `Digital Camera X-E3 Ver1.32`.
 This verifies original RAF transfer from this body and card over PC AutoSave.
 A later run extracted [six RAW thumbnails in one session](#raw-thumbnails-with-partial-reads)
 using 16 KiB from the start and 32 bytes from the end of each RAF.
+A follow-up [previewed all 16 RAWs and imported one selected original](#preview-and-import-in-one-session)
+using the same AutoSave connection for both phases.
 The [native iPhone acceptance record](wireless-import-acceptance.md) still governs
 Fuji Studio's signing, identity, and hardware gates. The physical phone trace
 below used Fujifilm Camera Remote. The [X-T5 Wi-Fi handoff](wifi-investigation-handoff-2026-11-16.md)
@@ -187,9 +189,31 @@ read was sufficient to switch objects on the tested body. The probe kept
 
 All six decoded as 160 × 120 JPEGs. The capture contains **98,496 bytes of
 RAF payload** across six files whose full sizes total **117,731,584 bytes**.
-The test covered six RAFs in one session. Preview layout on other RAFs,
-the idle time available for browsing, and reopening a previewed object for
-full download in the same session remain to be validated.
+
+### Preview and import in one session
+
+A follow-up Mac receiver opened one PC AutoSave session after the user started
+AutoSave from playback. It enumerated all 32 objects and used the head and tail
+sequence above for all 16 RAFs (`DSCF0244.RAF` through `DSCF0259.RAF`).
+All 16 thumbnails decoded as 160 × 120 JPEGs. The preview phase used **262,656
+bytes of RAF payload**. The probe kept progress at `0/32` and exposed the
+selection in Terminal to model a gallery selection.
+
+The trace shows **8.616 seconds** between the final preview reply and the first
+command after the user's selection, with no intervening application payload.
+The receiver refreshed ObjectInfo for `DSCF0244.RAF` (handle `2`) and read it
+from offset zero using 1 MiB `GetPartialObject` requests with an exact final
+remainder. All **19,571,312 bytes** matched the previously verified SD-card
+original. Only the selected RAF had a full transfer. Progress advanced to
+`1/32` after the download, and the camera and receiver closed their TCP sides.
+
+The preview reads (transactions `50–81`) and the complete original reads
+(transactions `83–101`) share TCP stream `7` and one `OpenSession`.
+The camera needed one playback confirmation for the successful run. After an
+earlier attempt was refused on TCP `55740`, the probe used a five-second
+retry window for that port during startup. The evidence verifies an 8.6-second
+browse pause on this body. Longer idle periods and the native iPhone workflow
+remain to be tested.
 
 ## Fuji Studio integration gaps
 
@@ -233,6 +257,7 @@ local. The filenames and digests below identify the originals used for analysis.
 | `xe3-thumbnail-test.pcap`, first trial, next ObjectInfo stalled | `d0ce278e44adb9ff4b1279aabbe659fdac1c3bdf8b46a09e90d5a90cf7cae6af` |
 | `xe3-thumbnail-test.pcap`, second trial, next RAF prefix stalled | `6afccf04b3fd799b4337752b9ec0e56bec86f65a343bf833b97d3c7548b03600` |
 | `xe3-thumbnail-test.pcap`, third trial, six RAFs with tail reads | `7ee1ad2623a424ef12dfffdd3da3dd08ff400115c7d5b9864a9c33b4d4adaa5d` |
+| `xe3-browse-select.pcap`, 16 previews and one selected original | `821643e0e48531bbc2318a2de9faa72eb78602b6ef294e1927418a6fe5f3ce31` |
 
 For packet review, display UDP/TCP ports `51540`–`51542` for discovery and
 invitations, then reassemble the successful `55740` stream in both directions.
