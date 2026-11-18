@@ -29,7 +29,7 @@ struct VersionMenu: View {
         }
         .overlay { if contrast == .increased { Capsule().stroke(.primary, lineWidth: 1).allowsHitTesting(false) } }
         .accessibilityLabel("Image versions")
-        .accessibilityValue(options.entries.first { $0.id == selected }?.accessibilityLabel ?? "No image version")
+        .accessibilityValue(options.entries.first { $0.id == selected }?.accessibilityLabel ?? "Camera preview")
         .accessibilityHint("Choose the original RAW, camera JPEG or a saved version")
         .accessibilityIdentifier("workspace.versions")
         .onChange(of: source.id) { _, _ in presented = false }

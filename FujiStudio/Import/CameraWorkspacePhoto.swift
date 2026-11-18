@@ -22,29 +22,30 @@ extension CameraCapture {
 }
 
 enum CameraViewerOriginal {
-    static func load(_ object: WirelessObjectDescriptor, session: any WirelessTransferSession) async throws -> ViewerFile {
-        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let staging = try ImportStagingStore(root: directory)
-        try staging.preflight(stagingByteLengths: [object.byteLength], photoCopyByteLengths: [])
-        let original = try await staging.write(object: object, session: session)
-        let url = try staging.fileURL(for: original)
+    static func load(_ object: WirelessObjectDescriptor, cache: CameraOriginalCache, session: any WirelessTransferSession) async throws -> ViewerFile {
+        let entry = try await cache.viewerOriginal(object, session: session)
+        let url = entry.url
         let geometry: ImageGeometry
         let image: URL
         switch object.format {
         case .raf:
             let metadata = try RAFMetadataReader().metadata(inFileAt: url).metadata
-            let raw = PreparedRAW(fileURL: url, sha256: original.sha256, sourceID: object.trayID,
-                                  sourceRevision: object.trayID, metadata: metadata)
-            let renderer = try RawDisplayRenderer(directory: directory)
-            image = try await renderer.render(raw)
+            image = url.deletingLastPathComponent().appending(path: "display-" + entry.original.sha256 + ".jpg")
+            if !FileManager.default.fileExists(atPath: image.path) {
+                let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+                defer { try? FileManager.default.removeItem(at: directory) }
+                let raw = PreparedRAW(fileURL: url, sha256: entry.original.sha256, sourceID: object.trayID,
+                                      sourceRevision: object.trayID, metadata: metadata)
+                let renderer = try RawDisplayRenderer(directory: directory)
+                try await FileManager.default.moveItem(at: renderer.render(raw), to: image)
+            }
             geometry = .raw(metadata)
         case .jpeg:
             geometry = try ImageGeometry.read(url)
             image = url
         default: throw ViewerError.invalidVersion
         }
-        return ViewerFile(lease: try DisplayFileLease.copy(from: image, geometry: geometry), geometry: geometry)
+        return ViewerFile(lease: try DisplayFileLease.copy(from: image, geometry: geometry, linking: true), geometry: geometry)
     }
 }
 

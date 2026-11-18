@@ -49,6 +49,7 @@ actor CameraImportCoordinator {
     private let journal: ImportJournal
     private let staging: ImportStagingStore
     private let gateway: any PhotoImportGateway
+    nonisolated let originalCache: CameraOriginalCache
     nonisolated let recovery: ImportRecovery
 
     private var run: Run?
@@ -67,6 +68,7 @@ actor CameraImportCoordinator {
         self.journal = journal
         self.staging = staging
         self.gateway = gateway
+        originalCache = CameraOriginalCache(root: staging.cameraCacheDirectory)
         recovery = .init(journal: journal, staging: staging, gateway: gateway)
     }
 
@@ -445,8 +447,13 @@ actor CameraImportCoordinator {
         var job = job
         let contains = job.captures[index].originals
         let remaining = objects.filter { object in !contains.contains(where: { $0.describes(object) }) }
+        var cached: [WirelessObjectDescriptor: CameraOriginalCache.Entry] = [:]
+        for object in remaining {
+            try checkRunning()
+            cached[object] = try await withCameraWork { try await originalCache.lookup(object, session: session) }
+        }
         if !remaining.isEmpty {
-            try staging.preflight(stagingByteLengths: remaining.map(\.byteLength),
+            try staging.preflight(stagingByteLengths: remaining.filter { cached[$0] == nil }.map(\.byteLength),
                                   photoCopyByteLengths: objects.map(\.byteLength))
         }
         if job.captures[index].stage != .readyToSave {
@@ -475,11 +482,16 @@ actor CameraImportCoordinator {
                     try await staging.rebind(original, to: current, session: session, progress: progress)
                 }
                 job.captures[index].originals[previous] = rebound
+            } else if let entry = cached[current] {
+                let original = try staging.link(entry.original, from: entry.url, for: current)
+                job.captures[index].originals.append(original)
             } else {
                 let original = try await withCameraWork {
                     try await staging.write(object: current, session: session, progress: progress)
                 }
                 job.captures[index].originals.append(original)
+                // The verified staging file remains sufficient to finish a save if caching fails.
+                try? await originalCache.retain(original, from: staging.fileURL(for: original), session: session)
             }
             job = try await save(job)
         }

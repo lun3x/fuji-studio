@@ -6,6 +6,71 @@ import XCTest
 
 @MainActor
 final class CameraImportCoordinatorTests: XCTestCase {
+    func testViewerAndSaveShareOriginalsAndFetchOnlyMissingComponents() async throws {
+        for viewRAW in [false, true] {
+            let harness = try CameraImportHarness()
+            defer { harness.fixture.cleanUp() }
+            let pair = harness.selection(1)
+            let rawOnly = harness.selection(2, pair: false)
+            let session = harness.session([pair, rawOnly])
+            let cache = harness.coordinator.originalCache
+            let browser = CameraBrowserModel(originalCache: cache)
+            await browser.load(session: session)
+            let raw = pair.descriptors[0], jpeg = pair.descriptors[1]
+            browser.apply(.sourceTapped(raw.trayID))
+            XCTAssertEqual(browser.viewerRequest?.original, jpeg)
+            let first = try await browser.viewerFile(for: jpeg)
+            browser.apply(.sourceTapped(rawOnly.descriptors[0].trayID))
+            XCTAssertNil(browser.viewerRequest?.original)
+            browser.apply(.sourceTapped(raw.trayID))
+            let reopened = try await browser.viewerFile(for: jpeg)
+            XCTAssertEqual(first.lease, reopened.lease)
+            if viewRAW {
+                browser.apply(.versionSelected(.raw))
+                XCTAssertEqual(browser.viewerRequest?.original, raw)
+                // The tiny test RAF has valid import metadata but no renderable sensor plane.
+                _ = try await cache.viewerOriginal(raw, session: session)
+            }
+            let opened = await session.handles
+            XCTAssertEqual(opened, viewRAW ? [jpeg.handle, raw.handle] : [jpeg.handle])
+
+            let jobID = try await harness.coordinator.start([pair], session: session)
+            let result = await importEvent(harness.coordinator, jobID: jobID) { !$0.isRunning && !$0.receipts.isEmpty }
+            XCTAssertEqual(result?.receipts.count, 1)
+            let afterSave = await session.handles
+            XCTAssertEqual(afterSave, [jpeg.handle, raw.handle])
+
+            let disk = CameraOriginalCache(root: harness.staging.cameraCacheDirectory)
+            for object in pair.descriptors {
+                let entry = try await disk.viewerOriginal(object, session: session)
+                XCTAssertEqual(try Data(contentsOf: entry.url), object.format == .raf ? harness.fixture.raf : harness.fixture.jpeg)
+            }
+            let revisited = await session.handles
+            XCTAssertEqual(revisited, afterSave)
+        }
+    }
+
+    func testCacheReopensAcrossSessionsAndRejectsChangedCardBytes() async throws {
+        let harness = try CameraImportHarness()
+        defer { harness.fixture.cleanUp() }
+        let first = harness.selection(1)
+        let cached = try await harness.coordinator.originalCache.viewerOriginal(first.descriptors[0], session: harness.session([first]))
+        let disk = CameraOriginalCache(root: harness.staging.cameraCacheDirectory)
+        let next = harness.selection(1, sessionID: UUID(), handleOffset: 100)
+        let matching = harness.session([next])
+        let hit = try await disk.viewerOriginal(next.descriptors[0], session: matching)
+        XCTAssertEqual(cached.url, hit.url)
+        let reused = await matching.handles
+        XCTAssertTrue(reused.isEmpty)
+
+        let replacement = harness.selection(1, sessionID: UUID(), handleOffset: 200)
+        let changed = harness.session([replacement], changedRAW: true)
+        let miss = try await disk.viewerOriginal(replacement.descriptors[0], session: changed)
+        let requests = await changed.handles
+        XCTAssertEqual(requests, [replacement.descriptors[0].handle])
+        XCTAssertNotEqual(miss.original.sha256, hit.original.sha256)
+    }
+
     func testThreeFrozenCapturesDownloadAndSaveSequentially() async throws {
         let harness = try CameraImportHarness()
         defer { harness.fixture.cleanUp() }
@@ -264,7 +329,8 @@ final class CameraImportCoordinatorTests: XCTestCase {
                 let handles = await session.handles
                 let creates = await harness.photos.submittedPaths.count
                 let preserved = try await harness.job(pendingID)
-                XCTAssertEqual(handles, alternate.descriptors.map(\.handle))
+                let missing = alternate.descriptors.filter { changedRAW || $0.format == .jpeg }
+                XCTAssertEqual(handles, missing.map(\.handle))
                 XCTAssertEqual(creates, changedRAW ? 2 : 1)
                 XCTAssertEqual(settled?.receipts.count, changedRAW ? 1 : 0)
                 XCTAssertEqual(settled?.pauseReason, changedRAW ? nil : .earlierSaveUnresolved)
@@ -430,7 +496,7 @@ struct CameraImportHarness {
     }
 }
 
-actor ImportTestSession: WirelessTransferSession {
+actor ImportTestSession: WirelessOriginalSampling {
     let camera: WirelessIdentity
     let objects: [WirelessObjectDescriptor]
     let bytes: [WirelessObjectFormat: Data]
@@ -460,6 +526,12 @@ actor ImportTestSession: WirelessTransferSession {
             stream.finish()
         }
     }
+    func originalSample(_ object: WirelessObjectDescriptor, offset: UInt32, count: UInt32) async throws -> Data {
+        guard objects.contains(object), let data = bytes[object.format],
+              Int(offset) + Int(count) <= data.count else { throw WirelessFailure.objectChanged }
+        return data.subdata(in: Int(offset)..<Int(offset + count))
+    }
+
     func thumbnail(_ object: WirelessObjectDescriptor) async throws -> Data { throw WirelessFailure.unsupportedProtocol }
     func download(_ object: WirelessObjectDescriptor, to sink: @escaping @Sendable (Data) async throws -> Void) async throws {
         guard objects.contains(object), let data = bytes[object.format] else { throw WirelessFailure.objectChanged }

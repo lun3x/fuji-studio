@@ -27,6 +27,8 @@ struct ImportStagingStore: Sendable {
         }
     }
 
+    var cameraCacheDirectory: URL { disk.root.deletingLastPathComponent().appending(path: "camera-originals") }
+
     static func requiredCapacity(stagingByteLengths: [UInt64], photoCopyByteLengths: [UInt64]) throws -> UInt64 {
         var total: UInt64 = 64 * 1024 * 1024
         for length in stagingByteLengths + photoCopyByteLengths {
@@ -76,6 +78,17 @@ struct ImportStagingStore: Sendable {
                      fingerprint: .init(role: role, originalFilename: object.filename,
                                         byteCount: object.byteLength, sha256: sha256),
                      metadata: metadata, descriptor: object, verifiedTransferMode: capabilities.mode)
+    }
+
+    /// Each owner gets a separate filesystem link so journal cleanup cannot remove a cached original.
+    func link(_ original: StagedOriginal, from source: URL, for object: WirelessObjectDescriptor) throws -> StagedOriginal {
+        let path = UUID().uuidString + "." + original.role.fileExtension
+        let destination = disk.root.appendingPathComponent(path)
+        try FileManager.default.linkItem(at: source, to: destination)
+        do { try disk.synchronizeDirectory() }
+        catch { try? disk.unlink(destination); throw error }
+        return .init(relativePath: path, fingerprint: original.fingerprint, metadata: original.metadata,
+                     descriptor: object, verifiedTransferMode: original.verifiedTransferMode)
     }
 
     /// Resolve a resource for reading. Only the app-generated opaque names are accepted.

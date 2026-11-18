@@ -110,17 +110,14 @@ struct AppWorkspaceView: View {
     @State private var cameraPhotoError: String?
     @State private var cameraPreview: DisplayFileLease?
     @State private var viewerFile: ViewerFile?
-    @State private var viewedObject: WirelessObjectDescriptor?
+    @State private var viewedRequest: CameraBrowserModel.ViewerRequest?
     @State private var viewerFailure: String?
 
     private var browser: CameraBrowserModel { model.cameraBrowser }
     private var state: WorkspaceState { cameraMode ? browser.workspace : model.state }
-    private var object: WirelessObjectDescriptor? {
-        guard cameraMode, let id = state.viewedSourceID, let capture = browser.capture(for: id) else { return nil }
-        return state.displayedVersion == .cameraJPEG ? capture.jpeg : capture.raw
-    }
+    private var request: CameraBrowserModel.ViewerRequest? { cameraMode ? browser.viewerRequest : nil }
     private var displayFile: DisplayFileLease? {
-        cameraMode ? (viewedObject == object ? (viewerFile?.lease ?? cameraPreview) : nil) : model.displayFile
+        cameraMode ? (viewedRequest == request ? (viewerFile?.lease ?? cameraPreview) : nil) : model.displayFile
     }
     private var galleryMessage: String? {
         guard cameraMode, browser.traySources.isEmpty else { return nil }
@@ -131,7 +128,9 @@ struct AppWorkspaceView: View {
 
     private var imageLoading: ImageLoadingState? {
         if !cameraMode { return model.imageLoading }
-        return object != nil && (viewedObject != object || viewerFile == nil) && viewerFailure == nil ? .loading : nil
+        guard let request, viewerFailure == nil else { return nil }
+        let ready = request.original == nil ? cameraPreview != nil : viewerFile != nil
+        return viewedRequest == request && ready ? nil : .loading
     }
 
     private var workspace: some View {
@@ -151,6 +150,7 @@ struct AppWorkspaceView: View {
             savedVersions: cameraMode ? [] : model.savedVersions, exportPending: model.isSubmitting, previewLoading: model.isLoadingPreview,
             onSaveCameraPhotos: save,
             canSaveCameraPhotos: cameraMode && browser.canSaveWorkspaceSelection && !model.cameraImportActive && model.importJournalIssue == nil,
+            showingCameraThumbnailOnly: cameraMode && request?.original == nil,
             cameraGalleryMessage: galleryMessage, reservesCameraButtonSpace: showsCameraPhotos,
             onAction: action, onRefreshRecipes: { Task { await model.refreshRecipes() } },
             onCopyRecipeToPhone: model.copyRecipeToPhone,
@@ -162,7 +162,7 @@ struct AppWorkspaceView: View {
 
     var body: some View {
         workspace.id(cameraMode)
-        .task(id: object) { await loadViewedOriginal(object) }
+        .task(id: request) { await loadViewedOriginal(request) }
         .overlay(alignment: .bottom) { cameraPhotosButton.padding(.bottom, 8) }
         .onChange(of: model.wirelessState.wifi) { _, phase in
             if phase == .ready { cameraMode = true }
@@ -305,26 +305,34 @@ struct AppWorkspaceView: View {
         }
     }
 
-    private func loadViewedOriginal(_ object: WirelessObjectDescriptor?) async {
+    private func loadViewedOriginal(_ request: CameraBrowserModel.ViewerRequest?) async {
         viewerFile = nil
         cameraPreview = nil
         viewerFailure = nil
-        viewedObject = object
-        guard let object else { return }
-        if let id = state.viewedSourceID, let capture = browser.capture(for: id), let previewObject = capture.thumbnailObject,
+        viewedRequest = request
+        guard let request else { return }
+        if let original = request.original, let file = browser.alreadyViewed(original) {
+            viewerFile = file
+            return
+        }
+        if let capture = browser.capture(for: request.id), let previewObject = request.thumbnail,
            let data = await browser.thumbnail(for: capture) {
             let preview = await Task.detached { try? DisplayFileLease.cameraPreview(data, object: previewObject) }.value
-            guard !Task.isCancelled, self.object == object else { return }
+            guard !Task.isCancelled, self.request == request else { return }
             cameraPreview = preview
         }
         guard !Task.isCancelled else { return }
+        guard let object = request.original else {
+            if cameraPreview == nil { viewerFailure = "Choose RAW in Image versions to load this photo." }
+            return
+        }
         do {
             let file = try await browser.viewerFile(for: object)
-            guard !Task.isCancelled, self.object == object else { return }
+            guard !Task.isCancelled, self.request == request else { return }
             viewerFile = file
             cameraPreview = nil
         } catch {
-            guard !Task.isCancelled, self.object == object else { return }
+            guard !Task.isCancelled, self.request == request else { return }
             cameraPreview = nil
             viewerFailure = (error as? WirelessFailure)?.connectionGuidance ?? "Couldn’t load this original from the camera."
         }

@@ -1157,6 +1157,8 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
       .read(0x101b, [44, 0, 3], Data([1, 2])), .read(0x101b, [44, 2, 3], Data([3, 4, 5])),
       .property(0xd226, word(2, 2)), .read(0x1008, [45], jpeg),
       .read(0x101b, [45, 0, 3], Data([6, 7, 8])), .read(0x101b, [45, 3, 1], Data([9])),
+      .property(0xd226, word(2, 2)), .read(0x1008, [44], raf),
+      .read(0x101b, [44, 1, 3], Data([2])), .read(0x101b, [44, 2, 2], Data([3, 4])),
       .write(0xd226, [0, 0]), .read(0x1003),
     ]
     let commands = [.read(0x1002, [1]), .property(0xd212, events([(0xdf00, 6)]))] + galleryModeSetup
@@ -1183,6 +1185,9 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
       try await session.download(object) { chunk in received.withLock { $0.append(chunk) } }
     }
     XCTAssertEqual(received.withLock { $0 }, Data(1...9))
+    let sampling = try XCTUnwrap(session as? any WirelessOriginalSampling)
+    let middle = try await sampling.originalSample(objects[0], offset: 1, count: 3)
+    XCTAssertEqual(middle, Data([2, 3, 4]))
     try await session.close()
     let remaining = await channel.remaining
     XCTAssertEqual(remaining, 0)

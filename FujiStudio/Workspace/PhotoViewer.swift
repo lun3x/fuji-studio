@@ -64,12 +64,13 @@ final class DisplayFileLease: Sendable, Equatable {
     private init(fileURL: URL, directory: URL, geometry: ImageGeometry?) {
         self.fileURL = fileURL; self.directory = directory; self.geometry = geometry
     }
-    static func copy(from source: URL, geometry: ImageGeometry? = nil) throws -> DisplayFileLease {
+    static func copy(from source: URL, geometry: ImageGeometry? = nil, linking: Bool = false) throws -> DisplayFileLease {
         let directory = root.appendingPathComponent(UUID().uuidString, isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let url = directory.appendingPathComponent("image.JPG")
-            try FileManager.default.copyItem(at: source, to: url)
+            if linking { try FileManager.default.linkItem(at: source, to: url) }
+            else { try FileManager.default.copyItem(at: source, to: url) }
             return DisplayFileLease(fileURL: url, directory: directory, geometry: geometry)
         } catch {
             try? FileManager.default.removeItem(at: directory)

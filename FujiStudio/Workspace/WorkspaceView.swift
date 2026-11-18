@@ -19,6 +19,7 @@ struct WorkspaceView<StatusControl: View>: View {
     var previewLoading = false
     var onSaveCameraPhotos: (() -> Void)?
     var canSaveCameraPhotos = false
+    var showingCameraThumbnailOnly = false
     var cameraGalleryMessage: String?
     var reservesCameraButtonSpace = false
     var onAction: (WorkspaceAction) -> Void
@@ -221,7 +222,7 @@ struct WorkspaceView<StatusControl: View>: View {
             if state.selectedRecipe != nil {
                 exportButton
             } else if let source = sources.first(where: { $0.id == state.viewedSourceID }) {
-                VersionMenu(source: source, saved: savedVersions, selected: state.displayedVersion,
+                VersionMenu(source: source, saved: savedVersions, selected: showingCameraThumbnailOnly ? nil : state.displayedVersion,
                     onVersionSelected: { onAction(.versionSelected($0)) })
             }
         }

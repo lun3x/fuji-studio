@@ -31,7 +31,35 @@ final class CameraBrowserModel {
     @ObservationIgnored private var trayCaptures: [SourceID: CameraCapture] = [:]
     @ObservationIgnored private var rawOrder: [SourceID] = []
 
-    func apply(_ action: WorkspaceAction) { _ = workspace.reduce(action) }
+    private let originalCache: CameraOriginalCache
+    private var explicitRAW: SourceID?
+    @ObservationIgnored private var viewedFiles: [WirelessObjectDescriptor: ViewerFile] = [:]
+
+    init(originalCache: CameraOriginalCache = CameraOriginalCache(root: ImportDisk.root("camera-originals"))) {
+        self.originalCache = originalCache
+    }
+
+    struct ViewerRequest: Equatable {
+        let id: SourceID
+        let thumbnail: WirelessObjectDescriptor?
+        let original: WirelessObjectDescriptor?
+    }
+
+    var viewerRequest: ViewerRequest? {
+        guard let id = workspace.viewedSourceID, let capture = trayCaptures[id] else { return nil }
+        return .init(id: id, thumbnail: capture.thumbnailObject, original: explicitRAW == id ? capture.raw : capture.jpeg)
+    }
+
+    func apply(_ action: WorkspaceAction) {
+        _ = workspace.reduce(action)
+        switch action {
+        case .sourceTapped: explicitRAW = nil
+        case .versionSelected(let version): explicitRAW = version == .raw ? workspace.viewedSourceID : nil
+        default: break
+        }
+    }
+
+    func alreadyViewed(_ object: WirelessObjectDescriptor) -> ViewerFile? { viewedFiles[object] }
     func capture(for id: SourceID) -> CameraCapture? { trayCaptures[id] }
 
     var canSaveWorkspaceSelection: Bool {
@@ -229,6 +257,7 @@ final class CameraBrowserModel {
     }
 
     func viewerFile(for object: WirelessObjectDescriptor) async throws -> ViewerFile {
+        if let file = alreadyViewed(object) { return file }
         guard let session, !thumbnailsSuspended else { throw WirelessFailure.connectionLost }
         let generation = generation
         let cancellation = BrowserCancellation()
@@ -237,7 +266,10 @@ final class CameraBrowserModel {
             try self.checkCurrent(generation, cancellation)
             guard !self.thumbnailsSuspended, self.trayCaptures.values.contains(where: { $0.objects.contains(object) })
             else { throw CancellationError() }
-            let file = try await CameraViewerOriginal.load(object, session: session)
+            if let file = self.alreadyViewed(object) { return file }
+            let file = try await CameraViewerOriginal.load(object, cache: self.originalCache, session: session)
+            guard self.generation == generation else { throw CancellationError() }
+            self.viewedFiles[object] = file
             try self.checkCurrent(generation, cancellation)
             return file
         }
@@ -268,6 +300,8 @@ final class CameraBrowserModel {
         session = nil
         clearReceiptStatuses()
         rawOrder = []
+        explicitRAW = nil
+        viewedFiles.removeAll()
         workspace = WorkspaceState(access: .full)
         publish([])
         selected.removeAll()
@@ -368,6 +402,9 @@ final class CameraBrowserModel {
         })
         traySources = rawOrder.compactMap { trayCaptures[$0]?.photoSource }
         _ = workspace.reduce(.libraryUpdated(sources: traySources, access: .full))
+        if let explicitRAW, explicitRAW == workspace.viewedSourceID, workspace.displayedVersion != .raw {
+            _ = workspace.reduce(.versionSelected(.raw))
+        }
         let groups = Dictionary(grouping: captures) { $0.timestamp?.calendarDay }
         dayGroups = groups.map { CameraCaptureDayGroup(day: $0.key, captures: $0.value) }
             .sorted { ($0.day ?? "") > ($1.day ?? "") }

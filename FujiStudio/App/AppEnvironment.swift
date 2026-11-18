@@ -110,10 +110,11 @@ import UIKit
          photoGateway: any PhotoImportGateway, isEnabled: Bool = true,
          requestPhotosAccess: @escaping @MainActor () async -> LibraryAccess) {
         self.connection = connection
-        let browser = CameraBrowserModel()
+        let importer = CameraImportCoordinator(journal: journal, staging: staging, gateway: photoGateway)
+        self.importer = importer
+        let browser = CameraBrowserModel(originalCache: importer.originalCache)
         self.browser = browser
         self.trayThumbnails = CameraGridThumbnails(browser: browser)
-        self.importer = CameraImportCoordinator(journal: journal, staging: staging, gateway: photoGateway)
         self.journal = journal
         self.requestPhotosAccess = requestPhotosAccess
         self.isEnabled = isEnabled

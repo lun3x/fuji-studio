@@ -42,7 +42,7 @@ import XCTest
         XCTAssertTrue(app.wait(for: .runningBackground, timeout: 5))
         app.activate()
         XCTAssertTrue(app.buttons["cameraTray.save"].waitForExistence(timeout: 10))
-        XCTAssertFalse(prompt.exists)
+        XCTAssertTrue(prompt.waitForNonExistence(timeout: 5))
     }
 
     func testCameraPhotosOpensWorkspaceVersionsAndSavesSelectedPair() {
@@ -56,6 +56,7 @@ import XCTest
         pair.tap()
         let versions = app.buttons["workspace.versions"]
         XCTAssertTrue(versions.waitForExistence(timeout: 5))
+        XCTAssertEqual(versions.value as? String, "Original camera JPEG")
         versions.tap()
         XCTAssertTrue(app.buttons["version.raw"].exists)
         app.buttons["version.cameraJPEG"].tap()

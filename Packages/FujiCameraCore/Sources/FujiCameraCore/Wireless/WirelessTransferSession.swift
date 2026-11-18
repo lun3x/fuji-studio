@@ -13,6 +13,11 @@ public protocol WirelessTransferSession: Sendable {
   func close() async throws
 }
 
+/// Small reads allow a returning client to check a cached original against a newly inserted card.
+public protocol WirelessOriginalSampling: WirelessTransferSession {
+  func originalSample(_ object: WirelessObjectDescriptor, offset: UInt32, count: UInt32) async throws -> Data
+}
+
 #if DEBUG
 /// Candidate bytes for independent comparison with originals copied from the card.
 public protocol WirelessDiagnosticCandidateSession: Sendable {
@@ -23,7 +28,7 @@ public protocol WirelessDiagnosticCandidateSession: Sendable {
 #endif
 
 /// Owns transaction IDs, storage selection and object affinity for a single camera-hosted socket.
-actor CameraHostedTransferSession: WirelessTransferSession {
+actor CameraHostedTransferSession: WirelessOriginalSampling {
   private struct CardScan {
     let id: UInt32
     let handles: [UInt32]
@@ -336,6 +341,29 @@ actor CameraHostedTransferSession: WirelessTransferSession {
       try await verifyObject(object)
       return try await execute(0x100a, [object.handle]).data
     }
+  }
+
+  func originalSample(_ object: WirelessObjectDescriptor, offset: UInt32, count: UInt32) async throws -> Data {
+    try checkMember(object)
+    let length = try originalLength(object)
+    guard mode == .xApp, count > 0, count <= 4096, offset <= length, count <= length - offset
+    else { throw WirelessFailure.unsupportedProtocol }
+    try await begin()
+    defer { busy = false }
+    try await selectStorage(for: object.storageID)
+    try await prepareOriginals(for: object.storageID)
+    if let failure = try capabilities().originalSizeFailure { throw failure }
+    try await verifyObject(object)
+    var sample = Data()
+    while sample.count < Int(count) {
+      let remaining = min(count - UInt32(sample.count), transport.partialObjectLimit)
+      let reply = try await execute(0x101b, [object.handle, offset + UInt32(sample.count), remaining])
+      guard !reply.data.isEmpty, reply.data.count <= Int(remaining),
+        reply.parameters.isEmpty || reply.parameters == [UInt32(reply.data.count)]
+      else { throw WirelessFailure.malformedData }
+      sample.append(reply.data)
+    }
+    return sample
   }
 
   func download(
