@@ -38,23 +38,46 @@ import XCTest
         XCTAssertTrue(prompt.waitForNonExistence(timeout: 5))
         cameraPhotos.tap()
         XCTAssertTrue(prompt.waitForExistence(timeout: 5))
-        XCUIDevice.shared.press(.home)
-        XCTAssertTrue(app.wait(for: .runningBackground, timeout: 5))
+        app.buttons["Open Settings"].tap()
+        let settings = XCUIApplication(bundleIdentifier: "com.apple.Preferences")
+        XCTAssertTrue(settings.wait(for: .runningForeground, timeout: 8))
+        let wifi = settings.navigationBars["Wi-Fi"]
+        XCTAssertTrue(wifi.exists || settings.navigationBars["Settings"].exists, settings.navigationBars.debugDescription)
         app.activate()
         XCTAssertTrue(app.buttons["cameraTray.save"].waitForExistence(timeout: 10))
         XCTAssertTrue(prompt.waitForNonExistence(timeout: 5))
+    }
+
+    func testCameraViewerShowsPercentageDuringOriginalDownload() {
+        let app = launch(["--fixture-wireless-slow-import"])
+        let photos = app.buttons["workspace.cameraPhotos"]
+        XCTAssertTrue(photos.waitForExistence(timeout: 8))
+        photos.tap()
+        let pair = app.cells.matching(NSPredicate(format: "label CONTAINS %@", "DSCF0001.RAF")).firstMatch
+        XCTAssertTrue(pair.waitForExistence(timeout: 10))
+        pair.tap()
+        let progress = app.descendants(matching: .any)["viewer.loading"].firstMatch
+        XCTAssertTrue(progress.wait(for: \.label, toEqual: "Downloading original", timeout: 8))
+        XCTAssertEqual(progress.value as? String, "50%")
+        XCTAssertFalse(app.staticTexts["50%"].exists)
+        XCTAssertTrue(progress.waitForNonExistence(timeout: 25))
     }
 
     func testCameraPhotosOpensWorkspaceVersionsAndSavesSelectedPair() {
         let app = launch(["--fixture-wireless-paired"])
         let cameraPhotos = app.buttons["workspace.cameraPhotos"]
         XCTAssertTrue(cameraPhotos.waitForExistence(timeout: 8))
+        let recipeSize = app.buttons["recipe.control"].frame.size
         cameraPhotos.tap()
         let pair = app.cells.matching(NSPredicate(format: "label CONTAINS %@", "DSCF0001.RAF")).firstMatch
         XCTAssertTrue(pair.waitForExistence(timeout: 10))
         XCTAssertTrue(pair.label.contains("RAW + JPEG"))
-        pair.tap()
         let versions = app.buttons["workspace.versions"]
+        XCTAssertTrue(versions.exists)
+        XCTAssertFalse(versions.isEnabled)
+        let saveFrame = app.buttons["cameraTray.save"].frame
+        pair.tap()
+        XCTAssertTrue(versions.isEnabled)
         XCTAssertTrue(versions.waitForExistence(timeout: 5))
         XCTAssertEqual(versions.value as? String, "Original camera JPEG")
         versions.tap()
@@ -63,6 +86,10 @@ import XCTest
         XCTAssertTrue(app.scrollViews["viewer.image"].waitForExistence(timeout: 10))
         let save = app.buttons["cameraTray.save"]
         XCTAssertTrue(save.isEnabled)
+        XCTAssertEqual(save.frame.width, recipeSize.width, accuracy: 1)
+        XCTAssertEqual(save.frame.height, recipeSize.height, accuracy: 1)
+        XCTAssertEqual(save.frame.minX, saveFrame.minX, accuracy: 1)
+        XCTAssertEqual(save.label, "Save to Phone")
         save.tap()
         let view = app.buttons["cameraImport.viewImported"]
         XCTAssertTrue(view.waitForExistence(timeout: 10))

@@ -4,12 +4,13 @@ import UIKit
 struct CameraNetworkInstructions: View {
     let network: CameraNetwork
     let connection: WirelessConnectionCoordinator
-    let openSettings: () -> Void
+    @Environment(\.openURL) private var openURL
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var phase
     @State private var password: String?
     @State private var copied = false
     @State private var failed = false
+    @State private var settingsUnavailable = false
 
     var body: some View {
         NavigationStack {
@@ -37,7 +38,18 @@ struct CameraNetworkInstructions: View {
                 } footer: {
                     Text("In Settings, open Wi-Fi and join this network. If it’s hidden, tap Other, enter the network name, and choose WPA2. Stay connected if iPhone reports no internet, then return to Fuji Studio.")
                 }
-                Button("Open Settings", action: openSettings)
+                if settingsUnavailable {
+                    Text("From the Home Screen, open Settings, then tap Wi-Fi.")
+                } else {
+                    Button("Open Settings") {
+                        // iOS may route this to the main Settings screen, or decline the handoff.
+                        openURL(URL(string: "App-Prefs:root=WIFI")!) { opened in
+                            if !opened {
+                                openURL(URL(string: "App-Prefs:")!) { settingsUnavailable = !$0 }
+                            }
+                        }
+                    }
+                }
             }
             .navigationTitle("Join camera Wi-Fi")
             .navigationBarTitleDisplayMode(.inline)

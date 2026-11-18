@@ -22,8 +22,9 @@ extension CameraCapture {
 }
 
 enum CameraViewerOriginal {
-    static func load(_ object: WirelessObjectDescriptor, cache: CameraOriginalCache, session: any WirelessTransferSession) async throws -> ViewerFile {
-        let entry = try await cache.viewerOriginal(object, session: session)
+    static func load(_ object: WirelessObjectDescriptor, cache: CameraOriginalCache, session: any WirelessTransferSession,
+                     progress: @escaping @Sendable (UInt64) async -> Void) async throws -> ViewerFile {
+        let entry = try await cache.viewerOriginal(object, session: session, progress: progress)
         let url = entry.url
         let geometry: ImageGeometry
         let image: URL

@@ -130,7 +130,11 @@ struct AppWorkspaceView: View {
         if !cameraMode { return model.imageLoading }
         guard let request, viewerFailure == nil else { return nil }
         let ready = request.original == nil ? cameraPreview != nil : viewerFile != nil
-        return viewedRequest == request && ready ? nil : .loading
+        if viewedRequest == request && ready { return nil }
+        if let download = browser.viewerDownload, download.object == request.original {
+            return .downloading(Double(download.percent) / 100)
+        }
+        return .loading
     }
 
     private var workspace: some View {
@@ -273,8 +277,7 @@ struct AppWorkspaceView: View {
 
     @ViewBuilder private var handoffSheet: some View {
         if let network = model.wirelessState.manualNetwork {
-            CameraNetworkInstructions(network: network, connection: model.environment.wireless.connection,
-                                      openSettings: model.openSettings)
+            CameraNetworkInstructions(network: network, connection: model.environment.wireless.connection)
         }
     }
 

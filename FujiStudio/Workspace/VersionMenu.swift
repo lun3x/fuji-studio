@@ -3,41 +3,35 @@ import SwiftUI
 
 /// A single floating selector. Opening or dismissing it never selects a version.
 struct VersionMenu: View {
-    let source: PhotoSource
+    let source: PhotoSource?
     let saved: [SavedVersion]
     let selected: VersionID?
     var onVersionSelected: (VersionID) -> Void
     @State private var presented = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.timeZone) private var timeZone
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-    @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.workspaceOrientation) private var orientation
 
-    private var options: VersionList {
-        VersionList(source: source, saved: saved, selected: selected, timeZone: timeZone,
+    private var options: VersionList? {
+        guard let source else { return nil }
+        return VersionList(source: source, saved: saved, selected: selected, timeZone: timeZone,
             onVersionSelected: { presented = false; onVersionSelected($0) })
     }
     var body: some View {
-        Button { presented = true } label: {
-            Image(systemName: "square.3.layers.3d").font(.headline)
-                .frame(minWidth: 44, minHeight: 44).contentShape(Capsule())
-        }
-        .buttonStyle(.glass).foregroundStyle(.primary)
-        .background {
-            if reduceTransparency { Capsule().fill(Color(uiColor: .secondarySystemBackground)) }
-        }
-        .overlay { if contrast == .increased { Capsule().stroke(.primary, lineWidth: 1).allowsHitTesting(false) } }
+        WorkspaceIconButton { presented = true } label: { Image(systemName: "square.3.layers.3d") }
+        .disabled(source == nil)
         .accessibilityLabel("Image versions")
-        .accessibilityValue(options.entries.first { $0.id == selected }?.accessibilityLabel ?? "Camera preview")
+        .accessibilityValue(options?.entries.first { $0.id == selected }?.accessibilityLabel ?? (source == nil ? "Select a photo" : "Camera preview"))
         .accessibilityHint("Choose the original RAW, camera JPEG or a saved version")
         .accessibilityIdentifier("workspace.versions")
-        .onChange(of: source.id) { _, _ in presented = false }
+        .onChange(of: source?.id) { _, _ in presented = false }
         .onDisappear { presented = false }
         .popover(isPresented: $presented, arrowEdge: orientation.popoverEdge) {
-            options.environment(\.dynamicTypeSize, dynamicTypeSize)
-                .background { PopoverEscapeHandler(onDismiss: { presented = false }).frame(width: 1, height: 1) }
-                .presentationCompactAdaptation(.popover)
+            if let options {
+                options.environment(\.dynamicTypeSize, dynamicTypeSize)
+                    .background { PopoverEscapeHandler(onDismiss: { presented = false }).frame(width: 1, height: 1) }
+                    .presentationCompactAdaptation(.popover)
+            }
         }
     }
 }

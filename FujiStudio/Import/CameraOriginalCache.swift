@@ -68,13 +68,15 @@ actor CameraOriginalCache {
         return admit(Entry(original: current, url: url), session: session)
     }
 
-    func viewerOriginal(_ object: WirelessObjectDescriptor, session: any WirelessTransferSession) async throws -> Entry {
+    func viewerOriginal(_ object: WirelessObjectDescriptor, session: any WirelessTransferSession,
+                        progress: @escaping @Sendable (UInt64) async -> Void = { _ in }) async throws -> Entry {
         if let entry = try await lookup(object, session: session) { return entry }
         let directory = directory(for: object)
         let store = try ImportStagingStore(root: directory)
         try store.removeInterruptedDownloads()
         try store.preflight(stagingByteLengths: [object.byteLength], photoCopyByteLengths: [])
-        let original = try await store.write(object: object, session: session)
+        await progress(0)
+        let original = try await store.write(object: object, session: session, progress: progress)
         return try admit(publish(original, in: directory, store: store), session: session)
     }
 

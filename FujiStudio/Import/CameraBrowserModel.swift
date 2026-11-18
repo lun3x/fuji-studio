@@ -274,6 +274,18 @@ final class CameraBrowserModel {
         }
     }
 
+    private(set) var viewerDownload: (object: WirelessObjectDescriptor, percent: Int)?
+
+    private func showDownload(_ bytes: UInt64, for object: WirelessObjectDescriptor, generation: UUID,
+                              cancellation: BrowserCancellation) {
+        guard self.generation == generation, !cancellation.isCancelled, object.byteLength > 0 else { return }
+        guard bytes < object.byteLength else { viewerDownload = nil; return }
+        let percent = min(99, Int((100 * Double(bytes) / Double(object.byteLength)).rounded()))
+        if viewerDownload?.object != object || viewerDownload?.percent != percent {
+            viewerDownload = (object, percent)
+        }
+    }
+
     func viewerFile(for object: WirelessObjectDescriptor) async throws -> ViewerFile {
         if let file = alreadyViewed(object) { return file }
         guard let session, !thumbnailsSuspended else { throw WirelessFailure.connectionLost }
@@ -285,7 +297,10 @@ final class CameraBrowserModel {
             guard !self.thumbnailsSuspended, self.trayCaptures.values.contains(where: { $0.objects.contains(object) })
             else { throw CancellationError() }
             if let file = self.alreadyViewed(object) { return file }
-            let file = try await CameraViewerOriginal.load(object, cache: self.originalCache, session: session)
+            defer { if self.generation == generation { self.viewerDownload = nil } }
+            let file = try await CameraViewerOriginal.load(object, cache: self.originalCache, session: session) { bytes in
+                await self.showDownload(bytes, for: object, generation: generation, cancellation: cancellation)
+            }
             guard self.generation == generation else { throw CancellationError() }
             self.viewedFiles[object] = file
             try self.checkCurrent(generation, cancellation)
@@ -323,6 +338,7 @@ final class CameraBrowserModel {
         rawOrder = []
         explicitRAW = nil
         viewedFiles.removeAll()
+        viewerDownload = nil
         workspace = WorkspaceState(access: .full)
         publish([])
         selected.removeAll()

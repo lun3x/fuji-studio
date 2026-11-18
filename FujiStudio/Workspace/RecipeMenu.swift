@@ -2,6 +2,23 @@ import FujiCameraCore
 import SwiftUI
 import UIKit
 
+struct WorkspaceIconButton<Label: View>: View {
+    let action: () -> Void
+    @ViewBuilder let label: () -> Label
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    var body: some View {
+        Button(action: action) {
+            label().font(.headline).frame(minWidth: 44, minHeight: 44).contentShape(Capsule())
+        }
+        .buttonStyle(.glass)
+        .foregroundStyle(.primary)
+        .background { if reduceTransparency { Capsule().fill(Color(uiColor: .secondarySystemBackground)) } }
+        .overlay { if contrast == .increased { Capsule().stroke(.primary, lineWidth: 1).allowsHitTesting(false) } }
+    }
+}
+
 /// A floating trigger and native popover; dismissal never dispatches a selection.
 struct RecipeMenu: View {
     let current: RecipeSnapshot?
@@ -29,9 +46,7 @@ struct RecipeMenu: View {
     @State private var deletionFailed = false
     @State private var editingRecipe: PhoneRecipe?
     private var isMutating: Bool { copyingID != nil || deletingID != nil }
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.workspaceOrientation) private var orientation
 
     init(current: RecipeSnapshot?, snapshots: [RecipeSnapshot], phoneSnapshots: [PhoneRecipe],
@@ -52,7 +67,7 @@ struct RecipeMenu: View {
         _collection = State(initialValue: current?.isPhoneRecipe == true ? .phone : .camera)
     }
     var body: some View {
-        Button {
+        WorkspaceIconButton {
             collection = current?.isPhoneRecipe == true ? .phone : .camera
             copyFailed = false; deletionFailed = false; presented = true
         } label: {
@@ -60,14 +75,8 @@ struct RecipeMenu: View {
                 if current?.isPhoneRecipe == true { Image(systemName: "iphone").font(.headline) }
                 else if let current { Text("C\(current.slot)").font(.headline.monospacedDigit()) }
                 else { Image(systemName: "camera.filters").font(.headline) }
-            }.frame(minWidth: 44, minHeight: 44).contentShape(Capsule())
+            }
         }
-        .buttonStyle(.glass)
-        .foregroundStyle(.primary)
-        .background {
-            if reduceTransparency { Capsule().fill(Color(uiColor: .secondarySystemBackground)) }
-        }
-        .overlay { if contrast == .increased { Capsule().stroke(.primary, lineWidth: 1).allowsHitTesting(false) } }
         .accessibilityLabel(current?.displayLabel ?? "No recipe selected")
         .accessibilityHint("Choose camera or phone recipes, or copy a camera recipe to your phone")
         .accessibilityIdentifier("recipe.control")

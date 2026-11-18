@@ -165,11 +165,10 @@ struct WorkspaceView<StatusControl: View>: View {
                     DeviceAnchoredRow(orientation: orientation, spacing: 8) {
                         statusControl()
                         if let onSaveCameraPhotos {
-                            Button(action: onSaveCameraPhotos) {
-                                Label("Save to Phone", systemImage: "square.and.arrow.down")
-                                    .font(.callout.weight(.semibold))
+                            WorkspaceIconButton(action: onSaveCameraPhotos) {
+                                Image(systemName: "square.and.arrow.down")
                             }
-                            .buttonStyle(.glassProminent)
+                            .accessibilityLabel("Save to Phone")
                             .disabled(!canSaveCameraPhotos)
                             .accessibilityIdentifier("cameraTray.save")
                         } else { recipeControl }
@@ -221,9 +220,12 @@ struct WorkspaceView<StatusControl: View>: View {
         Group {
             if state.selectedRecipe != nil {
                 exportButton
-            } else if let source = sources.first(where: { $0.id == state.viewedSourceID }) {
-                VersionMenu(source: source, saved: savedVersions, selected: showingCameraThumbnailOnly ? nil : state.displayedVersion,
-                    onVersionSelected: { onAction(.versionSelected($0)) })
+            } else {
+                let source = sources.first { $0.id == state.viewedSourceID }
+                if source != nil || onSaveCameraPhotos != nil {
+                    VersionMenu(source: source, saved: savedVersions, selected: showingCameraThumbnailOnly ? nil : state.displayedVersion,
+                        onVersionSelected: { onAction(.versionSelected($0)) })
+                }
             }
         }
     }
