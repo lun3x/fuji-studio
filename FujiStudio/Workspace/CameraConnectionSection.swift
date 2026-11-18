@@ -134,6 +134,10 @@ struct CameraConnectionSection: View {
         } else if let guidance = state.transferFailureGuidance {
             Text(guidance).accessibilityIdentifier("wireless.wifiFailure")
         }
+        if state.cameraTransferSizeRestoreUnconfirmed {
+            Text("Wi-Fi disconnected. The camera did not confirm that it restored its previous image transfer size.")
+                .accessibilityIdentifier("wireless.transferSize")
+        }
         if let failure = state.failure {
             Text(failure.connectionGuidance).accessibilityIdentifier("wireless.bluetoothFailure")
         }

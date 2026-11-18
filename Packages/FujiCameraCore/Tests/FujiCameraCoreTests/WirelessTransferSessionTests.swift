@@ -698,6 +698,9 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
     let closed = await channel.closed
     XCTAssertEqual(remaining, 0)
     XCTAssertTrue(closed)
+    let monitored = try XCTUnwrap(session as? any WirelessSessionMonitoring)
+    let transportClosed = await monitored.transportClosed
+    XCTAssertTrue(transportClosed)
   }
 
   func testGalleryAbortWhileOriginalModeAcknowledgementOrRestorationIsPending() async throws {

@@ -84,6 +84,12 @@ struct WirelessConnectionState: Equatable, Sendable {
   var pairingFailure: BluetoothPairingFailure?
   var connectionGeneration: UInt64 = 0
   var hasTransferLease = false
+  var cameraTransferSizeRestoreUnconfirmed = false
+
+  var showsCameraPhotosButton: Bool {
+    if wifi == .ready || manualNetwork != nil { return true }
+    return bluetooth == .ready && wifi != .disconnecting && !(wifi == .idle && hasTransferLease)
+  }
 
   var restrictsUSB: Bool { hasTransferLease || wifi != .idle }
 }

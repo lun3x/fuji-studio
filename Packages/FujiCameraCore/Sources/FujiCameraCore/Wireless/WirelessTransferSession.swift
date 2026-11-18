@@ -13,6 +13,13 @@ public protocol WirelessTransferSession: Sendable {
   func close() async throws
 }
 
+/// Camera-hosted sessions can distinguish a closed socket from camera-side cleanup
+/// and report a lost connection even when the browser is idle.
+public protocol WirelessSessionMonitoring: WirelessTransferSession {
+  var transportClosed: Bool { get async }
+  var connectionFailures: AsyncStream<WirelessFailure> { get }
+}
+
 /// Small reads allow a returning client to check a cached original against a newly inserted card.
 public protocol WirelessOriginalSampling: WirelessTransferSession {
   func originalSample(_ object: WirelessObjectDescriptor, offset: UInt32, count: UInt32) async throws -> Data
@@ -28,7 +35,11 @@ public protocol WirelessDiagnosticCandidateSession: Sendable {
 #endif
 
 /// Owns transaction IDs, storage selection and object affinity for a single camera-hosted socket.
-actor CameraHostedTransferSession: WirelessOriginalSampling {
+actor CameraHostedTransferSession: WirelessOriginalSampling, WirelessSessionMonitoring {
+  private(set) var transportClosed = false
+  private let failureEvents = AsyncStream<WirelessFailure>.makeStream(bufferingPolicy: .bufferingNewest(1))
+  nonisolated var connectionFailures: AsyncStream<WirelessFailure> { failureEvents.stream }
+
   private struct CardScan {
     let id: UInt32
     let handles: [UInt32]
@@ -464,6 +475,8 @@ actor CameraHostedTransferSession: WirelessOriginalSampling {
         _ = try? await execute(0x1003, whileClosing: true)
       }
       await transport.close()
+      transportClosed = true
+      failureEvents.continuation.finish()
       try restoration.get()
     }
     closing = close
@@ -546,7 +559,10 @@ actor CameraHostedTransferSession: WirelessOriginalSampling {
       _ = try await readEvents()
     }
     keepAliveRequest = request
-    if case .failure(let error) = await request.result { keepAliveFailure = error }
+    if case .failure(let error) = await request.result {
+      keepAliveFailure = error
+      if closing == nil { failureEvents.continuation.yield(error as? WirelessFailure ?? .connectionLost) }
+    }
     keepAliveRequest = nil
     return keepAliveFailure == nil
   }

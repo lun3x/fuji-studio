@@ -127,6 +127,7 @@ final class WiFiHandoffTests: XCTestCase {
     } catch WirelessFailure.cameraBusy {}
     let failed = await snapshot(fixture.coordinator)
     XCTAssertEqual(failed.wifiFailurePhase, .disconnecting)
+    XCTAssertFalse(failed.showsCameraPhotosButton)
     let first = await usb.camera.connectCount
     XCTAssertEqual(first, 0)
 
@@ -135,6 +136,30 @@ final class WiFiHandoffTests: XCTestCase {
     try await usb.environment.camera.connect()
     let connects = await usb.camera.connectCount
     XCTAssertEqual(connects, 1)
+  }
+
+  func testIdleLossWithClosedSocketReleasesOwnershipDespiteCameraSettingFailure() async throws {
+    let close = WirelessCloseFixture()
+    let fixture = Fixture(close: close)
+    await fixture.start()
+    await fixture.coordinator.connectWiFi()
+    await close.loseConnectionAfterSocketCloses()
+    let deadline = ContinuousClock.now + .seconds(3)
+    while await fixture.coordinator.currentState().wifiFailure == nil && ContinuousClock.now < deadline {
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    let settled = await fixture.coordinator.currentState()
+    XCTAssertEqual(settled.wifi, .idle)
+    XCTAssertFalse(settled.hasTransferLease)
+    XCTAssertEqual(settled.wifiFailure, .connectionLost)
+    XCTAssertEqual(settled.wifiFailurePhase, .ready)
+    XCTAssertTrue(settled.cameraTransferSizeRestoreUnconfirmed)
+    await fixture.coordinator.connectWiFi()
+    let reconnected = await fixture.coordinator.currentState()
+    XCTAssertEqual(reconnected.wifi, .ready)
+    XCTAssertFalse(reconnected.cameraTransferSizeRestoreUnconfirmed)
+    await close.allowClose()
+    await fixture.coordinator.disconnectWiFi()
   }
 
   func testUSBWaitsForNativeBluetoothCloseAndAfterUSBDisconnectBluetoothCanReconnect() async throws {
@@ -745,11 +770,14 @@ private struct HandoffOwner: WirelessCameraOwnershipGateway {
   func releaseWireless(_ lease: CameraUseLease) async { await log.record("release ownership") }
 }
 
-private struct HandoffSession: WirelessTransferSession {
+private struct HandoffSession: WirelessSessionMonitoring {
   let identity: WirelessIdentity
   let log: HandoffLog
   let failure: WirelessFailure?
   var closeFixture: WirelessCloseFixture? = nil
+
+  var transportClosed: Bool { get async { await closeFixture?.transportClosed ?? false } }
+  var connectionFailures: AsyncStream<WirelessFailure> { closeFixture?.stream ?? AsyncStream { $0.finish() } }
 
   func open() async throws -> WirelessIdentity {
     await log.record("PTP identity")
@@ -780,6 +808,13 @@ private struct HandoffSession: WirelessTransferSession {
 }
 
 private actor WirelessCloseFixture {
+  private let failures = AsyncStream<WirelessFailure>.makeStream()
+  nonisolated var stream: AsyncStream<WirelessFailure> { failures.stream }
+  private(set) var transportClosed = false
+  func loseConnectionAfterSocketCloses() {
+    transportClosed = true
+    failures.continuation.yield(.connectionLost)
+  }
   private var allowed = false
   func allowClose() { allowed = true }
   func confirmClose() throws {

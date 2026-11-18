@@ -81,6 +81,7 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
   private var wifiLease: CameraUseLease?
   private var joinedNetwork: JoinedCameraNetwork?
   private var session: (any WirelessTransferSession)?
+  private var transferMonitor: Task<Void, Never>?
   private var cameraWiFiActivationStarted = false
 
   init(
@@ -760,6 +761,7 @@ extension WirelessConnectionCoordinator {
     snapshot.wifiFailurePhase = nil
     snapshot.firmwareRejection = nil
     snapshot.transferRoute = autoSave ? .autoSave : .cameraNetwork
+    snapshot.cameraTransferSizeRestoreUnconfirmed = false
     snapshot.wifi = .acquiringOwnership
     let id = UUID()
     let attempt = Task { await run(id) }
@@ -989,6 +991,15 @@ extension WirelessConnectionCoordinator {
       try checkWiFiAttempt(id, intent)
       if !batch.objects.isEmpty || batch.storageChanges.values.contains(.complete) {
         snapshot.wifi = .ready
+        if let monitored = opened as? any WirelessSessionMonitoring {
+          transferMonitor = Task { [weak self] in
+            for await failure in monitored.connectionFailures {
+              guard !Task.isCancelled else { return }
+              await self?.retireTransfer(intent, failure: failure)
+              return
+            }
+          }
+        }
         return
       }
     }
@@ -1020,6 +1031,8 @@ extension WirelessConnectionCoordinator {
   }
 
   private func teardownWiFi(waitingFor previous: Task<Void, Never>?) async {
+    transferMonitor?.cancel()
+    transferMonitor = nil
     let isAutoSave = wifiAttempt?.autoSave == true
     let cleanup = Task {
       if isAutoSave { await autoSave?.cancel() }
@@ -1059,6 +1072,11 @@ extension WirelessConnectionCoordinator {
       session = nil
       return true
     } catch {
+      if let monitored = target as? any WirelessSessionMonitoring, await monitored.transportClosed {
+        session = nil
+        snapshot.cameraTransferSizeRestoreUnconfirmed = true
+        return true
+      }
       snapshot.wifiFailure = (error as? WirelessFailure) ?? .connectionLost
       snapshot.wifiFailurePhase = .disconnecting
       snapshot.firmwareRejection = nil

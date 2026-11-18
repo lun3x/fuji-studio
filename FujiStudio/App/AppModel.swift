@@ -1574,7 +1574,11 @@ extension AppModel {
             let previous = if let jobID = operation.jobID { await services.importer.latestRunEvent(jobID: jobID) } else { nil as ImportEvent? }
             let transfer = try? await services.connection.admittedTransfer()
             if operation.requiresSession && transfer == nil { throw CameraImportError.sessionRequired }
-            if let transfer {
+            // Only drain the browser when this operation can actually borrow its camera session.
+            let currentJob = if let id = operation.jobID { await services.importer.latestEvent(jobID: id) } else { nil as ImportEvent? }
+            let retainedIntent = operation.jobID.flatMap { importBinding[$0]?.intent }
+            let usesRetainedSession = currentJob?.needsSession == false && retainedIntent != nil && retainedIntent == transfer?.intent
+            if let transfer, operation.requiresSession || usesRetainedSession {
                 if case .workspace(let ids) = operation {
                     isFindingCameraMates = cameraBrowser.isFindingMates(for: ids)
                     defer { isFindingCameraMates = false }
@@ -1625,9 +1629,7 @@ extension AppModel {
                 intent = transfer.intent
             case .retry(let id), .skip(let id):
                 jobID = id
-                let retained = importBinding[id]?.intent
-                let latest = await services.importer.latestEvent(jobID: id)
-                intent = latest?.needsSession == false && retained == transfer?.intent ? retained : nil
+                intent = usesRetainedSession ? retainedIntent : nil
                 let allowedLoanID = intent == nil ? nil : transfer?.loanID
                 try checkImportEpoch(epoch)
                 switch operation {

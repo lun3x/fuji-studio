@@ -282,8 +282,7 @@ struct AppWorkspaceView: View {
     }
 
     private var showsCameraPhotos: Bool {
-        let wireless = model.wirelessState
-        return wireless.bluetooth == .ready || wireless.manualNetwork != nil || wireless.wifi == .ready
+        model.wirelessState.showsCameraPhotosButton
     }
 
     @ViewBuilder private var cameraPhotosButton: some View {

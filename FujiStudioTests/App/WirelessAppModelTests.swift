@@ -195,6 +195,33 @@ final class WirelessAppModelTests: XCTestCase {
         XCTAssertEqual(manualUSBConnects, 1)
     }
 
+    func testStagedRetryFinishesWhileReconnectedCameraInventoryIsStillLoading() async throws {
+        let fixture = try await FixtureEnvironment.make(wireless: .paired)
+        let model = AppModel(environment: fixture.environment)
+        await model.start()
+        try await browse(model)
+        let pair = try XCTUnwrap(model.cameraBrowser.captures.first { $0.availability == .pair })
+        for capture in model.cameraBrowser.captures where capture.id != pair.id {
+            model.cameraBrowser.deselect(capture.id)
+        }
+        await fixture.wireless.photos.rejectNextCreate(.storage)
+        await model.importSelectedCaptures()
+        try await waitUntil { model.importEvents.first?.pauseReason == .storage && !model.cameraImportActive }
+        let id = try XCTUnwrap(model.importEvents.first?.jobID)
+        await model.disconnectCameraWiFi()
+        let scan = FixtureBarrier()
+        await fixture.wireless.session.holdBrowserInventory(scan)
+        let reconnect = Task { await model.connectCameraWiFi() }
+        defer { Task { await scan.release() } }
+        await scan.entered()
+        let retry = Task { await model.retryImportCapture(jobID: id) }
+        try await waitUntil { model.importEvents.first?.receipts.count == 1 }
+        XCTAssertTrue(model.cameraBrowser.isLoading)
+        await scan.release()
+        await retry.value
+        await reconnect.value
+    }
+
     func testLocalPhotosRetryKeepsScreenAwakeAndBlocksCameraChoiceUntilSettlement() async throws {
         let fixture = try await FixtureEnvironment.make(wireless: .twoSaved)
         let model = AppModel(environment: fixture.environment)
