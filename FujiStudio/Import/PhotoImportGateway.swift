@@ -22,7 +22,7 @@ enum PhotoImportOutcome: Equatable, Sendable {
     /// No creation was issued. The caller may offer an explicit retry.
     case rejected(PhotoImportFailure)
     /// A creation was issued and could have committed. Reconcile before offering a retry.
-    case uncertain(assetID: String?)
+    case uncertain(assetID: String?, systemError: String? = nil)
 }
 
 enum PhotoImportFailure: Error, Equatable, Sendable {

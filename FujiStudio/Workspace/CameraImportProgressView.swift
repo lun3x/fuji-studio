@@ -125,6 +125,9 @@ private struct CameraImportJobView: View {
                 Text("\(cameraImportByteCount(event.retainedBytes)) retained on this iPhone")
                     .accessibilityIdentifier("cameraImport.retainedBytes")
             }
+            if let systemError = event.photoSaveError {
+                Text("Photos reported error \(systemError).")
+            }
             if let guidance {
                 Text(guidance).accessibilityIdentifier("cameraImport.guidance")
             }
@@ -169,7 +172,7 @@ private struct CameraImportJobView: View {
             Button("Pause") { Task { await model.pauseImport(jobID: jobID) } }
                 .accessibilityIdentifier("cameraImport.pause")
         }
-        if event.actions.contains(.managePhotos) {
+        if event.actions.contains(.managePhotos) && model.state.libraryAccess != .full {
             Button("Manage Photos") { Task { await model.manageImportPhotos() } }
                 .disabled(!canCommand).accessibilityIdentifier("cameraImport.managePhotos")
             Button("Open Settings", action: model.openSettings)
@@ -224,7 +227,13 @@ private struct CameraImportJobView: View {
     private var guidance: String? {
         switch event.pauseReason {
         case .unresolvedSave:
-            "Fuji Studio could not verify this Photos save. Use Manage Photos or Settings to allow access to the originals so the app can check the same save. The staged files remain on this iPhone."
+            if event.actions.contains(.retryCapture) {
+                "Photos has no asset for this save. Tap Retry to save the originals already on this iPhone."
+            } else if model.state.libraryAccess == .full {
+                "Fuji Studio could not confirm both the save and its original files in Photos. The originals are still on this iPhone. Reopen Fuji Studio to check the same save again."
+            } else {
+                "Allow Photos access so Fuji Studio can check the same save. The originals are still on this iPhone."
+            }
         case .earlierSaveUnresolved:
             "An earlier import of this RAW still has an unverified Photos save. Check that import in Camera imports before retrying. The staged originals remain on this iPhone."
         case .photosAccess:

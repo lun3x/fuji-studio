@@ -58,6 +58,7 @@ struct ImportEvent: Equatable, Sendable {
     let routeEvidence: ImportRouteEvidence?
     let retainedBytes: UInt64
     let recoveryRequired: Bool
+    var photoSaveError: String?
 
     var captureCountLabel: String {
         let total = captureCount == 1 ? "1 photo" : "\(captureCount) photos"

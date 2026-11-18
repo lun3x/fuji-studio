@@ -587,7 +587,12 @@ actor CameraImportCoordinator {
         let observedID: String?
         switch outcome {
         case .submitted(let id): observedID = id
-        case .uncertain(let id): observedID = id
+        case .uncertain(let id, let systemError):
+            observedID = id
+            if let systemError {
+                job.captures[index].photoSaveError = systemError
+                job = try await save(job)
+            }
         case .rejected: observedID = nil
         }
         if job.captures[index].placeholderAssetID == nil, let observedID {
@@ -671,7 +676,8 @@ actor CameraImportCoordinator {
             invalidatedSession: invalidatedSession || (active && run?.invalidatedSession == true),
             wirelessFailure: wirelessFailure, receipts: job.captures.compactMap(\.receipt),
             routeEvidence: active ? run?.routeEvidence : routeEvidence,
-            retainedBytes: job.retainedBytes, recoveryRequired: pause == .journalUnavailable)
+            retainedBytes: job.retainedBytes, recoveryRequired: pause == .journalUnavailable,
+            photoSaveError: current?.photoSaveError)
         latest[job.id] = event
         if event.runID != nil { latestRunEvents[job.id] = event }
         for continuation in listeners.values { continuation.yield(event) }

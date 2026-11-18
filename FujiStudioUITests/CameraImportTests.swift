@@ -68,9 +68,10 @@ import XCTest
         let cameraPhotos = app.buttons["workspace.cameraPhotos"]
         XCTAssertTrue(cameraPhotos.waitForExistence(timeout: 8))
         let recipeSize = app.buttons["recipe.control"].frame.size
+        wait { cameraPhotos.isEnabled && cameraPhotos.isHittable }
         cameraPhotos.tap()
         let pair = app.cells.matching(NSPredicate(format: "label CONTAINS %@", "DSCF0001.RAF")).firstMatch
-        XCTAssertTrue(pair.waitForExistence(timeout: 10))
+        XCTAssertTrue(pair.waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertTrue(pair.label.contains("RAW + JPEG"))
         let versions = app.buttons["workspace.versions"]
         XCTAssertTrue(versions.exists)
@@ -225,7 +226,7 @@ import XCTest
         app.buttons["cameraBrowser.import"].tap()
         wait { app.staticTexts["cameraImport.status"].label.contains("unverified") }
         XCTAssertTrue(app.staticTexts["cameraImport.retainedBytes"].exists)
-        XCTAssertTrue(app.buttons["cameraImport.managePhotos"].exists)
+        XCTAssertFalse(app.buttons["cameraImport.managePhotos"].exists)
         XCTAssertTrue(app.staticTexts["cameraImport.guidance"].label.contains("check the same save"))
         XCTAssertFalse(app.buttons["cameraImport.viewImported"].exists)
         XCTAssertFalse(app.buttons["cameraImport.discard"].exists)

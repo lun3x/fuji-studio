@@ -101,7 +101,7 @@ final class PhotoImportGatewayTests: XCTestCase {
         for id in ["created-asset", nil] {
             let library = PhotoImportCreationSpy(assetID: id, success: false, error: CocoaError(.userCancelled))
             let outcome = await NativePhotoImportGateway(staging: staging, creation: library).create(capture) { _ in }
-            XCTAssertEqual(outcome, .uncertain(assetID: id))
+            XCTAssertEqual(outcome, .uncertain(assetID: id, systemError: "\(NSCocoaErrorDomain) (\(CocoaError.userCancelled.rawValue))"))
         }
     }
 

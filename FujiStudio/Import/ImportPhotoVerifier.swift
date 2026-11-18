@@ -10,7 +10,7 @@ enum ImportReconciliation: Equatable, Sendable {
 struct ImportPhotoVerifier: Sendable {
     let gateway: any PhotoImportGateway
 
-    func reconcile(capture: ValidatedCapture, placeholder: String?) async -> ImportReconciliation {
+    func reconcile(capture: ValidatedCapture, placeholder: String?, recheckingSettledSave: Bool = false) async -> ImportReconciliation {
         let expected = capture.originals.map(\.fingerprint)
         var inspectedPlaceholder: ImportedAssetInspection?
         if let placeholder {
@@ -55,7 +55,10 @@ struct ImportPhotoVerifier: Sendable {
         guard !Task.isCancelled, !hasUnreadableCandidate else { return unresolved }
         if let match { return receipt(assetID: match, capture: capture, originals: expected) }
         // A found but incomplete asset could be a partially retained submission.
-        if search.isAuthoritative, !hasFoundCandidate, inspectedPlaceholder != .unavailable {
+        // PhotoKit assigns the finished asset the same ID as its placeholder. A second
+        // full-access lookup of that exact ID can settle an already paused save.
+        let settledIDIsMissing = recheckingSettledSave && inspectedPlaceholder == .absent
+        if !hasFoundCandidate, inspectedPlaceholder != .unavailable, search.isAuthoritative || settledIDIsMissing {
             return .definitivelyAbsent
         }
         return unresolved

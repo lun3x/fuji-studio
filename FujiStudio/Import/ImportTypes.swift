@@ -138,6 +138,7 @@ struct ImportCaptureProgress: Equatable, Sendable {
     var originals: [StagedOriginal] = []
     fileprivate(set) var placeholderAssetID: String?
     fileprivate(set) var receipt: ImportReceipt?
+    var photoSaveError: String?
 
     var id: CameraCaptureID { selection.captureID }
     var isFinished: Bool { stage == .imported || stage == .skipped }
@@ -157,6 +158,7 @@ struct ImportCaptureProgress: Equatable, Sendable {
               receipt.fingerprints.count == originals.count else {
             throw ImportJournalError.invalidTransition
         }
+        photoSaveError = nil
         self.receipt = receipt
         stage = .imported
     }
@@ -167,6 +169,7 @@ struct ImportCaptureProgress: Equatable, Sendable {
             throw ImportJournalError.invalidTransition
         }
         placeholderAssetID = nil
+        photoSaveError = nil
         stage = .readyToSave
     }
 
@@ -276,6 +279,7 @@ struct ImportJob: Equatable, Sendable {
             let originals: [StagedOriginal]
             let placeholderAssetID: String?
             let receipt: ImportReceipt?
+            var photoSaveError: String?
         }
 
         init(_ job: ImportJob) {
@@ -286,7 +290,8 @@ struct ImportJob: Equatable, Sendable {
             pauseReason = job.pauseReason
             captures = job.captures.map {
                 .init(id: $0.id, descriptors: $0.selection.descriptors, policy: $0.selection.policy, stage: $0.stage,
-                      originals: $0.originals, placeholderAssetID: $0.placeholderAssetID, receipt: $0.receipt)
+                      originals: $0.originals, placeholderAssetID: $0.placeholderAssetID, receipt: $0.receipt,
+                      photoSaveError: $0.photoSaveError)
             }
         }
     }
@@ -301,7 +306,7 @@ struct ImportJob: Equatable, Sendable {
         captures = snapshot.captures.map { entry in
             .init(selection: .init(captureID: entry.id, camera: identity, descriptors: entry.descriptors, policy: entry.policy),
                   stage: entry.stage, originals: entry.originals, placeholderAssetID: entry.placeholderAssetID,
-                  receipt: entry.receipt)
+                  receipt: entry.receipt, photoSaveError: entry.photoSaveError)
         }
         frozenSelections = captures.map(\.selection)
         try validate()

@@ -55,7 +55,8 @@ struct ImportRecovery: Sendable {
             return (job, entry.placeholderAssetID.map { .savedUnverified($0) } ?? .uncertain)
         }
         let result = await ImportPhotoVerifier(gateway: gateway)
-            .reconcile(capture: capture, placeholder: entry.placeholderAssetID)
+            .reconcile(capture: capture, placeholder: entry.placeholderAssetID,
+                       recheckingSettledSave: entry.stage == .savedUnverified && job.pauseReason == .unresolvedSave)
         switch result {
         case .verified(let receipt):
             try await journal.recordReceipt(receipt, jobID: job.id, expectedRevision: job.revision)

@@ -67,6 +67,8 @@ final class ImportPhotoVerifierTests: XCTestCase {
 
         let verifier = ImportPhotoVerifier(gateway: photos)
         let result = await verifier.reconcile(capture: capture, placeholder: "possibly-saved")
+        let recheck = await verifier.reconcile(capture: capture, placeholder: "possibly-saved", recheckingSettledSave: true)
+        XCTAssertEqual(recheck, .savedUnverified("possibly-saved"))
         let noPlaceholder = await verifier.reconcile(capture: capture, placeholder: nil)
         XCTAssertEqual(result, .savedUnverified("possibly-saved"))
         XCTAssertEqual(noPlaceholder, .uncertain)
@@ -80,6 +82,8 @@ final class ImportPhotoVerifierTests: XCTestCase {
         let verifier = ImportPhotoVerifier(gateway: photos)
 
         let result = await verifier.reconcile(capture: capture, placeholder: "possibly-saved")
+        let recheck = await verifier.reconcile(capture: capture, placeholder: "possibly-saved", recheckingSettledSave: true)
+        XCTAssertEqual(recheck, .definitivelyAbsent)
         let noPlaceholder = await verifier.reconcile(capture: capture, placeholder: nil)
         XCTAssertEqual(result, .savedUnverified("possibly-saved"))
         XCTAssertEqual(noPlaceholder, .uncertain)

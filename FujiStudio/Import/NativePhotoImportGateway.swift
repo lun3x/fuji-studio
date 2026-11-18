@@ -52,7 +52,7 @@ struct NativePhotoImportGateway: PhotoImportGateway {
                     transaction.record(id: id, persisted: false)
                 }
             } completion: { success, error in
-                continuation.resume(returning: transaction.outcome(confirmed: success && error == nil))
+                continuation.resume(returning: transaction.outcome(success: success, error: error))
             }
         }
     }
@@ -251,12 +251,16 @@ private final class PhotoImportTransaction: @unchecked Sendable {
         lock.withLock { placeholder = (id, persisted) }
     }
 
-    func outcome(confirmed: Bool) -> PhotoImportOutcome {
+    func outcome(success: Bool, error: Error?) -> PhotoImportOutcome {
         lock.withLock {
-            if confirmed, let placeholder, placeholder.persisted {
+            if success, error == nil, let placeholder, placeholder.persisted {
                 return .submitted(assetID: placeholder.id)
             }
-            return .uncertain(assetID: placeholder?.id)
+            let systemError = error.map { error in
+                let nsError = error as NSError
+                return "\(nsError.domain) (\(nsError.code))"
+            }
+            return .uncertain(assetID: placeholder?.id, systemError: systemError)
         }
     }
 }

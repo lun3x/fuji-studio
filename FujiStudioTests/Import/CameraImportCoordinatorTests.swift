@@ -583,7 +583,7 @@ actor ImportTestPhotos: PhotoImportGateway {
         trace.values.withLock { $0.append("create:" + capture.originals[0].originalFilename) }
         if let outcome = nextOutcome {
             nextOutcome = nil
-            if case .uncertain(let id?) = outcome { try? onPlaceholder(id) }
+            if case .uncertain(let id?, _) = outcome { try? onPlaceholder(id) }
             return outcome
         }
         let id = "asset-\(submittedPaths.count)"
