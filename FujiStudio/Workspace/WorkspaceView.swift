@@ -223,8 +223,14 @@ struct WorkspaceView<StatusControl: View>: View {
             } else {
                 let source = sources.first { $0.id == state.viewedSourceID }
                 if source != nil || onSaveCameraPhotos != nil {
-                    VersionMenu(source: source, saved: savedVersions, selected: showingCameraThumbnailOnly ? nil : state.displayedVersion,
+                    let versions = VersionMenu(source: source, saved: savedVersions,
+                        selected: showingCameraThumbnailOnly ? nil : state.displayedVersion,
                         onVersionSelected: { onAction(.versionSelected($0)) })
+                    if source != nil {
+                        versions
+                    } else {
+                        versions.hidden().allowsHitTesting(false).accessibilityHidden(true)
+                    }
                 }
             }
         }

@@ -75,12 +75,11 @@ import XCTest
         XCTAssertTrue(pair.waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertTrue(pair.label.contains("RAW + JPEG"))
         let versions = app.buttons["workspace.versions"]
-        XCTAssertTrue(versions.exists)
-        XCTAssertFalse(versions.isEnabled)
+        XCTAssertFalse(versions.exists)
         let saveFrame = app.buttons["cameraTray.save"].frame
         pair.tap()
-        XCTAssertTrue(versions.isEnabled)
         XCTAssertTrue(versions.waitForExistence(timeout: 5))
+        XCTAssertTrue(versions.isEnabled)
         XCTAssertEqual(versions.value as? String, "Original camera JPEG")
         versions.tap()
         XCTAssertTrue(app.buttons["version.raw"].exists)
