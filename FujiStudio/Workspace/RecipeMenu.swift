@@ -3,17 +3,23 @@ import SwiftUI
 import UIKit
 
 struct WorkspaceIconButton<Label: View>: View {
+    var prominent = false
     let action: () -> Void
     @ViewBuilder let label: () -> Label
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
-        Button(action: action) {
+        let button = Button(action: action) {
             label().font(.headline).frame(minWidth: 44, minHeight: 44).contentShape(Capsule())
         }
-        .buttonStyle(.glass)
-        .foregroundStyle(.primary)
+        Group {
+            if prominent {
+                button.buttonStyle(.glassProminent).tint(.blue)
+            } else {
+                button.buttonStyle(.glass).foregroundStyle(.primary)
+            }
+        }
         .background { if reduceTransparency { Capsule().fill(Color(uiColor: .secondarySystemBackground)) } }
         .overlay { if contrast == .increased { Capsule().stroke(.primary, lineWidth: 1).allowsHitTesting(false) } }
     }

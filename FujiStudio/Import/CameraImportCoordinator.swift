@@ -10,7 +10,15 @@ import FujiCameraCore
 actor CameraImportCoordinator {
     private struct Run {
         let id = UUID()
-        var job: ImportJob
+        var job: ImportJob {
+            didSet { download = ImportDownloadProgress(job) }
+        }
+        var download: ImportDownloadProgress
+
+        init(job: ImportJob) {
+            self.job = job
+            self.download = ImportDownloadProgress(job)
+        }
         var worker: Task<Void, Never>?
         var requestedPause: ImportPauseReason?
         var sessionID: UUID?
@@ -666,7 +674,7 @@ actor CameraImportCoordinator {
             }
         }
         sequence += 1
-        let event = ImportEvent(sequence: sequence, jobID: job.id, runID: active ? run?.id : runID, cameraID: job.camera.cameraID,
+        var event = ImportEvent(sequence: sequence, jobID: job.id, runID: active ? run?.id : runID, cameraID: job.camera.cameraID,
             jobContext: .init(cameraModel: job.camera.model, cameraDisplayName: job.camera.displayName,
                               startedAt: job.importDate, firstFilename: job.frozenSelections.first?.descriptors.first?.filename),
             captureID: current?.id, captureIndex: index, captureCount: job.captures.count,
@@ -677,6 +685,11 @@ actor CameraImportCoordinator {
             routeEvidence: active ? run?.routeEvidence : routeEvidence,
             retainedBytes: job.retainedBytes, recoveryRequired: pause == .journalUnavailable,
             photoSaveError: current?.photoSaveError)
+        if active, let run {
+            let previous = latest[job.id]
+            let lastFraction = previous?.runID == run.id ? previous?.downloadFraction ?? 0 : 0
+            event.downloadFraction = max(lastFraction, run.download.fraction(including: component, capture: current))
+        }
         latest[job.id] = event
         if event.runID != nil { latestRunEvents[job.id] = event }
         for continuation in listeners.values { continuation.yield(event) }
@@ -724,6 +737,30 @@ actor CameraImportCoordinator {
         case is ImportJournalError: return .journalUnavailable
         default: return .captureFailed
         }
+    }
+}
+
+/// Count durable originals once, even after Photos verification releases their staging files.
+struct ImportDownloadProgress {
+    private var expected = 0.0
+    private var available = 0.0
+
+    init(_ job: ImportJob) {
+        for capture in job.captures where capture.stage != .skipped {
+            let bytes = capture.selection.descriptors.reduce(0.0) { $0 + Double($1.byteLength) }
+            expected += bytes
+            available += capture.stage == .imported ? bytes : capture.originals.reduce(0.0) { $0 + Double($1.byteCount) }
+        }
+    }
+
+    func fraction(including component: ImportEvent.Component?, capture: ImportCaptureProgress?) -> Double {
+        guard expected > 0 else { return 0 }
+        var bytes = available
+        if let component, let capture, !capture.isFinished,
+           !capture.originals.contains(where: { $0.role == component.role }) {
+            bytes += Double(component.receivedBytes)
+        }
+        return min(1, bytes / expected)
     }
 }
 

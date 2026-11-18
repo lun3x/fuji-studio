@@ -59,6 +59,7 @@ struct ImportEvent: Equatable, Sendable {
     let retainedBytes: UInt64
     let recoveryRequired: Bool
     var photoSaveError: String?
+    var downloadFraction: Double = 0
 
     var canRetryFromStagedOriginals: Bool { stage == .readyToSave || stage?.mayHaveSubmitted == true }
 

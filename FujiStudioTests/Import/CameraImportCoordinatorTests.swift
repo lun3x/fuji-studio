@@ -6,6 +6,25 @@ import XCTest
 
 @MainActor
 final class CameraImportCoordinatorTests: XCTestCase {
+    func testBatchDownloadProgressIncludesEveryOriginalAndKeepsCreditAfterCleanup() throws {
+        let harness = try CameraImportHarness()
+        defer { harness.fixture.cleanUp() }
+        let pair = harness.selection(1)
+        let rawOnly = harness.selection(2, pair: false)
+        var job = try ImportJob(selections: [pair, rawOnly], importDate: .now)
+        let rawBytes = rawOnly.descriptors[0].byteLength
+        let pairBytes = pair.descriptors.reduce(0.0) { $0 + Double($1.byteLength) }
+        let total = pairBytes + Double(rawBytes)
+        let partial = ImportEvent.Component(role: .raf, receivedBytes: rawBytes / 2, expectedBytes: rawBytes)
+        XCTAssertEqual(ImportDownloadProgress(job).fraction(including: partial, capture: job.captures[0]),
+                       Double(partial.receivedBytes) / total, accuracy: 0.000001)
+        job.captures[0].stage = .imported
+        XCTAssertEqual(ImportDownloadProgress(job).fraction(including: partial, capture: job.captures[1]),
+                       (pairBytes + Double(partial.receivedBytes)) / total, accuracy: 0.000001)
+        job.captures[1].stage = .imported
+        XCTAssertEqual(ImportDownloadProgress(job).fraction(including: nil, capture: nil), 1)
+    }
+
     func testViewerAndSaveShareOriginalsAndFetchOnlyMissingComponents() async throws {
         for viewRAW in [false, true] {
             let harness = try CameraImportHarness()

@@ -19,6 +19,7 @@ struct WorkspaceView<StatusControl: View>: View {
     var previewLoading = false
     var onSaveCameraPhotos: (() -> Void)?
     var canSaveCameraPhotos = false
+    var cameraDownloadFraction: Double?
     var showingCameraThumbnailOnly = false
     var cameraGalleryMessage: String?
     var reservesCameraButtonSpace = false
@@ -165,12 +166,9 @@ struct WorkspaceView<StatusControl: View>: View {
                     DeviceAnchoredRow(orientation: orientation, spacing: 8) {
                         statusControl()
                         if let onSaveCameraPhotos {
-                            WorkspaceIconButton(action: onSaveCameraPhotos) {
-                                Image(systemName: "square.and.arrow.down")
+                            if cameraDownloadFraction != nil || !state.effectiveSourceIDs.isEmpty {
+                                cameraDownloadButton(action: onSaveCameraPhotos)
                             }
-                            .accessibilityLabel("Save to Phone")
-                            .disabled(!canSaveCameraPhotos)
-                            .accessibilityIdentifier("cameraTray.save")
                         } else { recipeControl }
                         photoActionControl
                     }
@@ -198,6 +196,27 @@ struct WorkspaceView<StatusControl: View>: View {
             ContentUnavailableView(cameraGalleryMessage ?? "Choose a photo", systemImage: "photo.on.rectangle")
         }
     }
+    private func cameraDownloadButton(action: @escaping () -> Void) -> some View {
+        let active = cameraDownloadFraction != nil
+        return WorkspaceIconButton(prominent: !active && canSaveCameraPhotos, action: action) {
+            Image(systemName: "square.and.arrow.down")
+                .frame(minWidth: 44, minHeight: 44)
+                .overlay(alignment: .bottom) {
+                    if let cameraDownloadFraction {
+                        ProgressView(value: cameraDownloadFraction)
+                            .progressViewStyle(.linear).tint(.blue)
+                            .frame(width: 28).padding(.bottom, 6)
+                            .accessibilityHidden(true).allowsHitTesting(false)
+                    }
+                }
+        }
+        .disabled(!active && !canSaveCameraPhotos)
+        .accessibilityLabel(active ? "Camera import progress" : "Save to Phone")
+        .accessibilityValue(cameraDownloadFraction?.formatted(.percent.precision(.fractionLength(0))) ?? "")
+        .accessibilityHint(active ? "Open Camera Imports" : "Download the selected camera photos")
+        .accessibilityIdentifier("cameraTray.save")
+    }
+
     private var recipeControl: some View {
         RecipeMenu(current: state.selectedRecipe, snapshots: state.recipes, phoneSnapshots: state.phoneRecipes,
             slots:state.recipeSlots,canImport:state.canImportRecipes,

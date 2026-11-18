@@ -109,6 +109,7 @@ struct AppWorkspaceView: View {
     private var cameraMode: Bool { model.wirelessState.wifi == .ready && !prefersPhonePhotos }
     @State private var handoffPresented = false
     @State private var cameraPhotoError: String?
+    @State private var pendingCameraSave: UUID?
     @State private var cameraPreview: DisplayFileLease?
     @State private var viewerFile: ViewerFile?
     @State private var viewedRequest: CameraBrowserModel.ViewerRequest?
@@ -154,7 +155,8 @@ struct AppWorkspaceView: View {
             imageStatusIsFailure: cameraMode ? viewerFailure != nil : model.imageStatusIsFailure,
             savedVersions: cameraMode ? [] : model.savedVersions, exportPending: model.isSubmitting, previewLoading: model.isLoadingPreview,
             onSaveCameraPhotos: save,
-            canSaveCameraPhotos: cameraMode && browser.canSaveWorkspaceSelection && !model.cameraImportActive && model.importJournalIssue == nil,
+            canSaveCameraPhotos: cameraMode && model.canRunCameraImportCommand && browser.canSaveWorkspaceSelection,
+            cameraDownloadFraction: cameraDownloadFraction,
             showingCameraThumbnailOnly: cameraMode && request?.original == nil,
             cameraGalleryMessage: galleryMessage, reservesCameraButtonSpace: showsCameraPhotos,
             onAction: action, onRefreshRecipes: { Task { await model.refreshRecipes() } },
@@ -341,13 +343,26 @@ struct AppWorkspaceView: View {
         }
     }
 
+    private var cameraDownloadFraction: Double? {
+        if let event = model.activeCameraImport { return event.downloadFraction }
+        return pendingCameraSave != nil || model.isPreparingImport ? 0 : nil
+    }
+
     private func saveCameraPhotos() {
+        if cameraDownloadFraction != nil {
+            statusPath = [.cameraImports(model.activeCameraImport?.jobID ?? pendingCameraSave)]
+            statusPresented = true
+            return
+        }
         let ids = state.effectiveSourceIDs
-        guard !ids.isEmpty else { return }
+        guard !ids.isEmpty, model.canRunCameraImportCommand, browser.canSaveWorkspaceSelection else { return }
         let jobID = UUID()
-        statusPath = [.cameraImports(jobID)]
-        statusPresented = true
-        Task { await model.saveCameraPhotos(ids, jobID: jobID) }
+        pendingCameraSave = jobID
+        Task {
+            await model.saveCameraPhotos(ids, jobID: jobID)
+            pendingCameraSave = nil
+            if !statusPresented { cameraPhotoError = model.importActionError }
+        }
     }
 
     private var statusButton: some View {
