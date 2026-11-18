@@ -30,7 +30,8 @@ actor CameraOriginalCache {
         return root.appending(path: identity)
     }
 
-    func lookup(_ object: WirelessObjectDescriptor, session: any WirelessTransferSession) async throws -> Entry? {
+    /// Local bytes and their manifest must agree before either a camera check or a receipt can reuse them.
+    func localEntry(for object: WirelessObjectDescriptor) throws -> Entry? {
         let directory = directory(for: object)
         let manifest = directory.appending(path: "original.json")
         guard let data = try? Data(contentsOf: manifest),
@@ -44,8 +45,14 @@ actor CameraOriginalCache {
             guard (try? store.checkIntegrity(original)) != nil else { return nil }
             checkedFiles[original.relativePath] = date
         }
+        return Entry(original: original, url: url)
+    }
+
+    func lookup(_ object: WirelessObjectDescriptor, session: any WirelessTransferSession) async throws -> Entry? {
+        guard let entry = try localEntry(for: object) else { return nil }
+        let (original, url) = (entry.original, entry.url)
         if original.descriptor == object, liveSession === session as AnyObject, livePaths.contains(original.relativePath) {
-            return Entry(original: original, url: url)
+            return entry
         }
 
         // Handles can be reassigned on reconnect, and another card can repeat a filename.
@@ -64,7 +71,7 @@ actor CameraOriginalCache {
         }
         let current = StagedOriginal(relativePath: original.relativePath, fingerprint: original.fingerprint,
             metadata: original.metadata, descriptor: object, verifiedTransferMode: original.verifiedTransferMode)
-        try JSONEncoder().encode(current).write(to: manifest, options: .atomic)
+        try JSONEncoder().encode(current).write(to: directory(for: object).appending(path: "original.json"), options: .atomic)
         return admit(Entry(original: current, url: url), session: session)
     }
 

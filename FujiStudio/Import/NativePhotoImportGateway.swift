@@ -57,6 +57,12 @@ struct NativePhotoImportGateway: PhotoImportGateway {
         }
     }
 
+    func isDefinitelyAbsent(assetID: String) async -> Bool {
+        guard Self.readableAccess() == .full else { return false }
+        let assets = PHAsset.fetchAssets(withLocalIdentifiers: [assetID], options: Self.fetchOptions())
+        return assets.count == 0 && Self.readableAccess() == .full
+    }
+
     func inspect(assetID: String) async throws -> ImportedAssetInspection {
         try Task.checkCancellation()
         guard let access = Self.readableAccess() else { return .unavailable }

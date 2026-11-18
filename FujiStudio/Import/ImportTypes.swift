@@ -101,7 +101,7 @@ struct ImportCameraSnapshot: Codable, Equatable, Sendable {
     let model: WirelessCameraModel
     let displayName: String?
     private let firmware: String?
-    private let mode: WirelessMode?
+    let mode: WirelessMode?
     private let peerKeyDigest: String?
 
     init(_ camera: WirelessIdentity, mode: WirelessMode?, displayName: String? = nil) {

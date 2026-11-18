@@ -14,6 +14,50 @@ struct ImportRecovery: Sendable {
     let staging: ImportStagingStore
     let gateway: any PhotoImportGateway
 
+    /// Restore an earlier Photos pair only when a member was confirmed in the selected camera session,
+    /// both local originals match the same receipt and Photos confirms the previous asset was deleted.
+    func stageDeletedPair(_ job: ImportJob, at index: Int, history: [ImportJob],
+                          cache: CameraOriginalCache) async throws -> ImportJob {
+        let capture = job.captures[index]
+        let objects = capture.selection.descriptors
+        guard capture.stage == .queued, capture.originals.isEmpty, capture.selection.policy == .pair,
+              objects.count == 2, objects.allSatisfy({ $0.captureDate != nil }) else { return job }
+        let receipts = history.flatMap(\.captures).compactMap { previous -> ImportReceipt? in
+            guard previous.id == capture.id, previous.stage == .imported,
+                  previous.selection.descriptors.count == objects.count,
+                  zip(previous.selection.descriptors, objects).allSatisfy({ $0.matchesOriginal($1) && $0.handle == $1.handle })
+            else { return nil }
+            return previous.receipt
+        }
+        guard let first = receipts.first, receipts.allSatisfy({ Set($0.fingerprints) == Set(first.fingerprints) })
+        else { return job }
+        for assetID in Set(receipts.map(\.assetID)) {
+            guard await gateway.isDefinitelyAbsent(assetID: assetID) else { return job }
+        }
+        var entries: [CameraOriginalCache.Entry] = []
+        for object in objects {
+            guard let entry = try? await cache.localEntry(for: object),
+                  entry.original.verifiedTransferMode == job.camera.mode else { return job }
+            entries.append(entry)
+        }
+        guard zip(entries, objects).contains(where: { $0.original.descriptor == $1 }),
+              Set(entries.map { $0.original.fingerprint }) == Set(first.fingerprints) else { return job }
+        try Task.checkCancellation()
+        var updated = job
+        do {
+            try staging.preflight(stagingByteLengths: [], photoCopyByteLengths: objects.map(\.byteLength))
+            for (entry, object) in zip(entries, objects) {
+                let original = try staging.link(entry.original, from: entry.url, for: object)
+                updated.captures[index].originals.append(original)
+            }
+        } catch {
+            for original in updated.captures[index].originals { try? staging.remove(original) }
+            return job
+        }
+        updated.captures[index].stage = .readyToSave
+        return try await journal.save(updated)
+    }
+
     func receiptStatus(for receipt: ImportReceipt) async -> ImportReceiptStatus {
         guard !Task.isCancelled, let result = try? await gateway.inspect(assetID: receipt.assetID),
               !Task.isCancelled else { return .inaccessible }

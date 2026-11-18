@@ -6,6 +6,45 @@ import XCTest
 
 @MainActor
 final class CameraImportCoordinatorTests: XCTestCase {
+    func testDeletedPairRestoresFromVerifiedCacheAfterViewingItsJPEG() async throws {
+        for recovering in [false, true] {
+            let harness = try CameraImportHarness()
+            defer { harness.fixture.cleanUp() }
+            let previous = harness.selection(1)
+            let first = try await harness.coordinator.start([previous], session: harness.session([previous]))
+            let saved = await importEvent(harness.coordinator, jobID: first) { !$0.isRunning && !$0.receipts.isEmpty }
+            let receipt = try XCTUnwrap(saved?.receipts.first)
+            await harness.photos.setInspection(.absent, for: receipt.assetID)
+
+            let selection = harness.selection(1, sessionID: UUID())
+            let session = harness.session([selection])
+            let cache = harness.coordinator.originalCache
+            var interrupted = try ImportJob(selections: [selection], importDate: .now, mode: .xApp)
+            interrupted.pauseReason = .connectionLost
+            // Matching filenames and an old receipt alone cannot restore a new selection.
+            let unchecked = try await harness.coordinator.recovery.stageDeletedPair(interrupted, at: 0,
+                history: harness.journal.loadJobs(), cache: cache)
+            XCTAssertEqual(unchecked.captures[0].stage, .queued)
+            _ = try await cache.viewerOriginal(selection.descriptors[1], session: session)
+
+            let id: UUID
+            if recovering {
+                id = interrupted.id
+                _ = try await harness.journal.save(interrupted)
+                await harness.coordinator.reconcile()
+                let job = try await harness.job(id)
+                XCTAssertEqual(job.captures[0].stage, .readyToSave)
+                try await harness.coordinator.retryCapture(jobID: id, usingLoanID: nil)
+            } else {
+                id = try await harness.coordinator.start([selection], session: session, matchedInBrowser: true)
+            }
+            let complete = await importEvent(harness.coordinator, jobID: id) { !$0.isRunning && !$0.receipts.isEmpty }
+            XCTAssertEqual(complete?.receipts.first?.fingerprints, receipt.fingerprints)
+            let downloads = await session.handles
+            XCTAssertTrue(downloads.isEmpty)
+        }
+    }
+
     func testBatchDownloadProgressIncludesEveryOriginalAndKeepsCreditAfterCleanup() throws {
         let harness = try CameraImportHarness()
         defer { harness.fixture.cleanUp() }

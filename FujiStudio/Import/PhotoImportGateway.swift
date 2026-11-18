@@ -7,11 +7,16 @@ protocol PhotoImportGateway: Sendable {
                 onPlaceholder: @escaping @Sendable (String) throws -> Void) async -> PhotoImportOutcome
     /// Preserve a located asset as `.foundUnreadable` if its originals cannot be read.
     func inspect(assetID: String) async throws -> ImportedAssetInspection
+    func isDefinitelyAbsent(assetID: String) async -> Bool
     func candidates(for capture: ValidatedCapture) async throws -> [String]
     func candidateSearch(for capture: ValidatedCapture) async throws -> ImportCandidateSearch
 }
 
 extension PhotoImportGateway {
+    func isDefinitelyAbsent(assetID: String) async -> Bool {
+        (try? await inspect(assetID: assetID)) == .absent
+    }
+
     func candidateSearch(for capture: ValidatedCapture) async throws -> ImportCandidateSearch {
         try await .narrow(candidates(for: capture))
     }

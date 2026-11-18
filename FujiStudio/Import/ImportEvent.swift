@@ -60,6 +60,7 @@ struct ImportEvent: Equatable, Sendable {
     let recoveryRequired: Bool
     var photoSaveError: String?
     var downloadFraction: Double = 0
+    var isCheckingCachedOriginals = false
 
     var canRetryFromStagedOriginals: Bool { stage == .readyToSave || stage?.mayHaveSubmitted == true }
 
@@ -74,6 +75,7 @@ struct ImportEvent: Equatable, Sendable {
         if isVerifyingPhotos { return "Verifying originals in Photos…" }
         guard let captureIndex else { return "Finishing import…" }
         let photo = "photo \(captureIndex + 1) of \(captureCount)"
+        if isCheckingCachedOriginals { return "Checking cached originals for \(photo)" }
         return switch stage {
         case .downloading: "Downloading \(photo)"
         case .validating: "Validating \(photo)"

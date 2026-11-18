@@ -25,6 +25,7 @@ actor CameraImportCoordinator {
         var invalidatedSession = false
         var isUsingCamera = false
         var isVerifyingPhotos = false
+        var isCheckingCachedOriginals = false
         var componentID: UUID?
         var componentBytes: UInt64 = 0
         var verifiedRoutes: [WirelessObjectDescriptor: ImportOriginalFingerprint] = [:]
@@ -310,6 +311,9 @@ actor CameraImportCoordinator {
                 } else if job.pauseReason == nil || job.pauseReason == .unresolvedSave {
                     job = try await setPause(.interrupted, on: job)
                 }
+                if job.pauseReason == .connectionLost, let index = job.nextCaptureIndex {
+                    job = try await recovery.stageDeletedPair(job, at: index, history: jobs, cache: originalCache)
+                }
                 publish(job, retryableSubmission: retryableSubmission)
             }
         } catch {
@@ -370,8 +374,22 @@ actor CameraImportCoordinator {
         var inventory: ImportInventory?
         var localFirst = retryLocalFirst
         do {
+            let history = routes == .browser ? try await journal.loadJobs() : []
             while let index = current.nextCaptureIndex {
                 try checkRunning()
+                if routes == .browser, current.captures[index].stage == .queued {
+                    run?.isCheckingCachedOriginals = true
+                    publish(current)
+                    defer { run?.isCheckingCachedOriginals = false }
+                    current = try await recovery.stageDeletedPair(current, at: index,
+                        history: history, cache: originalCache)
+                    run?.job = current
+                    if current.captures[index].stage == .readyToSave {
+                        localFirst = true
+                        publish(current)
+                    }
+                    try checkRunning()
+                }
                 let stage = current.captures[index].stage
                 guard !stage.mayHaveSubmitted else {
                     throw CameraImportError.unresolvedSave(retainedBytes: current.retainedBytes)
@@ -398,12 +416,12 @@ actor CameraImportCoordinator {
                     reason = .interrupted
                     break
                 }
-                localFirst = false
                 try checkRunning()
                 let entry = current.captures[index]
                 let validated = try OriginalImportValidator(staging: staging)
                     .validate(entry.selection, originals: entry.originals, importDate: current.importDate)
-                run?.recordRoutes(for: validated)
+                if !localFirst { run?.recordRoutes(for: validated) }
+                localFirst = false
                 if entry.stage != .readyToSave {
                     current.captures[index].stage = .readyToSave
                     current = try await save(current)
@@ -461,11 +479,14 @@ actor CameraImportCoordinator {
         let contains = job.captures[index].originals
         let remaining = objects.filter { object in !contains.contains(where: { $0.describes(object) }) }
         var cached: [WirelessObjectDescriptor: CameraOriginalCache.Entry] = [:]
-        for object in remaining {
-            try checkRunning()
-            cached[object] = try await withCameraWork { try await originalCache.lookup(object, session: session) }
-        }
         if !remaining.isEmpty {
+            run?.isCheckingCachedOriginals = true
+            publish(job)
+            defer { run?.isCheckingCachedOriginals = false }
+            for object in remaining {
+                try checkRunning()
+                cached[object] = try await withCameraWork { try await originalCache.lookup(object, session: session) }
+            }
             try staging.preflight(stagingByteLengths: remaining.filter { cached[$0] == nil }.map(\.byteLength),
                                   photoCopyByteLengths: objects.map(\.byteLength))
         }
@@ -686,6 +707,7 @@ actor CameraImportCoordinator {
             retainedBytes: job.retainedBytes, recoveryRequired: pause == .journalUnavailable,
             photoSaveError: current?.photoSaveError)
         if active, let run {
+            event.isCheckingCachedOriginals = run.isCheckingCachedOriginals
             let previous = latest[job.id]
             let lastFraction = previous?.runID == run.id ? previous?.downloadFraction ?? 0 : 0
             event.downloadFraction = max(lastFraction, run.download.fraction(including: component, capture: current))
