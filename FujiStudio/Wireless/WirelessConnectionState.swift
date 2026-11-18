@@ -70,6 +70,8 @@ struct WirelessConnectionState: Equatable, Sendable {
   var savedCameras: [SavedCamera] = []
   var selectedCameraID: WirelessCameraID?
   var hasLoadedSavedCameraPreference = false
+  var simulatorAutoSaveAvailable = false
+  var simulatorAutoSaveDestination: String?
   var discoveredCameras: [DiscoveredCamera] = []
   var bluetooth: WirelessBluetoothReadiness = .idle
   var wifi: WirelessWiFiPhase = .idle

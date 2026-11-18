@@ -78,17 +78,17 @@ struct CameraConnectionSection: View {
     }
 
     @ViewBuilder private var connectionActions: some View {
-        if let selected {
+        if selected != nil {
             Button("Connect over WiFi") {
                 connection.start(from: .status) { await model.connectCameraWiFi() }
             }
                 .buttonStyle(.borderedProminent)
                 .disabled(!canOpenTransfer)
                 .accessibilityIdentifier("wireless.connect")
-            if selected.model == .xe3 {
-                Button("Set up RAW transfer", action: onSetUpAutoSave)
-                    .disabled(!canOpenTransfer).accessibilityIdentifier("wireless.autoSave")
-            }
+        }
+        if selected?.model == .xe3 || state.simulatorAutoSaveAvailable {
+            Button("Set up RAW transfer", action: onSetUpAutoSave)
+                .disabled(!canOpenTransfer).accessibilityIdentifier("wireless.autoSave")
         }
         if state.bluetooth == .unavailable || state.bluetooth == .waitingForCamera {
             if selected != nil {

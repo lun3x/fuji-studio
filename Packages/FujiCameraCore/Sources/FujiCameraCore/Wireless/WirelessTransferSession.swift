@@ -53,6 +53,8 @@ actor CameraHostedTransferSession: WirelessOriginalSampling, WirelessSessionMoni
   private let clientName: String
   private let replayCapturedGalleryTiming: Bool
   private let verifiedCameraNetwork: Bool
+  let capturedAutoSaveName: String?
+  var usesCapturedAutoSave: Bool { capturedAutoSaveName != nil }
   private let sessionID = UUID()
   #if DEBUG
   var galleryObjects: [UInt32: [UInt32: WirelessObjectDescriptor]]?
@@ -82,11 +84,13 @@ actor CameraHostedTransferSession: WirelessOriginalSampling, WirelessSessionMoni
   private var xAppOriginalControlConflict = false
   var legacyObjectCount: UInt32?
   var legacyAccurateLengthsEnabled = false
+  var autoSaveReadsPrepared = false
+  var autoSaveDownloadedHandles: Set<UInt32> = []
 
   init(
     transport: WirelessPTPTransport, expectedIdentity: WirelessIdentity, mode: WirelessMode,
     clientGUID: Data, clientName: String? = nil, replayCapturedGalleryTiming: Bool = false,
-    verifiedCameraNetwork: Bool = false
+    verifiedCameraNetwork: Bool = false, capturedAutoSaveName: String? = nil
   ) {
     self.transport = transport
     self.expectedIdentity = expectedIdentity
@@ -95,13 +99,14 @@ actor CameraHostedTransferSession: WirelessOriginalSampling, WirelessSessionMoni
     self.clientName = clientName ?? "Fuji Studio"
     self.replayCapturedGalleryTiming = replayCapturedGalleryTiming
     self.verifiedCameraNetwork = verifiedCameraNetwork
+    self.capturedAutoSaveName = capturedAutoSaveName
   }
 
   func open() async throws -> WirelessIdentity {
     guard (mode == .xApp && expectedIdentity.model == .xt5)
       || (mode != .xApp && expectedIdentity.model == .xe3)
     else { throw WirelessFailure.unsupportedProtocol }
-    if mode == .autoSave, expectedIdentity.protocolPeerKey?.bytes.count != 32 {
+    if mode == .autoSave, !usesCapturedAutoSave, expectedIdentity.protocolPeerKey?.bytes.count != 32 {
       throw WirelessFailure.autoSaveIdentityUnavailable
     }
     if let peer, closing == nil { return peer }
@@ -116,6 +121,12 @@ actor CameraHostedTransferSession: WirelessOriginalSampling, WirelessSessionMoni
       return observed
     }
     try await startSession()
+    if usesCapturedAutoSave {
+      // The captured simulator path validates the registered destination and
+      // the initialization model. It has no independently verified firmware.
+      peer = expectedIdentity
+      return expectedIdentity
+    }
     let data = try await execute(0x1001).data
     let (device, observed) = try validateDeviceInfo(data)
     declaresJPEGOnly = mode == .phone && !device.imageFormats.isEmpty
@@ -129,7 +140,8 @@ actor CameraHostedTransferSession: WirelessOriginalSampling, WirelessSessionMoni
       clientName: clientName, clientGUID: clientGUID)
     do {
       let reply = try await transport.initialize(request)
-      if verifiedCameraNetwork, try FujiWirelessFrameDecoder.initializationName(reply) != expectedIdentity.model.rawValue {
+      if verifiedCameraNetwork || usesCapturedAutoSave,
+         try FujiWirelessFrameDecoder.initializationName(reply) != expectedIdentity.model.rawValue {
         throw WirelessFailure.peerMismatch
       }
     } catch PTPError.authorizationDenied {
@@ -233,11 +245,12 @@ actor CameraHostedTransferSession: WirelessOriginalSampling, WirelessSessionMoni
     switch mode {
     case .xApp: evidenceID = verifiedCameraNetwork ? "xt5-camera-network" : "libfuji-xapp-reference"
     case .phone: evidenceID = "libfuji-phone-reference"
-    case .autoSave: evidenceID = "libfuji-autosave-reference"
+    case .autoSave: evidenceID = usesCapturedAutoSave ? "xe3-pc-autosave-capture" : "libfuji-autosave-reference"
     }
     return WirelessCapabilities(
       mode: mode, rawExposure: rawExposure, storageIDs: storageIDs ?? [],
-      originalSizeVerified: xAppOriginalControlObserved == true, evidenceID: evidenceID,
+      originalSizeVerified: xAppOriginalControlObserved == true
+        || (usesCapturedAutoSave && legacyAccurateLengthsEnabled), evidenceID: evidenceID,
       originalSizeObservationsConflict: xAppOriginalControlConflict)
   }
 
@@ -321,6 +334,7 @@ actor CameraHostedTransferSession: WirelessOriginalSampling, WirelessSessionMoni
         var metadata: [WirelessObjectDescriptor] = []
         for handle in scan.handles[scan.index..<end] {
           metadata.append(try await objectInfo(handle: handle, storage: scan.id))
+          if usesCapturedAutoSave && handle == 1 { try await readEvents() }
         }
         return metadata
       }
@@ -345,6 +359,11 @@ actor CameraHostedTransferSession: WirelessOriginalSampling, WirelessSessionMoni
     guard object.hasThumbnail else { return Data() }
     try await begin()
     defer { busy = false }
+    if usesCapturedAutoSave {
+      try await prepareCapturedAutoSaveReads()
+      try await verifyObject(object)
+      return try await capturedAutoSaveThumbnail(object)
+    }
     try await selectStorage(for: object.storageID)
     if verifiedCameraNetwork { try await prepareOriginals(for: object.storageID) }
     return try await withAccurateLegacyLengths {
@@ -381,12 +400,18 @@ actor CameraHostedTransferSession: WirelessOriginalSampling, WirelessSessionMoni
     _ object: WirelessObjectDescriptor, to sink: @escaping @Sendable (Data) async throws -> Void
   ) async throws {
     try checkMember(object)
-    // Legacy D227 verifies size reporting. The representation still needs target evidence.
-    guard mode == .xApp else { throw WirelessFailure.originalSizeUnavailable }
+    guard mode == .xApp || usesCapturedAutoSave else { throw WirelessFailure.originalSizeUnavailable }
     let length = try originalLength(object)
     guard !xAppOriginalControlConflict else { throw WirelessFailure.inconsistentOriginalSizeObservations }
     try await begin()
     defer { busy = false }
+    if usesCapturedAutoSave {
+      try await prepareCapturedAutoSaveReads()
+      try await streamMatchingObject(object, length: length, to: sink)
+      autoSaveDownloadedHandles.insert(object.handle)
+      try await setAutoSaveProgress()
+      return
+    }
     try await selectStorage(for: object.storageID)
     try await prepareOriginals(for: object.storageID)
     if let failure = try capabilities().originalSizeFailure { throw failure }
@@ -446,7 +471,8 @@ actor CameraHostedTransferSession: WirelessOriginalSampling, WirelessSessionMoni
         offset += try await transport.receivePartialObject(command, maximumBytes: count, sink: sink)
       } else {
         let reply = try await transport.receive(command, expectedBytes: UInt64(count), sink: sink)
-        guard reply.parameters.isEmpty || reply.parameters == [count] else { throw WirelessFailure.malformedData }
+        guard reply.parameters == [count] || (!usesCapturedAutoSave && reply.parameters.isEmpty)
+        else { throw WirelessFailure.malformedData }
         offset += count
       }
     }
@@ -470,9 +496,16 @@ actor CameraHostedTransferSession: WirelessOriginalSampling, WirelessSessionMoni
         restoration = .failure(error)
       }
       if shouldCloseSession {
-        if legacyAccurateLengthsEnabled { try? await resetLegacyLengthReporting(whileClosing: true) }
-        // Even a PTP refusal must be followed by confirmed native socket teardown.
-        _ = try? await execute(0x1003, whileClosing: true)
+        if usesCapturedAutoSave {
+          if legacyAccurateLengthsEnabled,
+             let command = try? commandFor(0x1016, [0xd227], whileClosing: true) {
+            try? await transport.sendBeforeClosing(command, data: Data([0, 0]))
+          }
+        } else {
+          if legacyAccurateLengthsEnabled { try? await resetLegacyLengthReporting(whileClosing: true) }
+          // Even a PTP refusal must be followed by confirmed native socket teardown.
+          _ = try? await execute(0x1003, whileClosing: true)
+        }
       }
       await transport.close()
       transportClosed = true
@@ -527,6 +560,7 @@ actor CameraHostedTransferSession: WirelessOriginalSampling, WirelessSessionMoni
   private func requireAdmission() throws {
     try checkOpenOperation()
     guard let peer else { throw WirelessFailure.connectionLost }
+    if usesCapturedAutoSave { return }
     let policy = WirelessSupportPolicy()
     guard policy.assess(model: peer.model.rawValue, firmware: peer.firmware) == .supported(peer.model),
       expectedIdentity.firmware == nil
@@ -623,7 +657,9 @@ actor CameraHostedTransferSession: WirelessOriginalSampling, WirelessSessionMoni
         dimensions: width > 0 && height > 0 ? .init(width: Int(width), height: Int(height)) : nil,
         orientation: orientation.flatMap { (1...8).contains($0) ? $0 : nil },
         reportedStorageID: reportedStorage == 0 ? nil : reportedStorage,
-        hasThumbnail: mode != .autoSave && thumbnailBytes > 0)
+        hasThumbnail: usesCapturedAutoSave
+          ? format == .raf && length > AutoSaveTransferAdapter.thumbnailPrefixBytes
+          : mode != .autoSave && thumbnailBytes > 0)
     } catch {
       transport.observeIdentity(.init(.galleryObjectInfoValidation, .failed, failure: .malformedData))
       throw WirelessFailure.malformedData

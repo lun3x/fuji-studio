@@ -19,7 +19,9 @@ struct AutoSaveSetupView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 Text("PC Auto Save").font(.headline).accessibilityAddTraits(.isHeader)
-                Text("Connect your iPhone and X-E3 to the same WiFi network. PC Auto Save uses that shared network.")
+                Text(state.simulatorAutoSaveAvailable
+                    ? "Connect your Mac and X-E3 to the same WiFi network."
+                    : "Connect your iPhone and X-E3 to the same WiFi network. PC Auto Save uses that shared network.")
                     .accessibilityIdentifier("wireless.autoSave.network")
                 switch availability {
                 case nil:
@@ -54,13 +56,17 @@ struct AutoSaveSetupView: View {
 
     @ViewBuilder private var registration: some View {
         if registered {
-            Text("PC Auto Save destination verified").font(.headline)
+            Text(state.simulatorAutoSaveAvailable
+                ? "PC Auto Save destination registered" : "PC Auto Save destination verified").font(.headline)
                 .accessibilityIdentifier("wireless.autoSave.registered")
+            if let destination = state.simulatorAutoSaveDestination {
+                Text(destination).accessibilityIdentifier("wireless.autoSave.destination")
+            }
         } else {
-            Text("On the X-E3, open CONNECTION SETTING → PC AUTO SAVE SETTINGS → PC AUTO SAVE SETTING. Tap Register destination here, then choose MANUAL SETUP on the camera. Choose the shared WiFi network and select Fuji Studio when it appears.")
+            Text(setupInstructions)
                 .accessibilityIdentifier("wireless.autoSave.setupInstructions")
         }
-        if registered || state.wifiFailure != .autoSaveRegistrationRequired {
+        if registered || allowsUnregisteredWait {
             Text(registered
                 ? "Tap Wait for camera, then open the X-E3 playback menu, choose PC AUTO SAVE and start the transfer to Fuji Studio."
                 : "Already set up? Tap Wait for camera, then start PC AUTO SAVE from the X-E3 playback menu.")
@@ -95,6 +101,14 @@ struct AutoSaveSetupView: View {
         !connection.isWorking && !model.state.wirelessRestrictsUSB && !model.cameraImportActive && !model.isSuspended
     }
 
+    private var setupInstructions: String {
+        let start = "On the X-E3, open CONNECTION SETTING → PC AUTO SAVE SETTINGS → PC AUTO SAVE SETTING. Tap Register destination here, then choose MANUAL SETUP on the camera."
+        if state.simulatorAutoSaveAvailable {
+            return start + " Choose the shared WiFi network and select the new PC destination when it appears."
+        }
+        return start + " Choose the shared WiFi network and select Fuji Studio when it appears."
+    }
+
     @ViewBuilder private var transferActions: some View {
         if !registered || state.wifiFailure == .autoSaveRegistrationRequired {
             Button("Register destination") {
@@ -104,13 +118,17 @@ struct AutoSaveSetupView: View {
                 .disabled(!canStart)
                 .accessibilityIdentifier("wireless.autoSave.register")
         }
-        if state.wifiFailure != .autoSaveRegistrationRequired {
+        if state.wifiFailure != .autoSaveRegistrationRequired && (registered || allowsUnregisteredWait) {
             if registered {
                 waitForCamera.buttonStyle(.borderedProminent)
             } else {
                 waitForCamera.buttonStyle(.bordered)
             }
         }
+    }
+
+    private var allowsUnregisteredWait: Bool {
+        !state.simulatorAutoSaveAvailable && state.wifiFailure != .autoSaveRegistrationRequired
     }
 
     private var waitForCamera: some View {

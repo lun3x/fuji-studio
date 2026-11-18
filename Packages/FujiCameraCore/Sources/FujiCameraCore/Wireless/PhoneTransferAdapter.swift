@@ -79,7 +79,7 @@ extension CameraHostedTransferSession {
   func withAccurateLegacyLengths<Value: Sendable>(
     _ operation: () async throws -> Value
   ) async throws -> Value {
-    guard mode != .xApp else { return try await operation() }
+    guard mode != .xApp, !usesCapturedAutoSave else { return try await operation() }
     try await readEvents()
     let value: Value
     do {

@@ -166,7 +166,12 @@ final class KeychainCameraStore: CameraPairingStore, CameraNetworkCredentialProv
   }
 
   func saveAutoSaveRegistration(_ registration: AutoSaveRegistration, for camera: SavedCamera) async throws {
-    guard registration.cameraID == camera.id, camera.model == .xe3, registration.peerKey.bytes.count == 32,
+    #if targetEnvironment(simulator)
+    let validKey = registration.peerKey == nil || registration.peerKey?.bytes.count == 32
+    #else
+    let validKey = registration.peerKey?.bytes.count == 32
+    #endif
+    guard registration.cameraID == camera.id, camera.model == .xe3, validKey,
       storedSelection == camera.id, var record = try record(for: camera.id),
       record.camera.model == .xe3, record.camera.peripheralID == camera.peripheralID,
       record.camera.peerKeyReference == camera.peerKeyReference

@@ -101,7 +101,12 @@ actor NetworkByteChannel: WirelessByteChannel {
   }
 
   private static func nativeDriver(for endpoint: Endpoint) -> any Driver {
-    let connection = NWConnection(to: endpoint.nativeEndpoint, using: connectionParameters())
+    #if targetEnvironment(simulator)
+    let parameters = connectionParameters(requireWiFi: endpoint.mode != .autoSave)
+    #else
+    let parameters = connectionParameters()
+    #endif
+    let connection = NWConnection(to: endpoint.nativeEndpoint, using: parameters)
     return NativeNetworkConnection(connection, reportRefusal: endpoint.mode == .autoSave)
   }
 
@@ -141,9 +146,9 @@ actor NetworkByteChannel: WirelessByteChannel {
     }
   }
 
-  static func connectionParameters() -> NWParameters {
+  static func connectionParameters(requireWiFi: Bool = true) -> NWParameters {
     let parameters = NWParameters.tcp
-    parameters.requiredInterfaceType = .wifi
+    if requireWiFi { parameters.requiredInterfaceType = .wifi }
     parameters.prohibitedInterfaceTypes = [.cellular]
     return parameters
   }

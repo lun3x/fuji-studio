@@ -173,6 +173,28 @@ final class AutoSaveGatewayTests: XCTestCase {
     XCTAssertEqual(closeCount, 1)
   }
 
+  #if targetEnvironment(simulator)
+  func testSimulatorRegistrationNeedsOnlyTheCameraConfirmedDestination() async throws {
+    let store = try await cameraStore()
+    let phases = PhaseLog()
+    let gateway = NativeAutoSaveGateway(
+      store: store, entitlementAvailable: false, verifiedIdentity: { _ in nil },
+      exchange: { phase, importer, _, _ in
+        XCTAssertEqual(importer.count, 16)
+        XCTAssertTrue(importer.hasPrefix("PC") && importer.dropFirst(2).allSatisfy(\.isASCII)
+          && importer.dropFirst(2).allSatisfy(\.isNumber))
+        await phases.append(phase)
+        return .init(address: "192.168.1.32", cameraName: "FUJIFILM-X-E3-TEST")
+      }, makeSession: { _, _, _ in throw WirelessFailure.connectionLost }, simulatorAutoSave: true)
+    let receipt = try await gateway.register(camera: camera)
+    let loaded = try await gateway.savedRegistration(for: camera.id)
+    let recorded = await phases.values
+    XCTAssertEqual(recorded, [.registration])
+    XCTAssertNil(receipt.peerKey)
+    XCTAssertEqual(loaded, receipt)
+  }
+  #endif
+
   func testWaitRejectsSupersededAndForgottenRegistration() async throws {
     let store = try await cameraStore()
     let former = registration()

@@ -128,6 +128,11 @@ import UIKit
         defaults.set(clientID.uuidString, forKey: clientKey)
         let guid = withUnsafeBytes(of: clientID.uuid) { Data($0) }
         let store = KeychainCameraStore(defaults: defaults)
+        #if targetEnvironment(simulator)
+        let simulatorAutoSave = true
+        #else
+        let simulatorAutoSave = false
+        #endif
         let connection = WirelessConnectionCoordinator(
             bluetooth: NativeBluetoothGateway(
                 store: store, driver: CoreBluetoothDriver(discoverAllServices: true), usesXT5PhotoTransfer: true),
@@ -154,7 +159,8 @@ import UIKit
                     return PhoneTransferAdapter.makeSession(transport: transport, expectedIdentity: identity, clientGUID: guid)
                 }
             },
-            autoSave: NativeAutoSaveGateway(store: store, clientGUID: guid))
+            autoSave: NativeAutoSaveGateway(store: store, clientGUID: guid, simulatorAutoSave: simulatorAutoSave),
+            simulatorAutoSave: simulatorAutoSave)
         return Self(connection: connection, journal: journal, staging: staging,
                     photoGateway: NativePhotoImportGateway(staging: staging),
                     requestPhotosAccess: NativePhotoImportGateway.requestReadWriteAccess)

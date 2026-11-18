@@ -73,7 +73,7 @@ public enum AutoSaveCodec {
       return Invitation(cameraName: name, cameraModel: model)
     case .transfer:
       // The command connection uses the pinned command port. This claim cannot reroute it.
-      guard let port = headers["dscport"].flatMap(UInt16.init), port != 0 else {
+      guard headers["dscport"] == "\\" || headers["dscport"].flatMap(UInt16.init).map({ $0 != 0 }) == true else {
         throw WirelessFailure.malformedData
       }
       return Invitation(cameraName: name, cameraModel: nil)

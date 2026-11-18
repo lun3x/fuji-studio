@@ -402,6 +402,20 @@ import XCTest
         XCTAssertFalse(app.buttons["wireless.browse"].exists)
     }
 
+    #if targetEnvironment(simulator)
+    func testSimulatorOffersXE3RegistrationBeforeBluetoothPairing() {
+        let app = XCUIApplication()
+        app.launch()
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let allowPhotos = springboard.buttons["Allow Full Access"]
+        if allowPhotos.waitForExistence(timeout: 3) { allowPhotos.tap() }
+        openAutoSave(in: app)
+        XCTAssertTrue(app.staticTexts["wireless.autoSave.network"].label.contains("your Mac"))
+        XCTAssertTrue(app.buttons["wireless.autoSave.register"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["wireless.autoSave.wait"].exists)
+    }
+    #endif
+
     func testXE3GuidesSameNetworkRegistrationAndCameraStartedTransfer() {
         let app = XCUIApplication()
         app.launchArguments = ["--ui-fixtures", "--fixture-wireless-auto-save"]

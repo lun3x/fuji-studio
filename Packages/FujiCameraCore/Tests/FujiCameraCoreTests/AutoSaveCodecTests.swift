@@ -88,6 +88,12 @@ final class AutoSaveCodecTests: XCTestCase {
     XCTAssertEqual(
       try AutoSaveCodec.invitation(bytes(transfer), phase: .transfer, localAddress: "192.168.1.2")?.cameraName,
       "FUJIFILM-X-H1-CA2A")
+    let capturedXE3 = bytes([
+      "IMPORT /guest HTTP/1.1", "HOST:192.168.1.2:51541",
+      "DSCNAME:FUJIFILM-X-E3-TEST", "DSCPORT:\\",
+    ])
+    XCTAssertEqual(try AutoSaveCodec.invitation(
+      capturedXE3, phase: .transfer, localAddress: "192.168.1.2")?.cameraName, "FUJIFILM-X-E3-TEST")
     for replacement in [
       ("HOST:192.168.1.2:51541", "HOST:192.168.1.2:51542"),
       ("HOST:192.168.1.2:51541", "HOST:192.168.1.3:51541"),

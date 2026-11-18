@@ -4,8 +4,8 @@ import FujiCameraCore
 import Network
 import os
 
-/// Apple recommends BSD sockets for UDP broadcast. Every socket is IPv4 and
-/// bound to the current Wi-Fi interface. The worker owns and closes all fds.
+/// Apple recommends BSD sockets for UDP broadcast. The worker owns the IPv4
+/// sockets and binds them to the selected LAN interface.
 enum NativeAutoSaveNetwork {
   struct Datagram {
     let data: Data
@@ -44,7 +44,11 @@ enum NativeAutoSaveNetwork {
   }
 
   private static func wifiInterface() async throws -> NWInterface {
+    #if targetEnvironment(simulator)
+    let monitor = NWPathMonitor()
+    #else
     let monitor = NWPathMonitor(requiredInterfaceType: .wifi)
+    #endif
     let (paths, handle) = AsyncStream<NWPath>.makeStream(bufferingPolicy: .bufferingNewest(1))
     monitor.pathUpdateHandler = { handle.yield($0) }
     monitor.start(queue: pathQueue)
@@ -58,10 +62,12 @@ enum NativeAutoSaveNetwork {
     if path?.status == .unsatisfied, path?.unsatisfiedReason == .localNetworkDenied {
       throw WirelessFailure.permissionDenied(.localNetwork)
     }
-    guard let path, path.status == .satisfied, path.usesInterfaceType(.wifi),
-      let wifi = path.availableInterfaces.first(where: { $0.type == .wifi })
-    else { throw WirelessFailure.routeUnavailable }
-    return wifi
+    guard let path, path.status == .satisfied else { throw WirelessFailure.routeUnavailable }
+    if let wifi = path.availableInterfaces.first(where: { $0.type == .wifi }) { return wifi }
+    #if targetEnvironment(simulator)
+    if let ethernet = path.availableInterfaces.first(where: { $0.type == .wiredEthernet }) { return ethernet }
+    #endif
+    throw WirelessFailure.routeUnavailable
   }
 
   static func socketFailure(_ code: Int32, discoveredPeer: Bool) -> WirelessFailure {
@@ -180,7 +186,7 @@ enum NativeAutoSaveNetwork {
         }
         guard error == 0 else { throw socketFailure(error, discoveredPeer: true) }
       }
-      try sendAll(AutoSaveCodec.notify(address: address, importer: importer), to: fd, until: limit)
+      try sendAll(AutoSaveCodec.notify(address: address, importer: importer) + Data("\r\n".utf8), to: fd, until: limit)
       _ = try readMessage(fd, until: limit) { try AutoSaveCodec.notifyAcknowledged($0) ? true : nil }
     }
 
@@ -215,7 +221,7 @@ enum NativeAutoSaveNetwork {
         guard phase != .registration || invitation.cameraModel == WirelessCameraModel.xe3.rawValue,
           expectedName == nil || invitation.cameraName == expectedName
         else { return nil }
-        try sendAll(AutoSaveCodec.response(to: phase), to: fd, until: messageLimit)
+        try sendAll(AutoSaveCodec.response(to: phase) + Data("\r\n".utf8), to: fd, until: messageLimit)
         return invitation
       }
     }

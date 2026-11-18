@@ -43,6 +43,67 @@ public struct RAFMetadataReader: Sendable {
     catch is IncompleteMetadata { return nil }
   }
 
+  /// Extracts the Exif IFD1 JPEG when its entire range is in the received RAF prefix.
+  func embeddedThumbnail(in prefix: Data, fileByteCount: Int) -> Data? {
+    let bytes = Data(prefix)
+    guard bytes.count >= 112, bytes.starts(with: "FUJIFILMCCD-RAW ".utf8),
+      let section = try? section(bytes, offsetField: 84, lengthField: 88, fileByteCount: fileByteCount),
+      section.lowerBound + 2 <= bytes.count,
+      integer(bytes, section.lowerBound, 2) == 0xffd8
+    else { return nil }
+    let end = min(section.upperBound, bytes.count)
+    var marker = section.lowerBound + 2
+    while marker + 4 <= end {
+      guard bytes[marker] == 0xff, bytes[marker + 1] != 0xda else { return nil }
+      let length = integer(bytes, marker + 2, 2)
+      guard length >= 2 else { return nil }
+      let next = marker + 2 + length
+      let available = min(next, end)
+      if bytes[marker + 1] == 0xe1, marker + 10 <= available,
+         bytes[(marker + 4)..<(marker + 10)].elementsEqual([69, 120, 105, 102, 0, 0]) {
+        return exifThumbnail(bytes.subdata(in: (marker + 10)..<available))
+      }
+      marker = next
+    }
+    return nil
+  }
+
+  private func exifThumbnail(_ bytes: Data) -> Data? {
+    guard bytes.count >= 8 else { return nil }
+    let little: Bool
+    switch (bytes[0], bytes[1]) {
+    case (0x49, 0x49): little = true
+    case (0x4d, 0x4d): little = false
+    default: return nil
+    }
+    func number(_ offset: Int, _ count: Int) -> Int? {
+      guard offset >= 0, offset <= bytes.count - count else { return nil }
+      let order = little ? Array((0..<count).reversed()) : Array(0..<count)
+      return order.reduce(0) { ($0 << 8) | Int(bytes[offset + $1]) }
+    }
+    guard number(2, 2) == 42, let ifd0 = number(4, 4),
+      let entries0 = number(ifd0, 2), let ifd1 = number(ifd0 + 2 + 12 * entries0, 4),
+      ifd1 > 0, let entries = number(ifd1, 2), ifd1 + 2 + 12 * entries <= bytes.count
+    else { return nil }
+    var offset: Int?
+    var length: Int?
+    for index in 0..<entries {
+      let entry = ifd1 + 2 + 12 * index
+      guard number(entry + 2, 2) == 4, number(entry + 4, 4) == 1 else { continue }
+      switch number(entry, 2) {
+      case 0x0201: offset = number(entry + 8, 4)
+      case 0x0202: length = number(entry + 8, 4)
+      default: break
+      }
+    }
+    guard let offset, let length, offset > 0, length >= 4,
+      offset <= bytes.count, length <= bytes.count - offset,
+      integer(bytes, offset, 2) == 0xffd8,
+      integer(bytes, offset + length - 2, 2) == 0xffd9
+    else { return nil }
+    return bytes.subdata(in: offset..<(offset + length))
+  }
+
   /// Reads only bounded RAF header blocks, including the embedded JPEG metadata, using seeks.
   /// A corrupt framing offset cannot make this read the full RAW pixel payload.
   public func metadata(inFileAt url: URL) throws -> (metadata: RAWMetadata, embeddedJPEGProperties: [String: Any]) {

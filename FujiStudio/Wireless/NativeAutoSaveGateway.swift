@@ -15,6 +15,7 @@ actor NativeAutoSaveGateway: AutoSaveGateway {
 
   private let store: any AutoSaveRegistrationStore
   private let entitlementAvailable: Bool
+  private let simulatorAutoSave: Bool
   private let verifiedIdentity: @Sendable (SavedCamera) async throws -> WirelessProtocolPeerKey?
   private let exchange: AutoSaveExchange
   private let makeSession: AutoSaveSessionFactory
@@ -32,7 +33,7 @@ actor NativeAutoSaveGateway: AutoSaveGateway {
   #endif
 
   /// The production route remains gated until the physical signing and evidence steps pass.
-  init(store: any AutoSaveRegistrationStore, clientGUID: Data) {
+  init(store: any AutoSaveRegistrationStore, clientGUID: Data, simulatorAutoSave: Bool = false) {
     self.init(
       store: store, entitlementAvailable: false, verifiedIdentity: { _ in nil },
       exchange: NativeAutoSaveNetwork.exchange,
@@ -41,17 +42,23 @@ actor NativeAutoSaveGateway: AutoSaveGateway {
         let channel = try await NetworkByteChannel.connectAutoSave(to: peer, deadline: deadline)
         return AutoSaveTransferAdapter.makeSession(
           transport: .init(channel: channel), expectedIdentity: identity, clientGUID: clientGUID)
-      })
+      }, simulatorAutoSave: simulatorAutoSave)
   }
 
   init(
     store: any AutoSaveRegistrationStore, entitlementAvailable: Bool,
     verifiedIdentity: @escaping @Sendable (SavedCamera) async throws -> WirelessProtocolPeerKey?,
     exchange: @escaping AutoSaveExchange, makeSession: @escaping AutoSaveSessionFactory,
-    sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+    sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
+    simulatorAutoSave: Bool = false
   ) {
     self.store = store
     self.entitlementAvailable = entitlementAvailable
+    #if targetEnvironment(simulator)
+    self.simulatorAutoSave = simulatorAutoSave
+    #else
+    self.simulatorAutoSave = false
+    #endif
     self.verifiedIdentity = verifiedIdentity
     self.exchange = exchange
     self.makeSession = makeSession
@@ -65,17 +72,21 @@ actor NativeAutoSaveGateway: AutoSaveGateway {
     guard camera.model == .xe3 else { throw WirelessFailure.unsupportedProtocol }
     let result = try await run(stage: .autoSaveRegistration, limit: WirelessLimits.autoSaveRegistration) {
       deadline in
-      guard let key = try await self.verifiedIdentity(camera), key.bytes.count == 32 else {
+      let key = try await self.verifiedIdentity(camera)
+      guard self.simulatorAutoSave || key?.bytes.count == 32 else {
         throw WirelessFailure.autoSaveIdentityUnavailable
       }
       try Task.checkCancellation()
       // A fresh destination token prevents a stale transfer from satisfying a new setup.
-      let importer = "FujiStudio-\(UUID().uuidString.lowercased())"
+      let importer = self.simulatorAutoSave
+        ? "PC\(UInt64.random(in: 10_000_000_000_000...99_999_999_999_999))"
+        : "FujiStudio-\(UUID().uuidString.lowercased())"
       let registration = try await self.exchange(.registration, importer, nil, deadline)
       try Task.checkCancellation()
       try await onRegistered()
       let receipt = AutoSaveRegistration(
         cameraID: camera.id, peerKey: key, importer: importer, cameraName: registration.cameraName)
+      if self.simulatorAutoSave { return .registered(receipt, camera) }
       let session = try await self.openSession(registration: receipt, deadline: deadline)
       try await self.closePendingSession(session)
       return .registered(receipt, camera)
@@ -115,7 +126,7 @@ actor NativeAutoSaveGateway: AutoSaveGateway {
 
   func checkAvailability() throws {
     try Task.checkCancellation()
-    guard entitlementAvailable else { throw WirelessFailure.autoSaveEntitlementUnavailable }
+    guard entitlementAvailable || simulatorAutoSave else { throw WirelessFailure.autoSaveEntitlementUnavailable }
   }
 
   private func openSession(
@@ -127,7 +138,15 @@ actor NativeAutoSaveGateway: AutoSaveGateway {
     guard handshake.cameraName == registration.cameraName else { throw WirelessFailure.peerMismatch }
     let expected = WirelessIdentity(
       cameraID: registration.cameraID, model: .xe3, firmware: nil, protocolPeerKey: registration.peerKey)
-    let session = try await makeSession(handshake.address, expected, deadline)
+    let session: any WirelessTransferSession
+    if let captured = try await simulatorSession(for: handshake, registration: registration, deadline: deadline) {
+      session = captured
+    } else {
+      guard registration.peerKey?.bytes.count == 32 else {
+        throw WirelessFailure.autoSaveIdentityUnavailable
+      }
+      session = try await makeSession(handshake.address, expected, deadline)
+    }
     pendingSession = session
     try Task.checkCancellation()
     let observed = try await session.open()
@@ -139,11 +158,32 @@ actor NativeAutoSaveGateway: AutoSaveGateway {
     probeFirmwareObserver?(.init(model: observed.model, source: .autoSave,
       transferFirmware: observed.firmware, bluetoothFirmware: nil))
     #endif
+    if simulatorAutoSave { return session }
     let admission = WirelessSupportPolicy().assess(model: observed.model.rawValue, firmware: observed.firmware)
     guard admission == .supported(.xe3) else {
       throw WirelessFirmwareRejection(cameraModel: .xe3, transferAdmission: admission)
     }
     return session
+  }
+
+  private func simulatorSession(
+    for handshake: AutoSaveHandshake, registration: AutoSaveRegistration, deadline: ContinuousClock.Instant
+  ) async throws -> (any WirelessTransferSession)? {
+    #if targetEnvironment(simulator)
+    if simulatorAutoSave {
+      guard let peer = IPv4Address(handshake.address) else { throw WirelessFailure.malformedData }
+      let channel = try await NetworkByteChannel.connectAutoSave(to: peer, deadline: deadline)
+      do {
+        return try AutoSaveTransferAdapter.makeSimulatorSession(
+          transport: .init(channel: channel), cameraID: registration.cameraID, cameraName: handshake.cameraName,
+          localIPv4Bytes: await channel.connectedLocalIPv4Bytes)
+      } catch {
+        await channel.close()
+        throw error
+      }
+    }
+    #endif
+    return nil
   }
 
   private func closePendingSession(_ session: any WirelessTransferSession) async throws {

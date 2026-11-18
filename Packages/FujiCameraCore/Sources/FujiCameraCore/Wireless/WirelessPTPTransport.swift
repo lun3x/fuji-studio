@@ -90,6 +90,21 @@ public actor WirelessPTPTransport: PTPTransport {
     await terminate(PTPError.notConnected)
   }
 
+  /// The AutoSave receiver writes its final property and closes. A reply is optional.
+  func sendBeforeClosing(_ command: PTPCommand, data: Data) async throws {
+    try ensureIdle()
+    guard initialized, lastTransaction.map({ command.transactionID > $0 }) ?? true else {
+      throw PTPError.invalidParameters
+    }
+    let packet = try PTPCodec.encode(command)
+    let payload = FujiWirelessFrameDecoder.dataHeader(length: data.count, command: command) + data
+    try await run(beginOperation()) { transport in
+      transport.lastTransaction = command.transactionID
+      try await transport.write(packet)
+      try await transport.write(payload)
+    }
+  }
+
   private struct TransactionReply: Sendable {
     let reply: PTPReply
     let receivedDataContainer: Bool

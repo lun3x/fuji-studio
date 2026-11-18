@@ -1063,6 +1063,63 @@ final class WirelessTransferSessionTests: XCTestCase, @unchecked Sendable {
   }
   #endif
 
+  func testCapturedXE3AutoSaveBrowsesThenDownloadsOneOriginalOnTheSameSession() async throws {
+    let name = "FUJIFILM-X-E3-TEST"
+    let thumbnail = Data([0xff, 0xd8, 0x41, 0x42, 0xff, 0xd9])
+    // Synthetic TIFF IFD1 in the embedded JPEG's APP1 segment.
+    var exif = Data([0x49, 0x49, 42, 0]) + word(8) + word(0, 2) + word(14)
+    exif += word(2, 2)
+    exif += word(0x0201, 2) + word(4, 2) + word(1) + word(44)
+    exif += word(0x0202, 2) + word(4, 2) + word(1) + word(UInt32(thumbnail.count))
+    exif += word(0) + thumbnail
+    let jpeg = Data([0xff, 0xd8, 0xff, 0xe1, 0, UInt8(exif.count + 8)])
+      + Data([69, 120, 105, 102, 0, 0]) + exif + Data([0xff, 0xd9])
+    var prefix = Data(repeating: 0, count: 16_384)
+    prefix.replaceSubrange(0..<16, with: "FUJIFILMCCD-RAW ".utf8)
+    prefix.replaceSubrange(84..<92, with: [0, 0, 0, 148, 0, 0, 0, UInt8(jpeg.count)])
+    prefix.replaceSubrange(148..<(148 + jpeg.count), with: jpeg)
+    let tail = Data(repeating: 0xb1, count: 32)
+    let original = prefix + Data(repeating: 0xde, count: 40) + tail
+    let length = UInt32(original.count)
+    let first = object("DSCF0001.RAF", format: 0xb103, bytes: length)
+    let second = object("DSCF0002.RAF", format: 0xb103, bytes: length)
+    var close = Exchange.write(0xd227, [0, 0])
+    close.omitsResponse = true
+    let setup: [Exchange] = [.read(0x1002, [1]), .property(0xd212, events([(0xdf00, 3), (0xd222, 2)])),
+      .write(0xdf01, [3, 0]), .property(0xdf23, word(1)), .write(0xdf23, [1, 0, 0, 0]),
+      .write(0xd227, [1, 0]), .read(0x1008, [1], first), .property(0xd212, events()), .read(0x1008, [2], second)]
+    let commands = setup + Array(repeating: Exchange.property(0xd212, events()), count: 8)
+      + [.write(0xd228, Array(string("0/2"))),
+         .read(0x1008, [1], first), .read(0x101b, [1, 0, 16384], prefix), .read(0x101b, [1, length - 32, 32], tail),
+         .read(0x1008, [2], second), .read(0x101b, [2, 0, 16384], prefix), .read(0x101b, [2, length - 32, 32], tail),
+         .read(0x1008, [1], first), .read(0x101b, [1, 0, length], original),
+         .write(0xd228, Array(string("1/2"))), close]
+    let channel = Replay(commands, initializationName: "X-E3")
+    let session = CameraHostedTransferSession(
+      transport: .init(channel: channel), expectedIdentity: .init(cameraID: .init(), model: .xe3, firmware: nil),
+      mode: .autoSave, clientGUID: Data(repeating: 1, count: 16), clientName: name, capturedAutoSaveName: name)
+
+    _ = try await session.open()
+    let stream = try await session.enumerate()
+    var objects: [WirelessObjectDescriptor] = []
+    for try await batch in stream { objects += batch.objects }
+    XCTAssertEqual(objects.map(\.filename), ["DSCF0001.RAF", "DSCF0002.RAF"])
+    XCTAssertTrue(objects.allSatisfy(\.hasThumbnail))
+    let capabilities = try await session.capabilities()
+    XCTAssertTrue(capabilities.originalSizeVerified)
+    for object in objects {
+      let bytes = try await session.thumbnail(object)
+      XCTAssertEqual(bytes, thumbnail)
+    }
+    let output = Bytes()
+    try await session.download(objects[0]) { await output.append($0) }
+    let bytes = await output.value
+    XCTAssertEqual(bytes, original)
+    try await session.close()
+    let remaining = await channel.remaining
+    XCTAssertEqual(remaining, 0)
+  }
+
   private func autoSaveSetup(count: UInt32) -> [Exchange] {
     [.property(0xd212, events([(0xdf00, 3), (0xd222, count)])),
      .property(0xdf24, word(.max)), .write(0xdf01, [3, 0]), .property(0xd212, events()),

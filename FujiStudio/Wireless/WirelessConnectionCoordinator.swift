@@ -12,6 +12,9 @@ struct WirelessTransferAdmission: Sendable {
 }
 
 actor WirelessConnectionCoordinator: USBBluetoothControlling {
+  #if targetEnvironment(simulator)
+  private static let simulatorAutoSaveID = UUID(uuidString: "DDB7AC9B-370F-49E7-85FD-D42CDCC6C3E6")!
+  #endif
   private enum Work {
     case scanSaved([SavedCamera])
     case discovery
@@ -96,7 +99,8 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
     sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
     findNearby: FindNearby? = nil, credentials: (any CameraNetworkCredentialProvider)? = nil,
     wifi: (any WiFiJoinGateway)? = nil, ownership: (any WirelessCameraOwnershipGateway)? = nil,
-    sessionFactory: WirelessTransferSessionFactory? = nil, autoSave: (any AutoSaveGateway)? = nil
+    sessionFactory: WirelessTransferSessionFactory? = nil, autoSave: (any AutoSaveGateway)? = nil,
+    simulatorAutoSave: Bool = false
   ) {
     self.findNearby = findNearby
     self.credentials = credentials
@@ -108,6 +112,9 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
     self.ownership = ownership
     self.sessionFactory = sessionFactory
     self.autoSave = autoSave
+    #if targetEnvironment(simulator)
+    snapshot.simulatorAutoSaveAvailable = simulatorAutoSave
+    #endif
   }
 
   func states() -> AsyncStream<WirelessConnectionState> {
@@ -407,6 +414,9 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
 
   private func startReconnect(prompt: Bool) {
     guard let camera = selectedCamera else { return }
+    #if targetEnvironment(simulator)
+    if camera.peripheralID == Self.simulatorAutoSaveID { return }
+    #endif
     let permission = authorization()
     guard permission == .allowed || (permission == .notDetermined && prompt) else {
       recordBluetoothFailure(.permissionDenied(.bluetooth))
@@ -736,6 +746,19 @@ extension WirelessConnectionCoordinator {
   func checkAutoSaveAvailability() async throws {
     guard let autoSave else { throw WirelessFailure.autoSaveEntitlementUnavailable }
     try await autoSave.checkAvailability()
+    #if targetEnvironment(simulator)
+    guard snapshot.simulatorAutoSaveAvailable, let camera = selectedCamera, camera.model == .xe3 else { return }
+    let registration: AutoSaveRegistration?
+    do {
+      registration = try await autoSave.savedRegistration(for: camera.id)
+    } catch WirelessFailure.autoSaveRegistrationRequired {
+      registration = nil
+    }
+    try Task.checkCancellation()
+    guard snapshot.selectedCameraID == camera.id, wifiAttempt == nil else { return }
+    snapshot.verifiedAutoSaveCameraID = registration?.cameraID
+    snapshot.simulatorAutoSaveDestination = registration?.importer
+    #endif
   }
 
   private func startAutoSave(register: Bool) async {
@@ -915,11 +938,16 @@ extension WirelessConnectionCoordinator {
       await loadSavedCameras()
       try checkWiFiAttempt(id)
       snapshot.wifi = phase
+      try await gateway.checkAvailability()
+      try checkWiFiAttempt(id)
+      #if targetEnvironment(simulator)
+      if register, snapshot.simulatorAutoSaveAvailable, selectedCamera?.model != .xe3 {
+        try await selectSimulatorAutoSaveCamera(for: id)
+      }
+      #endif
       guard let camera = selectedCamera, camera.model == .xe3 else {
         throw WirelessFailure.unsupportedProtocol
       }
-      try await gateway.checkAvailability()
-      try checkWiFiAttempt(id)
       snapshot.wifi = .acquiringOwnership
       wifiLease = try await ownership.acquireWireless()
       snapshot.hasTransferLease = true
@@ -937,6 +965,9 @@ extension WirelessConnectionCoordinator {
         }
         try checkWiFiAttempt(id, intent)
         guard registration.cameraID == camera.id else { throw WirelessFailure.peerMismatch }
+        if snapshot.simulatorAutoSaveAvailable {
+          snapshot.simulatorAutoSaveDestination = registration.importer
+        }
         snapshot.verifiedAutoSaveCameraID = camera.id
         endWiFiRequest()
         snapshot.wifi = .disconnecting
@@ -947,6 +978,9 @@ extension WirelessConnectionCoordinator {
       let registration = try await gateway.savedRegistration(for: camera.id)
       try checkWiFiAttempt(id, intent)
       guard registration.cameraID == camera.id else { throw WirelessFailure.peerMismatch }
+      if snapshot.simulatorAutoSaveAvailable {
+        snapshot.simulatorAutoSaveDestination = registration.importer
+      }
       snapshot.verifiedAutoSaveCameraID = camera.id
       let opened = try await gateway.waitForSession(registration: registration)
       session = opened
@@ -957,12 +991,29 @@ extension WirelessConnectionCoordinator {
       guard peer.cameraID == camera.id, peer.model == .xe3,
         peer.protocolPeerKey == registration.peerKey
       else { throw WirelessFailure.peerMismatch }
-      try verifyFirmware(peer)
-      try await loadFirstInventory(opened, id: id, intent: intent)
+      let capturedSession = snapshot.simulatorAutoSaveAvailable && registration.peerKey == nil
+      if !capturedSession { try verifyFirmware(peer) }
+      try await loadFirstInventory(opened, id: id, intent: intent, waitForComplete: capturedSession)
     } catch {
       await failWiFi(id, error: error)
     }
   }
+
+  #if targetEnvironment(simulator)
+  private func selectSimulatorAutoSaveCamera(for attempt: UUID) async throws {
+    let identifier = Self.simulatorAutoSaveID
+    let camera = SavedCamera(
+      id: .init(rawValue: identifier), peripheralID: identifier, model: .xe3, displayName: "X-E3 (PC Auto Save)")
+    if !snapshot.savedCameras.contains(where: { $0.id == camera.id }) {
+      try await store.save(camera)
+      snapshot.savedCameras.append(camera)
+    }
+    try checkWiFiAttempt(attempt)
+    try await store.select(camera.id)
+    snapshot.selectedCameraID = camera.id
+    try checkWiFiAttempt(attempt)
+  }
+  #endif
 
   private func verifyAutoSaveRegistration(_ id: UUID, intent: WirelessConnectionIntent) throws {
     try checkWiFiAttempt(id, intent)
@@ -982,14 +1033,15 @@ extension WirelessConnectionCoordinator {
   }
 
   private func loadFirstInventory(
-    _ opened: any WirelessTransferSession, id: UUID, intent: WirelessConnectionIntent
+    _ opened: any WirelessTransferSession, id: UUID, intent: WirelessConnectionIntent,
+    waitForComplete: Bool = false
   ) async throws {
     snapshot.wifi = .loadingInventory
     let stream = try await opened.enumerate()
     try checkWiFiAttempt(id, intent)
     for try await batch in stream {
       try checkWiFiAttempt(id, intent)
-      if !batch.objects.isEmpty || batch.storageChanges.values.contains(.complete) {
+      if batch.storageChanges.values.contains(.complete) || (!waitForComplete && !batch.objects.isEmpty) {
         snapshot.wifi = .ready
         if let monitored = opened as? any WirelessSessionMonitoring {
           transferMonitor = Task { [weak self] in
