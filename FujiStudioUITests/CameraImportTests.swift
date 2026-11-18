@@ -38,11 +38,12 @@ import XCTest
         XCTAssertTrue(prompt.waitForNonExistence(timeout: 5))
         cameraPhotos.tap()
         XCTAssertTrue(prompt.waitForExistence(timeout: 5))
+        let instructions = app.staticTexts["cameraNetwork.instructions"]
+        XCTAssertTrue(instructions.label.contains("tap Back at the top left"))
+        XCTAssertTrue(instructions.label.contains("Tap Wi-Fi"))
         app.buttons["Open Settings"].tap()
         let settings = XCUIApplication(bundleIdentifier: "com.apple.Preferences")
         XCTAssertTrue(settings.wait(for: .runningForeground, timeout: 8))
-        let wifi = settings.navigationBars["Wi-Fi"]
-        XCTAssertTrue(wifi.exists || settings.navigationBars["Settings"].exists, settings.navigationBars.debugDescription)
         app.activate()
         XCTAssertTrue(app.buttons["cameraTray.save"].waitForExistence(timeout: 10))
         XCTAssertTrue(prompt.waitForNonExistence(timeout: 5))

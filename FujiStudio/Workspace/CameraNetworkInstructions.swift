@@ -36,14 +36,17 @@ struct CameraNetworkInstructions: View {
                         Text("Couldn’t read the camera password. Disconnect and try again.")
                     }
                 } footer: {
-                    Text("In Settings, open Wi-Fi and join this network. If it’s hidden, tap Other, enter the network name, and choose WPA2. Stay connected if iPhone reports no internet, then return to Fuji Studio.")
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Copy the password and tap Open Settings. If you land on Apps or another page, tap Back at the top left until you reach the main Settings screen. Tap Wi-Fi and choose the camera network.")
+                            .accessibilityIdentifier("cameraNetwork.instructions")
+                        Text("If the network is hidden, tap Other, enter its name, and choose WPA2. Stay connected if iPhone reports no internet, then return to Fuji Studio.")
+                    }
                 }
                 if settingsUnavailable {
                     Text("From the Home Screen, open Settings, then tap Wi-Fi.")
                 } else {
                     Button("Open Settings") {
-                        // iOS may route this to the main Settings screen, or decline the handoff.
-                        openURL(URL(string: "App-Prefs:root=WIFI")!) { opened in
+                        openURL(URL(string: "com.apple.Preferences:")!) { opened in
                             if !opened {
                                 openURL(URL(string: "App-Prefs:")!) { settingsUnavailable = !$0 }
                             }
