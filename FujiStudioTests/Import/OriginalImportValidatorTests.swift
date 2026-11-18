@@ -5,6 +5,31 @@ import XCTest
 
 @MainActor
 final class OriginalImportValidatorTests: XCTestCase {
+    func testXT5DiagnosticComparesUnzonedObjectInfoAsUTCWithEmbeddedOffset() throws {
+        for (offset, reported) in [("+01:00", "20200102T020405"), ("-05:00", "20200102T080405"),
+                                   ("+05:30", "20200101T213405")] {
+            let fixture = try ImportFileFixture(rawOffset: offset, objectDate: reported)
+            defer { fixture.cleanUp() }
+            try FileManager.default.createDirectory(at: fixture.root, withIntermediateDirectories: true)
+            let file = fixture.root.appendingPathComponent("source.raf")
+            try fixture.raf.write(to: file)
+            let metadata = try OriginalImportValidator.inspect(file: file, object: fixture.object(.raf))
+            XCTAssertNoThrow(try OriginalImportValidator.checkDiagnosticCaptureTime(metadata, object: fixture.object(.raf)))
+        }
+    }
+
+    func testXT5DiagnosticRejectsDifferentInstantEvenWhenWallClockMatches() throws {
+        let fixture = try ImportFileFixture(rawOffset: "+01:00", objectDate: "20200102T030405")
+        defer { fixture.cleanUp() }
+        try FileManager.default.createDirectory(at: fixture.root, withIntermediateDirectories: true)
+        let file = fixture.root.appendingPathComponent("source.raf")
+        try fixture.raf.write(to: file)
+        let metadata = try OriginalImportValidator.inspect(file: file, object: fixture.object(.raf))
+        XCTAssertThrowsError(try OriginalImportValidator.checkDiagnosticCaptureTime(metadata, object: fixture.object(.raf))) {
+            XCTAssertEqual($0 as? OriginalImportError, .validation(.captureTimeMismatch))
+        }
+    }
+
     func testMissingTimezoneUsesFrozenImportDate() async throws {
         let fixture = try ImportFileFixture()
         defer { fixture.cleanUp() }

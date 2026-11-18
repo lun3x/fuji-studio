@@ -174,11 +174,18 @@ struct OriginalImportValidator: Sendable {
     #if DEBUG
     static func checkDiagnosticCaptureTime(_ metadata: OriginalImportMetadata,
                                            object: WirelessObjectDescriptor) throws {
-        guard let reported = CameraCaptureTimestamp(object.captureDate) else {
+        guard var reported = CameraCaptureTimestamp(object.captureDate) else {
             throw OriginalImportError.validation(.objectInfoCaptureTimeMissingOrInvalid)
         }
         guard let embedded = embeddedTimestamp(metadata) else {
             throw OriginalImportError.validation(.embeddedCaptureTimeMissingOrInvalid)
+        }
+        // X-T5 Wi-Fi ObjectInfo reports UTC without a suffix. EXIF retains the camera's local offset.
+        if reported.offset == nil, embedded.offset != nil {
+            guard let utc = CameraCaptureTimestamp(reported.wallTime + "Z") else {
+                throw OriginalImportError.validation(.objectInfoCaptureTimeMissingOrInvalid)
+            }
+            reported = utc
         }
         guard reported.agreesForCapture(with: embedded) else {
             throw OriginalImportError.validation(.captureTimeMismatch)

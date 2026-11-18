@@ -440,6 +440,36 @@ The installed logging build still needs a complete pair rerun. It records a
 fixed `validationCheck` value for RAF structure, dimensions, orientation,
 manufacturer/model and capture-time checks, plus each pair consistency check.
 
+### Capture-time validation fix, November 18
+
+The instrumented run enumerated 1,273 entries on card 2, comprising 601 JPEG
+and 672 RAF. It downloaded all 37,030,176 expected bytes of the selected RAF,
+then logged `validationCheck.captureTimeMismatch`. RAF parsing, sensor framing,
+dimensions, orientation and camera-model validation had already succeeded.
+The JPEG transfer had not started. D226 restoration and session cleanup
+completed.
+
+The USB trace contains the full RAF transfer, including two short partial
+responses. Reconstruction validated continuous offsets and recovered exactly
+37,030,176 bytes. The object's unsuffixed PTP capture time was one hour earlier
+than EXIF DateTimeOriginal. EXIF OffsetTimeOriginal was `+01:00`. Apple's
+ImageIO reader and ExifTool independently reported the embedded offset. Treating
+the unsuffixed X-T5 Wi-Fi ObjectInfo timestamp as UTC made the two instants
+equal, with zero seconds difference.
+
+The diagnostic had compared the unsuffixed ObjectInfo clock directly with
+EXIF's local wall clock. It now interprets that X-T5 Wi-Fi timestamp as UTC
+when EXIF supplies an offset, then compares the absolute capture instants.
+Regression cases cover positive, negative and half-hour offsets, midnight
+rollover, and rejection of the same wall time representing a different instant.
+The signed fixed Debug diagnostic was verified, installed and launched normally.
+The complete rerun is the next hardware check.
+
+The app traces, reconstructed RAF, private ObjectInfo and metadata, plus the
+46,575-packet TCP capture with zero kernel drops remain local in
+`/tmp/fuji-raf-rerun.AbaXh4`. The fixed-build trial's evidence directory is
+`/tmp/fuji-raf-time-fix.EeAuXs`.
+
 ### Working conventions
 
 The root uses Jujutsu exclusively, with isolated `/tmp` workspaces and task-owned
