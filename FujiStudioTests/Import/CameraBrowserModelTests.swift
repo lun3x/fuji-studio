@@ -208,6 +208,50 @@ final class CameraBrowserModelTests: XCTestCase {
         XCTAssertNil(CameraThumbnail.decode(oversized))
     }
 
+    func testXT5PreviewRemovesCameraPaddingAndRotatesBothPortraitDirections() throws {
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let data = UIGraphicsImageRenderer(size: CGSize(width: 640, height: 480), format: format)
+            .jpegData(withCompressionQuality: 0.95) { context in
+                UIColor.black.setFill()
+                context.fill(CGRect(x: 0, y: 0, width: 640, height: 480))
+                UIColor.red.setFill()
+                context.fill(CGRect(x: 0, y: 27, width: 320, height: 426))
+                UIColor.blue.setFill()
+                context.fill(CGRect(x: 320, y: 27, width: 320, height: 426))
+            }
+
+        func object(_ orientation: Int) -> WirelessObjectDescriptor {
+            CaptureFixture.object(1, .raf, dimensions: .init(width: 7728, height: 5152), orientation: orientation)
+        }
+        func color(_ image: CGImage, x: Int, y: Int) throws -> [UInt8] {
+            let pixel = try XCTUnwrap(image.cropping(to: CGRect(x: x, y: y, width: 1, height: 1)))
+            var rgba = [UInt8](repeating: 0, count: 4)
+            try rgba.withUnsafeMutableBytes { bytes in
+                let context = try XCTUnwrap(CGContext(data: bytes.baseAddress, width: 1, height: 1,
+                    bitsPerComponent: 8, bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+                context.draw(pixel, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+            }
+            return rgba
+        }
+        let landscape = try XCTUnwrap(CameraThumbnail.decode(data, object: object(1))).image
+        XCTAssertEqual([landscape.width, landscape.height], [288, 192])
+        XCTAssertGreaterThan(try color(landscape, x: 12, y: 1)[0], 200)
+        XCTAssertGreaterThan(try color(landscape, x: 260, y: 190)[2], 200)
+
+        for orientation in [6, 8] {
+            let portrait = try XCTUnwrap(CameraThumbnail.decode(data, object: object(orientation))).image
+            XCTAssertEqual([portrait.width, portrait.height], [192, 288])
+            XCTAssertGreaterThan(try color(portrait, x: 1, y: 12)[orientation == 6 ? 0 : 2], 200)
+            XCTAssertGreaterThan(try color(portrait, x: 190, y: 260)[orientation == 6 ? 2 : 0], 200)
+            let viewer = try DisplayFileLease.cameraPreview(data, object: object(orientation))
+            let geometry = try ImageGeometry.read(viewer.fileURL)
+            XCTAssertEqual(geometry.upright, .init(width: 427, height: 640))
+            XCTAssertEqual(viewer.geometry, geometry)
+        }
+    }
+
     func testSelectionUsesTheSessionCapabilityAcrossModes() async throws {
         // An explicitly verified fixture describes the generic contract. Production
         // AutoSave does not advertise verified original sizes.

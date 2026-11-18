@@ -2,6 +2,7 @@ import FujiCameraCore
 import SwiftUI
 import ImageIO
 import CoreImage
+import UniformTypeIdentifiers
 
 /// Authoritative recorded/encoded pixel geometry, independent of the bounded fit-file size.
 /// UIKit inspection coordinates are upright with a top-left origin.
@@ -75,13 +76,18 @@ final class DisplayFileLease: Sendable, Equatable {
             throw RenderCacheError.storage
         }
     }
-    static func cameraPreview(_ data: Data) throws -> DisplayFileLease {
+    static func cameraPreview(_ data: Data, object: WirelessObjectDescriptor) throws -> DisplayFileLease {
+        guard let preview = CameraThumbnail.decode(data, object: object, maxPixelSize: 1280) else { throw ViewerError.invalidImage }
         let directory = root.appendingPathComponent(UUID().uuidString, isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            let url = directory.appendingPathComponent("preview.jpg")
-            try data.write(to: url)
-            return DisplayFileLease(fileURL: url, directory: directory, geometry: try ImageGeometry.read(url))
+            let url = directory.appendingPathComponent("preview.png")
+            guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil)
+            else { throw ViewerError.invalidImage }
+            CGImageDestinationAddImage(destination, preview.image, nil)
+            guard CGImageDestinationFinalize(destination) else { throw ViewerError.invalidImage }
+            let size = PixelSize(width: preview.image.width, height: preview.image.height)
+            return DisplayFileLease(fileURL: url, directory: directory, geometry: ImageGeometry(encoded: size, orientation: 1))
         } catch {
             try? FileManager.default.removeItem(at: directory)
             throw error

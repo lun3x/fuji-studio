@@ -59,9 +59,10 @@ final class CameraGridThumbnails: GridThumbnailProviding {
         let token = UUID()
         tasks[token] = Task {
             defer { tasks[token] = nil }
-            guard let capture = browser.capture(for: sourceID), let data = await browser.thumbnail(for: capture),
+            guard let capture = browser.capture(for: sourceID), let object = capture.thumbnailObject,
+                  let data = await browser.thumbnail(for: capture),
                   !Task.isCancelled else { return }
-            let thumbnail = await Task.detached { CameraThumbnail.decode(data) }.value
+            let thumbnail = await Task.detached { CameraThumbnail.decode(data, object: object) }.value
             guard !Task.isCancelled else { return }
             completion(thumbnail.map { UIImage(cgImage: $0.image) })
         }

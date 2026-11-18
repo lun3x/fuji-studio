@@ -1,5 +1,4 @@
 import FujiCameraCore
-import ImageIO
 import SwiftUI
 import UIKit
 
@@ -203,7 +202,7 @@ private struct CameraCaptureRow: View {
         .task(id: request) {
             guard !request.suspended, let object = request.object, thumbnail?.object != object,
                   let data = await browser.thumbnail(for: capture), !Task.isCancelled else { return }
-            let preview = await Task.detached { CameraThumbnail.decode(data) }.value
+            let preview = await Task.detached { CameraThumbnail.decode(data, object: object) }.value
             guard !Task.isCancelled, let preview else { return }
             thumbnail = Thumbnail(object: object, image: UIImage(cgImage: preview.image))
         }
@@ -257,29 +256,6 @@ private struct CameraCaptureRow: View {
         .accessibilityValue(verified ? "Imported" : policy == .pair ? "Selected" : "Not selected")
         .accessibilityAddTraits(policy == .pair ? .isSelected : [])
         .accessibilityIdentifier("cameraBrowser.select.\(rowIdentifier)")
-    }
-}
-
-// CGImage is immutable. Keep the decode off the main actor and create UIImage in the row.
-struct CameraThumbnail: @unchecked Sendable {
-    let image: CGImage
-
-    static func decode(_ data: Data) -> Self? {
-        autoreleasepool {
-            guard let source = CGImageSourceCreateWithData(data as CFData,
-                [kCGImageSourceShouldCache: false] as CFDictionary),
-                CGImageSourceGetCount(source) == 1,
-                let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-                let width = properties[kCGImagePropertyPixelWidth] as? Int, (1...4096).contains(width),
-                let height = properties[kCGImagePropertyPixelHeight] as? Int, (1...4096).contains(height),
-                let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
-                    kCGImageSourceCreateThumbnailFromImageAlways: true,
-                    kCGImageSourceCreateThumbnailWithTransform: true,
-                    kCGImageSourceThumbnailMaxPixelSize: 288,
-                    kCGImageSourceShouldCacheImmediately: true
-                ] as CFDictionary) else { return nil }
-            return CameraThumbnail(image: image)
-        }
     }
 }
 

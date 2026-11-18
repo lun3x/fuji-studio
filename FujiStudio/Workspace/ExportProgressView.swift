@@ -311,9 +311,9 @@ struct AppWorkspaceView: View {
         viewerFailure = nil
         viewedObject = object
         guard let object else { return }
-        if let id = state.viewedSourceID, let capture = browser.capture(for: id),
+        if let id = state.viewedSourceID, let capture = browser.capture(for: id), let previewObject = capture.thumbnailObject,
            let data = await browser.thumbnail(for: capture) {
-            let preview = await Task.detached { try? DisplayFileLease.cameraPreview(data) }.value
+            let preview = await Task.detached { try? DisplayFileLease.cameraPreview(data, object: previewObject) }.value
             guard !Task.isCancelled, self.object == object else { return }
             cameraPreview = preview
         }
