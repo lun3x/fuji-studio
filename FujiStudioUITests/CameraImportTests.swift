@@ -21,6 +21,54 @@ import XCTest
         XCTAssertTrue(app.navigationBars["Camera photos"].waitForExistence(timeout: 5))
     }
 
+    func testManualNetworkSheetCanBeDismissedAndReturnsDirectlyToCameraTray() {
+        let app = launch(["--fixture-wireless-manual-network"])
+        let cameraPhotos = app.buttons["workspace.cameraPhotos"]
+        XCTAssertTrue(cameraPhotos.waitForExistence(timeout: 8))
+        cameraPhotos.tap()
+        let prompt = app.navigationBars["Join camera Wi-Fi"]
+        XCTAssertTrue(prompt.waitForExistence(timeout: 5))
+        let name = app.descendants(matching: .any)["cameraNetwork.ssid"].firstMatch
+        XCTAssertEqual(name.value as? String, "Fixture WiFi")
+        let copy = app.buttons["cameraNetwork.copy"]
+        XCTAssertEqual(copy.value as? String, "camera-fixture")
+        copy.tap()
+        XCTAssertTrue(copy.label.contains("Password copied"))
+        app.buttons["Dismiss"].tap()
+        XCTAssertTrue(prompt.waitForNonExistence(timeout: 5))
+        cameraPhotos.tap()
+        XCTAssertTrue(prompt.waitForExistence(timeout: 5))
+        XCUIDevice.shared.press(.home)
+        XCTAssertTrue(app.wait(for: .runningBackground, timeout: 5))
+        app.activate()
+        XCTAssertTrue(app.buttons["cameraTray.save"].waitForExistence(timeout: 10))
+        XCTAssertFalse(prompt.exists)
+    }
+
+    func testCameraPhotosOpensWorkspaceVersionsAndSavesSelectedPair() {
+        let app = launch(["--fixture-wireless-paired"])
+        let cameraPhotos = app.buttons["workspace.cameraPhotos"]
+        XCTAssertTrue(cameraPhotos.waitForExistence(timeout: 8))
+        cameraPhotos.tap()
+        let pair = app.cells.matching(NSPredicate(format: "label CONTAINS %@", "DSCF0001.RAF")).firstMatch
+        XCTAssertTrue(pair.waitForExistence(timeout: 10))
+        XCTAssertTrue(pair.label.contains("RAW + JPEG"))
+        pair.tap()
+        let versions = app.buttons["workspace.versions"]
+        XCTAssertTrue(versions.waitForExistence(timeout: 5))
+        versions.tap()
+        XCTAssertTrue(app.buttons["version.raw"].exists)
+        app.buttons["version.cameraJPEG"].tap()
+        XCTAssertTrue(app.scrollViews["viewer.image"].waitForExistence(timeout: 10))
+        let save = app.buttons["cameraTray.save"]
+        XCTAssertTrue(save.isEnabled)
+        save.tap()
+        let view = app.buttons["cameraImport.viewImported"]
+        XCTAssertTrue(view.waitForExistence(timeout: 10))
+        view.tap()
+        XCTAssertTrue(app.cells["grid.wireless-1"].waitForExistence(timeout: 8))
+    }
+
     func testPairIsOnePhotoAndViewImportedReturnsToLibrary() {
         let app = launch(["--fixture-wireless-paired"])
         browse(app)

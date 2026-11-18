@@ -3,12 +3,12 @@ import FujiCameraCore
 
 enum CaptureResolver {
     static func resolve(
-        objects: [WirelessObjectDescriptor], inventory: WirelessStorageInventory
+        objects: [WirelessObjectDescriptor], inventory: WirelessStorageInventory, provisional: Bool = false
     ) -> [CameraCapture] {
         let objects = Set(objects)
         let allListed = !inventory.storage.isEmpty && !inventory.storage.values.contains(.pending)
             && objects.allSatisfy { inventory.storage[$0.storageID] != nil }
-        guard allListed else {
+        guard allListed || provisional else {
             return objects.map(checking).sorted(by: CameraCapture.newestFirst)
         }
 
@@ -39,9 +39,9 @@ enum CaptureResolver {
 
             for raw in raws {
                 if !duplicateIDs.contains(raw.id),
-                   inventory.storage[raw.object.storageID] == .complete,
+                   (provisional || inventory.storage[raw.object.storageID] == .complete),
                    let jpeg = jpegIndex.uniquePlausibleMate(for: raw),
-                   inventory.storage[jpeg.object.storageID] == .complete,
+                   (provisional || inventory.storage[jpeg.object.storageID] == .complete),
                    !duplicateIDs.contains(jpeg.id),
                    raw.corroborates(jpeg),
                    rawIndex.uniquePlausibleMate(for: jpeg)?.object == raw.object {
@@ -58,6 +58,7 @@ enum CaptureResolver {
             }
         }
         return singles.map { capture in
+            if provisional, capture.availability != .pair { return checking(capture.rowID) }
             guard capture.availability != .unsupported, duplicateIDs.contains(capture.id) else { return capture }
             return capture.withAvailability(.ambiguous)
         }.sorted(by: CameraCapture.newestFirst)

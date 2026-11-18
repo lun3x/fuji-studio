@@ -28,7 +28,6 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.lun3x.FujiStudio
-        CODE_SIGN_ENTITLEMENTS: Config/FujiStudio.entitlements
         INFOPLIST_FILE: Config/FujiStudio-Info.plist
         INFOPLIST_KEY_CFBundleDisplayName: Fuji Studio
         INFOPLIST_KEY_NSPhotoLibraryUsageDescription: Fuji Studio reads original RAF and JPEG photos you view or convert and verifies original RAW and JPEG photos you explicitly import from your Fujifilm camera.

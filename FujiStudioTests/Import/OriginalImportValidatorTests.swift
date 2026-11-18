@@ -30,7 +30,7 @@ final class OriginalImportValidatorTests: XCTestCase {
         }
     }
 
-    func testMissingTimezoneUsesFrozenImportDate() async throws {
+    func testXT5MissingEXIFOffsetUsesCameraUTCTime() async throws {
         let fixture = try ImportFileFixture()
         defer { fixture.cleanUp() }
         let store = try ImportStagingStore(root: fixture.root)
@@ -38,8 +38,8 @@ final class OriginalImportValidatorTests: XCTestCase {
         let frozenDate = Date(timeIntervalSince1970: 1_700_000_000)
         let validated = try OriginalImportValidator(staging: store).validate(
             fixture.selection(), originals: originals, importDate: frozenDate)
-        XCTAssertEqual(validated.metadata.creationDate, frozenDate)
-        XCTAssertEqual(validated.metadata.dateSource, .importTimeMissingOffset)
+        XCTAssertEqual(validated.metadata.creationDate, Date(timeIntervalSince1970: 1_577_934_245))
+        XCTAssertEqual(validated.metadata.dateSource, .objectInfo)
         XCTAssertNil(validated.metadata.location)
         XCTAssertEqual(originals[0].metadata.captureWallTime, "20200102T030405")
         XCTAssertEqual(try ResourceChecksum.sha256(store.fileURL(for: originals[0])), ResourceChecksum.sha256(fixture.raf))

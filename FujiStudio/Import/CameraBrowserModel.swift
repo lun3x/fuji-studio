@@ -26,6 +26,34 @@ final class CameraBrowserModel {
     private var receiptStatuses: [WirelessObjectDescriptor: ImportReceiptStatus] = [:]
     var inventorySessionID: UUID? { captures.first?.rowID.sessionID }
 
+    private(set) var workspace = WorkspaceState(access: .full)
+    private(set) var traySources: [PhotoSource] = []
+    @ObservationIgnored private var trayCaptures: [SourceID: CameraCapture] = [:]
+    @ObservationIgnored private var rawOrder: [SourceID] = []
+
+    func apply(_ action: WorkspaceAction) { _ = workspace.reduce(action) }
+    func capture(for id: SourceID) -> CameraCapture? { trayCaptures[id] }
+
+    var canSaveWorkspaceSelection: Bool {
+        guard canSelectOriginals, !isLoading, !thumbnailsSuspended else { return false }
+        return (try? workspaceSelections().isEmpty) == false
+    }
+
+    func selectWorkspacePhotos() throws {
+        let selections = try workspaceSelections()
+        guard !selections.isEmpty else { throw CameraBrowserSelectionError.captureChanged }
+        selected = Dictionary(uniqueKeysWithValues: selections.map { ($0.captureID, $0) })
+        updateSelectionTotals()
+    }
+
+    private func workspaceSelections() throws -> [ImportSelection] {
+        try workspace.effectiveSourceIDs.compactMap { id in
+            guard let capture = trayCaptures[id] else { throw CameraBrowserSelectionError.captureChanged }
+            guard receiptStatuses[capture.rowID] != .verified else { return nil }
+            return try proposedSelection(for: capture.id, policy: capture.jpeg == nil ? .rawOnly : .pair)
+        }
+    }
+
     private var selected: [CameraCaptureID: ImportSelection] = [:]
     @ObservationIgnored private var capturesByID: [CameraCaptureID: [CameraCapture]] = [:]
     @ObservationIgnored private var visibleRows: [WirelessObjectDescriptor: CameraCapture] = [:]
@@ -200,6 +228,22 @@ final class CameraBrowserModel {
         }
     }
 
+    func viewerFile(for object: WirelessObjectDescriptor) async throws -> ViewerFile {
+        guard let session, !thumbnailsSuspended else { throw WirelessFailure.connectionLost }
+        let generation = generation
+        let cancellation = BrowserCancellation()
+        // An already-started command must drain before another view or import uses the socket.
+        let work = enqueue {
+            try self.checkCurrent(generation, cancellation)
+            guard !self.thumbnailsSuspended, self.trayCaptures.values.contains(where: { $0.objects.contains(object) })
+            else { throw CancellationError() }
+            let file = try await CameraViewerOriginal.load(object, session: session)
+            try self.checkCurrent(generation, cancellation)
+            return file
+        }
+        return try await withTaskCancellationHandler { try await work.value } onCancel: { cancellation.cancel() }
+    }
+
     /// Let an importer take the shared socket after already-started preview work drains.
     /// Freeze the selection after this drains, and resume only after transfer releases it.
     func suspendThumbnails() async {
@@ -223,6 +267,8 @@ final class CameraBrowserModel {
         camera = nil
         session = nil
         clearReceiptStatuses()
+        rawOrder = []
+        workspace = WorkspaceState(access: .full)
         publish([])
         selected.removeAll()
         updateSelectionTotals()
@@ -256,7 +302,8 @@ final class CameraBrowserModel {
         let cursor = InventoryCursor(admission.stream)
         var objectsByCard: [UInt32: [UInt32: WirelessObjectDescriptor]] = [:]
         var objectSessionID: UUID?
-        var checkingRows: [CameraCapture] = []
+        var provisional = ProgressiveCameraCaptures()
+        var count = 0
         let clock = ContinuousClock()
         var nextPublication = clock.now
         while true {
@@ -285,12 +332,14 @@ final class CameraBrowserModel {
                     throw WirelessFailure.malformedData
                 }
                 objectsByCard[object.storageID, default: [:]][object.handle] = object
-                checkingRows.append(CaptureResolver.checking(object))
+                provisional.insert(object)
+                count += 1
+                if object.format == .raf { rawOrder.append(object.trayID) }
             }
-            if checkingRows.count > captures.count, clock.now >= nextPublication {
-                publish(checkingRows.sorted(by: CameraCapture.newestFirst))
-                // Coalesce larger galleries so each 16-object PTP batch doesn't re-sort every row.
-                let interval = max(250, checkingRows.count / 40)
+            if !batch.objects.isEmpty, clock.now >= nextPublication {
+                publish(provisional.rows(inventory: inventory))
+                // Coalesce updates while replaying already-cached batches.
+                let interval = max(250, count / 40)
                 nextPublication = clock.now + .milliseconds(interval)
             }
         }
@@ -314,6 +363,11 @@ final class CameraBrowserModel {
 
     private func publish(_ captures: [CameraCapture]) {
         self.captures = captures
+        trayCaptures = Dictionary(uniqueKeysWithValues: captures.compactMap { capture in
+            capture.raw.map { ($0.trayID, capture) }
+        })
+        traySources = rawOrder.compactMap { trayCaptures[$0]?.photoSource }
+        _ = workspace.reduce(.libraryUpdated(sources: traySources, access: .full))
         let groups = Dictionary(grouping: captures) { $0.timestamp?.calendarDay }
         dayGroups = groups.map { CameraCaptureDayGroup(day: $0.key, captures: $0.value) }
             .sorted { ($0.day ?? "") > ($1.day ?? "") }
@@ -411,6 +465,28 @@ final class CameraBrowserModel {
             self.iterator = iterator
             return batch
         }
+    }
+}
+
+/// Only objects with the same filename stem can become mates. Re-evaluate that
+/// bucket when either card adds evidence, keeping previously resolved rows.
+private struct ProgressiveCameraCaptures {
+    private var buckets: [String: [WirelessObjectDescriptor]] = [:]
+    private var changed: Set<String> = []
+    private var resolved: [String: [CameraCapture]] = [:]
+
+    mutating func insert(_ object: WirelessObjectDescriptor) {
+        let key = CameraCaptureEvidence.stem(object) ?? object.filename
+        buckets[key, default: []].append(object)
+        changed.insert(key)
+    }
+
+    mutating func rows(inventory: WirelessStorageInventory) -> [CameraCapture] {
+        for key in changed {
+            resolved[key] = CaptureResolver.resolve(objects: buckets[key] ?? [], inventory: inventory, provisional: true)
+        }
+        changed.removeAll(keepingCapacity: true)
+        return resolved.values.flatMap { $0 }.sorted(by: CameraCapture.newestFirst)
     }
 }
 

@@ -47,12 +47,12 @@ final class ManualWiFiFixture {
   final class SavedFinder {
     var beforeReturn: FixtureBarrier?
 
-    func find(_ saved: [SavedCamera]) async throws -> ManualPairedCameraMatches {
+    func find(_ saved: [SavedCamera]) async throws -> PairedCameraMatches {
       await beforeReturn?.wait()
-      var results = ManualPairedCameraMatches(saved: saved)
+      var results = PairedCameraMatches(saved: saved)
       if let camera = saved.first {
         results.receive(peripheralID: camera.peripheralID, advertisement: [
-          CBAdvertisementDataServiceUUIDsKey: [ManualPairedCameraMatches.service],
+          CBAdvertisementDataServiceUUIDsKey: [PairedCameraMatches.service],
           CBAdvertisementDataManufacturerDataKey: Data([0xd8, 0x04, 0, 0, 0, 0, 0, 0]),
           CBAdvertisementDataIsConnectable: true
         ])

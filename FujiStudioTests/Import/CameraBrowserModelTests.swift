@@ -44,6 +44,8 @@ final class CameraBrowserModelTests: XCTestCase {
 
         let row = try XCTUnwrap(browser.captures.first)
         XCTAssertEqual(row.availability, .checking)
+        let trayID = try XCTUnwrap(browser.traySources.first?.id)
+        browser.apply(.sourceTapped(trayID))
         XCTAssertThrowsError(try browser.select(row.id, policy: .pair))
         XCTAssertThrowsError(try browser.select(row.id, policy: .rawOnly))
         let thumbnail = Task { await browser.thumbnail(for: row) }
@@ -53,6 +55,9 @@ final class CameraBrowserModelTests: XCTestCase {
         _ = await thumbnail.value
 
         XCTAssertEqual(browser.captures.map(\.availability), [.pair])
+        XCTAssertEqual(browser.traySources.map(\.id), [trayID])
+        XCTAssertEqual(browser.workspace.viewedSourceID, trayID)
+        XCTAssertEqual(browser.traySources.first?.originalResources.jpeg?.originalFilename, jpeg.filename)
         let overlapped = await session.overlapCount
         XCTAssertEqual(overlapped, 0)
         let resolved = try XCTUnwrap(browser.captures.first)

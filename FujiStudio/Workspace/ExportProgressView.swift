@@ -105,24 +105,82 @@ struct AppWorkspaceView: View {
     @State private var statusPath: [StatusDestination] = []
     @State private var connection = PresentedCameraConnection()
 
+    @State private var cameraMode = false
+    @State private var handoffPresented = false
+    @State private var cameraPhotoError: String?
+    @State private var cameraPreview: DisplayFileLease?
+    @State private var viewerFile: ViewerFile?
+    @State private var viewedObject: WirelessObjectDescriptor?
+    @State private var viewerFailure: String?
+
+    private var browser: CameraBrowserModel { model.cameraBrowser }
+    private var state: WorkspaceState { cameraMode ? browser.workspace : model.state }
+    private var object: WirelessObjectDescriptor? {
+        guard cameraMode, let id = state.viewedSourceID, let capture = browser.capture(for: id) else { return nil }
+        return state.displayedVersion == .cameraJPEG ? capture.jpeg : capture.raw
+    }
+    private var displayFile: DisplayFileLease? {
+        cameraMode ? (viewedObject == object ? (viewerFile?.lease ?? cameraPreview) : nil) : model.displayFile
+    }
+    private var galleryMessage: String? {
+        guard cameraMode, browser.traySources.isEmpty else { return nil }
+        return browser.isLoading ? "Reading camera photos…" : "No RAW photos on the camera"
+    }
+
     private enum StatusDestination: Hashable { case cameraBrowser, autoSave, cameraImports }
 
-    var body: some View {
-        WorkspaceView(state: model.state, sources: model.sources, thumbnails: model.environment.thumbnails,
-            imageURL: model.displayFile?.fileURL, imageGeometry: model.displayFile?.geometry,
-            displayFile: model.displayFile, imageIdentity: model.imageIdentity,
-            detail: model.detail, imageLoading: model.imageLoading, imageStatus: model.imageStatus,
-            imageStatusIsFailure: model.imageStatusIsFailure,
-            savedVersions: model.savedVersions, exportPending: model.isSubmitting, previewLoading: model.isLoadingPreview,
-            onAction: model.send, onRefreshRecipes: { Task { await model.refreshRecipes() } },
+    private var imageLoading: ImageLoadingState? {
+        if !cameraMode { return model.imageLoading }
+        return object != nil && (viewedObject != object || viewerFile == nil) && viewerFailure == nil ? .loading : nil
+    }
+
+    private var workspace: some View {
+        let provider: any GridThumbnailProviding = cameraMode ? model.environment.wireless.trayThumbnails : model.environment.thumbnails
+        let action: (WorkspaceAction) -> Void = { event in
+            if cameraMode { browser.apply(event) } else { model.send(event) }
+        }
+        let save: (() -> Void)? = cameraMode ? { saveCameraPhotos() } : nil
+        return WorkspaceView(state: state, sources: cameraMode ? browser.traySources : model.sources,
+            thumbnails: provider,
+            imageURL: displayFile?.fileURL, imageGeometry: displayFile?.geometry,
+            displayFile: displayFile, imageIdentity: cameraMode ? nil : model.imageIdentity,
+            detail: cameraMode ? nil : model.detail,
+            imageLoading: imageLoading,
+            imageStatus: cameraMode ? viewerFailure : model.imageStatus,
+            imageStatusIsFailure: cameraMode ? viewerFailure != nil : model.imageStatusIsFailure,
+            savedVersions: cameraMode ? [] : model.savedVersions, exportPending: model.isSubmitting, previewLoading: model.isLoadingPreview,
+            onSaveCameraPhotos: save,
+            canSaveCameraPhotos: cameraMode && browser.canSaveWorkspaceSelection && !model.cameraImportActive && model.importJournalIssue == nil,
+            cameraGalleryMessage: galleryMessage, reservesCameraButtonSpace: showsCameraPhotos,
+            onAction: action, onRefreshRecipes: { Task { await model.refreshRecipes() } },
             onCopyRecipeToPhone: model.copyRecipeToPhone,
             onDeletePhoneRecipe: model.deletePhoneRecipe,
             onEditPhoneRecipe: model.updatePhoneRecipe,
             onExport: { Task { await model.export() } },
             statusControl: { statusButton })
+    }
+
+    var body: some View {
+        workspace.id(cameraMode)
+        .task(id: object) { await loadViewedOriginal(object) }
+        .overlay(alignment: .bottom) { cameraPhotosButton.padding(.bottom, 8) }
+        .onChange(of: model.wirelessState.wifi) { _, phase in
+            if phase == .ready { cameraMode = true }
+            if phase == .idle { cameraMode = false }
+        }
+        .onChange(of: model.wirelessState.manualNetwork) { _, network in handoffPresented = network != nil }
+        .sheet(isPresented: Binding(get: { handoffPresented && !statusPresented }, set: { handoffPresented = $0 })) {
+            handoffSheet
+        }
+        .alert("Camera Photos", isPresented: Binding(get: { cameraPhotoError != nil }, set: { if !$0 { cameraPhotoError = nil } })) {
+            Button("OK") { cameraPhotoError = nil }
+        } message: { Text(cameraPhotoError ?? "") }
         .sheet(isPresented: Binding(get: { statusPresented }, set: { presented in
             if presented { statusPresented = true } else { closeStatus() }
-        })) {
+        })) { statusSheet }
+    }
+
+    private var statusSheet: some View {
             NavigationStack(path: $statusPath) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
@@ -205,18 +263,89 @@ struct AppWorkspaceView: View {
                         case .autoSave:
                             AutoSaveSetupView(model: model, connection: connection, onBack: popStatus, onBrowse: { statusPath = [.cameraBrowser] })
                         case .cameraImports:
-                            CameraImportProgressView(model: model, onBack: popStatus, onViewImported: closeStatus)
+                            CameraImportProgressView(model: model, onBack: popStatus, onViewImported: { cameraMode = false; closeStatus() })
                         }
                     }
             }
             .environment(\.dynamicTypeSize, dynamicTypeSize)
+            .sheet(isPresented: $handoffPresented) { handoffSheet }
+    }
+
+    @ViewBuilder private var handoffSheet: some View {
+        if let network = model.wirelessState.manualNetwork {
+            CameraNetworkInstructions(network: network, connection: model.environment.wireless.connection,
+                                      openSettings: model.openSettings)
         }
     }
+
+    private var showsCameraPhotos: Bool {
+        let wireless = model.wirelessState
+        return wireless.bluetooth == .ready || wireless.manualNetwork != nil || wireless.wifi == .ready
+    }
+
+    @ViewBuilder private var cameraPhotosButton: some View {
+        let wireless = model.wirelessState
+        if showsCameraPhotos {
+            Button {
+                if wireless.wifi == .ready { cameraMode.toggle() }
+                else if wireless.manualNetwork != nil { handoffPresented = true }
+                else {
+                    Task {
+                        await model.connectCameraWiFi()
+                        if model.wirelessState.wifi != .ready { cameraPhotoError = model.wirelessState.transferFailureGuidance }
+                    }
+                }
+            } label: {
+                Label(cameraMode ? "Phone Photos" : "Camera Photos", systemImage: cameraMode ? "iphone" : "camera")
+                    .font(.callout.weight(.semibold)).padding(.horizontal, 8)
+            }
+            .buttonStyle(.glass)
+            .disabled(wireless.manualNetwork == nil && wireless.wifi != .idle && wireless.wifi != .ready)
+            .accessibilityIdentifier("workspace.cameraPhotos")
+        }
+    }
+
+    private func loadViewedOriginal(_ object: WirelessObjectDescriptor?) async {
+        viewerFile = nil
+        cameraPreview = nil
+        viewerFailure = nil
+        viewedObject = object
+        guard let object else { return }
+        if let id = state.viewedSourceID, let capture = browser.capture(for: id),
+           let data = await browser.thumbnail(for: capture) {
+            let preview = await Task.detached { try? DisplayFileLease.cameraPreview(data) }.value
+            guard !Task.isCancelled, self.object == object else { return }
+            cameraPreview = preview
+        }
+        guard !Task.isCancelled else { return }
+        do {
+            let file = try await browser.viewerFile(for: object)
+            guard !Task.isCancelled, self.object == object else { return }
+            viewerFile = file
+            cameraPreview = nil
+        } catch {
+            guard !Task.isCancelled, self.object == object else { return }
+            cameraPreview = nil
+            viewerFailure = (error as? WirelessFailure)?.connectionGuidance ?? "Couldn’t load this original from the camera."
+        }
+    }
+
+    private func saveCameraPhotos() {
+        do { try browser.selectWorkspacePhotos() }
+        catch {
+            cameraPhotoError = "These originals can’t be saved together. Check the card for ambiguous file matches."
+            return
+        }
+        statusPath = [.cameraImports]
+        statusPresented = true
+        Task { await model.importSelectedCaptures() }
+    }
+
     private var statusButton: some View {
         CameraStatusControl(state: CameraIndicatorState(camera: model.state.cameraState,
             refreshingRecipes: model.isRefreshing || model.isResettingCamera,
             hasError: model.cameraError != nil || model.cameraResetError != nil), label: statusLabel,
-            exportProgress: model.exportEvent?.activeProgress, wireless: wirelessStatus) {
+            exportProgress: model.exportEvent?.activeProgress, wireless: wirelessStatus, bluetooth: model.wirelessState.bluetooth) {
             statusPath.removeAll()
             statusPresented = true
         }
@@ -245,6 +374,7 @@ struct AppWorkspaceView: View {
         if model.isResettingCamera { return "Resetting camera connection…" }
         if model.cameraError != nil || model.cameraResetError != nil { return "Camera error" }
         if model.cameraImportActive, let wirelessStatus { return wirelessStatus.label }
+        if model.wirelessState.bluetooth == .ready, let wirelessStatus { return wirelessStatus.label }
         if model.isLoadingLibrary { return "Reading Photos…" }
         if let event = model.exportEvent {
             let count = event.summary.replacementCleanup > 0 ? "\(event.summary.exported) exported" : "\(event.summary.completed) saved"

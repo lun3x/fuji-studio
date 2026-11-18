@@ -6,6 +6,30 @@ import XCTest
 
 @MainActor
 final class WiFiHandoffTests: XCTestCase {
+  func testManualHandoffRetainsCredentialsAcrossSettingsAndOpensGallery() async throws {
+    let route = HandoffBarrier()
+    let fixture = Fixture(manualRoute: route)
+    await fixture.start()
+    let connecting = Task { await fixture.coordinator.connectWiFi() }
+    await route.entered()
+    let prompt = await snapshot(fixture.coordinator)
+    let network = try XCTUnwrap(prompt.manualNetwork)
+    let password = try await fixture.coordinator.handoffPassword(for: network)
+    XCTAssertEqual(password, "private-fixture")
+    await fixture.coordinator.setActivity(.background)
+    let background = await snapshot(fixture.coordinator)
+    XCTAssertEqual(background.manualNetwork, network)
+    XCTAssertTrue(background.hasTransferLease)
+    await fixture.coordinator.setActivity(.active)
+    await route.release()
+    await connecting.value
+    let connected = await snapshot(fixture.coordinator)
+    XCTAssertEqual(connected.wifi, .ready)
+    XCTAssertNil(connected.manualNetwork)
+    XCTAssertFalse(fixture.log.events.contains("native join"))
+    await fixture.coordinator.disconnectWiFi()
+  }
+
   func testBackgroundUSBConnectDrainsBeforeWiFiActivationOrJoin() async throws {
     let usb = try await FixtureEnvironment.make()
     let fixture = Fixture(ownership: usb.environment.wirelessOwnership)
@@ -509,7 +533,7 @@ private final class Fixture {
   init(
     failure: WirelessFailure? = nil, model: WirelessCameraModel = .xt5, autoSave: HandoffAutoSave? = nil,
     ownership: (any WirelessCameraOwnershipGateway)? = nil, close: WirelessCloseFixture? = nil,
-    peerFirmware: String? = "4.32", bluetoothFirmware: String? = "4.32"
+    peerFirmware: String? = "4.32", bluetoothFirmware: String? = "4.32", manualRoute: HandoffBarrier? = nil
   ) {
     let camera = SavedCamera(id: id, peripheralID: UUID(), model: model, displayName: "Fixture")
     let bluetooth = HandoffBluetooth(id: id, log: log, failure: failure, firmware: bluetoothFirmware)
@@ -519,8 +543,10 @@ private final class Fixture {
     self.gateway = gateway
     coordinator = WirelessConnectionCoordinator(
       bluetooth: bluetooth, store: HandoffStore(camera: camera),
-      authorization: { .allowed }, wifi: gateway, ownership: ownership ?? HandoffOwner(log: log),
+      authorization: { .allowed }, credentials: manualRoute == nil ? nil : PasswordFixture(),
+      wifi: manualRoute == nil ? gateway : nil, ownership: ownership ?? HandoffOwner(log: log),
       sessionFactory: { identity, _ in
+        if let manualRoute { await manualRoute.wait() }
         await log.record("allocate socket")
         let peer = WirelessIdentity(cameraID: identity.cameraID, model: identity.model, firmware: peerFirmware,
                                     protocolPeerKey: identity.protocolPeerKey)

@@ -122,6 +122,7 @@ final class PhotoGridController: UIViewController, UICollectionViewDelegateFlowL
         let metadataChanged = self.sources != sources
         if sweeping && (idsChanged || !selecting) { finishSweep(cancelled: true) }
         let anchor = idsChanged ? captureAnchor() : nil
+        let previousByID = byID
         if metadataChanged {
             byID = Dictionary(sources.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
         }
@@ -140,14 +141,14 @@ final class PhotoGridController: UIViewController, UICollectionViewDelegateFlowL
             for (index, section) in sections.enumerated() {
                 snapshot.appendSections([index]); snapshot.appendItems(section.sourceIDs, toSection: index)
             }
-            dataSource.applySnapshotUsingReloadData(snapshot)
+            dataSource.apply(snapshot, animatingDifferences: false)
             collectionView.layoutIfNeeded(); restoreAnchor(anchor)
         }
         refreshHeaders()
         for case let cell as PhotoGridCell in collectionView.visibleCells {
             if let id = cell.sourceID, let source = byID[id] {
                 cell.contentView.transform = CGAffineTransform(rotationAngle: contentRotation)
-                if metadataChanged { configure(cell, source: source) }
+                if metadataChanged, previousByID[id] != source { configure(cell, source: source) }
                 else { cell.membership(selecting: selecting, checked: checked.contains(id), viewed: id == viewed) }
             }
         }

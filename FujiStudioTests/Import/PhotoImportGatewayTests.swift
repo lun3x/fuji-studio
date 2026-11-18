@@ -33,7 +33,7 @@ final class PhotoImportGatewayTests: XCTestCase {
         XCTAssertEqual(request.resources.map(\.filename), ["DSCF0001.JPG", "DSCF0001.RAF"])
         XCTAssertEqual(request.resources.map(\.shouldMoveFile), [false, false])
         XCTAssertTrue(request.prefersJPEG)
-        XCTAssertEqual(request.metadata.creationDate, Date(timeIntervalSince1970: 1_700_000_000))
+        XCTAssertEqual(request.metadata.creationDate, Date(timeIntervalSince1970: 1_577_934_245))
         XCTAssertEqual(request.metadata.location, .init(latitude: 52.25, longitude: -4.5))
         XCTAssertEqual(try Data(contentsOf: request.resources[0].fileURL), fixture.jpeg)
         XCTAssertEqual(try Data(contentsOf: request.resources[1].fileURL), fixture.raf)

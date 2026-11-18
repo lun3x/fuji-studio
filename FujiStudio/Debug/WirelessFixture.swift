@@ -1,11 +1,13 @@
 #if DEBUG
 import Foundation
 import FujiCameraCore
+import UIKit
 
 /// Exercises production session ownership, browsing, staging and recovery in UI fixtures.
 @MainActor struct WirelessFixture {
     enum Mode: String, CaseIterable {
         case disabled, unpaired = "--fixture-wireless-unpaired", paired = "--fixture-wireless-paired"
+        case manualNetwork = "--fixture-wireless-manual-network"
         case unverifiedSave = "--fixture-wireless-unverified-save"
         case unidentifiedSave = "--fixture-wireless-unidentified-save"
         case xe3Unpaired = "--fixture-wireless-xe3-unpaired"
@@ -92,8 +94,10 @@ import FujiCameraCore
             rejection: mode == .retryable || mode == .heldLocalRetry ? .storage : nil,
             retryDelay: mode == .heldLocalRetry ? .seconds(25) : nil)
         self.bluetooth = bluetooth; self.wifi = wifi; self.session = session; self.photos = photos
+        let manualNetwork = mode == .manualNetwork ? FixtureManualCameraNetwork() : nil
         let connection = WirelessConnectionCoordinator(bluetooth: bluetooth, store: store, authorization: { .allowed },
-            wifi: wifi, ownership: FixtureWirelessOwnership(base: ownership, refuse: mode == .autoSaveOwnershipFailure), sessionFactory: { peer, _ in
+            credentials: manualNetwork, wifi: manualNetwork == nil ? wifi : nil, ownership: FixtureWirelessOwnership(base: ownership, refuse: mode == .autoSaveOwnershipFailure), sessionFactory: { peer, _ in
+                if let manualNetwork { try await manualNetwork.requireReturnFromSettings() }
                 if peer.cameraID == identity.cameraID {
                     await session.begin()
                     return session
@@ -133,6 +137,24 @@ import FujiCameraCore
                      photoGateway: FixtureImportPhotos(reader: nil, verifySaves: false),
                      isEnabled: false, requestPhotosAccess: { .denied })
     }
+}
+
+@MainActor
+private final class FixtureManualCameraNetwork: CameraNetworkCredentialProvider {
+    private var returned = false
+
+    init() {
+        NotificationCenter.default.addObserver(self, selector: #selector(enteredForeground),
+                                               name: UIApplication.willEnterForegroundNotification, object: nil)
+    }
+
+    @objc private func enteredForeground() { returned = true }
+
+    func requireReturnFromSettings() throws {
+        guard returned else { throw WirelessFailure.routeUnavailable }
+    }
+
+    func password(for reference: CameraCredentialReference) async throws -> String { "camera-fixture" }
 }
 
 private struct FixtureWirelessOwnership: WirelessCameraOwnershipGateway {

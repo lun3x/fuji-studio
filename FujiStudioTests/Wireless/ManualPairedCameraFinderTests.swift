@@ -5,12 +5,12 @@ import Testing
 @testable import FujiStudio
 
 @MainActor
-struct ManualPairedCameraFinderTests {
+struct PairedCameraFinderTests {
   @Test func requiresSavedServiceExactPeripheralManufacturerShapeAndConnectability() {
     let camera = saved()
     let unsupported = saved(model: .xe3)
-    var matches = ManualPairedCameraMatches(saved: [camera, unsupported])
-    let paired = ManualPairedCameraMatches.service
+    var matches = PairedCameraMatches(saved: [camera, unsupported])
+    let paired = PairedCameraMatches.service
     let pairingOnly = CBUUID(string: "a9d2b304-e8d6-4902-8336-352b772d7597")
     matches.receive(peripheralID: UUID(), advertisement: advertisement(paired))
     matches.receive(peripheralID: unsupported.peripheralID, advertisement: advertisement(paired))
@@ -29,8 +29,8 @@ struct ManualPairedCameraFinderTests {
     let ambiguous = saved()
     let alias = saved(peripheralID: ambiguous.peripheralID)
     let unseen = saved()
-    var matches = ManualPairedCameraMatches(saved: [first, second, ambiguous, alias, unseen])
-    let packet = advertisement(ManualPairedCameraMatches.service)
+    var matches = PairedCameraMatches(saved: [first, second, ambiguous, alias, unseen])
+    let packet = advertisement(PairedCameraMatches.service)
     for camera in [second, ambiguous, first, second] {
       matches.receive(peripheralID: camera.peripheralID, advertisement: packet)
     }

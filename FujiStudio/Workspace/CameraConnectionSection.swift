@@ -39,7 +39,7 @@ struct CameraConnectionSection: View {
                 disconnectButton
             } else if state.wifi != .idle || discovering || connection.isWorking {
                 if state.bluetooth == .discovering && state.wifi == .idle {
-                    Text("Start pairing registration in the camera’s connection settings.")
+                    Text("Start Pairing Registration in the camera’s connection settings. Choose the camera below and confirm the pairing on the camera and iPhone.")
                         .font(.footnote).foregroundStyle(.secondary)
                     ForEach(state.discoveredCameras) { camera in
                         Button(camera.displayName) {
@@ -157,7 +157,11 @@ struct CameraConnectionSection: View {
     private func cancel() {
         choosingCamera = false
         retryingBluetooth = false
-        connection.cancel { pending in await model.cancelWirelessConnection(draining: pending) }
+        if connection.isWorking {
+            connection.cancel { pending in await model.cancelWirelessConnection(draining: pending) }
+        } else {
+            Task { await model.cancelWirelessConnection(draining: nil) }
+        }
     }
 
     private var disconnectButton: some View {

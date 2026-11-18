@@ -76,6 +76,7 @@ struct WirelessConnectionState: Equatable, Sendable {
   /// Route of the current or last started transfer attempt.
   var transferRoute: WirelessTransferRoute?
   var failure: WirelessFailure?
+  var manualNetwork: CameraNetwork?
   var wifiFailure: WirelessFailure?
   var wifiFailurePhase: WirelessWiFiPhase?
   var firmwareRejection: WirelessFirmwareRejection?

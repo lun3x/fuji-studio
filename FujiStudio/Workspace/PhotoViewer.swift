@@ -75,6 +75,18 @@ final class DisplayFileLease: Sendable, Equatable {
             throw RenderCacheError.storage
         }
     }
+    static func cameraPreview(_ data: Data) throws -> DisplayFileLease {
+        let directory = root.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let url = directory.appendingPathComponent("preview.jpg")
+            try data.write(to: url)
+            return DisplayFileLease(fileURL: url, directory: directory, geometry: try ImageGeometry.read(url))
+        } catch {
+            try? FileManager.default.removeItem(at: directory)
+            throw error
+        }
+    }
     deinit { try? FileManager.default.removeItem(at: directory) }
     static func == (lhs: DisplayFileLease, rhs: DisplayFileLease) -> Bool { lhs === rhs }
 }

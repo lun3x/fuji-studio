@@ -17,6 +17,10 @@ struct WorkspaceView<StatusControl: View>: View {
     var savedVersions: [SavedVersion] = []
     var exportPending = false
     var previewLoading = false
+    var onSaveCameraPhotos: (() -> Void)?
+    var canSaveCameraPhotos = false
+    var cameraGalleryMessage: String?
+    var reservesCameraButtonSpace = false
     var onAction: (WorkspaceAction) -> Void
     var onRefreshRecipes: () -> Void
     var onCopyRecipeToPhone: (UUID) async -> Bool
@@ -87,7 +91,7 @@ struct WorkspaceView<StatusControl: View>: View {
                         }, grid: { onDrawerDrag in
                             PhotoGrid(sources: traySources, checkedSourceIDs: state.checkedSourceIDs, isSelecting: state.isSelecting,
                                 viewedSourceID: state.viewedSourceID, thumbnails: thumbnails, scrollRequest: scrollRequest,
-                                gridMetrics: gridMetrics, bottomInset: safe.bottom,
+                                gridMetrics: gridMetrics, bottomInset: safe.bottom + (reservesCameraButtonSpace ? 52 : 0),
                                 contentRotation: orientation.contentRotation, allowsDrawerCollapse: state.drawerDetent == .expanded,
                                 dayHeaderControlsSize: orientation == .portrait
                                     ? CGSize(width: selectionControlSize.width + 76, height: selectionControlSize.height + 24)
@@ -159,7 +163,15 @@ struct WorkspaceView<StatusControl: View>: View {
                 GlassEffectContainer(spacing: 8) {
                     DeviceAnchoredRow(orientation: orientation, spacing: 8) {
                         statusControl()
-                        recipeControl
+                        if let onSaveCameraPhotos {
+                            Button(action: onSaveCameraPhotos) {
+                                Label("Save to Phone", systemImage: "square.and.arrow.down")
+                                    .font(.callout.weight(.semibold))
+                            }
+                            .buttonStyle(.glassProminent)
+                            .disabled(!canSaveCameraPhotos)
+                            .accessibilityIdentifier("cameraTray.save")
+                        } else { recipeControl }
                         photoActionControl
                     }
                 }
@@ -183,7 +195,7 @@ struct WorkspaceView<StatusControl: View>: View {
                 statusOverlayInsets: statusOverlayInsets,
                 onStatusHeightChanged: { statusHeight = $0 })
         } else {
-            ContentUnavailableView("Choose a photo", systemImage: "photo.on.rectangle")
+            ContentUnavailableView(cameraGalleryMessage ?? "Choose a photo", systemImage: "photo.on.rectangle")
         }
     }
     private var recipeControl: some View {
@@ -218,8 +230,8 @@ struct WorkspaceView<StatusControl: View>: View {
         GlassEffectContainer(spacing: 12) {
             DeviceAnchoredRow(orientation: orientation, spacing: 12, leadingItems: 0,
                 reversesAxis: orientation == .landscapeLeft) {
-                PhotoFilterMenu(selected: state.photoFilter, cameraModel: state.photoFilterCamera?.model,
-                    onSelect: { onAction(.photoFilterSelected($0)) })
+                if onSaveCameraPhotos == nil { PhotoFilterMenu(selected: state.photoFilter, cameraModel: state.photoFilterCamera?.model,
+                    onSelect: { onAction(.photoFilterSelected($0)) }) }
                 TraySelectionControlLayout {
                     selectionCountSizingLabel.hidden().frame(maxWidth: .infinity, maxHeight: .infinity).overlay {
                         if state.isSelecting { selectionCount }

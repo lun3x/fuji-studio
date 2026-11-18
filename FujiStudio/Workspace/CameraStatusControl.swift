@@ -60,6 +60,7 @@ struct CameraStatusControl: View {
     let label: String
     var exportProgress: ExportSummary? = nil
     var wireless: WirelessStatusSummary? = nil
+    var bluetooth: WirelessBluetoothReadiness = .idle
     var onTap: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
@@ -68,7 +69,7 @@ struct CameraStatusControl: View {
 
     var body: some View {
         Button(action: onTap) {
-            Image(systemName: state == .disconnected ? wireless?.symbol ?? "camera" : "camera")
+            Image(systemName: bluetooth == .connecting || bluetooth == .pairing || bluetooth == .ready ? "camera" : state == .disconnected ? wireless?.symbol ?? "camera" : "camera")
                 .font(.headline)
                 .overlay {
                     if state == .disconnected && wireless == nil {
@@ -76,7 +77,7 @@ struct CameraStatusControl: View {
                     }
                 }
                 .symbolEffect(.rotate.wholeSymbol, options: .repeating,
-                    isActive: state == .preparing && !reduceMotion)
+                    isActive: (state == .preparing || bluetooth == .connecting || bluetooth == .pairing) && !reduceMotion)
                 .frame(minWidth: 44, minHeight: 44).contentShape(Capsule())
                 .overlay(alignment: .bottom) {
                     if let exportProgress {

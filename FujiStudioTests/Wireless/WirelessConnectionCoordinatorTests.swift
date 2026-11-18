@@ -6,6 +6,29 @@ import XCTest
 
 @MainActor
 final class WirelessConnectionCoordinatorTests: XCTestCase {
+  func testSavedDiscoveryCanBeginAuthenticationInBackground() async throws {
+    let found = FixtureBarrier()
+    let fixture = Fixture(findNearby: { cameras in
+      await found.wait()
+      return cameras.first
+    })
+    var updates = await fixture.coordinator.states().makeAsyncIterator()
+    var calls = fixture.gateway.operations.makeAsyncIterator()
+    await fixture.coordinator.setActivity(.active)
+    await found.entered()
+    _ = try await state(&updates) { $0.bluetooth == .waitingForCamera }
+    XCTAssertTrue(fixture.gateway.calls.isEmpty)
+    await fixture.coordinator.setActivity(.background)
+    await found.release()
+    let attempt = await calls.next(isolation: #isolation)
+    XCTAssertEqual(attempt, .reconnect(fixture.first.id, prompt: false))
+    _ = try await state(&updates) { $0.bluetooth == .connecting }
+    fixture.gateway.completeLink()
+    let connected = try await state(&updates) { $0.bluetooth == .ready }
+    XCTAssertEqual(connected.activity, .background)
+    XCTAssertEqual(connected.wifi, .idle)
+  }
+
   func testUnauthorizedLaunchMakesNoConnectionAttempt() async throws {
     let fixture = Fixture(authorization: .denied)
     let states = await fixture.coordinator.states()
@@ -846,11 +869,12 @@ final class WirelessConnectionCoordinatorTests: XCTestCase {
     let gateway: ControlledBluetoothGateway
     let coordinator: WirelessConnectionCoordinator
 
-    init(authorization: WirelessBluetoothAuthorization = .allowed, selected: Bool = true) {
+    init(authorization: WirelessBluetoothAuthorization = .allowed, selected: Bool = true,
+         findNearby: WirelessConnectionCoordinator.FindNearby? = nil) {
       self.store = MemorySavedCameraStore(cameras: [first, second], selected: selected ? first.id : nil)
       self.gateway = ControlledBluetoothGateway(store: store)
       self.coordinator = WirelessConnectionCoordinator(
-        bluetooth: gateway, store: store, authorization: { authorization }, sleep: clock.sleep)
+        bluetooth: gateway, store: store, authorization: { authorization }, sleep: clock.sleep, findNearby: findNearby)
     }
   }
 }

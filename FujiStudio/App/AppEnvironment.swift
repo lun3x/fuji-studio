@@ -100,6 +100,7 @@ import UIKit
 @MainActor struct WirelessServices {
     let connection: WirelessConnectionCoordinator
     let browser: CameraBrowserModel
+    let trayThumbnails: CameraGridThumbnails
     let importer: CameraImportCoordinator
     let journal: ImportJournal
     let requestPhotosAccess: @MainActor () async -> LibraryAccess
@@ -109,7 +110,9 @@ import UIKit
          photoGateway: any PhotoImportGateway, isEnabled: Bool = true,
          requestPhotosAccess: @escaping @MainActor () async -> LibraryAccess) {
         self.connection = connection
-        self.browser = CameraBrowserModel()
+        let browser = CameraBrowserModel()
+        self.browser = browser
+        self.trayThumbnails = CameraGridThumbnails(browser: browser)
         self.importer = CameraImportCoordinator(journal: journal, staging: staging, gateway: photoGateway)
         self.journal = journal
         self.requestPhotosAccess = requestPhotosAccess
@@ -128,7 +131,9 @@ import UIKit
             bluetooth: NativeBluetoothGateway(
                 store: store, driver: CoreBluetoothDriver(discoverAllServices: true), usesXT5PhotoTransfer: true),
             store: store,
-            wifi: NativeWiFiJoinGateway(credentials: store), ownership: ownership,
+            findNearby: { saved in
+                try await PairedCameraFinder(saved: saved).find(firstMatch: true).cameras.first
+            }, credentials: store, ownership: ownership,
             sessionFactory: { identity, _ in
                 let mode: WirelessMode = identity.model == .xt5 ? .xApp : .phone
                 let channel = try await NetworkByteChannel.connect(to: .cameraHosted(mode: mode))

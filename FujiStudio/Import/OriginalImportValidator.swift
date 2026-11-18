@@ -45,7 +45,7 @@ struct OriginalImportValidator: Sendable {
         let source: ImportCaptureMetadata.DateSource
         if let date = embedded.compactMap(\.absoluteDate).first {
             (resolvedDate, source) = (date, .embedded)
-        } else if let date = reported.compactMap(\.absoluteDate).first {
+        } else if let date = reported.compactMap({ selection.camera.model == .xt5 ? $0.xT5Date : $0.absoluteDate }).first {
             (resolvedDate, source) = (date, .objectInfo)
         } else {
             (resolvedDate, source) = (importDate, embedded.isEmpty && reported.isEmpty
@@ -207,7 +207,12 @@ struct OriginalImportValidator: Sendable {
     }
 }
 
-private extension CameraCaptureTimestamp {
+extension CameraCaptureTimestamp {
+    /// Unsuffixed X-T5 gallery ObjectInfo is UTC.
+    var xT5Date: Date? {
+        offset == nil ? CameraCaptureTimestamp(wallTime + "Z")?.absoluteDate : absoluteDate
+    }
+
     func agreesForCapture(with other: Self) -> Bool {
         if let first = absoluteDate, let second = other.absoluteDate {
             return abs(first.timeIntervalSince(second)) < 1

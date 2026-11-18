@@ -13,6 +13,7 @@ struct WirelessTransferAdmission: Sendable {
 
 actor WirelessConnectionCoordinator: USBBluetoothControlling {
   private enum Work {
+    case scanSaved([SavedCamera])
     case discovery
     case pair(DiscoveredCamera)
     case reconnect(SavedCamera, prompt: Bool)
@@ -32,6 +33,9 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
 
   private let bluetooth: any BluetoothGateway
   private let store: any SavedCameraStore
+  typealias FindNearby = @Sendable ([SavedCamera]) async throws -> SavedCamera?
+  private let findNearby: FindNearby?
+  private let credentials: (any CameraNetworkCredentialProvider)?
   private let authorization: @Sendable () -> WirelessBluetoothAuthorization
   private let wifi: (any WiFiJoinGateway)?
   private let ownership: (any WirelessCameraOwnershipGateway)?
@@ -89,9 +93,12 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
       }
     },
     sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
+    findNearby: FindNearby? = nil, credentials: (any CameraNetworkCredentialProvider)? = nil,
     wifi: (any WiFiJoinGateway)? = nil, ownership: (any WirelessCameraOwnershipGateway)? = nil,
     sessionFactory: WirelessTransferSessionFactory? = nil, autoSave: (any AutoSaveGateway)? = nil
   ) {
+    self.findNearby = findNearby
+    self.credentials = credentials
     self.bluetooth = bluetooth
     self.store = store
     self.authorization = authorization
@@ -125,6 +132,12 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
     case .inactive:
       break
     case .background:
+      // The Settings trip is part of a manual handoff. Keep its authenticated intent.
+      if snapshot.manualNetwork != nil { return }
+      if findNearby != nil, snapshot.wifi == .idle, !isPairing, snapshot.bluetooth != .discovering {
+        startAutomaticReconnect()
+        return
+      }
       await resetConnection()
       startAutomaticReconnect()
     }
@@ -225,6 +238,7 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
 
   func retryBluetooth() async {
     await loadSavedCameras()
+    if case .scanSaved = work?.kind { await stopBluetoothWork() }
     guard !Task.isCancelled, snapshot.activity != .background, !bluetoothSuspendedForUSB, !mutatingStore, cleanup == nil, pendingDiscovery == nil,
       work == nil, activeTransfer == nil, wifiLease == nil,
       wifiAttempt?.autoSave != true, snapshot.bluetooth != .ready
@@ -241,6 +255,8 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
     await loadSavedCameras()
     try Task.checkCancellation()
     guard snapshot.activity != .background else { throw CancellationError() }
+    if case .scanSaved = work?.kind { await stopBluetoothWork() }
+    try Task.checkCancellation()
     guard let camera = selectedCamera else { throw WirelessFailure.peerMismatch }
     guard !bluetoothSuspendedForUSB, !mutatingStore, cleanup == nil, wifiRequest == nil, activeTransfer == nil, pendingDiscovery == nil,
       wifiAttempt?.autoSave != true,
@@ -375,11 +391,17 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
   }
 
   private func startAutomaticReconnect() {
-    guard snapshot.activity == .active, !bluetoothSuspendedForUSB, !mutatingStore, cleanup == nil, activeTransfer == nil, pendingDiscovery == nil,
+    guard (snapshot.activity == .active || findNearby != nil), !bluetoothSuspendedForUSB, !mutatingStore, cleanup == nil, activeTransfer == nil, pendingDiscovery == nil,
       wifiAttempt == nil, wifiTeardown == nil, wifiLease == nil,
       work == nil, snapshot.hasLoadedSavedCameraPreference, retry == nil, blockedFailure == nil, snapshot.bluetooth != .ready
     else { return }
-    startReconnect(prompt: false)
+    if findNearby != nil, selectedCamera?.model != .xe3,
+       snapshot.savedCameras.contains(where: { $0.model == .xt5 }), authorization() == .allowed {
+      snapshot.bluetooth = .waitingForCamera
+      begin(.scanSaved(snapshot.savedCameras))
+    } else {
+      startReconnect(prompt: false)
+    }
   }
 
   private func startReconnect(prompt: Bool) {
@@ -405,6 +427,9 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
       do {
         try Task.checkCancellation()
         switch kind {
+        case .scanSaved(let saved):
+          guard let camera = try await self?.findNearby?(saved) else { throw WirelessFailure.connectionLost }
+          await self?.foundNearby(camera, id: id)
         case .discovery:
           let candidates = try await bluetooth.discover()
           for try await cameras in candidates {
@@ -427,6 +452,13 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
       }
     }
     work = (id, kind, task)
+  }
+
+  private func foundNearby(_ camera: SavedCamera, id: UUID) {
+    guard work?.id == id, snapshot.savedCameras.contains(camera) else { return }
+    work = nil
+    snapshot.selectedCameraID = camera.id
+    startReconnect(prompt: false)
   }
 
   private func listen(to events: AsyncStream<BluetoothGatewayEvent>, id: UUID) -> Bool {
@@ -558,7 +590,10 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
     snapshot.discoveredCameras = []
     let failure = (error as? WirelessFailure) ?? .unavailableStorage
     recordBluetoothFailure(failure)
-    if case .reconnect = current.kind { scheduleRetry() }
+    switch current.kind {
+    case .reconnect, .scanSaved: scheduleRetry()
+    default: break
+    }
   }
 
   private func recordBluetoothFailure(_ failure: WirelessFailure) {
@@ -578,7 +613,7 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
   }
 
   private func scheduleRetry() {
-    guard snapshot.activity == .active, !bluetoothSuspendedForUSB, activeTransfer == nil, wifiLease == nil,
+    guard (snapshot.activity == .active || findNearby != nil), !bluetoothSuspendedForUSB, activeTransfer == nil, wifiLease == nil,
       work == nil, cleanup == nil, retry == nil, blockedFailure == nil else { return }
     let id = UUID()
     let delay = Self.retryDelays[backoffIndex]
@@ -611,6 +646,7 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
 
   private func endWiFiRequest(failure: WirelessFailure? = nil) {
     guard let current = wifiRequest else { return }
+    snapshot.manualNetwork = nil
     wifiRequest = nil
     snapshot.connectionGeneration &+= 1
     let phase = snapshot.wifi
@@ -682,13 +718,13 @@ actor WirelessConnectionCoordinator: USBBluetoothControlling {
 
 extension WirelessConnectionCoordinator {
   func connectWiFi() async {
-    guard let wifi, let ownership, let sessionFactory else {
+    guard wifi != nil || credentials != nil, let ownership, let sessionFactory else {
       snapshot.transferRoute = .cameraNetwork
       snapshot.wifiFailure = .unsupportedProtocol
       return
     }
     await startWiFiAttempt(autoSave: false) { id in
-      await self.runWiFi(id, wifi: wifi, ownership: ownership, makeSession: sessionFactory)
+      await self.runWiFi(id, wifi: self.wifi, ownership: ownership, makeSession: sessionFactory)
     }
   }
 
@@ -774,7 +810,7 @@ extension WirelessConnectionCoordinator {
   }
 
   private func runWiFi(
-    _ id: UUID, wifi: any WiFiJoinGateway, ownership: any WirelessCameraOwnershipGateway,
+    _ id: UUID, wifi: (any WiFiJoinGateway)?, ownership: any WirelessCameraOwnershipGateway,
     makeSession: WirelessTransferSessionFactory
   ) async {
     do {
@@ -796,13 +832,27 @@ extension WirelessConnectionCoordinator {
       try checkWiFiAttempt(id, intent)
       guard cameraNetwork.credential.cameraID == intent.cameraID else { throw WirelessFailure.peerMismatch }
       snapshot.wifi = .joiningNetwork
-      let joined = try await wifi.join(cameraNetwork)
-      joinedNetwork = joined
-      try checkWiFiAttempt(id, intent)
-      try await wifi.verify(joined)
-      try checkWiFiAttempt(id, intent)
-      snapshot.wifi = .openingSession
-      let opened = try await makeSession(bleIdentity, joined)
+      let opened: any WirelessTransferSession
+      if let wifi {
+        let joined = try await wifi.join(cameraNetwork)
+        joinedNetwork = joined
+        try checkWiFiAttempt(id, intent)
+        try await wifi.verify(joined)
+        try checkWiFiAttempt(id, intent)
+        snapshot.wifi = .openingSession
+        opened = try await makeSession(bleIdentity, joined)
+      } else {
+        snapshot.manualNetwork = cameraNetwork
+        opened = try await waitForManualConnection(cameraNetwork, identity: bleIdentity, makeSession: makeSession)
+        // A socket can become ready while Settings is still in front. Start PTP only on return.
+        session = opened
+        while snapshot.activity != .active {
+          try Task.checkCancellation()
+          try await sleep(.milliseconds(150))
+        }
+        snapshot.manualNetwork = nil
+        snapshot.wifi = .openingSession
+      }
       session = opened
       try checkWiFiAttempt(id, intent)
       let peer = try await opened.open()
@@ -811,7 +861,7 @@ extension WirelessConnectionCoordinator {
       guard peer.cameraID == bleIdentity.cameraID, peer.model == bleIdentity.model else {
         throw WirelessFailure.peerMismatch
       }
-      try await wifi.verify(joined)
+      if let joinedNetwork { try await wifi?.verify(joinedNetwork) }
       try checkWiFiAttempt(id, intent)
       #if DEBUG
       probeFirmwareObserver?(.init(model: peer.model, source: .cameraNetwork,
@@ -823,6 +873,35 @@ extension WirelessConnectionCoordinator {
     } catch {
       await failWiFi(id, error: error)
     }
+  }
+
+  func handoffPassword(for network: CameraNetwork) async throws -> String {
+    guard snapshot.manualNetwork == network, let credentials else { throw WirelessFailure.connectionLost }
+    let password = try await credentials.password(for: network.credential)
+    guard snapshot.manualNetwork == network else { throw WirelessFailure.connectionLost }
+    return password
+  }
+
+  private func waitForManualConnection(
+    _ network: CameraNetwork, identity: WirelessIdentity, makeSession: WirelessTransferSessionFactory
+  ) async throws -> any WirelessTransferSession {
+    let deadline = ContinuousClock.now + .seconds(180)
+    let manual = JoinedCameraNetwork(ssid: network.ssid, ownsTemporaryConfiguration: false)
+    while ContinuousClock.now < deadline {
+      try Task.checkCancellation()
+      if snapshot.activity == .active {
+        do {
+          // This opens the actual Wi-Fi-only camera socket. A successful probe would
+          // consume the camera's first gallery connection, so keep this same session.
+          return try await makeSession(identity, manual)
+        } catch WirelessFailure.routeUnavailable {
+        } catch WirelessFailure.connectionLost {
+        } catch WirelessFailure.timeout(.tcpSetup) {
+        }
+      }
+      try await sleep(.seconds(1))
+    }
+    throw WirelessFailure.timeout(.joinResult)
   }
 
   private func runAutoSave(

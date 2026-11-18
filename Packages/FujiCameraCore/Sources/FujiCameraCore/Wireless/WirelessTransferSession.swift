@@ -297,7 +297,9 @@ actor CameraHostedTransferSession: WirelessTransferSession {
     }
     var additions: [WirelessObjectDescriptor] = []
     let previousExposure = rawExposure
-    let end = min(scan.index + 16, scan.handles.count)
+    // Yield the socket regularly so visible previews can interleave with a large card scan.
+    let batchSize = verifiedCameraNetwork ? 4 : 16
+    let end = min(scan.index + batchSize, scan.handles.count)
     if scan.index < end {
       additions = try await withAccurateLegacyLengths {
         var metadata: [WirelessObjectDescriptor] = []

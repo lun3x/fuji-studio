@@ -39,7 +39,7 @@ final class ManualWiFiProbe {
 
   private let bluetooth: any BluetoothGateway
   private let loadSaved: () async throws -> [SavedCamera]
-  private let findPaired: ([SavedCamera]) async throws -> ManualPairedCameraMatches
+  private let findPaired: ([SavedCamera]) async throws -> PairedCameraMatches
   private let password: (CameraCredentialReference) async throws -> String
   private let authorizeLaunch: (UUID, @escaping () -> Bool) throws -> Void
   private let makeSession: SessionFactory
@@ -89,7 +89,7 @@ final class ManualWiFiProbe {
 
   init(
     bluetooth: any BluetoothGateway, loadSaved: @escaping () async throws -> [SavedCamera],
-    findPaired: @escaping ([SavedCamera]) async throws -> ManualPairedCameraMatches,
+    findPaired: @escaping ([SavedCamera]) async throws -> PairedCameraMatches,
     password: @escaping (CameraCredentialReference) async throws -> String,
     authorizeLaunch: @escaping (UUID, @escaping () -> Bool) throws -> Void,
     makeSession: @escaping SessionFactory, startLease: @escaping StartLease,
@@ -807,7 +807,7 @@ extension ManualWiFiProbe {
     return ManualWiFiProbe(
       bluetooth: NativeBluetoothGateway(store: store, driver: driver),
       loadSaved: { try await store.cameras() },
-      findPaired: { try await ManualPairedCameraFinder(saved: $0).find() },
+      findPaired: { try await PairedCameraFinder(saved: $0).find() },
       password: { try await store.password(for: $0) },
       authorizeLaunch: { try driver.beginImageViewingActivation(peripheralID: $0, selectionIsCurrent: $1) },
       makeSession: { identity, trace in
