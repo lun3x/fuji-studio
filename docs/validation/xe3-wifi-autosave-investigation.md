@@ -15,6 +15,8 @@ A later run extracted [six RAW thumbnails in one session](#raw-thumbnails-with-p
 using 16 KiB from the start and 32 bytes from the end of each RAF.
 A follow-up [previewed all 16 RAWs and imported one selected original](#preview-and-import-in-one-session)
 using the same AutoSave connection for both phases.
+A separate run [verified five minutes of idle browsing](#five-minute-idle-browse)
+before another preview read on the original connection.
 The [native iPhone acceptance record](wireless-import-acceptance.md) still governs
 Fuji Studio's signing, identity, and hardware gates. The physical phone trace
 below used Fujifilm Camera Remote. The [X-T5 Wi-Fi handoff](wifi-investigation-handoff-2026-11-16.md)
@@ -211,9 +213,29 @@ The preview reads (transactions `50–81`) and the complete original reads
 (transactions `83–101`) share TCP stream `7` and one `OpenSession`.
 The camera needed one playback confirmation for the successful run. After an
 earlier attempt was refused on TCP `55740`, the probe used a five-second
-retry window for that port during startup. The evidence verifies an 8.6-second
-browse pause on this body. Longer idle periods and the native iPhone workflow
-remain to be tested.
+retry window for that port during startup. This run verifies a selected import
+after an 8.6-second pause.
+
+### Five-minute idle browse
+
+The Mac receiver loaded all 16 RAW thumbnails using the same 16 KiB head and
+32-byte tail reads. It then disabled its socket inactivity timeout and TCP
+keepalive and waited five minutes with the original AutoSave connection open.
+The camera received no further user interaction after the initial playback
+confirmation.
+
+In TCP stream `3` of the idle capture, **300.004 seconds** elapsed between the
+last preview response (transaction `81`, frame `684`) and the next ObjectInfo
+request (transaction `82`, frame `697`). The only intervening packet on that
+stream was the Mac's TCP acknowledgement of the last preview response. The
+camera answered the ObjectInfo request and both subsequent reads of
+`DSCF0244.RAF` (transactions `83–84`). The new head and tail bytes matched
+those from before the pause. The endpoints closed the connection after the
+probe cleared `0xD227`.
+
+Five minutes is the verified idle lower bound for resuming thumbnail reads on
+this body and LAN. The maximum idle time, a full original download after a
+five-minute pause, and the native iPhone workflow remain untested.
 
 ## Fuji Studio integration gaps
 
@@ -258,6 +280,7 @@ local. The filenames and digests below identify the originals used for analysis.
 | `xe3-thumbnail-test.pcap`, second trial, next RAF prefix stalled | `6afccf04b3fd799b4337752b9ec0e56bec86f65a343bf833b97d3c7548b03600` |
 | `xe3-thumbnail-test.pcap`, third trial, six RAFs with tail reads | `7ee1ad2623a424ef12dfffdd3da3dd08ff400115c7d5b9864a9c33b4d4adaa5d` |
 | `xe3-browse-select.pcap`, 16 previews and one selected original | `821643e0e48531bbc2318a2de9faa72eb78602b6ef294e1927418a6fe5f3ce31` |
+| `xe3-browse-idle.pcap`, 16 previews and five minutes idle before a repeat preview | `f797d66869f0d7b82f92110092ba2b2b46360b10c19c8472c6af3c92b26a5171` |
 
 For packet review, display UDP/TCP ports `51540`–`51542` for discovery and
 invitations, then reassemble the successful `55740` stream in both directions.
