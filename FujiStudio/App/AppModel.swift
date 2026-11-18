@@ -36,6 +36,16 @@ import Observation
     private var importEventsByJob: [UUID: ImportEvent] = [:]
     private(set) var isPreparingImport = false
     private(set) var isFindingCameraMates = false
+    private(set) var isWaitingForImportInventory = false
+    var canRunCameraImportCommand: Bool {
+        wirelessAvailable && wirelessActivity == .active && wirelessState.activity == .active
+            && !isDisconnectingWireless && !cameraImportActive && !bluetoothChoiceActive && importJournalIssue == nil
+    }
+
+    func hasResumeConnection(for event: ImportEvent) -> Bool {
+        wirelessState.wifi == .ready && event.cameraID == wirelessState.selectedCameraID
+            && !cameraBrowser.requiresFreshSession
+    }
     private(set) var isDisconnectingWireless = false
     var cameraBrowser: CameraBrowserModel { environment.wireless.browser }
     var importEvents: [ImportEvent] { importEventsByJob.values.sorted { $0.sequence < $1.sequence } }
@@ -43,7 +53,7 @@ import Observation
     var activeCameraImport: ImportEvent? { importEventsByJob.values.first(where: \.isRunning) }
     var cameraImportActive: Bool { isPreparingImport || activeCameraImport != nil }
     var wirelessAvailable: Bool { environment.wireless.isEnabled }
-    @ObservationIgnored private var wirelessActivity: WirelessActivity = .active
+    private var wirelessActivity: WirelessActivity = .active
     @ObservationIgnored private var wirelessEpoch: UInt64 = 0
     @ObservationIgnored private var wirelessBackgroundTask: Task<Void, Never>?
     @ObservationIgnored private var browserLoadTask: Task<Void, Never>?
@@ -1506,7 +1516,13 @@ extension AppModel {
         if isFindingCameraMates { importCommand?.task.cancel() }
     }
     func resumeImport(jobID: UUID) async { await runImportCommand(.resume(jobID)) }
-    func retryImportCapture(jobID: UUID) async { await runImportCommand(.retry(jobID)) }
+    func retryImportCapture(jobID: UUID) async {
+        if let event = importEventsByJob[jobID], event.needsSession && !event.canRetryFromStagedOriginals {
+            await runImportCommand(.resume(jobID))
+        } else {
+            await runImportCommand(.retry(jobID))
+        }
+    }
     func skipImportCapture(jobID: UUID) async { await runImportCommand(.skip(jobID)) }
 
     func pauseImport(jobID: UUID) async {
@@ -1550,8 +1566,7 @@ extension AppModel {
     }
 
     private func runImportCommand(_ operation: ImportCommand) async {
-        guard wirelessAvailable, wirelessActivity == .active, !isSuspended, !isDisconnectingWireless, importCommand == nil,
-              !bluetoothChoiceActive, activeCameraImport == nil else { return }
+        guard canRunCameraImportCommand, importCommand == nil else { return }
         importActionError = nil
         isPreparingImport = true
         updateIdle()
@@ -1587,6 +1602,8 @@ extension AppModel {
                         await cameraBrowser.waitForInventoryChange()
                     }
                 } else if !cameraBrowser.thumbnailsSuspended {
+                    isWaitingForImportInventory = cameraBrowser.isLoading
+                    defer { isWaitingForImportInventory = false }
                     await browserLoadTask?.value
                 }
                 await cameraBrowser.suspendThumbnails()

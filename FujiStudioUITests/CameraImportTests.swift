@@ -335,7 +335,9 @@ import XCTest
         XCTAssertTrue(app.buttons["wireless.browse"].waitForExistence(timeout: 8))
         app.buttons["cameraImport.open"].tap()
         wait { resume.isEnabled }
-        resume.tap()
+        let retry = app.buttons["cameraImport.retry"]
+        XCTAssertTrue(retry.isEnabled)
+        retry.tap()
         wait { app.staticTexts["cameraImport.status"].label == "Import complete" }
     }
 

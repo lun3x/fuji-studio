@@ -12,13 +12,20 @@ struct CameraImportProgressView: View {
         return Array(recovery.reversed()) + model.importEvents.reversed().filter { !unfinishedIDs.contains($0.jobID) }
     }
 
+    private var preparationLabel: String {
+        if model.isWaitingForImportInventory {
+            return "Checking the camera card for the remaining originals… \(model.cameraBrowser.captures.count) photos found."
+        }
+        return model.isFindingCameraMates ? "Looking for matching JPEGs on the camera…" : "Preparing camera originals…"
+    }
+
     var body: some View {
         let events = events
         let shortReferences = Dictionary(grouping: events.compactMap(\.jobID)) { String($0.uuidString.prefix(8)) }
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 if model.isPreparingImport {
-                    ProgressView(model.isFindingCameraMates ? "Looking for matching JPEGs on the camera…" : "Preparing camera originals…")
+                    ProgressView(preparationLabel)
                         .accessibilityIdentifier("cameraImport.preparing")
                     if model.isFindingCameraMates {
                         Button("Cancel") { model.cancelFindingCameraMates(); onBack() }
@@ -79,16 +86,13 @@ private struct CameraImportJobView: View {
     @State private var confirmingDiscard = false
 
     private var canResume: Bool {
-        model.wirelessState.wifi == .ready && event.cameraID == model.wirelessState.selectedCameraID
-            && model.cameraBrowser.canSelectOriginals && !model.cameraBrowser.isLoading
-            && !model.cameraBrowser.requiresFreshSession
+        model.hasResumeConnection(for: event)
     }
     private var canCommand: Bool {
-        !model.cameraImportActive && !model.isSuspended && !model.isDisconnectingWireless
-            && model.importJournalIssue == nil
+        model.canRunCameraImportCommand
     }
     private var canRetry: Bool {
-        canCommand && (!event.needsSession || event.stage == .readyToSave || event.stage?.mayHaveSubmitted == true)
+        canCommand && (!event.needsSession || event.canRetryFromStagedOriginals || canResume)
     }
 
     var body: some View {
@@ -135,7 +139,7 @@ private struct CameraImportJobView: View {
                 Text(failure.connectionGuidance).accessibilityIdentifier("cameraImport.wirelessFailure")
             }
             if event.actions.contains(.resume) && !canResume {
-                Text("Connect to the camera used for this import and wait for verified original RAW files.")
+                Text("Open Camera Photos and connect to the Wi-Fi of the camera used for this import.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
             actions

@@ -60,6 +60,8 @@ struct ImportEvent: Equatable, Sendable {
     let recoveryRequired: Bool
     var photoSaveError: String?
 
+    var canRetryFromStagedOriginals: Bool { stage == .readyToSave || stage?.mayHaveSubmitted == true }
+
     var captureCountLabel: String {
         let total = captureCount == 1 ? "1 photo" : "\(captureCount) photos"
         return "\(receipts.count) of \(total) imported"

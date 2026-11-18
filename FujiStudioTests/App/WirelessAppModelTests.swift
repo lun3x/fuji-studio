@@ -402,8 +402,11 @@ final class WirelessAppModelTests: XCTestCase {
         await fixture.wireless.session.holdBrowserInventory(inventory)
         let connect = Task { await model.connectCameraWiFi() }
         try await waitUntil { model.wirelessState.wifi == .ready && model.cameraBrowser.isLoading }
+        let recovered = try XCTUnwrap(model.importEvents.first { $0.jobID == job.id })
+        XCTAssertTrue(model.canRunCameraImportCommand)
+        XCTAssertTrue(model.hasResumeConnection(for: recovered))
         let resume = Task { await model.resumeImport(jobID: job.id) }
-        try await waitUntil { model.isPreparingImport }
+        try await waitUntil { model.isWaitingForImportInventory }
         await inventory.release()
         await connect.value
         await resume.value
