@@ -11,7 +11,7 @@ final class WorkspaceAccessibilityTests: WorkspaceTestCase {
             for accessibility in [false, true] {
                 XCUIDevice.shared.orientation = orientation
                 let app = XCUIApplication()
-                app.launchArguments = ["--ui-fixtures", "--fixture-wireless-unverified-save"]
+                app.launchArguments = ["--ui-fixtures", "--fixture-wireless-unverified-save", "--fixture-limited"]
                     + (accessibility ? ["--fixture-accessibility"] : [])
                 app.launch()
                 let status = app.buttons["app.status"]
