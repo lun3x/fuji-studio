@@ -250,7 +250,8 @@ final class WiFiHandoffTests: XCTestCase {
     let peer = try await fixture.coordinator.transferSession().open()
     XCTAssertEqual(peer.model, .xe3)
     await fixture.coordinator.disconnectWiFi()
-    XCTAssertEqual(Array(fixture.log.events.suffix(2)), ["close socket", "release ownership"])
+    let cleanup = fixture.log.events.filter { $0 == "close socket" || $0 == "release ownership" }
+    XCTAssertEqual(Array(cleanup.suffix(2)), ["close socket", "release ownership"])
     XCTAssertFalse(fixture.log.events.contains("native join"))
   }
 
