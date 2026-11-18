@@ -14,7 +14,9 @@ remain on this branch as well.
   X-E3 **1.32**. X-E3 Wi-Fi hardware acceptance remains outstanding.
 - With the two BLE app flags enabled, the native gallery exposed the same 548
   JPEG and 619 RAF handles identified in the prior captures. Native JPEG+RAW
-  pair download is a separate hardware check.
+  pair download and validation succeeded on November 18 after correcting the
+  diagnostic's interpretation of X-T5 Wi-Fi capture times. The latest card
+  inventory contains 601 JPEG and 672 RAF entries.
 - The prior full metadata trial used source revision
   `1885339990c5c156ac8bb15c28a981ead92dfe6c`. The user forgot the phone bond and
   paired again. Image-viewing launch `03 00`
@@ -412,6 +414,12 @@ evidence. Python, if needed, must use the project's `.venv`.
   interrupted after UI failures. Full and focused UI retries then encountered
   execution-worker timeouts. Full UI validation remains unverified for this
   logging checkpoint.
+- `87d04ce3`: the capture-time fix passed the iOS fast suite with 917 passes,
+  two skips and zero failures. The full iOS suite passed 1,035 with six skips
+  and zero failures, including all six manual Wi-Fi UI tests. The task-owned
+  simulator and test clones were removed. The physical pair test passed both
+  file validations, pair validation and publication, with saved and wire hashes
+  independently verified as described below.
 
 ### Phone state at checkpoint
 
@@ -463,12 +471,28 @@ when EXIF supplies an offset, then compares the absolute capture instants.
 Regression cases cover positive, negative and half-hour offsets, midnight
 rollover, and rejection of the same wall time representing a different instant.
 The signed fixed Debug diagnostic was verified, installed and launched normally.
-The complete rerun is the next hardware check.
+The complete rerun then succeeded, as described below.
 
 The app traces, reconstructed RAF, private ObjectInfo and metadata, plus the
 46,575-packet TCP capture with zero kernel drops remain local in
 `/tmp/fuji-raf-rerun.AbaXh4`. The fixed-build trial's evidence directory is
 `/tmp/fuji-raf-time-fix.EeAuXs`.
+
+The fixed-build trial started at 08:43:08 UTC and completed at 08:50:05 UTC.
+It downloaded and validated a 37,030,176-byte RAF and 25,844,174-byte JPEG.
+Both files report X-T5, 7,728 by 5,152 pixels and orientation 8. The pair
+consistency check and publication completed, D226 restoration was confirmed,
+and CloseSession and socket cleanup completed without a failure.
+
+The entire `Documents/ManualWiFiPair/completed` directory was copied from the
+phone. Both saved file sizes and SHA-256 hashes match the completed manifest.
+The validated RAF is byte-identical to the RAF reconstructed from the preceding
+failed validation run. Independent reconstruction of both files from the new
+TCP trace matched both saved hashes. The RAF used two short partial responses,
+and the JPEG used full requested chunks. The new TCP capture ended with 75,588 packets and zero
+kernel drops, and the task-owned RVI was removed. This diagnostic stores the
+pair in app-private storage. The production PhotoKit paired-asset workflow has
+separate simulator validation described above.
 
 ### Working conventions
 
