@@ -405,6 +405,13 @@ evidence. Python, if needed, must use the project's `.venv`.
   back and matched byte-for-byte against the fixtures. The complete iOS suite
   passed 1,032 with six skips and zero failures. Task simulators and their test
   clones were removed.
+- `1df87512`: 101 portable XCTest and 141 Swift Testing tests passed. The iOS
+  fast suite passed 915 with two skips and zero failures, including the exact
+  validation-check tests. The first fast attempt failed to launch its host.
+  The subsequent full UI run crossed a host sleep/USB disconnect and was
+  interrupted after UI failures. Full and focused UI retries then encountered
+  execution-worker timeouts. Full UI validation remains unverified for this
+  logging checkpoint.
 
 ### Phone state at checkpoint
 
@@ -422,6 +429,16 @@ The rerun uses a USB TCP trace to reconstruct the transferred object if the
 validation requires further analysis. The current iPhone Release provisioning profile lacks the
 Hotspot Configuration and Access Wi-Fi Information entitlements, so Xcode
 could not sign the production app for this phone.
+
+The first instrumented pair run started at 16:39:11 UTC on November 17 and was
+cancelled during ObjectInfo after 125 entries. It ended before the download or
+validation. The RVI interface disappeared with the USB connection. The complete
+940-packet capture, with zero kernel drops, and copied app traces remain in
+`/tmp/fuji-raf-validation-phone.h5XwlF`. The capture contains no RAF file transfer.
+The prior failure's copied traces remain in `/tmp/fuji-iphone-pair-verification.5VhpsF`.
+The installed logging build still needs a complete pair rerun. It records a
+fixed `validationCheck` value for RAF structure, dimensions, orientation,
+manufacturer/model and capture-time checks, plus each pair consistency check.
 
 ### Working conventions
 
