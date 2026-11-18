@@ -11,6 +11,8 @@ verified copy. All three have SHA-256
 The original's EXIF Software field reads `Digital Camera X-E3 Ver1.32`.
 
 This verifies original RAF transfer from this body and card over PC AutoSave.
+A later run extracted [six RAW thumbnails in one session](#raw-thumbnails-with-partial-reads)
+using 16 KiB from the start and 32 bytes from the end of each RAF.
 The [native iPhone acceptance record](wireless-import-acceptance.md) still governs
 Fuji Studio's signing, identity, and hardware gates. The physical phone trace
 below used Fujifilm Camera Remote. The [X-T5 Wi-Fi handoff](wifi-investigation-handoff-2026-11-16.md)
@@ -141,6 +143,54 @@ iterator. Draining that iterator fixed the warning in a local replay of the
 captured session, which also regenerated the identical RAF. The drain change was
 validated in replay after the hardware run.
 
+## RAW thumbnails with partial reads
+
+The PC AutoSave ObjectInfo replies for the original four-file test reported
+zero thumbnail bytes. The tested `DSCF0244.RAF` contains a 160 × 120 JPEG inside
+its embedded preview's Exif data. The probe saved that thumbnail after receiving
+only the first 16 KiB. In the first two trials the camera then stopped replying
+at the PTP layer when the receiver moved to the next RAF. This happened both
+with a fresh ObjectInfo request for the next handle and with a direct partial
+read using its already enumerated handle. In both cases TCP acknowledged the
+request.
+
+The third trial used the same AutoSave setup and a card inventory of 32 objects.
+It followed this sequence for each of the first six RAFs:
+
+1. Get the handle and the exact original length `L` from ObjectInfo with
+   `0xD227 = 1`. Confirm the object format is RAF (`0xB103`).
+2. Send `GetPartialObject (0x101B) [handle, 0, 16384]`. The RAF header's
+   big-endian UInt32 values at offsets 84 and 88 give the embedded JPEG's offset
+   and length. Within the JPEG's Exif APP1 segment, use TIFF IFD1 tags `0x0201`
+   and `0x0202` for the thumbnail offset and length. Check that the thumbnail
+   lies entirely within the received prefix before decoding it.
+3. Send `GetPartialObject (0x101B) [handle, L - 32, 32]` for the same RAF.
+4. Wait for the tail response before sending the head request for the next
+   handle. For each request, validate the transaction ID and data length, the
+   `0x2001` response, and its returned byte count.
+
+The camera answered all 12 requests (transactions `30` through `41` in TCP
+stream `2`). Both byte ranges for `DSCF0244.RAF` matched the known original,
+including the noncontiguous tail offset. The next handle started successfully
+after each tail read. This establishes that reaching end-of-file with a short
+read was sufficient to switch objects on the tested body. The probe kept
+`0xD228` at `0/32` and cleared `0xD227` before closing.
+
+| RAF | Handle | JPEG thumbnail bytes |
+| --- | ---: | ---: |
+| `DSCF0244.RAF` | 2 | 9,296 |
+| `DSCF0245.RAF` | 4 | 9,364 |
+| `DSCF0246.RAF` | 6 | 8,943 |
+| `DSCF0247.RAF` | 8 | 9,384 |
+| `DSCF0248.RAF` | 10 | 9,337 |
+| `DSCF0249.RAF` | 12 | 9,169 |
+
+All six decoded as 160 × 120 JPEGs. The capture contains **98,496 bytes of
+RAF payload** across six files whose full sizes total **117,731,584 bytes**.
+The test covered six RAFs in one session. Preview layout on other RAFs,
+the idle time available for browsing, and reopening a previewed object for
+full download in the same session remain to be validated.
+
 ## Fuji Studio integration gaps
 
 - The [current invitation codec](../../Packages/FujiCameraCore/Sources/FujiCameraCore/Wireless/AutoSaveCodec.swift)
@@ -152,6 +202,10 @@ validated in replay after the hardware run.
   selected `3`. Carry over the measured initialization, original-size scope,
   enumeration, and download behavior as an X-E3 AutoSave profile, with bounded
   reads and transaction validation. Preserve the X-T5 gallery path.
+- For X-E3 RAW previews, keep each head and tail read on the same serialized
+  command session before moving to another object. The current AutoSave
+  intake does not expose thumbnail capability, and the existing bounded
+  original-sample method is currently restricted to XApp.
 - The observed `0xD228` values are progress updates. Queue advancement and the
   effect of cancellation, repeated imports, or progress writes on future
   visibility are still unverified. Verify the Photos receipt separately.
@@ -176,6 +230,9 @@ local. The filenames and digests below identify the originals used for analysis.
 | `pc-autosave-get-object.pcap` | `1cc8142548c9f9051124fd981a2f2fd934141e79594c88fe3b552b06a371fde2` |
 | `official-xe3-20261118-213159.pcap` | `e9d77de4a7ff0ed9f1b3bfa3e88680f44db3e1118158786358f647af3895154b` |
 | `pc-autosave-matched-setup.pcap` | `97540ec0eb04c11c4c921f2ae3894bc8278fb596cc7c829a4f12c87c9090aed1` |
+| `xe3-thumbnail-test.pcap`, first trial, next ObjectInfo stalled | `d0ce278e44adb9ff4b1279aabbe659fdac1c3bdf8b46a09e90d5a90cf7cae6af` |
+| `xe3-thumbnail-test.pcap`, second trial, next RAF prefix stalled | `6afccf04b3fd799b4337752b9ec0e56bec86f65a343bf833b97d3c7548b03600` |
+| `xe3-thumbnail-test.pcap`, third trial, six RAFs with tail reads | `7ee1ad2623a424ef12dfffdd3da3dd08ff400115c7d5b9864a9c33b4d4adaa5d` |
 
 For packet review, display UDP/TCP ports `51540`–`51542` for discovery and
 invitations, then reassemble the successful `55740` stream in both directions.
