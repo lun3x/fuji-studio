@@ -33,6 +33,7 @@ final class CameraBrowserModel {
 
     private let originalCache: CameraOriginalCache
     private var explicitRAW: SourceID?
+    @ObservationIgnored private var inventoryWaiters: [UUID: AsyncStream<Void>.Continuation] = [:]
     @ObservationIgnored private var viewedFiles: [WirelessObjectDescriptor: ViewerFile] = [:]
 
     init(originalCache: CameraOriginalCache = CameraOriginalCache(root: ImportDisk.root("camera-originals"))) {
@@ -63,22 +64,37 @@ final class CameraBrowserModel {
     func capture(for id: SourceID) -> CameraCapture? { trayCaptures[id] }
 
     var canSaveWorkspaceSelection: Bool {
-        guard canSelectOriginals, !isLoading, !thumbnailsSuspended else { return false }
-        return (try? workspaceSelections().isEmpty) == false
+        guard canSelectOriginals, !thumbnailsSuspended, failure == nil else { return false }
+        let ids = workspace.effectiveSourceIDs
+        if !isFindingMates(for: ids) { return (try? workspaceSelections(for: ids).isEmpty) == false }
+        return ids.contains { id in
+            guard let capture = trayCaptures[id] else { return false }
+            return receiptStatuses[capture.rowID] != .verified
+        }
     }
 
-    func selectWorkspacePhotos() throws {
-        let selections = try workspaceSelections()
-        guard !selections.isEmpty else { throw CameraBrowserSelectionError.captureChanged }
-        selected = Dictionary(uniqueKeysWithValues: selections.map { ($0.captureID, $0) })
-        updateSelectionTotals()
+    func waitForInventoryChange() async {
+        let id = UUID()
+        let (changes, continuation) = AsyncStream<Void>.makeStream()
+        inventoryWaiters[id] = continuation
+        defer { inventoryWaiters[id] = nil }
+        for await _ in changes {}
     }
 
-    private func workspaceSelections() throws -> [ImportSelection] {
-        try workspace.effectiveSourceIDs.compactMap { id in
+    private func signalInventoryChange() {
+        for waiter in inventoryWaiters.values { waiter.finish() }
+        inventoryWaiters.removeAll()
+    }
+
+    func isFindingMates(for ids: [SourceID]) -> Bool {
+        isLoading && ids.contains { trayCaptures[$0]?.availability == .checking }
+    }
+
+    func workspaceSelections(for ids: [SourceID]) throws -> [ImportSelection] {
+        try ids.compactMap { id in
             guard let capture = trayCaptures[id] else { throw CameraBrowserSelectionError.captureChanged }
             guard receiptStatuses[capture.rowID] != .verified else { return nil }
-            return try proposedSelection(for: capture.id, policy: capture.jpeg == nil ? .rawOnly : .pair)
+            return try proposedSelection(for: capture.id, policy: capture.jpeg == nil ? .rawOnly : .pair, allowMatchedPair: true)
         }
     }
 
@@ -102,6 +118,7 @@ final class CameraBrowserModel {
         let cancellation = BrowserCancellation()
         self.session = session
         isLoading = true
+        defer { signalInventoryChange() }
 
         await withTaskCancellationHandler {
             do {
@@ -132,8 +149,9 @@ final class CameraBrowserModel {
         (try? proposedSelection(for: id, policy: policy)) != nil
     }
 
-    private func proposedSelection(for id: CameraCaptureID, policy: ImportPolicy) throws -> ImportSelection {
-        guard !isLoading, failure == nil, let camera else {
+    private func proposedSelection(for id: CameraCaptureID, policy: ImportPolicy, allowMatchedPair: Bool = false) throws -> ImportSelection {
+        let matchedPair = allowMatchedPair && policy == .pair
+        guard (!isLoading || matchedPair), failure == nil, let camera else {
             throw CameraBrowserSelectionError.inventoryNotReady
         }
         guard let matches = capturesByID[id], let capture = matches.first else {
@@ -141,7 +159,7 @@ final class CameraBrowserModel {
         }
         guard matches.count == 1 else { throw CameraBrowserSelectionError.ambiguousCapture }
         let descriptors = try resources(for: capture, policy: policy)
-        guard descriptors.allSatisfy({ inventory.storage[$0.storageID] == .complete }) else {
+        guard matchedPair || descriptors.allSatisfy({ inventory.storage[$0.storageID] == .complete }) else {
             throw WirelessFailure.unavailableStorage
         }
         if let originalSizeFailure { throw originalSizeFailure }
@@ -179,7 +197,7 @@ final class CameraBrowserModel {
     func refreshImportReceipts(using recovery: ImportRecovery,
                                originalFingerprints: [WirelessObjectDescriptor: ImportOriginalFingerprint]) async throws {
         clearReceiptStatuses()
-        guard !originalFingerprints.isEmpty, !isLoading, failure == nil else { return }
+        guard !originalFingerprints.isEmpty, failure == nil else { return }
         let generation = receiptGeneration
         let jobs = try await recovery.journal.loadJobs()
         var statuses: [WirelessObjectDescriptor: ImportReceiptStatus] = [:]
@@ -284,7 +302,10 @@ final class CameraBrowserModel {
         await operationTail?.value
     }
 
-    func resumeThumbnails() { thumbnailsSuspended = false }
+    func resumeThumbnails() {
+        thumbnailsSuspended = false
+        signalInventoryChange()
+    }
 
     func cancel() {
         generation = UUID()
@@ -340,13 +361,23 @@ final class CameraBrowserModel {
         var count = 0
         let clock = ContinuousClock()
         var nextPublication = clock.now
+        var capabilities = admission.capabilities
         while true {
-            let batch = try await enqueue {
+            // Finish the in-flight batch before lending the socket to a selected import.
+            while thumbnailsSuspended {
+                try checkCurrent(generation, cancellation)
+                await waitForInventoryChange()
+            }
+            let next = try await enqueue {
                 try self.checkCurrent(generation, cancellation)
-                return try await cursor.next()
+                let batch = try await cursor.next()
+                return (batch, try await session.capabilities())
             }.value
             try checkCurrent(generation, cancellation)
-            guard let batch else { break }
+            capabilities = next.1
+            canSelectOriginals = capabilities.originalSizeVerified
+            originalSizeFailure = capabilities.originalSizeFailure
+            guard let batch = next.0 else { break }
             inventory.apply(batch)
             for object in batch.objects {
                 guard object.cameraID == admission.camera.cameraID,
@@ -378,10 +409,6 @@ final class CameraBrowserModel {
             }
         }
 
-        let capabilities = try await enqueue {
-            try self.checkCurrent(generation, cancellation)
-            return try await session.capabilities()
-        }.value
         try checkCurrent(generation, cancellation)
         let objects = objectsByCard.values.flatMap { $0.values }
         let resolutionInventory = inventory
@@ -396,6 +423,7 @@ final class CameraBrowserModel {
     }
 
     private func publish(_ captures: [CameraCapture]) {
+        defer { signalInventoryChange() }
         self.captures = captures
         trayCaptures = Dictionary(uniqueKeysWithValues: captures.compactMap { capture in
             capture.raw.map { ($0.trayID, capture) }
@@ -426,6 +454,7 @@ final class CameraBrowserModel {
         canSelectOriginals = false
         requiresFreshSession = true
         self.failure = failure
+        signalInventoryChange()
         clearReceiptStatuses()
         thumbnailCache = .init()
         onSessionInvalidated?(failure)

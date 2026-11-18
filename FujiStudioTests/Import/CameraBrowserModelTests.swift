@@ -46,6 +46,8 @@ final class CameraBrowserModelTests: XCTestCase {
         XCTAssertEqual(row.availability, .checking)
         let trayID = try XCTUnwrap(browser.traySources.first?.id)
         browser.apply(.sourceTapped(trayID))
+        XCTAssertTrue(browser.canSaveWorkspaceSelection)
+        XCTAssertTrue(browser.isFindingMates(for: [trayID]))
         XCTAssertThrowsError(try browser.select(row.id, policy: .pair))
         XCTAssertThrowsError(try browser.select(row.id, policy: .rawOnly))
         let thumbnail = Task { await browser.thumbnail(for: row) }
@@ -72,6 +74,32 @@ final class CameraBrowserModelTests: XCTestCase {
         XCTAssertEqual(chosen.policy, .pair)
         let downloads = await session.downloadCount
         XCTAssertEqual(downloads, 0)
+    }
+
+    func testMatchedWorkspacePairCanSaveWhileTheNextMetadataBatchIsStillPending() async throws {
+        let raw = CaptureFixture.object(1, .raf), jpeg = CaptureFixture.object(2, .jpeg)
+        let session = BrowserSessionFixture(batches: [
+            .init(objects: [raw, jpeg], storageChanges: [1: .pending], rawExposure: .available),
+            .init(objects: []), .init(objects: [], storageChanges: [1: .complete])
+        ], heldBatches: [1])
+        let browser = CameraBrowserModel()
+        var calls = session.calls.makeAsyncIterator()
+        let load = Task { await browser.load(session: session) }
+        _ = await calls.next()
+        _ = await calls.next()
+        browser.apply(.sourceTapped(raw.trayID))
+        XCTAssertTrue(browser.isLoading)
+        XCTAssertTrue(browser.canSaveWorkspaceSelection)
+        XCTAssertFalse(browser.isFindingMates(for: [raw.trayID]))
+        let pause = Task { await browser.suspendThumbnails() }
+        while !browser.thumbnailsSuspended { await Task.yield() }
+        await session.release(batch: 1)
+        await pause.value
+        XCTAssertTrue(browser.isLoading)
+        XCTAssertEqual(try browser.workspaceSelections(for: [raw.trayID]).first?.descriptors, [raw, jpeg])
+        browser.resumeThumbnails()
+        await load.value
+        XCTAssertFalse(browser.isLoading)
     }
 
     func testProgressivePreviewCanRunBetweenMetadataBatches() async throws {

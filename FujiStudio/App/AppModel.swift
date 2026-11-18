@@ -35,6 +35,7 @@ import Observation
     private(set) var importJournalIssue: ImportEvent?
     private var importEventsByJob: [UUID: ImportEvent] = [:]
     private(set) var isPreparingImport = false
+    private(set) var isFindingCameraMates = false
     private(set) var isDisconnectingWireless = false
     var cameraBrowser: CameraBrowserModel { environment.wireless.browser }
     var importEvents: [ImportEvent] { importEventsByJob.values.sorted { $0.sequence < $1.sequence } }
@@ -1500,6 +1501,10 @@ extension AppModel {
     }
 
     func importSelectedCaptures() async { await runImportCommand(.start) }
+    func saveCameraPhotos(_ ids: [SourceID]) async { await runImportCommand(.workspace(ids)) }
+    func cancelFindingCameraMates() {
+        if isFindingCameraMates { importCommand?.task.cancel() }
+    }
     func resumeImport(jobID: UUID) async { await runImportCommand(.resume(jobID)) }
     func retryImportCapture(jobID: UUID) async { await runImportCommand(.retry(jobID)) }
     func skipImportCapture(jobID: UUID) async { await runImportCommand(.skip(jobID)) }
@@ -1528,17 +1533,17 @@ extension AppModel {
     }
 
     private enum ImportCommand {
-        case start, resume(UUID), retry(UUID), skip(UUID)
+        case start, workspace([SourceID]), resume(UUID), retry(UUID), skip(UUID)
 
         var jobID: UUID? {
             switch self {
-            case .start: nil
+            case .start, .workspace: nil
             case .resume(let id), .retry(let id), .skip(let id): id
             }
         }
         var requiresSession: Bool {
             switch self {
-            case .start, .resume: true
+            case .start, .workspace, .resume: true
             case .retry, .skip: false
             }
         }
@@ -1570,12 +1575,19 @@ extension AppModel {
             let transfer = try? await services.connection.admittedTransfer()
             if operation.requiresSession && transfer == nil { throw CameraImportError.sessionRequired }
             if let transfer {
-                // The first usable native inventory batch may precede the full browser index.
-                // Finish browser inventory, then fence queued previews before freezing routes.
-                await browserLoadTask?.value
+                if case .workspace(let ids) = operation {
+                    isFindingCameraMates = cameraBrowser.isFindingMates(for: ids)
+                    defer { isFindingCameraMates = false }
+                    while cameraBrowser.isFindingMates(for: ids) {
+                        try checkImportEpoch(epoch)
+                        await cameraBrowser.waitForInventoryChange()
+                    }
+                } else if !cameraBrowser.thumbnailsSuspended {
+                    await browserLoadTask?.value
+                }
                 await cameraBrowser.suspendThumbnails()
                 try checkImportEpoch(epoch)
-                guard browserIntent == transfer.intent, !cameraBrowser.isLoading, !cameraBrowser.requiresFreshSession,
+                guard browserIntent == transfer.intent, !cameraBrowser.requiresFreshSession,
                       try await services.connection.admittedTransfer().intent == transfer.intent else {
                     throw CameraBrowserSelectionError.inventoryNotReady
                 }
@@ -1584,9 +1596,17 @@ extension AppModel {
             let jobID: UUID
             let intent: WirelessConnectionIntent?
             switch operation {
-            case .start:
+            case .start, .workspace:
                 guard let transfer else { throw CameraImportError.sessionRequired }
-                let selections = try cameraBrowser.selectionForImport()
+                let selections: [ImportSelection]
+                let matchedInBrowser: Bool
+                if case .workspace(let ids) = operation {
+                    selections = try cameraBrowser.workspaceSelections(for: ids)
+                    matchedInBrowser = true
+                } else {
+                    selections = try cameraBrowser.selectionForImport()
+                    matchedInBrowser = false
+                }
                 guard !selections.isEmpty else { return }
                 let access = await services.requestPhotosAccess()
                 try checkImportEpoch(epoch)
@@ -1596,7 +1616,7 @@ extension AppModel {
                 }
                 let cameraName = wirelessState.savedCameras.first { $0.id == transfer.intent.cameraID }?.displayName
                 jobID = try await services.importer.start(selections, session: transfer.session, loanID: transfer.loanID,
-                                                          cameraDisplayName: cameraName)
+                                                          cameraDisplayName: cameraName, matchedInBrowser: matchedInBrowser)
                 intent = transfer.intent
             case .resume(let id):
                 guard let transfer else { throw CameraImportError.sessionRequired }

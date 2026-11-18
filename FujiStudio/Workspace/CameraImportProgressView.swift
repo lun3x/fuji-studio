@@ -18,8 +18,11 @@ struct CameraImportProgressView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 if model.isPreparingImport {
-                    ProgressView("Preparing camera originals…")
+                    ProgressView(model.isFindingCameraMates ? "Looking for matching JPEGs on the camera…" : "Preparing camera originals…")
                         .accessibilityIdentifier("cameraImport.preparing")
+                    if model.isFindingCameraMates {
+                        Button("Cancel") { model.cancelFindingCameraMates(); onBack() }
+                    }
                 }
                 if model.importJournalIssue != nil { CameraImportJournalIssue() }
                 if let error = model.importActionError {

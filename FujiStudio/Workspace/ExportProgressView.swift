@@ -339,14 +339,11 @@ struct AppWorkspaceView: View {
     }
 
     private func saveCameraPhotos() {
-        do { try browser.selectWorkspacePhotos() }
-        catch {
-            cameraPhotoError = "These originals can’t be saved together. Check the card for ambiguous file matches."
-            return
-        }
+        let ids = state.effectiveSourceIDs
+        guard !ids.isEmpty else { return }
         statusPath = [.cameraImports]
         statusPresented = true
-        Task { await model.importSelectedCaptures() }
+        Task { await model.saveCameraPhotos(ids) }
     }
 
     private var statusButton: some View {

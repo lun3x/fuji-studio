@@ -97,10 +97,9 @@ actor CameraImportCoordinator {
         listeners[id] = nil
     }
 
-    /// The session must already have completed browsing. A new job must use the same
-    /// routes the user selected. A resumed job can rematch fresh session routes.
+    /// Fresh browser selections can use their observed routes while unrelated card inventory is still arriving.
     func start(_ selections: [ImportSelection], session: any WirelessTransferSession, loanID: UUID = UUID(),
-               cameraDisplayName: String? = nil) async throws -> UUID {
+               cameraDisplayName: String? = nil, matchedInBrowser: Bool = false) async throws -> UUID {
         let jobID = UUID()
         try beginCommand(jobID: jobID)
         defer { endCommand() }
@@ -119,7 +118,7 @@ actor CameraImportCoordinator {
                                 cameraDisplayName: cameraDisplayName)
         try Task.checkCancellation()
         let committed = try await journal.save(job)
-        try await admit(committed, loan: .init(id: loanID, jobID: jobID, session: session), requireOriginalRoutes: true)
+        try await admit(committed, loan: .init(id: loanID, jobID: jobID, session: session), routes: matchedInBrowser ? .browser : .selected)
         return committed.id
     }
 
@@ -336,7 +335,9 @@ actor CameraImportCoordinator {
         return loan
     }
 
-    private func admit(_ job: ImportJob, loan: Loan?, requireOriginalRoutes: Bool = false,
+    private enum Routes { case browser, selected, rematch }
+
+    private func admit(_ job: ImportJob, loan: Loan?, routes: Routes = .rematch,
                        retryLocalFirst: Bool = false) async throws {
         let lostLoan = loan.map { retiredLoanIDs.contains($0.id) } ?? false
         if command?.requestedPause != nil || lostLoan || Task.isCancelled {
@@ -346,14 +347,14 @@ actor CameraImportCoordinator {
         }
         self.loan = loan
         run = .init(job: job)
-        if requireOriginalRoutes { run?.sessionID = job.frozenSelections.first?.descriptors.first?.sessionID }
+        if routes != .rematch { run?.sessionID = job.frozenSelections.first?.descriptors.first?.sessionID }
         run?.worker = Task {
-            await self.process(job, session: loan?.session, requireOriginalRoutes: requireOriginalRoutes, retryLocalFirst: retryLocalFirst)
+            await self.process(job, session: loan?.session, routes: routes, retryLocalFirst: retryLocalFirst)
         }
         publish(job)
     }
 
-    private func process(_ job: ImportJob, session: (any WirelessTransferSession)?, requireOriginalRoutes: Bool,
+    private func process(_ job: ImportJob, session: (any WirelessTransferSession)?, routes: Routes,
                          retryLocalFirst: Bool) async {
         var current = job
         var failure: WirelessFailure?
@@ -369,17 +370,22 @@ actor CameraImportCoordinator {
                     throw CameraImportError.unresolvedSave(retainedBytes: current.retainedBytes)
                 }
                 if let session, !(localFirst && stage == .readyToSave) {
-                    if inventory == nil {
-                        inventory = try await withCameraWork { try await ImportInventory.read(session, for: job.camera) }
-                        run?.sessionID = inventory?.sessionID
-                        if let sessionID = inventory?.sessionID, retiredSessions.contains(sessionID) {
-                            retireSession()
-                            throw WirelessFailure.connectionLost
+                    let selection = current.captures[index].selection
+                    let objects: [WirelessObjectDescriptor]
+                    if routes == .browser {
+                        objects = selection.descriptors
+                    } else {
+                        if inventory == nil {
+                            inventory = try await withCameraWork { try await ImportInventory.read(session, for: job.camera) }
+                            run?.sessionID = inventory?.sessionID
                         }
+                        guard let inventory else { throw WirelessFailure.connectionLost }
+                        objects = try inventory.match(selection, requireOriginalRoutes: routes == .selected)
                     }
-                    guard let inventory else { throw WirelessFailure.connectionLost }
-                    let objects = try inventory.match(current.captures[index].selection,
-                                                      requireOriginalRoutes: requireOriginalRoutes)
+                    if let sessionID = run?.sessionID, retiredSessions.contains(sessionID) {
+                        retireSession()
+                        throw WirelessFailure.connectionLost
+                    }
                     current = try await download(current, at: index, objects: objects, session: session)
                 } else if stage != .readyToSave {
                     reason = .interrupted

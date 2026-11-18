@@ -34,9 +34,11 @@ final class CameraImportCoordinatorTests: XCTestCase {
             let opened = await session.handles
             XCTAssertEqual(opened, viewRAW ? [jpeg.handle, raw.handle] : [jpeg.handle])
 
-            let jobID = try await harness.coordinator.start([pair], session: session)
+            let jobID = try await harness.coordinator.start([pair], session: session, matchedInBrowser: true)
             let result = await importEvent(harness.coordinator, jobID: jobID) { !$0.isRunning && !$0.receipts.isEmpty }
             XCTAssertEqual(result?.receipts.count, 1)
+            let scans = await session.enumerations
+            XCTAssertEqual(scans, 1)
             let afterSave = await session.handles
             XCTAssertEqual(afterSave, [jpeg.handle, raw.handle])
 
@@ -505,6 +507,7 @@ actor ImportTestSession: WirelessOriginalSampling {
     let hold: (UInt32, ImportTestGate)?
     private(set) var handles: [UInt32] = []
     private(set) var openCount = 0
+    private(set) var enumerations = 0
 
     init(camera: WirelessIdentity, objects: [WirelessObjectDescriptor], bytes: [WirelessObjectFormat: Data],
          interrupt: WirelessObjectFormat?, trace: ImportTestTrace, hold: (UInt32, ImportTestGate)?) {
@@ -521,7 +524,8 @@ actor ImportTestSession: WirelessOriginalSampling {
         .init(mode: .xApp, rawExposure: .available, storageIDs: [1], originalSizeVerified: true, evidenceID: "test")
     }
     func enumerate() async throws -> AsyncThrowingStream<WirelessInventoryBatch, Error> {
-        .init { stream in
+        enumerations += 1
+        return .init { stream in
             stream.yield(.init(objects: objects, storageChanges: [1: .complete], rawExposure: .available))
             stream.finish()
         }
