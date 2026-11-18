@@ -105,7 +105,8 @@ struct AppWorkspaceView: View {
     @State private var statusPath: [StatusDestination] = []
     @State private var connection = PresentedCameraConnection()
 
-    @State private var cameraMode = false
+    @State private var prefersPhonePhotos = false
+    private var cameraMode: Bool { model.wirelessState.wifi == .ready && !prefersPhonePhotos }
     @State private var handoffPresented = false
     @State private var cameraPhotoError: String?
     @State private var cameraPreview: DisplayFileLease?
@@ -124,7 +125,7 @@ struct AppWorkspaceView: View {
         return browser.isLoading ? "Reading camera photos…" : "No RAW photos on the camera"
     }
 
-    private enum StatusDestination: Hashable { case cameraBrowser, autoSave, cameraImports }
+    private enum StatusDestination: Hashable { case cameraBrowser, autoSave, cameraImports(UUID?) }
 
     private var imageLoading: ImageLoadingState? {
         if !cameraMode { return model.imageLoading }
@@ -169,8 +170,7 @@ struct AppWorkspaceView: View {
         .task(id: request) { await loadViewedOriginal(request) }
         .overlay(alignment: .bottom) { cameraPhotosButton.padding(.bottom, 8) }
         .onChange(of: model.wirelessState.wifi) { _, phase in
-            if phase == .ready { cameraMode = true }
-            if phase == .idle { cameraMode = false }
+            if phase == .idle { prefersPhonePhotos = false }
         }
         .onChange(of: model.wirelessState.manualNetwork) { _, network in handoffPresented = network != nil }
         .sheet(isPresented: Binding(get: { handoffPresented && !statusPresented }, set: { handoffPresented = $0 })) {
@@ -194,7 +194,7 @@ struct AppWorkspaceView: View {
                                 Text(error).foregroundStyle(.red).accessibilityIdentifier("app.importError")
                             }
                             if model.isPreparingImport || !model.importEvents.isEmpty || model.importActionError != nil {
-                                Button("Camera imports") { statusPath.append(.cameraImports) }
+                                Button("Camera imports") { statusPath.append(.cameraImports(nil)) }
                                     .accessibilityIdentifier("cameraImport.open")
                             }
                             CameraConnectionSection(model: model, connection: connection,
@@ -261,13 +261,14 @@ struct AppWorkspaceView: View {
                         switch destination {
                         case .cameraBrowser:
                             CameraBrowserView(model: model, onBack: popStatus, onImport: {
-                                statusPath.append(.cameraImports)
-                                Task { await model.importSelectedCaptures() }
+                                let jobID = UUID()
+                                statusPath.append(.cameraImports(jobID))
+                                Task { await model.importSelectedCaptures(jobID: jobID) }
                             }, onSetUpAutoSave: setUpAutoSaveFromBrowser)
                         case .autoSave:
                             AutoSaveSetupView(model: model, connection: connection, onBack: popStatus, onBrowse: { statusPath = [.cameraBrowser] })
-                        case .cameraImports:
-                            CameraImportProgressView(model: model, onBack: popStatus, onViewImported: { cameraMode = false; closeStatus() })
+                        case .cameraImports(let jobID):
+                            CameraImportProgressView(model: model, focusedJobID: jobID, onBack: popStatus, onViewImported: { prefersPhonePhotos = true; closeStatus() })
                         }
                     }
             }
@@ -289,7 +290,7 @@ struct AppWorkspaceView: View {
         let wireless = model.wirelessState
         if showsCameraPhotos {
             Button {
-                if wireless.wifi == .ready { cameraMode.toggle() }
+                if wireless.wifi == .ready { prefersPhonePhotos.toggle() }
                 else if wireless.manualNetwork != nil { handoffPresented = true }
                 else {
                     Task {
@@ -343,9 +344,10 @@ struct AppWorkspaceView: View {
     private func saveCameraPhotos() {
         let ids = state.effectiveSourceIDs
         guard !ids.isEmpty else { return }
-        statusPath = [.cameraImports]
+        let jobID = UUID()
+        statusPath = [.cameraImports(jobID)]
         statusPresented = true
-        Task { await model.saveCameraPhotos(ids) }
+        Task { await model.saveCameraPhotos(ids, jobID: jobID) }
     }
 
     private var statusButton: some View {

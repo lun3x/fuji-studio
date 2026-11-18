@@ -99,8 +99,7 @@ actor CameraImportCoordinator {
 
     /// Fresh browser selections can use their observed routes while unrelated card inventory is still arriving.
     func start(_ selections: [ImportSelection], session: any WirelessTransferSession, loanID: UUID = UUID(),
-               cameraDisplayName: String? = nil, matchedInBrowser: Bool = false) async throws -> UUID {
-        let jobID = UUID()
+               cameraDisplayName: String? = nil, matchedInBrowser: Bool = false, jobID: UUID = UUID()) async throws -> UUID {
         try beginCommand(jobID: jobID)
         defer { endCommand() }
         guard let first = selections.first else { throw ImportJournalError.invalidJob }

@@ -3,13 +3,17 @@ import SwiftUI
 
 struct CameraImportProgressView: View {
     let model: AppModel
+    let focusedJobID: UUID?
     let onBack: () -> Void
     let onViewImported: () -> Void
 
     private var events: [ImportEvent] {
-        let recovery = model.importRecoveryEvents
-        let unfinishedIDs = Set(recovery.map(\.jobID))
-        return Array(recovery.reversed()) + model.importEvents.reversed().filter { !unfinishedIDs.contains($0.jobID) }
+        if let focusedJobID { return model.importEvents.filter { $0.jobID == focusedJobID } }
+        return model.importEvents.sorted {
+            let lhs = $0.jobContext?.startedAt ?? .distantPast
+            let rhs = $1.jobContext?.startedAt ?? .distantPast
+            return lhs == rhs ? $0.sequence > $1.sequence : lhs > rhs
+        }
     }
 
     private var preparationLabel: String {

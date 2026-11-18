@@ -65,7 +65,7 @@ import XCTest
     }
 
     func testCameraPhotosOpensWorkspaceVersionsAndSavesSelectedPair() {
-        let app = launch(["--fixture-wireless-paired"])
+        let app = launch(["--fixture-wireless-recovery-jobs"])
         let cameraPhotos = app.buttons["workspace.cameraPhotos"]
         XCTAssertTrue(cameraPhotos.waitForExistence(timeout: 8))
         let recipeSize = app.buttons["recipe.control"].frame.size
@@ -95,6 +95,9 @@ import XCTest
         save.tap()
         let view = app.buttons["cameraImport.viewImported"]
         XCTAssertTrue(view.waitForExistence(timeout: 10))
+        let statuses = app.staticTexts.matching(identifier: "cameraImport.status")
+        XCTAssertEqual(statuses.count, 1)
+        XCTAssertTrue(statuses.firstMatch.wait(for: \.label, toEqual: "Import complete", timeout: 5))
         view.tap()
         XCTAssertTrue(app.cells["grid.wireless-1"].waitForExistence(timeout: 8))
     }

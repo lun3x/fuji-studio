@@ -1510,8 +1510,10 @@ extension AppModel {
         adoptWirelessState(await services.connection.currentState())
     }
 
-    func importSelectedCaptures() async { await runImportCommand(.start) }
-    func saveCameraPhotos(_ ids: [SourceID]) async { await runImportCommand(.workspace(ids)) }
+    func importSelectedCaptures(jobID: UUID = UUID()) async { await runImportCommand(.start(jobID, workspaceIDs: nil)) }
+    func saveCameraPhotos(_ ids: [SourceID], jobID: UUID = UUID()) async {
+        await runImportCommand(.start(jobID, workspaceIDs: ids))
+    }
     func cancelFindingCameraMates() {
         if isFindingCameraMates { importCommand?.task.cancel() }
     }
@@ -1549,17 +1551,17 @@ extension AppModel {
     }
 
     private enum ImportCommand {
-        case start, workspace([SourceID]), resume(UUID), retry(UUID), skip(UUID)
+        case start(UUID, workspaceIDs: [SourceID]?), resume(UUID), retry(UUID), skip(UUID)
 
         var jobID: UUID? {
             switch self {
-            case .start, .workspace: nil
+            case .start: nil
             case .resume(let id), .retry(let id), .skip(let id): id
             }
         }
         var requiresSession: Bool {
             switch self {
-            case .start, .workspace, .resume: true
+            case .start, .resume: true
             case .retry, .skip: false
             }
         }
@@ -1594,7 +1596,7 @@ extension AppModel {
             let retainedIntent = operation.jobID.flatMap { importBinding[$0]?.intent }
             let usesRetainedSession = currentJob?.needsSession == false && retainedIntent != nil && retainedIntent == transfer?.intent
             if let transfer, operation.requiresSession || usesRetainedSession {
-                if case .workspace(let ids) = operation {
+                if case .start(_, let ids?) = operation {
                     isFindingCameraMates = cameraBrowser.isFindingMates(for: ids)
                     defer { isFindingCameraMates = false }
                     while cameraBrowser.isFindingMates(for: ids) {
@@ -1617,11 +1619,11 @@ extension AppModel {
             let jobID: UUID
             let intent: WirelessConnectionIntent?
             switch operation {
-            case .start, .workspace:
+            case .start(let newID, let workspaceIDs):
                 guard let transfer else { throw CameraImportError.sessionRequired }
                 let selections: [ImportSelection]
                 let matchedInBrowser: Bool
-                if case .workspace(let ids) = operation {
+                if let ids = workspaceIDs {
                     selections = try cameraBrowser.workspaceSelections(for: ids)
                     matchedInBrowser = true
                 } else {
@@ -1637,7 +1639,7 @@ extension AppModel {
                 }
                 let cameraName = wirelessState.savedCameras.first { $0.id == transfer.intent.cameraID }?.displayName
                 jobID = try await services.importer.start(selections, session: transfer.session, loanID: transfer.loanID,
-                                                          cameraDisplayName: cameraName, matchedInBrowser: matchedInBrowser)
+                                                          cameraDisplayName: cameraName, matchedInBrowser: matchedInBrowser, jobID: newID)
                 intent = transfer.intent
             case .resume(let id):
                 guard let transfer else { throw CameraImportError.sessionRequired }
