@@ -97,6 +97,33 @@ final class ImportRecoveryTests: XCTestCase {
         XCTAssertEqual(finished.captures[0].placeholderAssetID, "asset-1")
     }
 
+    func testMissingAssetAfterFailedPhotosCompletionRetriesFromRetainedPair() async throws {
+        let harness = try CameraImportHarness()
+        defer { harness.fixture.cleanUp() }
+        let selection = harness.selection(1)
+        let systemError = "PHPhotosErrorDomain (3301)"
+        await harness.photos.setInspection(.absent, for: "reserved")
+        await harness.photos.setSearch(.narrow([]))
+        await harness.photos.setNextOutcome(.uncertain(assetID: "reserved", systemError: systemError))
+        let id = try await harness.coordinator.start([selection], session: harness.session([selection]))
+        let first = await importEvent(harness.coordinator, jobID: id) { !$0.isRunning && $0.pauseReason == .unresolvedSave }
+        XCTAssertEqual(first?.photoSaveError, systemError)
+        XCTAssertEqual(first?.actions.contains(.retryCapture), false)
+
+        let reopened = try harness.reopened()
+        await reopened.reconcile()
+        let recovered = await reopened.latestEvent(jobID: id)
+        XCTAssertEqual(recovered?.photoSaveError, systemError)
+        XCTAssertEqual(recovered?.actions.contains(.retryCapture), true)
+        try await reopened.retryCapture(jobID: id, usingLoanID: nil)
+        let finished = await importEvent(reopened, jobID: id) { !$0.isRunning && $0.receipts.count == 1 }
+        XCTAssertEqual(finished?.receipts.count, 1)
+        XCTAssertNil(finished?.photoSaveError)
+        let paths = await harness.photos.submittedPaths
+        XCTAssertEqual(paths.count, 2)
+        XCTAssertEqual(paths.first, paths.last)
+    }
+
     func testDefinitiveRejectionPermitsLocalRetryAfterRelaunch() async throws {
         let harness = try CameraImportHarness()
         defer { harness.fixture.cleanUp() }
