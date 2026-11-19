@@ -5,6 +5,28 @@ import XCTest
 
 @MainActor
 final class OriginalImportValidatorTests: XCTestCase {
+    func testXE3AutoSaveStagesAndRevalidatesRAWWhenObjectInfoOmitsDimensions() async throws {
+        let fixture = try ImportFileFixture(model: .xe3)
+        defer { fixture.cleanUp() }
+        let store = try ImportStagingStore(root: fixture.root)
+        let raw = WirelessObjectDescriptor(cameraID: fixture.camera.cameraID, sessionID: fixture.sessionID,
+            storageID: 1, handle: 1, directory: nil, filename: "DSCF0001.RAF", format: .raf,
+            byteLength: UInt64(fixture.raf.count), captureDate: fixture.objectDate, dimensions: nil, orientation: 1)
+        let jpeg = fixture.object()
+        let objects = [raw, jpeg]
+        let selection = ImportSelection(captureID: .init(describing: objects), camera: fixture.camera,
+                                        descriptors: objects, policy: .pair)
+        let staged = try await store.write(object: raw, session: ImportFileSession(bytes: fixture.raf, mode: .autoSave))
+        let companion = try await store.write(object: jpeg, session: ImportFileSession(bytes: fixture.jpeg, mode: .autoSave))
+        let validated = try OriginalImportValidator(staging: store).validate(
+            selection, originals: [staged, companion], importDate: .distantPast)
+        XCTAssertEqual(validated.originals.first?.metadata.dimensions, .init(width: 7728, height: 5152))
+        XCTAssertEqual(staged.sha256, ResourceChecksum.sha256(fixture.raf))
+        await assertImportThrows {
+            _ = try await store.write(object: raw, session: ImportFileSession(bytes: fixture.raf, mode: .phone))
+        }
+    }
+
     func testXT5DiagnosticComparesUnzonedObjectInfoAsUTCWithEmbeddedOffset() throws {
         for (offset, reported) in [("+01:00", "20200102T020405"), ("-05:00", "20200102T080405"),
                                    ("+05:30", "20200101T213405")] {

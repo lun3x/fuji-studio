@@ -142,10 +142,11 @@ struct ImportFileSession: WirelessTransferSession {
     let bytes: Data
     var verified = true
     var interrupt = false
+    var mode: WirelessMode = .xApp
 
     func open() async throws -> WirelessIdentity { .init(cameraID: .init(), model: .xt5, firmware: "4.32") }
     func capabilities() async throws -> WirelessCapabilities {
-        .init(mode: .xApp, rawExposure: .available, storageIDs: [1], originalSizeVerified: verified, evidenceID: "test")
+        .init(mode: mode, rawExposure: .available, storageIDs: [1], originalSizeVerified: verified, evidenceID: "test")
     }
     func enumerate() async throws -> AsyncThrowingStream<WirelessInventoryBatch, Error> { .init { $0.finish() } }
     func thumbnail(_ object: WirelessObjectDescriptor) async throws -> Data { throw WirelessFailure.unsupportedProtocol }
@@ -160,8 +161,7 @@ struct ImportFileSession: WirelessTransferSession {
 
 struct ImportFileFixture {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-    let camera = WirelessIdentity(cameraID: .init(), model: .xt5, firmware: "4.32",
-                                  protocolPeerKey: .init(bytes: Data("camera-evidence-fixture".utf8)))
+    let camera: WirelessIdentity
     let sessionID = UUID()
     let jpeg: Data
     let raf: Data
@@ -169,15 +169,18 @@ struct ImportFileFixture {
 
     init(jpegDate: String = "2020:01:02 03:04:05", jpegOffset: String? = nil,
          rawDate: String = "2020:01:02 03:04:05", rawOffset: String? = nil,
-         objectDate: String? = "20200102T030405", location: Bool = false) throws {
+         objectDate: String? = "20200102T030405", location: Bool = false,
+         model: WirelessCameraModel = .xt5) throws {
+        camera = .init(cameraID: .init(), model: model, firmware: model == .xt5 ? "4.32" : "1.32",
+                       protocolPeerKey: .init(bytes: Data("camera-evidence-fixture".utf8)))
         self.objectDate = objectDate
-        jpeg = try Self.makeJPEG(width: 6, height: 4, date: jpegDate, offset: jpegOffset, location: location)
-        let preview = try Self.makeJPEG(width: 2, height: 2, date: rawDate, offset: rawOffset, location: location)
+        jpeg = try Self.makeJPEG(width: 6, height: 4, date: jpegDate, offset: jpegOffset, location: location, model: model)
+        let preview = try Self.makeJPEG(width: 2, height: 2, date: rawDate, offset: rawOffset, location: location, model: model)
         func big32(_ value: Int) -> Data { withUnsafeBytes(of: UInt32(value).bigEndian) { Data($0) } }
         func big16(_ value: Int) -> Data { withUnsafeBytes(of: UInt16(value).bigEndian) { Data($0) } }
         var bytes = Data(repeating: 0, count: 128)
         bytes.replaceSubrange(0..<16, with: Data("FUJIFILMCCD-RAW ".utf8))
-        bytes.replaceSubrange(28..<32, with: Data("X-T5".utf8))
+        bytes.replaceSubrange(28..<32, with: Data(model.rawValue.utf8))
         var tags = big32(4)
         for (tag, values) in [(0x100, [5196, 7872]), (0x110, [22, 72]), (0x111, [5152, 7728]), (0x115, [2, 3])] {
             tags += big16(tag) + big16(4) + big16(values[0]) + big16(values[1])
@@ -216,7 +219,8 @@ struct ImportFileFixture {
                      policy: pair ? .pair : .rawOnly)
     }
 
-    private static func makeJPEG(width: Int, height: Int, date: String, offset: String?, location: Bool) throws -> Data {
+    private static func makeJPEG(width: Int, height: Int, date: String, offset: String?, location: Bool,
+                                 model: WirelessCameraModel) throws -> Data {
         let context = try XCTUnwrap(CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
             bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
         let jpeg = NSMutableData()
@@ -226,7 +230,7 @@ struct ImportFileFixture {
         var properties: [String: Any] = [
             kCGImagePropertyOrientation as String: 1,
             kCGImagePropertyTIFFDictionary as String: [kCGImagePropertyTIFFMake as String: "FUJIFILM",
-                                                      kCGImagePropertyTIFFModel as String: "X-T5"],
+                                                      kCGImagePropertyTIFFModel as String: model.rawValue],
             kCGImagePropertyExifDictionary as String: exif
         ]
         if location {

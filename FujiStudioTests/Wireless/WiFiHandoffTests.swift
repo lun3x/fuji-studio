@@ -633,6 +633,7 @@ private final class HandoffAutoSave: AutoSaveGateway {
   let waiting = HandoffBarrier()
   let cancelled = HandoffBarrier()
   private var shouldWait = false
+  private var isWaitingForInvitation = false
   private var log: HandoffLog?
   private var registration: AutoSaveRegistration?
 
@@ -663,7 +664,11 @@ private final class HandoffAutoSave: AutoSaveGateway {
   func waitForSession(
     registration: AutoSaveRegistration, onInvitation: @escaping @Sendable () async throws -> Void
   ) async throws -> any WirelessTransferSession {
-    if shouldWait { await waiting.wait() }
+    if shouldWait {
+      isWaitingForInvitation = true
+      await waiting.wait()
+      isWaitingForInvitation = false
+    }
     try await onInvitation()
     let log = try XCTUnwrap(log)
     return HandoffSession(
@@ -673,7 +678,7 @@ private final class HandoffAutoSave: AutoSaveGateway {
   }
 
   func cancel() async {
-    if shouldWait {
+    if isWaitingForInvitation {
       await cancelled.wait()
       await waiting.release()
     }

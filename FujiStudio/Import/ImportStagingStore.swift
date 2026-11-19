@@ -64,7 +64,7 @@ struct ImportStagingStore: Sendable {
         defer { try? handle.close() }
         let writer = OriginalStreamVerifier(handle: handle, expected: object.byteLength, beforeWrite: beforeChunkWrite)
         let sha256 = try await stream(object, from: session, into: writer, progress: progress)
-        let metadata = try OriginalImportValidator.inspect(file: partial, object: object)
+        let metadata = try OriginalImportValidator.inspect(file: partial, object: object, transferMode: capabilities.mode)
         try Task.checkCancellation()
         let destination = disk.root.appendingPathComponent(relativePath)
         try disk.rename(partial, to: destination, replacing: false)

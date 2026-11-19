@@ -21,7 +21,7 @@ struct OriginalImportValidator: Sendable {
             }
             try staging.checkIntegrity(original)
             let file = try staging.fileURL(for: original)
-            let current = try Self.inspect(file: file, object: object)
+            let current = try Self.inspect(file: file, object: object, transferMode: original.verifiedTransferMode)
             guard current == original.metadata, current.cameraModel == selection.camera.model.rawValue else {
                 throw OriginalImportError.captureMismatch
             }
@@ -56,7 +56,8 @@ struct OriginalImportValidator: Sendable {
     }
 
     /// Reads only headers/metadata; never decodes raw pixels or rewrites camera bytes.
-    static func inspect(file: URL, object: WirelessObjectDescriptor) throws -> OriginalImportMetadata {
+    static func inspect(file: URL, object: WirelessObjectDescriptor,
+                        transferMode: WirelessMode? = nil) throws -> OriginalImportMetadata {
         let properties: [String: Any]
         let dimensions: PixelSize
         let orientation: Int
@@ -69,7 +70,9 @@ struct OriginalImportValidator: Sendable {
             orientation = raw.metadata.orientation
             model = raw.metadata.cameraModel
             // ObjectInfo can describe either the visible frame or the full sensor container.
-            guard object.dimensions == dimensions || object.dimensions == raw.metadata.containerGeometry else {
+            let omitsDimensions = transferMode == .autoSave && model == WirelessCameraModel.xe3.rawValue
+                && object.dimensions == nil
+            guard omitsDimensions || object.dimensions == dimensions || object.dimensions == raw.metadata.containerGeometry else {
                 throw OriginalImportError.validation(.dimensions(
                     reported: object.dimensions, recorded: dimensions, container: raw.metadata.containerGeometry))
             }
