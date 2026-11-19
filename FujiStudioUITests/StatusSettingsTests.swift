@@ -8,13 +8,13 @@ import UIKit
         XCTAssertTrue(app.buttons["wireless.connect"].waitForExistence(timeout: 5))
         app.buttons["wireless.connect"].tap()
         XCTAssertTrue(app.buttons["wireless.browse"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.staticTexts["app.camera"].label.contains("USB conversion is unavailable"))
+        XCTAssertTrue(app.staticTexts["app.camera"].label.contains("Disconnect Wi-Fi to use USB"))
         XCTAssertFalse(app.buttons["app.resetCamera"].exists)
         XCTAssertTrue(app.buttons["Reload Photos"].exists)
         XCTAssertTrue(app.switches["settings.updateOriginalInPhotos"].exists)
         app.buttons["wireless.disconnect"].tap()
         wait { app.buttons["app.resetCamera"].isEnabled }
-        XCTAssertTrue(app.staticTexts["app.access"].label.contains("Photos access is allowed"))
+        XCTAssertTrue(app.staticTexts["app.access"].label.contains("Full access"))
         XCTAssertTrue(app.buttons["Done"].isHittable)
     }
 

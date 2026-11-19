@@ -56,8 +56,20 @@ import XCTest
         XCTAssertFalse(app.buttons["wireless.autoSave.register"].exists)
         XCTAssertFalse(app.staticTexts["wireless.autoSave.network"].exists)
         XCTAssertFalse(app.buttons["wireless.pair"].exists)
-        app.buttons["wireless.autoSave.done"].tap()
-        XCTAssertTrue(app.buttons["wireless.model.xt5"].exists)
+        let xt5 = app.buttons["wireless.model.xt5"]
+        let xe3 = app.buttons["wireless.model.xe3"]
+        XCTAssertTrue(app.navigationBars["Status & settings"].exists)
+        XCTAssertEqual(xe3.value as? String, "Expanded")
+        xt5.tap()
+        XCTAssertEqual(xe3.value as? String, "Collapsed")
+        XCTAssertFalse(reason.exists)
+        XCTAssertTrue(app.buttons["wireless.pair"].exists)
+        xt5.tap()
+        XCTAssertFalse(app.buttons["wireless.pair"].exists)
+        xe3.tap()
+        XCTAssertTrue(reason.waitForExistence(timeout: 5))
+        xe3.tap()
+        XCTAssertFalse(reason.exists)
     }
 
     func testChangeBetweenTwoSavedCamerasWithoutPairingAgain() {

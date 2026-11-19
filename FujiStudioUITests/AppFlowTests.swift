@@ -19,7 +19,7 @@ final class AppFlowTests: AppFlowTestCase {
         XCTAssertFalse(app.buttons["app.connect"].exists)
         app.buttons["app.status"].tap()
         XCTAssertTrue(app.staticTexts["app.camera"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["app.camera"].label.contains("Plug in a supported Fujifilm camera"), app.staticTexts["app.camera"].label)
+        XCTAssertTrue(app.staticTexts["app.camera"].label.contains("Connect a USB data cable"), app.staticTexts["app.camera"].label)
         app.buttons["Done"].tap()
         app.buttons["fixture.foreground"].tap()
         wait { app.buttons["app.status"].label.contains("Camera ready") }

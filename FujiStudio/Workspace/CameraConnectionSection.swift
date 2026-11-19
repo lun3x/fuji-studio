@@ -6,7 +6,7 @@ struct CameraConnectionSection: View {
     let connection: PresentedCameraConnection
     let onBrowse: () -> Void
     let onSetUpAutoSave: () -> Void
-    private enum SetupStep { case modelPicker, xt5 }
+    private enum SetupStep { case modelPicker, xt5, xe3 }
     @State private var setupStep: SetupStep?
     private var addingCamera: Bool { setupStep != nil }
     @State private var confirmingForget = false
@@ -30,10 +30,12 @@ struct CameraConnectionSection: View {
                 Label(state.bluetooth.statusLabel, systemImage: "antenna.radiowaves.left.and.right")
                     .accessibilityIdentifier("wireless.bluetooth")
             }
-            if state.wifi != .idle || disconnecting || unconfirmedClose || state.isListeningForAutoSave {
+            if !addingCamera && (state.wifi != .idle || disconnecting || unconfirmedClose || state.isListeningForAutoSave) {
                 Label(wifiStatus, systemImage: "wifi").accessibilityIdentifier("wireless.wifi")
             }
-            if connected {
+            if addingCamera || (selected == nil && state.wifi == .idle && !disconnecting && !unconfirmedClose && !connection.isWorking && !discovering) {
+                modelPicker
+            } else if connected {
                 Button("Browse camera photos", action: onBrowse)
                     .buttonStyle(.borderedProminent).accessibilityIdentifier("wireless.browse")
                 disconnectButton
@@ -42,20 +44,7 @@ struct CameraConnectionSection: View {
             } else if unconfirmedClose {
                 disconnectButton
             } else if state.wifi != .idle || discovering || connection.isWorking {
-                if state.bluetooth == .discovering && state.wifi == .idle {
-                    Text("Choose your camera when it appears. Keep Pairing Registration open on the camera.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                    ForEach(state.discoveredCameras.filter { $0.advertisedModelHint != .xe3 }) { camera in
-                        Button(camera.displayName) {
-                            connection.start(from: .status) { await model.pairWirelessCamera(camera) }
-                        }
-                            .disabled(connection.isWorking || model.cameraImportActive)
-                            .accessibilityIdentifier(camera.discoveryAccessibilityID)
-                    }
-                }
-                if state.bluetooth == .pairing {
-                    Text("Confirm the pairing request on your camera and iPhone.")
-                }
+                discoveryInstructions
                 Button("Cancel", action: cancel).accessibilityIdentifier("wireless.cancel")
             } else {
                 connectionActions
@@ -75,7 +64,9 @@ struct CameraConnectionSection: View {
         } message: { camera in
             Text("To pair \(camera.displayName) again, remove its pairing registration on the camera and forget it in iPhone Bluetooth settings if it still appears there.")
         }
-        .onChange(of: state.selectedCameraID) { setupStep = nil }
+        .onChange(of: state.selectedCameraID) {
+            if setupStep != .xe3 { setupStep = nil }
+        }
         .onChange(of: state.bluetooth) { _, readiness in
             if readiness != .connecting { retryingBluetooth = false }
         }
@@ -89,10 +80,6 @@ struct CameraConnectionSection: View {
 
     @ViewBuilder private var connectionActions: some View {
         if selected != nil && !addingCamera && !retryingBluetooth && !state.hasAutomaticAutoSaveDestination {
-            if state.bluetooth == .ready {
-                Text("Your camera is paired. Connect to its Wi-Fi to import photos.")
-                    .font(.subheadline).foregroundStyle(.secondary)
-            }
             Button("Connect for photo import") {
                 connection.start(from: .status) { await model.connectCameraWiFi() }
             }
@@ -107,31 +94,6 @@ struct CameraConnectionSection: View {
                     connection.start(from: .status) { await model.retryCameraBluetooth() }
                 }
                     .disabled(!canChoose).accessibilityIdentifier("wireless.retry")
-            }
-        }
-        if selected == nil || addingCamera {
-            if setupStep == .xt5 {
-                Text("On your X-T5, open the connection settings and start Pairing Registration.")
-                    .font(.subheadline).foregroundStyle(.secondary)
-                    .accessibilityIdentifier("wireless.pairInstructions")
-                Button("Find my X-T5") {
-                    setupStep = nil
-                    connection.start(from: .status) { await model.discoverWirelessCameras() }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(!canChoose).accessibilityIdentifier("wireless.pair")
-                Button("Choose a different model") { setupStep = .modelPicker }
-            } else {
-                Text("Which camera are you setting up?").font(.headline)
-                modelChoice("X-T5", route: "Bluetooth") { setupStep = .xt5 }
-                    .disabled(!canChoose).accessibilityIdentifier("wireless.model.xt5")
-                Divider()
-                modelChoice("X-E3", route: "PC Auto Save", action: onSetUpAutoSave)
-                    .disabled(!canOpenTransfer).accessibilityIdentifier("wireless.model.xe3")
-                if selected == nil { savedCameraChoices }
-                if selected != nil {
-                    Button("Cancel") { setupStep = nil }
-                }
             }
         }
         if !addingCamera && selected?.model == .xe3 {
@@ -151,21 +113,75 @@ struct CameraConnectionSection: View {
         }
     }
 
-    private func modelChoice(_ name: String, route: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(name).font(.headline)
-                    Text(route).font(.subheadline).foregroundStyle(.secondary)
+    @ViewBuilder private var modelPicker: some View {
+        modelChoice("X-T5", route: "Bluetooth", step: .xt5)
+            .accessibilityIdentifier("wireless.model.xt5")
+        if setupStep == .xt5 {
+            if discovering || connection.isWorking {
+                Text(state.bluetooth == .pairing ? "Pairing…" : "Searching…")
+                    .font(.subheadline).foregroundStyle(.secondary)
+                discoveryInstructions
+            } else {
+                Text("On the X-T5, open Pairing Registration.")
+                    .accessibilityIdentifier("wireless.pairInstructions")
+                Button("Find X-T5") {
+                    connection.start(from: .status) { await model.discoverWirelessCameras() }
                 }
+                .buttonStyle(.borderedProminent)
+                .disabled(!canChoose).accessibilityIdentifier("wireless.pair")
+            }
+        }
+        Divider()
+        modelChoice("X-E3", route: "PC Auto Save", step: .xe3)
+            .accessibilityIdentifier("wireless.model.xe3")
+        if setupStep == .xe3 {
+            AutoSaveSetupContent(model: model, connection: connection, onBrowse: onBrowse)
+        }
+        if selected == nil { savedCameraChoices }
+        if selected != nil && setupStep == .modelPicker {
+            Button("Cancel") {
+                if connection.isWorking || discovering { cancel() }
+                setupStep = nil
+            }
+        }
+    }
+
+    @ViewBuilder private var discoveryInstructions: some View {
+        if state.bluetooth == .discovering && state.wifi == .idle {
+            ForEach(state.discoveredCameras.filter { $0.advertisedModelHint != .xe3 }) { camera in
+                Button(camera.displayName) {
+                    connection.start(from: .status) { await model.pairWirelessCamera(camera) }
+                }
+                    .disabled(connection.isWorking || model.cameraImportActive)
+                    .accessibilityIdentifier(camera.discoveryAccessibilityID)
+            }
+        }
+        if state.bluetooth == .pairing {
+            Text("Confirm on the camera and iPhone.")
+        }
+    }
+
+    private func modelChoice(_ name: String, route: String, step: SetupStep) -> some View {
+        let expanded = setupStep == step
+        return Button {
+            if expanded && (connection.isWorking || discovering) { cancel() }
+            withAnimation(.easeInOut(duration: 0.18)) {
+                setupStep = expanded ? (connected || unconfirmedClose ? nil : .modelPicker) : step
+            }
+        } label: {
+            HStack {
+                Text(name).font(.headline)
+                Text(route).font(.subheadline).foregroundStyle(.secondary)
                 Spacer()
-                Image(systemName: "chevron.right").font(.footnote).foregroundStyle(.tertiary)
-                    .accessibilityHidden(true)
+                Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                    .font(.footnote).foregroundStyle(.secondary).accessibilityHidden(true)
             }
             .frame(minHeight: 44)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .disabled(!expanded && (step == .xe3 ? !canOpenTransfer : !canChoose))
+        .accessibilityValue(expanded ? "Expanded" : "Collapsed")
     }
 
     @ViewBuilder private var savedCameraChoices: some View {
@@ -307,7 +323,7 @@ extension WirelessFailure {
         case .peerMismatch:
             "The transfer peer did not match the selected camera. Check which camera is connected."
         case .savedSettingsUnavailable:
-            "Saved camera settings could not be read. Unlock your iPhone and reopen Fuji Studio to retry. For USB, use Reset camera connection in Status & settings."
+            "Unlock your iPhone and reopen Fuji Studio to load saved cameras."
         case .malformedData, .unavailableStorage:
             "Camera storage could not be read. Check the memory card and reconnect."
         case .objectChanged:
@@ -317,7 +333,7 @@ extension WirelessFailure {
         case .originalSizeUnavailable:
             "Original-size transfer could not be verified. On the camera, check that Resize Image for Smartphone is off, then reconnect."
         case .autoSaveEntitlementUnavailable:
-            "This iPhone build cannot discover your X-E3 for PC Auto Save because it lacks Apple’s Multicast Networking capability."
+            "Unavailable on this iPhone build. PC Auto Save requires Multicast Networking."
         case .autoSaveIdentityUnavailable:
             "PC Auto Save requires a verified identity for this X-E3. RAW transfer through PC Auto Save is unavailable."
         case .autoSaveRegistrationRequired:

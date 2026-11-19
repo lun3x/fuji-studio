@@ -247,12 +247,9 @@ struct AppWorkspaceView: View {
                             Toggle("Update original in Photos", isOn: Binding(get: { model.settings.updateOriginalInPhotos },
                                 set: { model.settings.updateOriginalInPhotos = $0 }))
                                 .accessibilityIdentifier("settings.updateOriginalInPhotos")
-                            Text("RAW-only photos become RAW+JPEG pairs. After verification, Photos removes the old asset. Existing pairs support Revert to Original in Photos. Only the latest edit appears in image versions. Changes apply to new exports.")
+                            Text("RAW-only assets are replaced after verification. Existing pairs support Revert to Original.")
                                 .font(.footnote).foregroundStyle(.secondary)
                                 .accessibilityIdentifier("settings.updateOriginalExplanation")
-                            if let reason = model.state.exportDisabledReason {
-                                Text(reason.message).accessibilityIdentifier("app.exportDisabledReason")
-                            }
                             if let message = model.message { Text(message).accessibilityIdentifier("app.error") }
                             if let error = model.connectionError { Text(error).accessibilityIdentifier("app.connectionError") }
                             ForEach(model.progressEvents, id: \.jobID) { event in
@@ -443,27 +440,27 @@ struct AppWorkspaceView: View {
     }
     private var accessMessage: String {
         switch model.state.libraryAccess {
-        case .full: "Photos access is allowed. Original RAW and RAW + JPEG photos appear here."
-        case .limited: "Only selected Photos are accessible. Use Manage Photos to include originals and saved outputs."
-        case .denied: "Photos access is denied. Allow access in Settings to browse original photos."
-        case .restricted: "Photos access is restricted on this device. Check your device's Settings."
-        case .notDetermined: "Allow Photos access to browse original RAW photos."
+        case .full: "Full access"
+        case .limited: "Selected photos only"
+        case .denied: "Allow Photos access in Settings."
+        case .restricted: "Photos access is restricted."
+        case .notDetermined: "Allow access to browse Photos."
         }
     }
     private var cameraMessage: String {
         if model.state.wirelessRestrictsUSB {
-            return "USB conversion is unavailable while WiFi import uses the camera."
+            return "Disconnect Wi-Fi to use USB."
         }
         let manualUSBConnection = model.wirelessAvailable
             && (!model.wirelessState.hasLoadedSavedCameraPreference || model.wirelessState.selectedCameraID != nil)
         if manualUSBConnection, case .disconnected = model.state.cameraState {
-            return "For USB conversion, plug in a data cable, select USB RAW CONV./BACKUP RESTORE on the camera and tap Reset camera connection."
+            return "Connect a USB data cable, select USB RAW CONV./BACKUP RESTORE, then reset."
         }
         return switch model.state.cameraState {
         case .ready: "\(model.state.currentCameraExecutionContext?.model ?? "Camera") ready for conversion over USB."
-        case .busy: "The USB camera is processing the current operation."
-        case .attentionRequired: "Camera connection needs attention. Reset the connection to try again."
-        case .authorizationRequired: "Allow camera control to read recipes and convert RAWs over USB. This does not take new pictures."
+        case .busy: "USB camera busy."
+        case .attentionRequired: "Reset the USB connection to retry."
+        case .authorizationRequired: "Allow camera control for USB conversion."
         case .authorizationDenied: manualUSBConnection
             ? "Camera control is denied. Allow it in Settings, then tap Reset camera connection."
             : "Camera control is denied. Allow it in Settings, then return to Fuji Studio to connect automatically."
@@ -472,7 +469,7 @@ struct AppWorkspaceView: View {
             ? "Camera connection interrupted. Check its USB mode and data cable, then tap Reset camera connection."
             : "Camera connection interrupted. Check its USB mode and data cable. Fuji Studio reconnects automatically."
         case .opening, .discovering, .sessionOpen: "Connecting and verifying the USB camera…"
-        case .disconnected: "Plug in a supported Fujifilm camera with a USB data cable in USB RAW CONV./BACKUP RESTORE mode. Fuji Studio connects automatically."
+        case .disconnected: "Connect a USB data cable in USB RAW CONV./BACKUP RESTORE mode."
         }
     }
 }
