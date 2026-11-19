@@ -173,6 +173,10 @@ struct AppWorkspaceView: View {
         .overlay(alignment: .bottom) { cameraPhotosButton.padding(.bottom, 8) }
         .onChange(of: model.wirelessState.wifi) { _, phase in
             if phase == .idle { prefersPhonePhotos = false }
+            if phase == .ready, model.wirelessState.automaticAutoSaveTransfer, statusPresented,
+               statusPath.isEmpty || statusPath.last == .autoSave {
+                closeStatus()
+            }
         }
         .onChange(of: model.wirelessState.manualNetwork) { _, network in handoffPresented = network != nil }
         .sheet(isPresented: Binding(get: { handoffPresented && !statusPresented }, set: { handoffPresented = $0 })) {
@@ -378,7 +382,9 @@ struct AppWorkspaceView: View {
         if !statusPath.isEmpty { statusPath.removeLast() }
     }
     private func closeStatus() {
-        connection.cancel { pending in await model.cancelWirelessConnection(draining: pending) }
+        if connection.isWorking || !model.wirelessState.automaticAutoSaveTransfer {
+            connection.cancel { pending in await model.cancelWirelessConnection(draining: pending) }
+        }
         statusPresented = false
     }
     private func setUpAutoSaveFromBrowser() {

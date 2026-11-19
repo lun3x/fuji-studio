@@ -103,12 +103,14 @@ actor NativeAutoSaveGateway: AutoSaveGateway {
     return registration
   }
 
-  func waitForSession(registration: AutoSaveRegistration) async throws -> any WirelessTransferSession {
+  func waitForSession(
+    registration: AutoSaveRegistration, onInvitation: @escaping @Sendable () async throws -> Void
+  ) async throws -> any WirelessTransferSession {
     try checkAvailability()
     let result = try await run(stage: .autoSaveSession, limit: WirelessLimits.autoSaveSession) { deadline in
       let saved = try await self.savedRegistration(for: registration.cameraID)
       guard saved == registration else { throw WirelessFailure.autoSaveRegistrationRequired }
-      let session = try await self.openSession(registration: saved, deadline: deadline)
+      let session = try await self.openSession(registration: saved, deadline: deadline, onInvitation: onInvitation)
       // Selection, forget or re-registration can race an asynchronous native wait.
       let current = try await self.savedRegistration(for: registration.cameraID)
       guard current == saved else { throw WirelessFailure.autoSaveRegistrationRequired }
@@ -130,12 +132,15 @@ actor NativeAutoSaveGateway: AutoSaveGateway {
   }
 
   private func openSession(
-    registration: AutoSaveRegistration, deadline: ContinuousClock.Instant
+    registration: AutoSaveRegistration, deadline: ContinuousClock.Instant,
+    onInvitation: @Sendable () async throws -> Void = {}
   ) async throws -> any WirelessTransferSession {
     try Task.checkCancellation()
     let handshake = try await exchange(.transfer, registration.importer, registration.cameraName, deadline)
     try Task.checkCancellation()
     guard handshake.cameraName == registration.cameraName else { throw WirelessFailure.peerMismatch }
+    try await onInvitation()
+    try Task.checkCancellation()
     let expected = WirelessIdentity(
       cameraID: registration.cameraID, model: .xe3, firmware: nil, protocolPeerKey: registration.peerKey)
     let session: any WirelessTransferSession

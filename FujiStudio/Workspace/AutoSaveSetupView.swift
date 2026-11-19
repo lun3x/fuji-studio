@@ -67,9 +67,7 @@ struct AutoSaveSetupView: View {
                 .accessibilityIdentifier("wireless.autoSave.setupInstructions")
         }
         if registered || allowsUnregisteredWait {
-            Text(registered
-                ? "Tap Wait for camera, then open the X-E3 playback menu, choose PC AUTO SAVE and start the transfer to Fuji Studio."
-                : "Already set up? Tap Wait for camera, then start PC AUTO SAVE from the X-E3 playback menu.")
+            Text(transferInstructions)
                 .accessibilityIdentifier("wireless.autoSave.startInstructions")
         }
         if state.wifi == .ready && !model.isDisconnectingWireless {
@@ -109,6 +107,15 @@ struct AutoSaveSetupView: View {
         return start + " Choose the shared WiFi network and select Fuji Studio when it appears."
     }
 
+    private var transferInstructions: String {
+        if state.hasAutomaticAutoSaveDestination {
+            return "Start PC AUTO SAVE from the X-E3 playback menu while Fuji Studio is open. Camera Photos opens when the camera connects."
+        }
+        return registered
+            ? "Tap Wait for camera, then open the X-E3 playback menu, choose PC AUTO SAVE and start the transfer to Fuji Studio."
+            : "Already set up? Tap Wait for camera, then start PC AUTO SAVE from the X-E3 playback menu."
+    }
+
     @ViewBuilder private var transferActions: some View {
         if !registered || state.wifiFailure == .autoSaveRegistrationRequired {
             Button("Register destination") {
@@ -118,7 +125,8 @@ struct AutoSaveSetupView: View {
                 .disabled(!canStart)
                 .accessibilityIdentifier("wireless.autoSave.register")
         }
-        if state.wifiFailure != .autoSaveRegistrationRequired && (registered || allowsUnregisteredWait) {
+        if state.wifiFailure != .autoSaveRegistrationRequired,
+           !state.hasAutomaticAutoSaveDestination && (registered || allowsUnregisteredWait) {
             if registered {
                 waitForCamera.buttonStyle(.borderedProminent)
             } else {
@@ -151,11 +159,15 @@ struct AutoSaveSetupView: View {
     }
 
     private func back() {
-        cancel()
+        if connection.isWorking { cancel() }
         onBack()
     }
 
     private func cancel() {
-        connection.cancel(from: .autoSave) { pending in await model.cancelWirelessConnection(draining: pending) }
+        if connection.isWorking {
+            connection.cancel(from: .autoSave) { pending in await model.cancelWirelessConnection(draining: pending) }
+        } else {
+            Task { await model.cancelWirelessConnection(draining: nil) }
+        }
     }
 }

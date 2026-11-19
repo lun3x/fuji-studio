@@ -46,6 +46,9 @@ struct WirelessStatusSummary: Equatable {
         } else if state.wifi != .idle {
             label = state.wifi.statusLabel
             symbol = "wifi"
+        } else if state.isListeningForAutoSave {
+            label = "Listening for PC Auto Save"
+            symbol = "wifi"
         } else if state.bluetooth != .idle {
             label = state.bluetooth.statusLabel
             symbol = "antenna.radiowaves.left.and.right"

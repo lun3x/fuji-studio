@@ -8,7 +8,9 @@ protocol AutoSaveGateway: Sendable {
     camera: SavedCamera, onRegistered: @escaping @Sendable () async throws -> Void
   ) async throws -> AutoSaveRegistration
   func savedRegistration(for cameraID: WirelessCameraID) async throws -> AutoSaveRegistration
-  func waitForSession(registration: AutoSaveRegistration) async throws -> any WirelessTransferSession
+  func waitForSession(
+    registration: AutoSaveRegistration, onInvitation: @escaping @Sendable () async throws -> Void
+  ) async throws -> any WirelessTransferSession
   /// Invalidate the attempt and wait for its native handshake and any unadopted session to close.
   func cancel() async
 }
@@ -16,6 +18,10 @@ protocol AutoSaveGateway: Sendable {
 extension AutoSaveGateway {
   func register(camera: SavedCamera) async throws -> AutoSaveRegistration {
     try await register(camera: camera, onRegistered: {})
+  }
+
+  func waitForSession(registration: AutoSaveRegistration) async throws -> any WirelessTransferSession {
+    try await waitForSession(registration: registration, onInvitation: {})
   }
 }
 

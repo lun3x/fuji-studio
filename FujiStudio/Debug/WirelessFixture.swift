@@ -27,13 +27,14 @@ import UIKit
         case heldLocalRetry = "--fixture-wireless-held-local-retry"
         case journalIssue = "--fixture-wireless-journal-issue"
         case autoSave = "--fixture-wireless-auto-save"
+        case automaticAutoSave = "--fixture-wireless-automatic-auto-save"
         case autoSaveOwnershipFailure = "--fixture-wireless-auto-save-ownership-failure"
         case autoSaveInventoryFailure = "--fixture-wireless-auto-save-inventory-failure"
         case autoSaveCloseFailure = "--fixture-wireless-auto-save-close-failure"
         case recoveryJobs = "--fixture-wireless-recovery-jobs"
 
         var hasAutoSave: Bool {
-            self == .autoSave || self == .autoSaveOwnershipFailure || self == .autoSaveInventoryFailure
+            self == .autoSave || self == .automaticAutoSave || self == .autoSaveOwnershipFailure || self == .autoSaveInventoryFailure
         }
 
         var cameraModel: WirelessCameraModel {
@@ -64,7 +65,8 @@ import UIKit
     init(mode: Mode, root: URL, reader: FixtureLibrary, ownership: some WirelessCameraOwnershipGateway) throws {
         let persistenceSuite = ProcessInfo.processInfo.environment["FUJI_STUDIO_SETTINGS_SUITE"]
         let autoSaveCameraID = UUID(uuid: (0xFE, 0xE3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1))
-        let cameraID = mode == .autoSave ? WirelessCameraID(rawValue: autoSaveCameraID) : WirelessCameraID()
+        let cameraID = mode == .autoSave || mode == .automaticAutoSave
+            ? WirelessCameraID(rawValue: autoSaveCameraID) : WirelessCameraID()
         let store = FixtureSavedCameras(selected: mode != .unpaired && mode != .xe3Unpaired && mode != .disabled,
                                         model: mode.cameraModel, cameraID: cameraID, dual: mode == .twoSaved || mode == .recoveryJobs)
         savedCameras = store
@@ -81,7 +83,7 @@ import UIKit
             firmware: transferFirmware, protocolPeerKey: identity.protocolPeerKey), scenario: mode)
         let autoSave: FixtureAutoSave? = if mode.hasAutoSave {
             FixtureAutoSave(session: try FixtureWirelessSession(identity: identity, scenario: mode, transport: .autoSave),
-                            persistenceSuite: persistenceSuite)
+                            persistenceSuite: persistenceSuite, automatic: mode == .automaticAutoSave)
         } else { nil }
         journalRoot = root.appendingPathComponent("import-journal")
         let journal = try ImportJournal(root: journalRoot)
@@ -103,7 +105,7 @@ import UIKit
                     return session
                 }
                 return try FixtureWirelessSession(identity: peer, scenario: mode)
-            }, autoSave: autoSave)
+            }, autoSave: autoSave, simulatorAutoSave: mode == .automaticAutoSave)
         services = .init(connection: connection, journal: journal, staging: staging, photoGateway: photos,
                          isEnabled: mode != .disabled, requestPhotosAccess: { await reader.requestAccess() })
     }
@@ -455,11 +457,14 @@ actor FixtureWirelessSession: WirelessTransferSession {
 private actor FixtureAutoSave: AutoSaveGateway {
     private let session: FixtureWirelessSession
     private let persistenceSuite: String?
+    private let automatic: Bool
     private var registration: AutoSaveRegistration?
+    private var sentInvitation = false
 
-    init(session: FixtureWirelessSession, persistenceSuite: String?) {
+    init(session: FixtureWirelessSession, persistenceSuite: String?, automatic: Bool) {
         self.session = session
         self.persistenceSuite = persistenceSuite
+        self.automatic = automatic
     }
 
     private var preferences: UserDefaults? { persistenceSuite.flatMap(UserDefaults.init(suiteName:)) }
@@ -490,8 +495,19 @@ private actor FixtureAutoSave: AutoSaveGateway {
         return registration
     }
 
-    func waitForSession(registration: AutoSaveRegistration) async throws -> any WirelessTransferSession {
+    func waitForSession(
+        registration: AutoSaveRegistration, onInvitation: @escaping @Sendable () async throws -> Void
+    ) async throws -> any WirelessTransferSession {
         guard self.registration == registration else { throw WirelessFailure.peerMismatch }
+        if automatic {
+            if sentInvitation {
+                try await Task.sleep(for: WirelessLimits.autoSaveSession)
+                throw WirelessFailure.timeout(.autoSaveSession)
+            }
+            try await Task.sleep(for: .seconds(2))
+        }
+        try await onInvitation()
+        sentInvitation = true
         await session.begin()
         return session
     }

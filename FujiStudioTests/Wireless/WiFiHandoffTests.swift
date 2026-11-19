@@ -255,6 +255,43 @@ final class WiFiHandoffTests: XCTestCase {
     XCTAssertFalse(fixture.log.events.contains("native join"))
   }
 
+  #if targetEnvironment(simulator)
+  func testRegisteredSimulatorAutoSaveListensWithoutOwnershipThenOpensCameraPhotos() async throws {
+    let gateway = HandoffAutoSave()
+    let fixture = Fixture(model: .xe3, autoSave: gateway, simulatorAutoSave: true)
+    await fixture.start()
+    gateway.holdWait()
+    await gateway.verifying.release()
+    await fixture.coordinator.setUpAutoSave()
+    await gateway.waiting.entered()
+
+    let listening = await snapshot(fixture.coordinator)
+    XCTAssertTrue(listening.isListeningForAutoSave)
+    XCTAssertEqual(listening.wifi, .idle)
+    XCTAssertFalse(listening.restrictsUSB)
+    XCTAssertFalse(listening.automaticAutoSaveTransfer)
+    XCTAssertEqual(fixture.log.events.filter { $0 == "ownership" }.count, 1)
+    await expectNoSession(fixture.coordinator)
+
+    let states = await fixture.coordinator.states()
+    await gateway.waiting.release()
+    for await state in states where state.wifi == .ready { break }
+    let ready = await snapshot(fixture.coordinator)
+    XCTAssertTrue(ready.automaticAutoSaveTransfer)
+    XCTAssertTrue(ready.showsCameraPhotosButton)
+    XCTAssertTrue(ready.restrictsUSB)
+    XCTAssertEqual(fixture.log.events.filter { $0 == "ownership" }.count, 2)
+    let peer = try await fixture.coordinator.transferSession().open()
+    XCTAssertEqual(peer.model, .xe3)
+
+    gateway.stopHoldingWait()
+    await fixture.coordinator.setActivity(.background)
+    let background = await snapshot(fixture.coordinator)
+    XCTAssertFalse(background.isListeningForAutoSave)
+    XCTAssertFalse(background.hasTransferLease)
+  }
+  #endif
+
   func testBackgroundDrainsAutoSaveBeforeReleasingOwnershipAndDiscardsLateSession() async {
     let gateway = HandoffAutoSave()
     let fixture = Fixture(model: .xe3, autoSave: gateway)
@@ -559,7 +596,8 @@ private final class Fixture {
   init(
     failure: WirelessFailure? = nil, model: WirelessCameraModel = .xt5, autoSave: HandoffAutoSave? = nil,
     ownership: (any WirelessCameraOwnershipGateway)? = nil, close: WirelessCloseFixture? = nil,
-    peerFirmware: String? = "4.32", bluetoothFirmware: String? = "4.32", manualRoute: HandoffBarrier? = nil
+    peerFirmware: String? = "4.32", bluetoothFirmware: String? = "4.32", manualRoute: HandoffBarrier? = nil,
+    simulatorAutoSave: Bool = false
   ) {
     let camera = SavedCamera(id: id, peripheralID: UUID(), model: model, displayName: "Fixture")
     let bluetooth = HandoffBluetooth(id: id, log: log, failure: failure, firmware: bluetoothFirmware)
@@ -577,7 +615,7 @@ private final class Fixture {
         let peer = WirelessIdentity(cameraID: identity.cameraID, model: identity.model, firmware: peerFirmware,
                                     protocolPeerKey: identity.protocolPeerKey)
         return HandoffSession(identity: peer, log: log, failure: failure, closeFixture: close)
-      }, autoSave: autoSave)
+      }, autoSave: autoSave, simulatorAutoSave: simulatorAutoSave)
     autoSave?.use(log: log)
   }
 
@@ -600,6 +638,7 @@ private final class HandoffAutoSave: AutoSaveGateway {
 
   func use(log: HandoffLog) { self.log = log }
   func holdWait() { shouldWait = true }
+  func stopHoldingWait() { shouldWait = false }
   func checkAvailability() throws { try Task.checkCancellation() }
 
   func register(
@@ -621,8 +660,11 @@ private final class HandoffAutoSave: AutoSaveGateway {
     return registration
   }
 
-  func waitForSession(registration: AutoSaveRegistration) async throws -> any WirelessTransferSession {
+  func waitForSession(
+    registration: AutoSaveRegistration, onInvitation: @escaping @Sendable () async throws -> Void
+  ) async throws -> any WirelessTransferSession {
     if shouldWait { await waiting.wait() }
+    try await onInvitation()
     let log = try XCTUnwrap(log)
     return HandoffSession(
       identity: .init(

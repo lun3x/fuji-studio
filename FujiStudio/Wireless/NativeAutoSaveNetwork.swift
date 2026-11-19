@@ -125,7 +125,7 @@ enum NativeAutoSaveNetwork {
     private var clock: ContinuousClock { ContinuousClock() }
 
     func run(importer: String, expectedName: String?) throws -> AutoSaveHandshake {
-      let subnet = try localSubnet()
+      _ = try localSubnet()
       let udp = try openSocket(SOCK_DGRAM)
       defer { Darwin.close(udp) }
       try bind(udp, to: socketAddress(port: phase.port))
@@ -133,15 +133,17 @@ enum NativeAutoSaveNetwork {
       return try findInvitation(phase: phase, importer: importer) {
         while true {
           let (data, address) = try receiveDatagram(udp)
-          if subnet.contains(address.sin_addr), let source = addressString(address.sin_addr) {
+          if let subnet = try? localSubnet(), subnet.contains(address.sin_addr),
+            let source = addressString(address.sin_addr) {
             return Datagram(data: data, source: source)
           }
         }
       } invite: { source in
+        let subnet = try localSubnet()
         let listener = try invitationListener()
         defer { Darwin.close(listener) }
         var peer = in_addr()
-        guard source.withCString({ inet_pton(AF_INET, $0, &peer) }) == 1 else {
+        guard source.withCString({ inet_pton(AF_INET, $0, &peer) }) == 1, subnet.contains(peer) else {
           throw WirelessFailure.malformedData
         }
         try notify(address: source, importer: importer)

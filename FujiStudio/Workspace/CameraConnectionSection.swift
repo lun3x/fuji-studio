@@ -25,8 +25,10 @@ struct CameraConnectionSection: View {
             if let selected {
                 Text(selected.displayName).accessibilityIdentifier("wireless.selected")
             }
-            Label(state.bluetooth.statusLabel, systemImage: "antenna.radiowaves.left.and.right")
-                .accessibilityIdentifier("wireless.bluetooth")
+            if !state.hasAutomaticAutoSaveDestination {
+                Label(state.bluetooth.statusLabel, systemImage: "antenna.radiowaves.left.and.right")
+                    .accessibilityIdentifier("wireless.bluetooth")
+            }
             Label(wifiStatus, systemImage: "wifi")
                 .accessibilityIdentifier("wireless.wifi")
             if connected {
@@ -74,11 +76,12 @@ struct CameraConnectionSection: View {
 
     private var wifiStatus: String {
         if disconnecting { return WirelessWiFiPhase.disconnecting.statusLabel }
+        if state.isListeningForAutoSave { return "Listening for PC Auto Save" }
         return unconfirmedClose ? "WiFi closure unconfirmed" : state.wifi.statusLabel
     }
 
     @ViewBuilder private var connectionActions: some View {
-        if selected != nil {
+        if selected != nil && !state.hasAutomaticAutoSaveDestination {
             Button("Connect over WiFi") {
                 connection.start(from: .status) { await model.connectCameraWiFi() }
             }
@@ -91,7 +94,7 @@ struct CameraConnectionSection: View {
                 .disabled(!canOpenTransfer).accessibilityIdentifier("wireless.autoSave")
         }
         if state.bluetooth == .unavailable || state.bluetooth == .waitingForCamera {
-            if selected != nil {
+            if selected != nil && !state.hasAutomaticAutoSaveDestination {
                 Button("Retry Bluetooth") {
                     retryingBluetooth = true
                     connection.start(from: .status) { await model.retryCameraBluetooth() }

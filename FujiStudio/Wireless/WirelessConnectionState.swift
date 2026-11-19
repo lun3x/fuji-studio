@@ -72,6 +72,8 @@ struct WirelessConnectionState: Equatable, Sendable {
   var hasLoadedSavedCameraPreference = false
   var simulatorAutoSaveAvailable = false
   var simulatorAutoSaveDestination: String?
+  var isListeningForAutoSave = false
+  var automaticAutoSaveTransfer = false
   var discoveredCameras: [DiscoveredCamera] = []
   var bluetooth: WirelessBluetoothReadiness = .idle
   var wifi: WirelessWiFiPhase = .idle
@@ -88,9 +90,15 @@ struct WirelessConnectionState: Equatable, Sendable {
   var hasTransferLease = false
   var cameraTransferSizeRestoreUnconfirmed = false
 
+  var hasAutomaticAutoSaveDestination: Bool {
+    simulatorAutoSaveAvailable && selectedCameraID != nil && selectedCameraID == verifiedAutoSaveCameraID
+  }
+
   var showsCameraPhotosButton: Bool {
     if wifi == .ready || manualNetwork != nil { return true }
-    return bluetooth == .ready && wifi != .disconnecting && !(wifi == .idle && hasTransferLease)
+    if automaticAutoSaveTransfer && wifi != .idle && wifi != .disconnecting { return true }
+    return !hasAutomaticAutoSaveDestination && bluetooth == .ready
+      && wifi != .disconnecting && !(wifi == .idle && hasTransferLease)
   }
 
   var restrictsUSB: Bool { hasTransferLease || wifi != .idle }

@@ -414,6 +414,31 @@ import XCTest
         XCTAssertTrue(app.buttons["wireless.autoSave.register"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["wireless.autoSave.wait"].exists)
     }
+
+    func testRegisteredXE3AutoSaveAutomaticallyOpensTheWorkspaceCameraTray() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-fixtures", "--fixture-wireless-automatic-auto-save"]
+        app.launchEnvironment["FUJI_STUDIO_SETTINGS_SUITE"] = "FujiAutomaticAutoSaveUI-\(UUID())"
+        app.launch()
+        openAutoSave(in: app)
+        let register = app.buttons["wireless.autoSave.register"]
+        XCTAssertTrue(register.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["wireless.autoSave.wait"].exists)
+        register.tap()
+
+        let pair = app.cells.matching(NSPredicate(format: "label CONTAINS %@", "DSCF0001.RAF")).firstMatch
+        let cameraPhotos = app.buttons["workspace.cameraPhotos"]
+        XCTAssertTrue(pair.waitForExistence(timeout: 10))
+        XCTAssertTrue(cameraPhotos.wait(for: \.label, toEqual: "Phone Photos", timeout: 5))
+        cameraPhotos.tap()
+        XCTAssertTrue(cameraPhotos.wait(for: \.label, toEqual: "Camera Photos", timeout: 5))
+        cameraPhotos.tap()
+        XCTAssertTrue(pair.waitForExistence(timeout: 5))
+
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(pair.waitForExistence(timeout: 10))
+    }
     #endif
 
     func testXE3GuidesSameNetworkRegistrationAndCameraStartedTransfer() {
