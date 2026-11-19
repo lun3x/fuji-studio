@@ -70,14 +70,24 @@ struct AutoSaveSetupContent: View {
             Button("Disconnect WiFi") { Task { await model.disconnectCameraWiFi() } }
                 .accessibilityIdentifier("wireless.disconnect")
         } else if isBusy || model.isDisconnectingWireless {
+            if state.wifi == .registeringAutoSave {
+                PairingInstructions([
+                    "On the X-E3, select MANUAL SETUP.",
+                    "Choose “SELECT FROM NETWORK LIST”.",
+                    "Select the shared Wi-Fi network.",
+                    "Enter its password if prompted.",
+                    "Select the new PC destination."
+                ], startingAt: 8, identifier: "wireless.autoSave.manual")
+            } else if state.wifi == .waitingForAutoSave || state.wifi == .verifyingAutoSave {
+                playbackSteps(startingAt: state.wifi == .waitingForAutoSave ? 2 : 13)
+            }
             ProgressView(state.wifi.statusLabel)
                 .accessibilityIdentifier("wireless.autoSave.progress")
             Button("Cancel", action: cancel)
                 .disabled(model.isDisconnectingWireless || state.wifi == .disconnecting)
                 .accessibilityIdentifier("wireless.cancel")
         } else {
-            setupGuidance
-            transferActions
+            setupSteps
         }
         if state.transferRoute == .autoSave, let failure = state.wifiFailure, let guidance = state.transferFailureGuidance {
             Text(guidance)
@@ -93,55 +103,53 @@ struct AutoSaveSetupContent: View {
         !connection.isWorking && !model.state.wirelessRestrictsUSB && !model.cameraImportActive && !model.isSuspended
     }
 
-    @ViewBuilder private var setupGuidance: some View {
-        if registered {
+    @ViewBuilder private var setupSteps: some View {
+        if registered && state.wifiFailure != .autoSaveRegistrationRequired {
             Text("Destination registered").font(.headline)
                 .accessibilityIdentifier("wireless.autoSave.registered")
             if let destination = state.simulatorAutoSaveDestination {
                 Text(destination).accessibilityIdentifier("wireless.autoSave.destination")
             }
-            Text(transferInstructions).accessibilityIdentifier("wireless.autoSave.startInstructions")
+            if state.hasAutomaticAutoSaveDestination {
+                playbackSteps(startingAt: 1)
+            } else {
+                PairingStep(1) { waitForCamera.buttonStyle(.borderedProminent) }
+                playbackSteps(startingAt: 2)
+            }
         } else {
-            Text(state.simulatorAutoSaveAvailable
-                ? "Connect your Mac and X-E3 to the same WiFi network."
-                : "Connect your iPhone and X-E3 to the same WiFi network.")
-                .accessibilityIdentifier("wireless.autoSave.network")
-            Text(setupInstructions).accessibilityIdentifier("wireless.autoSave.setupInstructions")
-            if allowsUnregisteredWait {
-                Text("Already registered? Tap Wait for camera, then start PC AUTO SAVE in the playback menu.")
-                    .accessibilityIdentifier("wireless.autoSave.startInstructions")
-            }
-        }
-    }
-
-    private var setupInstructions: String {
-        "On the X-E3, open PC AUTO SAVE SETTING. Tap Register destination, then choose MANUAL SETUP on the camera."
-    }
-
-    private var transferInstructions: String {
-        if state.hasAutomaticAutoSaveDestination {
-            return "Start PC AUTO SAVE in the X-E3 playback menu."
-        }
-        return "Tap Wait for camera, then choose PC AUTO SAVE in the playback menu."
-    }
-
-    @ViewBuilder private var transferActions: some View {
-        if !registered || state.wifiFailure == .autoSaveRegistrationRequired {
-            Button("Register destination") {
-                connection.start(from: .autoSave) { await model.setUpCameraAutoSave() }
-            }
+            PairingInstructions([
+                state.simulatorAutoSaveAvailable
+                    ? "Connect your Mac to the Wi-Fi network for the X-E3."
+                    : "Connect your iPhone to the Wi-Fi network for the X-E3.",
+                "Press MENU/OK on the X-E3.",
+                "Select SET UP.",
+                "Select CONNECTION SETTING.",
+                "Select PC AUTO SAVE SETTINGS.",
+                "Select PC AUTO SAVE SETTING."
+            ], identifier: "wireless.autoSave.setup")
+            PairingStep(7) {
+                Button("Register destination") {
+                    connection.start(from: .autoSave) { await model.setUpCameraAutoSave() }
+                }
                 .buttonStyle(.borderedProminent)
                 .disabled(!canStart)
                 .accessibilityIdentifier("wireless.autoSave.register")
-        }
-        if state.wifiFailure != .autoSaveRegistrationRequired,
-           !state.hasAutomaticAutoSaveDestination && (registered || allowsUnregisteredWait) {
-            if registered {
-                waitForCamera.buttonStyle(.borderedProminent)
-            } else {
-                waitForCamera.buttonStyle(.bordered)
+            }
+            if allowsUnregisteredWait {
+                Text("Already registered?").font(.subheadline)
+                PairingStep(1) { waitForCamera.buttonStyle(.bordered) }
             }
         }
+    }
+
+    private func playbackSteps(startingAt first: Int) -> some View {
+        PairingInstructions([
+            "Press Playback on the X-E3.",
+            "Press MENU/OK.",
+            "Select PC AUTO SAVE.",
+            "Select the saved destination.",
+            "Confirm the transfer."
+        ], startingAt: first, identifier: "wireless.autoSave.playback")
     }
 
     private var allowsUnregisteredWait: Bool {

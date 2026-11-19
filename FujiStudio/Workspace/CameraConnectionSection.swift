@@ -122,13 +122,19 @@ struct CameraConnectionSection: View {
                     .font(.subheadline).foregroundStyle(.secondary)
                 discoveryInstructions
             } else {
-                Text("On the X-T5, open Pairing Registration.")
-                    .accessibilityIdentifier("wireless.pairInstructions")
-                Button("Find X-T5") {
-                    connection.start(from: .status) { await model.discoverWirelessCameras() }
+                PairingInstructions([
+                    "Press MENU/OK on the X-T5.",
+                    "Select Network/USB Setting.",
+                    "Select Bluetooth/Smartphone Setting.",
+                    "Select Pairing Registration."
+                ], identifier: "wireless.pairInstructions")
+                PairingStep(5) {
+                    Button("Find X-T5") {
+                        connection.start(from: .status) { await model.discoverWirelessCameras() }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!canChoose).accessibilityIdentifier("wireless.pair")
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(!canChoose).accessibilityIdentifier("wireless.pair")
             }
         }
         Divider()
@@ -148,6 +154,9 @@ struct CameraConnectionSection: View {
 
     @ViewBuilder private var discoveryInstructions: some View {
         if state.bluetooth == .discovering && state.wifi == .idle {
+            if state.discoveredCameras.contains(where: { $0.advertisedModelHint != .xe3 }) {
+                PairingInstructions(["Select your X-T5 below."], startingAt: 6, identifier: "wireless.chooseCamera")
+            }
             ForEach(state.discoveredCameras.filter { $0.advertisedModelHint != .xe3 }) { camera in
                 Button(camera.displayName) {
                     connection.start(from: .status) { await model.pairWirelessCamera(camera) }
@@ -157,7 +166,8 @@ struct CameraConnectionSection: View {
             }
         }
         if state.bluetooth == .pairing {
-            Text("Confirm on the camera and iPhone.")
+            PairingInstructions(["Confirm pairing on the X-T5.", "Tap Pair on your iPhone."],
+                                startingAt: 7, identifier: "wireless.confirmPairing")
         }
     }
 

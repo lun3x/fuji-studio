@@ -414,8 +414,8 @@ import XCTest
         if allowPhotos.waitForExistence(timeout: 3) { allowPhotos.tap() }
         app.buttons["app.status"].tap()
         app.buttons["wireless.model.xe3"].tap()
-        XCTAssertTrue(app.staticTexts["wireless.autoSave.network"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["wireless.autoSave.network"].label.contains("your Mac"))
+        XCTAssertTrue(app.descendants(matching: .any)["wireless.autoSave.setup.1"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["wireless.autoSave.setup.1"].firstMatch.label.contains("your Mac"))
         XCTAssertTrue(app.buttons["wireless.autoSave.register"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["wireless.autoSave.wait"].exists)
     }
@@ -452,10 +452,10 @@ import XCTest
         app.launchEnvironment["FUJI_STUDIO_SETTINGS_SUITE"] = "FujiAutoSaveUI-\(UUID())"
         app.launch()
         openAutoSave(in: app)
-        XCTAssertTrue(app.staticTexts["wireless.autoSave.network"].label.contains("same WiFi network"))
+        XCTAssertTrue(app.descendants(matching: .any)["wireless.autoSave.setup.1"].firstMatch.label.contains("your iPhone"))
         let register = app.buttons["wireless.autoSave.register"]
         XCTAssertTrue(register.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["wireless.autoSave.setupInstructions"].label.contains("PC AUTO SAVE SETTING"))
+        XCTAssertTrue(app.descendants(matching: .any)["wireless.autoSave.setup.6"].firstMatch.label.contains("PC AUTO SAVE SETTING"))
         let waitForCamera = app.buttons["wireless.autoSave.wait"]
         XCTAssertTrue(waitForCamera.isEnabled)
         waitForCamera.tap()
@@ -468,7 +468,7 @@ import XCTest
         openAutoSave(in: app)
         XCTAssertTrue(waitForCamera.waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts["wireless.autoSave.registered"].exists)
-        XCTAssertTrue(app.staticTexts["wireless.autoSave.startInstructions"].label.contains("playback menu"))
+        XCTAssertTrue(app.staticTexts["Already registered?"].exists)
         waitForCamera.tap()
         browseConnectedCamera(app)
         importPair(app)

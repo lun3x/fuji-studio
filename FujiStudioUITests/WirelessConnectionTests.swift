@@ -26,7 +26,12 @@ import XCTest
         XCTAssertTrue(app.buttons["wireless.model.xe3"].exists)
         shot(app, "Camera model picker")
         app.buttons["wireless.model.xt5"].tap()
-        XCTAssertTrue(app.staticTexts["wireless.pairInstructions"].label.contains("Pairing Registration"))
+        let choices = ["MENU/OK", "Network/USB Setting", "Bluetooth/Smartphone Setting", "Pairing Registration"]
+        for (index, choice) in choices.enumerated() {
+            let step = app.descendants(matching: .any)["wireless.pairInstructions.\(index + 1)"].firstMatch
+            XCTAssertTrue(step.label.hasPrefix("\(index + 1)."))
+            XCTAssertTrue(step.label.contains(choice))
+        }
         app.buttons["wireless.pair"].tap()
         let xt5 = cameraButton(prefix: "wireless.discovered.X-T5.", in: app)
         XCTAssertTrue(xt5.waitForExistence(timeout: 5))
@@ -54,7 +59,7 @@ import XCTest
         XCTAssertTrue(reason.label.contains("Multicast Networking"))
         shot(app, "X-E3 PC Auto Save unavailable")
         XCTAssertFalse(app.buttons["wireless.autoSave.register"].exists)
-        XCTAssertFalse(app.staticTexts["wireless.autoSave.network"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["wireless.autoSave.setup.1"].firstMatch.exists)
         XCTAssertFalse(app.buttons["wireless.pair"].exists)
         let xt5 = app.buttons["wireless.model.xt5"]
         let xe3 = app.buttons["wireless.model.xe3"]
