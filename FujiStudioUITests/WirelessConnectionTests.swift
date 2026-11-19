@@ -13,15 +13,22 @@ import XCTest
         XCTAssertNotEqual(status.value as? String, "Camera ready")
         status.tap()
         XCTAssertTrue(app.buttons["wireless.connect"].waitForExistence(timeout: 5))
-        XCTAssertEqual(app.buttons["wireless.connect"].label, "Connect over WiFi")
+        XCTAssertEqual(app.buttons["wireless.connect"].label, "Connect for photo import")
         XCTAssertEqual(app.staticTexts["wireless.bluetooth"].label, "Bluetooth connected")
         XCTAssertTrue(app.staticTexts["app.camera"].label.contains("USB"))
-        XCTAssertEqual(app.staticTexts["wireless.wifi"].label, "WiFi import disconnected")
+        XCTAssertFalse(app.staticTexts["wireless.wifi"].exists)
     }
 
     func testPairAndForgetXT5() {
         let app = pair(model: "X-T5", fixture: "--fixture-wireless-unpaired")
         wait { app.staticTexts["wireless.selected"].label == "Fixture X-T5" }
+        XCTAssertFalse(app.buttons["wireless.forget"].exists)
+        app.buttons["wireless.change"].tap()
+        app.buttons["Pair another camera"].tap()
+        XCTAssertTrue(app.staticTexts["wireless.pairInstructions"].exists)
+        XCTAssertFalse(app.buttons["wireless.connect"].exists)
+        app.buttons["Cancel"].tap()
+        app.buttons["wireless.change"].tap()
         app.buttons["wireless.forget"].tap()
         app.alerts.buttons["Forget camera"].tap()
         XCTAssertTrue(app.buttons["wireless.pair"].waitForExistence(timeout: 5))
@@ -39,6 +46,8 @@ import XCTest
         let app = launch([fixture])
         app.buttons["app.status"].tap()
         XCTAssertTrue(app.buttons["wireless.pair"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["wireless.pairInstructions"].label.contains("Pairing Registration"))
+        XCTAssertFalse(app.staticTexts["wireless.bluetooth"].exists)
         app.buttons["wireless.pair"].tap()
         let camera = cameraButton(prefix: "wireless.discovered.\(model).", in: app)
         XCTAssertTrue(camera.waitForExistence(timeout: 5))
@@ -70,13 +79,13 @@ import XCTest
         connect.tap()
         wait { app.staticTexts["wireless.wifi"].label.contains("Waiting for Bluetooth") }
         app.buttons["wireless.cancel"].tap()
-        wait { app.staticTexts["wireless.wifi"].label == "WiFi import disconnected" }
+        wait { connect.exists && !app.staticTexts["wireless.wifi"].exists }
         XCTAssertFalse(app.buttons["wireless.browse"].exists)
         connect.tap()
         wait { app.staticTexts["wireless.wifi"].label.contains("Waiting for Bluetooth") }
         app.buttons["Done"].tap()
         app.buttons["app.status"].tap()
-        wait { app.staticTexts["wireless.wifi"].label == "WiFi import disconnected" }
+        wait { connect.exists && !app.staticTexts["wireless.wifi"].exists }
         connect.tap()
         XCTAssertTrue(app.buttons["wireless.browse"].waitForExistence(timeout: 12))
         app.buttons["Done"].tap()

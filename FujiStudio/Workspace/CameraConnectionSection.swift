@@ -6,7 +6,7 @@ struct CameraConnectionSection: View {
     let connection: PresentedCameraConnection
     let onBrowse: () -> Void
     let onSetUpAutoSave: () -> Void
-    @State private var choosingCamera = false
+    @State private var addingCamera = false
     @State private var confirmingForget = false
     @State private var retryingBluetooth = false
 
@@ -21,16 +21,16 @@ struct CameraConnectionSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Wireless camera").font(.headline).accessibilityAddTraits(.isHeader)
-            if let selected {
-                Text(selected.displayName).accessibilityIdentifier("wireless.selected")
+            if let selected, !addingCamera {
+                Text(selected.displayName).font(.headline).accessibilityIdentifier("wireless.selected")
             }
-            if !state.hasAutomaticAutoSaveDestination {
+            if !state.hasAutomaticAutoSaveDestination && !addingCamera && (selected != nil || discovering) && state.wifi == .idle {
                 Label(state.bluetooth.statusLabel, systemImage: "antenna.radiowaves.left.and.right")
                     .accessibilityIdentifier("wireless.bluetooth")
             }
-            Label(wifiStatus, systemImage: "wifi")
-                .accessibilityIdentifier("wireless.wifi")
+            if state.wifi != .idle || disconnecting || unconfirmedClose || state.isListeningForAutoSave {
+                Label(wifiStatus, systemImage: "wifi").accessibilityIdentifier("wireless.wifi")
+            }
             if connected {
                 Button("Browse camera photos", action: onBrowse)
                     .buttonStyle(.borderedProminent).accessibilityIdentifier("wireless.browse")
@@ -41,7 +41,7 @@ struct CameraConnectionSection: View {
                 disconnectButton
             } else if state.wifi != .idle || discovering || connection.isWorking {
                 if state.bluetooth == .discovering && state.wifi == .idle {
-                    Text("Start Pairing Registration in the camera’s connection settings. Choose the camera below and confirm the pairing on the camera and iPhone.")
+                    Text("Choose your camera when it appears. Keep Pairing Registration open on the camera.")
                         .font(.footnote).foregroundStyle(.secondary)
                     ForEach(state.discoveredCameras) { camera in
                         Button(camera.displayName) {
@@ -50,6 +50,9 @@ struct CameraConnectionSection: View {
                             .disabled(connection.isWorking || model.cameraImportActive)
                             .accessibilityIdentifier(camera.discoveryAccessibilityID)
                     }
+                }
+                if state.bluetooth == .pairing {
+                    Text("Confirm the pairing request on your camera and iPhone.")
                 }
                 Button("Cancel", action: cancel).accessibilityIdentifier("wireless.cancel")
             } else {
@@ -62,6 +65,7 @@ struct CameraConnectionSection: View {
         }
         .alert("Forget camera?", isPresented: $confirmingForget, presenting: selected) { camera in
             Button("Forget camera", role: .destructive) {
+                addingCamera = false
                 Task { await model.forgetWirelessCamera(camera.id) }
             }
             .disabled(model.cameraImportActive)
@@ -81,19 +85,19 @@ struct CameraConnectionSection: View {
     }
 
     @ViewBuilder private var connectionActions: some View {
-        if selected != nil && !state.hasAutomaticAutoSaveDestination {
-            Button("Connect over WiFi") {
+        if selected != nil && !addingCamera && !retryingBluetooth && !state.hasAutomaticAutoSaveDestination {
+            if state.bluetooth == .ready {
+                Text("Your camera is paired. Connect to its Wi-Fi to import photos.")
+                    .font(.subheadline).foregroundStyle(.secondary)
+            }
+            Button("Connect for photo import") {
                 connection.start(from: .status) { await model.connectCameraWiFi() }
             }
                 .buttonStyle(.borderedProminent)
                 .disabled(!canOpenTransfer)
                 .accessibilityIdentifier("wireless.connect")
         }
-        if selected?.model == .xe3 || state.simulatorAutoSaveAvailable {
-            Button("Set up RAW transfer", action: onSetUpAutoSave)
-                .disabled(!canOpenTransfer).accessibilityIdentifier("wireless.autoSave")
-        }
-        if state.bluetooth == .unavailable || state.bluetooth == .waitingForCamera {
+        if !addingCamera && (state.bluetooth == .unavailable || state.bluetooth == .waitingForCamera) {
             if selected != nil && !state.hasAutomaticAutoSaveDestination {
                 Button("Retry Bluetooth") {
                     retryingBluetooth = true
@@ -102,27 +106,45 @@ struct CameraConnectionSection: View {
                     .disabled(!canChoose).accessibilityIdentifier("wireless.retry")
             }
         }
-        if selected == nil || choosingCamera {
-            ForEach(state.savedCameras) { camera in
-                if camera.id != selected?.id {
-                    Button(camera.displayName) {
-                        choosingCamera = false
-                        connection.start(from: .status) { await model.selectWirelessCamera(camera.id) }
-                    }
-                    .disabled(!canChoose)
-                    .accessibilityIdentifier(camera.selectionAccessibilityID)
-                }
-            }
-            Button("Pair camera") {
+        if selected == nil || addingCamera {
+            Text("On your camera, open the connection settings and start Pairing Registration. Then search for it here.")
+                .font(.subheadline).foregroundStyle(.secondary)
+                .accessibilityIdentifier("wireless.pairInstructions")
+            if selected == nil { savedCameraChoices }
+            Button("Find my camera") {
+                addingCamera = false
                 connection.start(from: .status) { await model.discoverWirelessCameras() }
             }
+                .buttonStyle(.borderedProminent)
                 .disabled(!canChoose).accessibilityIdentifier("wireless.pair")
         }
-        if selected != nil {
-            Button(choosingCamera ? "Done changing camera" : "Change camera") { choosingCamera.toggle() }
-                .disabled(!canChoose).accessibilityIdentifier("wireless.change")
-            Button("Forget camera", role: .destructive) { confirmingForget = true }
-                .disabled(!canChoose).accessibilityIdentifier("wireless.forget")
+        if !addingCamera && (selected?.model == .xe3 || state.simulatorAutoSaveAvailable) {
+            Button(selected == nil ? "Use X-E3 PC Auto Save" : "Set up RAW transfer", action: onSetUpAutoSave)
+                .disabled(!canOpenTransfer).accessibilityIdentifier("wireless.autoSave")
+        }
+        if addingCamera {
+            Button("Cancel") { addingCamera = false }
+        } else if selected != nil {
+            Menu {
+                savedCameraChoices
+                Button("Pair another camera", systemImage: "plus") { addingCamera = true }
+                Button("Forget camera", systemImage: "trash", role: .destructive) { confirmingForget = true }
+                    .accessibilityIdentifier("wireless.forget")
+            } label: {
+                Label("Manage cameras", systemImage: "ellipsis.circle")
+            }
+            .disabled(!canChoose).accessibilityIdentifier("wireless.change")
+        }
+    }
+
+    @ViewBuilder private var savedCameraChoices: some View {
+        ForEach(state.savedCameras) { camera in
+            if camera.id != selected?.id {
+                Button(camera.displayName) {
+                    connection.start(from: .status) { await model.selectWirelessCamera(camera.id) }
+                }
+                .disabled(!canChoose).accessibilityIdentifier(camera.selectionAccessibilityID)
+            }
         }
     }
 
@@ -154,15 +176,10 @@ struct CameraConnectionSection: View {
         if state.failure?.opensSettings == true || state.wifiFailure?.opensSettings == true {
             Button("Open Settings", action: model.openSettings).accessibilityIdentifier("wireless.settings")
         }
-        if model.state.wirelessRestrictsUSB {
-            Text("Disconnect WiFi to use USB conversion.")
-                .font(.footnote).foregroundStyle(.secondary)
-                .accessibilityIdentifier("wireless.usbUnavailable")
-        }
     }
 
     private func cancel() {
-        choosingCamera = false
+        addingCamera = false
         retryingBluetooth = false
         if connection.isWorking {
             connection.cancel { pending in await model.cancelWirelessConnection(draining: pending) }

@@ -121,7 +121,7 @@ import XCTest
         XCTAssertTrue(pair.label.contains("RAW+JPEG"))
         XCTAssertTrue(raw.label.contains("RAW"))
         pair.tap()
-        XCTAssertEqual(app.staticTexts["cameraBrowser.selection"].label, "1 photo selected")
+        XCTAssertEqual(app.buttons["cameraBrowser.import"].label, "Import 1 photo")
         XCTAssertTrue(app.staticTexts["cameraBrowser.bytes"].label.contains("Estimated"))
         let submit = app.buttons["cameraBrowser.import"]
         XCTAssertEqual(submit.label, "Import 1 photo")
@@ -129,8 +129,8 @@ import XCTest
         let view = app.buttons["cameraImport.viewImported"]
         XCTAssertTrue(view.waitForExistence(timeout: 10))
         app.buttons["cameraImport.done"].tap()
-        wait { app.staticTexts["cameraBrowser.selection"].label == "0 photos selected" }
-        XCTAssertFalse(submit.isEnabled)
+        wait { app.staticTexts["cameraBrowser.selection"].exists }
+        XCTAssertFalse(submit.exists)
         XCTAssertEqual(pair.value as? String, "Imported")
         app.buttons["cameraBrowser.done"].tap()
         app.buttons["cameraImport.open"].tap()
@@ -217,9 +217,8 @@ import XCTest
         let change = app.buttons["wireless.change"]
         let forget = app.buttons["wireless.forget"]
         XCTAssertTrue(change.exists)
-        XCTAssertTrue(forget.exists)
+        XCTAssertFalse(forget.exists)
         XCTAssertFalse(change.isEnabled)
-        XCTAssertFalse(forget.isEnabled)
         shot(app, "Wireless camera choices disabled during local Photos save")
         app.buttons["Done"].tap()
         let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
@@ -228,6 +227,7 @@ import XCTest
         XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 30), .completed)
         app.buttons["app.status"].tap()
         XCTAssertTrue(change.isEnabled)
+        change.tap()
         XCTAssertTrue(forget.isEnabled)
     }
 
@@ -246,7 +246,7 @@ import XCTest
         XCTAssertFalse(app.buttons["cameraImport.discard"].exists)
         app.buttons["cameraImport.done"].tap()
         XCTAssertTrue(app.buttons["cameraBrowser.done"].waitForExistence(timeout: 5))
-        XCTAssertEqual(app.staticTexts["cameraBrowser.selection"].label, "1 photo selected")
+        XCTAssertEqual(app.buttons["cameraBrowser.import"].label, "Import 1 photo")
         app.buttons["cameraBrowser.done"].tap()
         XCTAssertTrue(app.buttons["Done"].waitForExistence(timeout: 5))
         app.buttons["Done"].tap()
@@ -259,18 +259,18 @@ import XCTest
         let checking = app.descendants(matching: .any)["cameraBrowser.format.1.1"].firstMatch
         XCTAssertTrue(checking.waitForExistence(timeout: 3))
         XCTAssertTrue(checking.label.contains("Checking files"))
-        XCTAssertFalse(app.buttons["cameraBrowser.import"].isEnabled)
+        XCTAssertFalse(app.buttons["cameraBrowser.import"].exists)
         let pair = app.buttons["cameraBrowser.select.1.1"]
         wait { pair.exists && pair.isEnabled }
         let rawOnly = app.buttons["cameraBrowser.rawOnly.1.3"]
-        XCTAssertEqual(rawOnly.label, "Import RAW only")
+        XCTAssertEqual(rawOnly.label, "Select RAW only")
         XCTAssertFalse(app.buttons["cameraBrowser.rawOnly.1.1"].exists)
         pair.tap()
         let pairEstimate = app.staticTexts["cameraBrowser.bytes"].label
         pair.tap()
         rawOnly.tap()
         XCTAssertEqual(rawOnly.value as? String, "Selected")
-        XCTAssertEqual(app.staticTexts["cameraBrowser.selection"].label, "1 photo selected")
+        XCTAssertEqual(app.buttons["cameraBrowser.import"].label, "Import 1 photo")
         XCTAssertNotEqual(app.staticTexts["cameraBrowser.bytes"].label, pairEstimate)
         let jpeg = app.descendants(matching: .any)["cameraBrowser.format.1.4"].firstMatch
         if !jpeg.isHittable { reveal(jpeg, in: app) }
@@ -285,8 +285,8 @@ import XCTest
         app.buttons["cameraBrowser.import"].tap()
         wait { app.staticTexts["cameraImport.status"].label == "Import complete" }
         app.buttons["cameraImport.done"].tap()
-        wait { app.staticTexts["cameraBrowser.selection"].label == "0 photos selected" }
-        XCTAssertFalse(app.buttons["cameraBrowser.import"].isEnabled)
+        wait { app.staticTexts["cameraBrowser.selection"].exists }
+        XCTAssertFalse(app.buttons["cameraBrowser.import"].exists)
         let raw = app.descendants(matching: .any)["cameraBrowser.format.1.3"].firstMatch
         let browser = app.scrollViews["cameraBrowser.scroll"]
         for _ in 0..<5 where !raw.isHittable { browser.swipeDown() }
@@ -305,9 +305,10 @@ import XCTest
         app.buttons["cameraImport.done"].tap()
         XCTAssertFalse(pair.isEnabled)
         XCTAssertFalse(app.buttons["cameraBrowser.rawOnly.1.3"].isEnabled)
-        XCTAssertEqual(app.staticTexts["cameraBrowser.selection"].label, "1 photo selected")
+        XCTAssertEqual(app.buttons["cameraBrowser.import"].label, "Import 1 photo")
         app.buttons["cameraBrowser.done"].tap()
         app.buttons["cameraImport.open"].tap()
+        app.buttons["cameraImport.options"].tap()
         XCTAssertTrue(app.buttons["cameraImport.cancel"].isHittable)
         app.buttons["cameraImport.cancel"].tap()
         wait { app.staticTexts["cameraImport.status"].label == "Import cancelled" }
@@ -350,8 +351,8 @@ import XCTest
         app.buttons["cameraImport.open"].tap()
         wait { resume.isEnabled }
         let retry = app.buttons["cameraImport.retry"]
-        XCTAssertTrue(retry.isEnabled)
-        retry.tap()
+        XCTAssertFalse(retry.exists)
+        resume.tap()
         wait { app.staticTexts["cameraImport.status"].label == "Import complete" }
     }
 
@@ -359,6 +360,7 @@ import XCTest
         let app = launch(["--fixture-wireless-recoverable"])
         browse(app)
         importPair(app)
+        app.buttons["cameraImport.options"].tap()
         let discard = app.buttons["cameraImport.discard"]
         XCTAssertTrue(discard.waitForExistence(timeout: 10))
         reveal(discard, in: app)
@@ -373,6 +375,7 @@ import XCTest
             let app = launch(["--fixture-wireless-retryable"])
             browse(app)
             importPair(app, includeStandalone: true)
+            if action == "skip" { app.buttons["cameraImport.options"].tap() }
             let button = app.buttons["cameraImport.\(action)"]
             XCTAssertTrue(button.waitForExistence(timeout: 10))
             XCTAssertTrue(app.staticTexts["cameraImport.retainedBytes"].exists)
@@ -391,7 +394,7 @@ import XCTest
         XCTAssertTrue(app.staticTexts["cameraBrowser.rawUnavailable"].waitForExistence(timeout: 5))
         let rawUnavailable = app.descendants(matching: .any)["cameraBrowser.format.1.2"].firstMatch
         XCTAssertTrue(rawUnavailable.label.contains("RAW unavailable"))
-        XCTAssertFalse(app.buttons["cameraBrowser.import"].isEnabled)
+        XCTAssertFalse(app.buttons["cameraBrowser.import"].exists)
         XCTAssertFalse(app.buttons["cameraBrowser.select.1.2"].exists)
         app.buttons["cameraBrowser.autoSave"].tap()
         let unavailable = app.staticTexts["wireless.autoSave.unavailable"]
@@ -511,6 +514,7 @@ import XCTest
     func testRecoveryDistinguishesRepeatedJobsAfterForgettingCamera() throws {
         let app = launch(["--fixture-wireless-recovery-jobs"])
         app.buttons["app.status"].tap()
+        app.buttons["wireless.change"].tap()
         let forget = app.buttons["wireless.forget"]
         XCTAssertTrue(forget.waitForExistence(timeout: 5))
         forget.tap()
@@ -535,12 +539,14 @@ import XCTest
         XCTAssertEqual(target.staticTexts["cameraImport.counts"].label, other.staticTexts["cameraImport.counts"].label)
         let retained = target.staticTexts["cameraImport.retainedBytes"].label
         XCTAssertEqual(retained, other.staticTexts["cameraImport.retainedBytes"].label)
+        target.buttons["cameraImport.options"].tap()
         let discard = target.buttons["cameraImport.discard"]
         reveal(discard, in: app)
         discard.tap()
         XCTAssertTrue(app.alerts.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", targetLabel)).firstMatch.exists)
         app.alerts.buttons["Discard remaining"].tap()
         wait { !discard.exists }
+        other.buttons["cameraImport.options"].tap()
         XCTAssertTrue(other.buttons["cameraImport.discard"].exists)
         XCTAssertEqual(other.staticTexts["cameraImport.retainedBytes"].label, retained)
     }

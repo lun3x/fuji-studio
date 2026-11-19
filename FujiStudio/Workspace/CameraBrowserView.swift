@@ -105,24 +105,27 @@ struct CameraBrowserView: View {
         }
     }
 
-    private var selectionActions: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(browser.selectedCount == 1 ? "1 photo selected" : "\(browser.selectedCount) photos selected")
-                .font(.headline).accessibilityIdentifier("cameraBrowser.selection")
-            if browser.selectedCount > 0 {
+    @ViewBuilder private var selectionActions: some View {
+        if browser.selectedCount > 0 {
+            VStack(alignment: .leading, spacing: 6) {
                 Text("Estimated size \(cameraImportByteCount(browser.knownByteEstimate))")
                     .font(.subheadline).foregroundStyle(.secondary)
                     .accessibilityIdentifier("cameraBrowser.bytes")
+                Button(action: onImport) {
+                    Text(browser.selectedCount == 1 ? "Import 1 photo" : "Import \(browser.selectedCount) photos")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!canSelect || model.importJournalIssue != nil)
+                .accessibilityIdentifier("cameraBrowser.import")
             }
-            Button(action: onImport) {
-                Text(browser.selectedCount == 1 ? "Import 1 photo" : "Import \(browser.selectedCount) photos")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(!canSelect || browser.selectedCount == 0 || model.importJournalIssue != nil)
-            .accessibilityIdentifier("cameraBrowser.import")
+            .padding()
+        } else if canSelect && !browser.captures.isEmpty {
+            Text("Select photos to import")
+                .font(.subheadline).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading).padding()
+                .accessibilityIdentifier("cameraBrowser.selection")
         }
-        .padding()
     }
 
     private func select(_ capture: CameraCapture, policy: ImportPolicy) {
@@ -184,12 +187,12 @@ private struct CameraCaptureRow: View {
                     Button {
                         onSelect(.rawOnly)
                     } label: {
-                        Label("Import RAW only", systemImage: policy == .rawOnly ? "checkmark.circle.fill" : "circle")
+                        Label("Select RAW only", systemImage: policy == .rawOnly ? "checkmark.circle.fill" : "circle")
                             .frame(minHeight: 44)
                             .contentShape(Rectangle())
                     }
                     .disabled(!canSelect || !browser.permitsSelection(for: capture.id, policy: .rawOnly))
-                    .accessibilityLabel("Import RAW only")
+                    .accessibilityLabel("Select RAW only")
                     .accessibilityValue(policy == .rawOnly ? "Selected" : "Not selected")
                     .accessibilityHint("\(capture.rowID.filename), \(captureDay)")
                     .accessibilityAddTraits(policy == .rawOnly ? .isSelected : [])

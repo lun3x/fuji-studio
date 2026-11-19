@@ -193,73 +193,80 @@ struct AppWorkspaceView: View {
     private var statusSheet: some View {
             NavigationStack(path: $statusPath) {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
+                    VStack(alignment: .leading, spacing: 16) {
                         if model.wirelessAvailable {
-                            if model.importJournalIssue != nil { CameraImportJournalIssue() }
-                            if let error = model.importActionError {
-                                Text(error).foregroundStyle(.red).accessibilityIdentifier("app.importError")
+                            settingsGroup("Wireless camera", icon: "camera") {
+                                CameraConnectionSection(model: model, connection: connection,
+                                    onBrowse: { statusPath.append(.cameraBrowser) },
+                                    onSetUpAutoSave: { statusPath.append(.autoSave) })
                             }
-                            if model.isPreparingImport || !model.importEvents.isEmpty || model.importActionError != nil {
-                                Button("Camera imports") { statusPath.append(.cameraImports(nil)) }
-                                    .accessibilityIdentifier("cameraImport.open")
-                            }
-                            CameraConnectionSection(model: model, connection: connection,
-                                onBrowse: { statusPath.append(.cameraBrowser) },
-                                onSetUpAutoSave: { statusPath.append(.autoSave) })
-                            Divider()
-                        }
-                        Text(accessMessage).accessibilityIdentifier("app.access")
-                        if model.state.libraryAccess == .limited { Button("Manage Photos", action: model.managePhotos).accessibilityIdentifier("app.managePhotos") }
-                        if model.state.libraryAccess == .denied || model.state.libraryAccess == .restricted { Button("Open Settings", action: model.openSettings) }
-                        Text(cameraMessage).accessibilityIdentifier("app.camera")
-                        if let error = model.cameraError {
-                            Text(error).foregroundStyle(.red).accessibilityIdentifier("app.cameraError")
-                        }
-                        if let error = model.cameraResetError {
-                            Text(error).foregroundStyle(.red).accessibilityIdentifier("app.cameraResetError")
-                        }
-                        Button {
-                            Task { await model.resetCameraConnection() }
-                        } label: {
-                            HStack {
-                                if model.isResettingCamera { ProgressView() }
-                                Text(model.isResettingCamera ? "Resetting camera connection…" : "Reset camera connection")
+                            if model.isPreparingImport || !model.importEvents.isEmpty || model.importActionError != nil || model.importJournalIssue != nil {
+                                settingsGroup("Imports", icon: "square.and.arrow.down") {
+                                    if model.importJournalIssue != nil { CameraImportJournalIssue() }
+                                    if let error = model.importActionError {
+                                        Text(error).foregroundStyle(.red).accessibilityIdentifier("app.importError")
+                                    }
+                                    Button("Camera imports") { statusPath.append(.cameraImports(nil)) }
+                                        .accessibilityIdentifier("cameraImport.open")
+                                }
                             }
                         }
-                        .disabled(!model.canResetCameraConnection)
-                        .accessibilityIdentifier("app.resetCamera")
-                        if let reason = model.state.exportDisabledReason {
-                            Text(reason.message).accessibilityIdentifier("app.exportDisabledReason")
-                        }
-                        if case .authorizationDenied = model.state.cameraState { Button("Open Settings", action: model.openSettings) }
-                        if let message = model.message { Text(message).accessibilityIdentifier("app.error") }
-                        if let error = model.connectionError { Text(error).accessibilityIdentifier("app.connectionError") }
-                        ForEach(model.progressEvents, id: \.jobID) { event in
-                            ExportProgressView(event: event, canResume: !model.isSuspended && !model.isSubmitting && !model.isResettingCamera && model.cameraError == nil && model.cameraResetError == nil && model.state.currentCameraExecutionContext != nil && model.state.isCameraReady,
-                                onCancel: { Task { await model.cancelExport(jobID: event.jobID) } }, onResume: { Task { await model.resumeExport(jobID: event.jobID) } },
-                                onRetry: { Task { await model.resumeExport(jobID: event.jobID, retry: true) } }, onReconcile: { Task { await model.reconcile() } },
-                                canFinishReplacement: model.canFinishReplacements,
-                                onFinishReplacement: { Task { await model.finishReplacement(jobID: event.jobID) } })
-                                .accessibilityElement(children: .contain).accessibilityIdentifier("export.job.\(event.jobID.uuidString)")
-                            Divider()
-                        }
-                        Button("Reload Photos") { Task { await model.reloadLibrary() } }
-                        if model.isLoadingLibrary { ProgressView("Reading Photos…") }
-                        Divider()
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Settings").font(.headline)
-                            Toggle(isOn: Binding(get: { model.settings.updateOriginalInPhotos },
-                                                 set: { model.settings.updateOriginalInPhotos = $0 })) {
-                                Text("Update original in Photos").foregroundStyle(.red)
+                        settingsGroup("USB camera", icon: "cable.connector") {
+                            Text(cameraMessage).accessibilityIdentifier("app.camera")
+                            if let error = model.cameraError {
+                                Text(error).foregroundStyle(.red).accessibilityIdentifier("app.cameraError")
                             }
-                            .tint(.red)
-                            .accessibilityIdentifier("settings.updateOriginalInPhotos")
-                            Text("RAW-only photos become a new RAW+JPEG pair; the old asset is removed after verification. Existing pairs preserve their originals and support Revert to Original in Photos. Only the latest edit appears in image versions. Applies to new export jobs.")
+                            if let error = model.cameraResetError {
+                                Text(error).foregroundStyle(.red).accessibilityIdentifier("app.cameraResetError")
+                            }
+                            if model.canResetCameraConnection || model.isResettingCamera {
+                                Button {
+                                    Task { await model.resetCameraConnection() }
+                                } label: {
+                                    HStack {
+                                        if model.isResettingCamera { ProgressView() }
+                                        Text(model.isResettingCamera ? "Resetting camera connection…" : "Reset camera connection")
+                                    }
+                                }
+                                .disabled(!model.canResetCameraConnection)
+                                .accessibilityIdentifier("app.resetCamera")
+                            }
+                            if case .authorizationDenied = model.state.cameraState { Button("Open Settings", action: model.openSettings) }
+                        }
+                        settingsGroup("Photos library", icon: "photo.on.rectangle") {
+                            Text(accessMessage).accessibilityIdentifier("app.access")
+                            if model.state.libraryAccess == .limited { Button("Manage Photos", action: model.managePhotos).accessibilityIdentifier("app.managePhotos") }
+                            if model.state.libraryAccess == .denied || model.state.libraryAccess == .restricted { Button("Open Settings", action: model.openSettings) }
+                            if model.isLoadingLibrary {
+                                ProgressView("Reading Photos…")
+                            } else if model.state.libraryAccess == .full || model.state.libraryAccess == .limited {
+                                Button("Reload Photos") { Task { await model.reloadLibrary() } }
+                            }
+                        }
+                        settingsGroup("Export", icon: "square.and.arrow.up") {
+                            Toggle("Update original in Photos", isOn: Binding(get: { model.settings.updateOriginalInPhotos },
+                                set: { model.settings.updateOriginalInPhotos = $0 }))
+                                .accessibilityIdentifier("settings.updateOriginalInPhotos")
+                            Text("RAW-only photos become RAW+JPEG pairs. After verification, Photos removes the old asset. Existing pairs support Revert to Original in Photos. Only the latest edit appears in image versions. Changes apply to new exports.")
                                 .font(.footnote).foregroundStyle(.secondary)
                                 .accessibilityIdentifier("settings.updateOriginalExplanation")
+                            if let reason = model.state.exportDisabledReason {
+                                Text(reason.message).accessibilityIdentifier("app.exportDisabledReason")
+                            }
+                            if let message = model.message { Text(message).accessibilityIdentifier("app.error") }
+                            if let error = model.connectionError { Text(error).accessibilityIdentifier("app.connectionError") }
+                            ForEach(model.progressEvents, id: \.jobID) { event in
+                                ExportProgressView(event: event, canResume: !model.isSuspended && !model.isSubmitting && !model.isResettingCamera && model.cameraError == nil && model.cameraResetError == nil && model.state.currentCameraExecutionContext != nil && model.state.isCameraReady,
+                                    onCancel: { Task { await model.cancelExport(jobID: event.jobID) } }, onResume: { Task { await model.resumeExport(jobID: event.jobID) } },
+                                    onRetry: { Task { await model.resumeExport(jobID: event.jobID, retry: true) } }, onReconcile: { Task { await model.reconcile() } },
+                                    canFinishReplacement: model.canFinishReplacements,
+                                    onFinishReplacement: { Task { await model.finishReplacement(jobID: event.jobID) } })
+                                    .accessibilityElement(children: .contain).accessibilityIdentifier("export.job.\(event.jobID.uuidString)")
+                            }
                         }
                     }.padding()
                 }
+                    .background(Color(uiColor: .systemGroupedBackground))
                     .accessibilityIdentifier("app.statusScroll")
                     .navigationTitle("Status & settings")
                     .toolbar { Button("Done", action: closeStatus) }
@@ -280,6 +287,18 @@ struct AppWorkspaceView: View {
             }
             .environment(\.dynamicTypeSize, dynamicTypeSize)
             .sheet(isPresented: $handoffPresented) { handoffSheet }
+    }
+
+    private func settingsGroup<Content: View>(_ title: String, icon: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(title, systemImage: icon)
+                .font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                .accessibilityAddTraits(.isHeader)
+            VStack(alignment: .leading, spacing: 10, content: content)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding()
+                .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+        }
     }
 
     @ViewBuilder private var handoffSheet: some View {
@@ -453,7 +472,7 @@ struct AppWorkspaceView: View {
             ? "Camera connection interrupted. Check its USB mode and data cable, then tap Reset camera connection."
             : "Camera connection interrupted. Check its USB mode and data cable. Fuji Studio reconnects automatically."
         case .opening, .discovering, .sessionOpen: "Connecting and verifying the USB camera…"
-        case .disconnected: "Plug in a supported Fujifilm camera with a USB data cable in USB RAW CONV./BACKUP RESTORE mode. Fuji Studio connects automatically and retries every three seconds while active. Browsing originals and saved versions works without the camera."
+        case .disconnected: "Plug in a supported Fujifilm camera with a USB data cable in USB RAW CONV./BACKUP RESTORE mode. Fuji Studio connects automatically."
         }
     }
 }

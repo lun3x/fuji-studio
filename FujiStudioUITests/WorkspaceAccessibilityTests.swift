@@ -25,29 +25,28 @@ final class WorkspaceAccessibilityTests: WorkspaceTestCase {
                 status.tap()
                 let connection = app.scrollViews["app.statusScroll"]
                 let connect = app.buttons["wireless.connect"]
-                revealCameraControl(connect, in: connection)
+                revealCameraControl(connect, in: connection, below: app.navigationBars["Status & settings"].frame.maxY)
                 connect.tap()
                 let browse = app.buttons["wireless.browse"]
                 XCTAssertTrue(browse.waitForExistence(timeout: 8))
-                revealCameraControl(browse, in: connection)
+                revealCameraControl(browse, in: connection, below: app.navigationBars["Status & settings"].frame.maxY)
                 browse.tap()
                 let browser = app.scrollViews["cameraBrowser.scroll"]
                 let pair = app.buttons["cameraBrowser.select.1.1"]
-                revealCameraControl(pair, in: browser)
+                revealCameraControl(pair, in: browser, below: app.navigationBars["Camera photos"].frame.maxY)
                 let selectable = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in pair.isEnabled }, object: nil)
                 XCTAssertEqual(XCTWaiter.wait(for: [selectable], timeout: 5), .completed)
                 XCTAssertTrue(pair.label.contains("RAW+JPEG"))
                 XCTAssertGreaterThanOrEqual(pair.frame.height, accessibility ? 70 : 44)
                 let summary = app.staticTexts["cameraBrowser.selection"]
                 let submit = app.buttons["cameraBrowser.import"]
-                XCTAssertEqual(summary.label, "0 photos selected")
-                XCTAssertFalse(submit.isEnabled)
-                XCTAssertFalse(submit.frame.intersects(pair.frame))
+                XCTAssertEqual(summary.label, "Select photos to import")
+                XCTAssertFalse(submit.exists)
                 if accessibility { attachCameraScreen("\(name) AX5 Unselected Camera Browser") }
-                pair.tap()
+                pair.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
                 let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-                    pair.value as? String == "Selected" && summary.label == "1 photo selected"
-                        && !submit.frame.intersects(pair.frame) && !summary.frame.intersects(pair.frame)
+                    pair.value as? String == "Selected" && submit.exists && submit.label == "Import 1 photo"
+                        && !submit.frame.intersects(pair.frame)
                 }, object: nil)
                 XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 5), .completed)
                 XCTAssertTrue(app.buttons["cameraBrowser.done"].isHittable)
@@ -64,11 +63,14 @@ final class WorkspaceAccessibilityTests: WorkspaceTestCase {
                     XCTAssertTrue(context.isHittable)
                     XCTAssertTrue(context.label.contains("Fixture X-T5"))
                     attachCameraScreen("\(name) AX5 Import Context")
+                    let options = app.buttons["cameraImport.options"]
+                    revealCameraControl(options, in: recovery)
+                    options.tap()
                     let cancel = app.buttons["cameraImport.cancel"]
                     revealCameraControl(cancel, in: recovery)
                     XCTAssertTrue(app.buttons["cameraImport.done"].isHittable)
                     attachCameraScreen("\(name) AX5 Import Recovery")
-                    revealCameraControl(manage, in: recovery)
+                    revealCameraControl(manage, in: recovery, scrollDown: false)
                     XCTAssertTrue(manage.isEnabled)
                 }
                 app.terminate()
@@ -87,9 +89,15 @@ final class WorkspaceAccessibilityTests: WorkspaceTestCase {
         XCTAssertTrue(scroll.waitForExistence(timeout: 5))
         for _ in 0..<12 where !hasVisibleHitPoint() {
             // A full swipe can skip a large row in the short landscape viewport.
-            let origin = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: scrollDown ? 0.75 : 0.35))
-            let target = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: scrollDown ? 0.35 : 0.75))
-            origin.press(forDuration: 0.05, thenDragTo: target)
+            let frame = control.exists ? control.frame : .zero
+            let viewport = scroll.frame
+            let top = topEdge ?? viewport.minY
+            let distance = frame.isEmpty ? (scrollDown ? 1.0 : -1.0) * viewport.height / 4
+                : frame.midY - (top + viewport.maxY) / 2
+            let step = min(abs(distance), viewport.height / 4)
+            let origin = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.55))
+            let target = origin.withOffset(CGVector(dx: 0, dy: distance > 0 ? -step : step))
+            origin.press(forDuration: 0.05, thenDragTo: target, withVelocity: .slow, thenHoldForDuration: 0.3)
         }
         XCTAssertTrue(hasVisibleHitPoint(), "Could not reach \(control)")
     }

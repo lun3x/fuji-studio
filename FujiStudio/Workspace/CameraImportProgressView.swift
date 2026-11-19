@@ -10,6 +10,7 @@ struct CameraImportProgressView: View {
     private var events: [ImportEvent] {
         if let focusedJobID { return model.importEvents.filter { $0.jobID == focusedJobID } }
         return model.importEvents.sorted {
+            if $0.isRunning != $1.isRunning { return $0.isRunning }
             let lhs = $0.jobContext?.startedAt ?? .distantPast
             let rhs = $1.jobContext?.startedAt ?? .distantPast
             return lhs == rhs ? $0.sequence > $1.sequence : lhs > rhs
@@ -39,25 +40,22 @@ struct CameraImportProgressView: View {
                 if let error = model.importActionError {
                     Text(error).foregroundStyle(.red).accessibilityIdentifier("cameraImport.error")
                     if model.state.libraryAccess != .full && !events.contains(where: { $0.actions.contains(.managePhotos) }) {
-                        Button("Manage Photos") { Task { await model.manageImportPhotos() } }
-                            .accessibilityIdentifier("cameraImport.managePhotos")
-                        Button("Open Settings", action: model.openSettings)
-                            .accessibilityIdentifier("cameraImport.settings")
+                        ImportPhotosAccessButton(model: model)
                     }
                 }
                 ForEach(events, id: \.jobID) { event in
                     if let jobID = event.jobID {
                         let shortReference = String(jobID.uuidString.prefix(8))
                         let reference = shortReferences[shortReference]?.count == 1 ? shortReference : jobID.uuidString
-                        CameraImportJobView(model: model, event: event, jobID: jobID, reference: reference,
+                        CameraImportJobView(model: model, event: event, jobID: jobID, reference: reference, showsReference: events.count > 1,
                                             onViewImported: onViewImported)
-                        Divider()
                     }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding()
         }
+        .background(Color(uiColor: .systemGroupedBackground))
         .accessibilityIdentifier("cameraImport.scroll")
         .navigationTitle("Camera imports")
         .navigationBarTitleDisplayMode(.inline)
@@ -81,12 +79,27 @@ struct CameraImportJournalIssue: View {
     }
 }
 
+private struct ImportPhotosAccessButton: View {
+    let model: AppModel
+
+    var body: some View {
+        if model.state.libraryAccess == .denied || model.state.libraryAccess == .restricted {
+            Button("Open Settings", action: model.openSettings).accessibilityIdentifier("cameraImport.settings")
+        } else {
+            Button("Manage Photos") { Task { await model.manageImportPhotos() } }
+                .disabled(!model.canRunCameraImportCommand).accessibilityIdentifier("cameraImport.managePhotos")
+        }
+    }
+}
+
 private struct CameraImportJobView: View {
     let model: AppModel
     let event: ImportEvent
     let jobID: UUID
     let reference: String
+    let showsReference: Bool
     let onViewImported: () -> Void
+    @State private var showingOptions = false
     @State private var confirmingDiscard = false
 
     private var canResume: Bool {
@@ -101,18 +114,15 @@ private struct CameraImportJobView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(contextTitle).font(.headline)
-                .accessibilityAddTraits(.isHeader)
-                .accessibilityIdentifier("cameraImport.jobContext")
-            if let context = event.jobContext {
-                Text("Started \(context.startedAt.formatted(date: .abbreviated, time: .shortened))")
-                    .foregroundStyle(.secondary)
-                if let filename = context.firstFilename {
-                    Text("First original \(filename)").foregroundStyle(.secondary)
-                }
-            }
-            Text(status).font(.headline)
+            Text(status).font(.title3.weight(.semibold)).accessibilityAddTraits(.isHeader)
                 .accessibilityIdentifier("cameraImport.status")
+            Text(contextTitle).font(.subheadline).foregroundStyle(.secondary)
+                .accessibilityIdentifier("cameraImport.jobContext")
+            if showsReference, let context = event.jobContext {
+                Text([context.startedAt.formatted(date: .abbreviated, time: .shortened), context.firstFilename]
+                    .compactMap { $0 }.joined(separator: " · "))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Text(event.captureCountLabel).accessibilityIdentifier("cameraImport.counts")
             if let component = event.component {
                 let componentLabel = component.role == .raf ? "RAW download" : "JPEG download"
@@ -129,7 +139,7 @@ private struct CameraImportJobView: View {
             } else if event.isRunning && event.pauseReason == nil {
                 ProgressView().accessibilityLabel(status).accessibilityIdentifier("cameraImport.progress")
             }
-            if event.retainedBytes > 0 {
+            if event.retainedBytes > 0 && !event.isRunning {
                 Text("\(cameraImportByteCount(event.retainedBytes)) retained on this iPhone")
                     .accessibilityIdentifier("cameraImport.retainedBytes")
             }
@@ -142,12 +152,15 @@ private struct CameraImportJobView: View {
             if let failure = event.wirelessFailure {
                 Text(failure.connectionGuidance).accessibilityIdentifier("cameraImport.wirelessFailure")
             }
-            if event.actions.contains(.resume) && !canResume {
+            if event.actions.contains(.resume) && !canResume && !event.canRetryFromStagedOriginals {
                 Text("Open Camera Photos and connect to the Wi-Fi of the camera used for this import.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
             actions
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding()
+        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("cameraImport.job.\(jobID.uuidString)")
         .alert("Discard remaining originals?", isPresented: $confirmingDiscard) {
@@ -166,45 +179,28 @@ private struct CameraImportJobView: View {
         } else {
             modelName
         }
-        return "\(cameraName) · Import \(reference)"
+        return showsReference ? "\(cameraName) · Import \(reference)" : cameraName
     }
 
     @ViewBuilder private var actions: some View {
-        if event.actions.contains(.cancelRemaining) {
-            Button("Cancel", role: .destructive) { Task { await model.cancelImport(jobID: jobID) } }
-                .disabled(!event.isRunning && !canCommand)
-                .accessibilityHint("Stop after the current camera or Photos operation")
-                .accessibilityIdentifier("cameraImport.cancel")
-        }
         if event.actions.contains(.pause) {
             Button("Pause") { Task { await model.pauseImport(jobID: jobID) } }
                 .accessibilityIdentifier("cameraImport.pause")
         }
         if event.actions.contains(.managePhotos) && model.state.libraryAccess != .full {
-            Button("Manage Photos") { Task { await model.manageImportPhotos() } }
-                .disabled(!canCommand).accessibilityIdentifier("cameraImport.managePhotos")
-            Button("Open Settings", action: model.openSettings)
-                .accessibilityIdentifier("cameraImport.settings")
+            ImportPhotosAccessButton(model: model)
         }
-        if event.actions.contains(.resume) {
+        if event.actions.contains(.resume) && !(event.actions.contains(.retryCapture) && event.canRetryFromStagedOriginals) {
             Button("Resume remaining") { Task { await model.resumeImport(jobID: jobID) } }
                 .buttonStyle(.borderedProminent)
                 .disabled(!canCommand || !canResume)
                 .accessibilityIdentifier("cameraImport.resume")
         }
-        if event.actions.contains(.retryCapture) {
+        if event.actions.contains(.retryCapture) && (event.canRetryFromStagedOriginals || !event.actions.contains(.resume)) {
             Button("Retry") { Task { await model.retryImportCapture(jobID: jobID) } }
                 .disabled(!canRetry).accessibilityIdentifier("cameraImport.retry")
         }
-        if event.actions.contains(.skipCapture) {
-            Button("Skip") { Task { await model.skipImportCapture(jobID: jobID) } }
-                .disabled(!canCommand).accessibilityIdentifier("cameraImport.skip")
-        }
-        if event.actions.contains(.discardRemaining) {
-            Button("Discard remaining", role: .destructive) { confirmingDiscard = true }
-                .disabled(!canCommand).accessibilityIdentifier("cameraImport.discard")
-        }
-        if !event.receipts.isEmpty {
+        if !event.isRunning && !event.receipts.isEmpty {
             Button("View imported") {
                 Task {
                     await model.viewImported(jobID: jobID)
@@ -214,8 +210,30 @@ private struct CameraImportJobView: View {
                     }
                 }
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.borderedProminent)
             .accessibilityIdentifier("cameraImport.viewImported")
+        }
+        if !event.actions.intersection([.cancelRemaining, .skipCapture, .discardRemaining]).isEmpty {
+            Button(showingOptions ? "Fewer options" : "More options") { showingOptions.toggle() }
+                .accessibilityIdentifier("cameraImport.options")
+            if showingOptions {
+                VStack(alignment: .leading, spacing: 14) {
+                    if event.actions.contains(.skipCapture) {
+                        Button("Skip this photo") { Task { await model.skipImportCapture(jobID: jobID) } }
+                            .disabled(!canCommand).accessibilityIdentifier("cameraImport.skip")
+                    }
+                    if event.actions.contains(.cancelRemaining) {
+                        Button("Cancel import", role: .destructive) { Task { await model.cancelImport(jobID: jobID) } }
+                            .disabled(!event.isRunning && !canCommand)
+                            .accessibilityHint("Stop after the current camera or Photos operation")
+                            .accessibilityIdentifier("cameraImport.cancel")
+                    }
+                    if event.actions.contains(.discardRemaining) {
+                        Button("Discard remaining", role: .destructive) { confirmingDiscard = true }
+                            .disabled(!canCommand).accessibilityIdentifier("cameraImport.discard")
+                    }
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
     }
 
