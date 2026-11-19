@@ -17,6 +17,9 @@ A follow-up [previewed all 16 RAWs and imported one selected original](#preview-
 using the same AutoSave connection for both phases.
 A separate run [verified five minutes of idle browsing](#five-minute-idle-browse)
 before another preview read on the original connection.
+On November 19, Fuji Studio in the iOS Simulator used an
+[iPhone Personal Hotspot](#fuji-studio-over-iphone-personal-hotspot) to register
+the X-E3, browse its thumbnails, and save four verified RAW+JPEG pairs to Photos.
 The [native iPhone acceptance record](wireless-import-acceptance.md) still governs
 Fuji Studio's signing, identity, and hardware gates. The physical phone trace
 below used Fujifilm Camera Remote. The [X-T5 Wi-Fi handoff](wifi-investigation-handoff-2026-11-16.md)
@@ -237,30 +240,77 @@ Five minutes is the verified idle lower bound for resuming thumbnail reads on
 this body and LAN. The maximum idle time, a full original download after a
 five-minute pause, and the native iPhone workflow remain untested.
 
-## Fuji Studio integration gaps
+## Fuji Studio over iPhone Personal Hotspot
 
-- The [current invitation codec](../../Packages/FujiCameraCore/Sources/FujiCameraCore/Wireless/AutoSaveCodec.swift)
-  requires numeric `DSCPORT`. A sanitized replay of the observed `0x5C` token
-  should exercise any X-E3 parser change. The command endpoint remains the
-  validated camera address on fixed TCP `55740`.
-- The [current AutoSave adapter](../../Packages/FujiCameraCore/Sources/FujiCameraCore/Wireless/AutoSaveTransferAdapter.swift)
-  selects `DF01` from `DF24`, whereas the successful official path directly
-  selected `3`. Carry over the measured initialization, original-size scope,
-  enumeration, and download behavior as an X-E3 AutoSave profile, with bounded
-  reads and transaction validation. Preserve the X-T5 gallery path.
-- For X-E3 RAW previews, keep each head and tail read on the same serialized
-  command session before moving to another object. The current AutoSave
-  intake does not expose thumbnail capability, and the existing bounded
-  original-sample method is currently restricted to XApp.
-- The observed `0xD228` values are progress updates. Queue advancement and the
-  effect of cancellation, repeated imports, or progress writes on future
-  visibility are still unverified. Verify the Photos receipt separately.
-- Signed iPhone multicast provisioning and the independent `DeviceInfo`
-  selected-body binding remain gates. The independent Mac probe verified the
-  saved MAC and initialization model. A fresh `GetDeviceInfo` check is pending.
-  Hardware validation still needs the native signed app to register, enumerate,
-  receive originals, compare against the card, and verify the Photos receipt.
-  The evidence covers the tested body, firmware, card, and LAN.
+On November 19, 2026, the Mac running the iOS 27.1 Simulator and the physical
+X-E3 joined the same iPhone Personal Hotspot as Wi-Fi clients. Fuji Studio ran
+on the Mac in the simulator. After the Mac rejoined the hotspot from its usual
+Wi-Fi network, the simulator received the X-E3's UDP discovery on `51542`. It
+sent `NOTIFY`, received `200 OK` from the camera, and accepted the camera's
+`REGISTER` request. The saved destination was available after relaunch.
+
+In the successful playback session, the simulator received discovery on
+`51541`, opened the command connection on TCP `55740`, and displayed the RAW
+thumbnails in Camera Photos. The user selected and saved four captures. Fuji
+Studio verified both originals for each pair by reading back their byte counts
+and SHA-256 fingerprints from Photos.
+
+| Capture | Verified RAF bytes | Verified JPEG bytes |
+| --- | ---: | ---: |
+| `DSCF0246` | 19,639,904 | 15,327,056 |
+| `DSCF0248` | 19,953,904 | 15,002,226 |
+| `DSCF0250` | 20,300,848 | 15,335,563 |
+| `DSCF0251` | 20,610,864 | 15,273,015 |
+
+The hotspot capture retained up to 160 bytes per packet. It documents the
+discovery, connections, and transfer timing. The Photos receipts establish
+the saved originals' equality to the bytes downloaded by the app. The four
+hotspot imports have no independent SD-card comparison in this report.
+
+An earlier `DSCF0245.RAF` import stopped in staging before submitting to Photos.
+The official capture confirms that the camera reported zero width and height in
+RAF ObjectInfo. Fuji Studio now takes the geometry from the validated X-E3 RAF
+container when AutoSave omits those fields. It checks any dimensions the camera
+does report against the recorded frame or sensor container.
+[Original import validator](../../FujiStudio/Import/OriginalImportValidator.swift)
+
+## Automatic Camera Photos flow
+
+1. In Fuji Studio, open **Status & settings → Set up RAW transfer → Register
+   destination**. On the X-E3, open **PC Auto Save Settings → Manual Setup**,
+   join the shared network, and select the new destination. Registration is a
+   one-time step for that saved destination.
+2. With Fuji Studio open, start **Playback → PC Auto Save** on the X-E3 and
+   confirm the saved destination. The app listens automatically after
+   registration and on relaunch. It takes camera ownership when the registered
+   camera sends an accepted invitation.
+3. When the inventory is ready, Fuji Studio opens the same Camera Photos tray
+   used by the X-T5. The bottom control switches between **Camera Photos** and
+   **Phone Photos**. Browse the thumbnails, select captures, and save the
+   selected originals from the tray.
+
+The [invitation codec](../../Packages/FujiCameraCore/Sources/FujiCameraCore/Wireless/AutoSaveCodec.swift)
+accepts the observed backslash in `DSCPORT` and keeps the fixed command port.
+The [simulator AutoSave profile](../../Packages/FujiCameraCore/Sources/FujiCameraCore/Wireless/AutoSaveTransferAdapter.swift)
+uses the observed initialization and `DF01 = 3`, reads 16 KiB from the start
+and 32 bytes from the end of a RAF for its thumbnail, and streams each selected
+original in 1 MiB requests with an exact final remainder.
+
+The 51 focused simulator tests passed, including idle listening without camera
+ownership, automatic tray entry after registration and relaunch, and staging
+and revalidating an X-E3 RAF whose ObjectInfo omits dimensions. The full
+simulator run was interrupted after reproducing a known landscape recipe-editor
+failure.
+
+## Remaining hardware validation
+
+- The simulator test verifies a receiver and camera on the same hotspot. The
+  case where the physical iPhone both hosts the hotspot and runs Fuji Studio
+  remains untested. Physical iPhone support requires multicast provisioning,
+  independent selected-camera binding, and validation of the native Photos
+  import against SD-card originals.
+- `0xD228` reports progress. The effect of cancellation, repeated imports, and
+  progress updates on the camera's future AutoSave queue remains unverified.
 
 ## Evidence index
 
@@ -281,6 +331,8 @@ local. The filenames and digests below identify the originals used for analysis.
 | `xe3-thumbnail-test.pcap`, third trial, six RAFs with tail reads | `7ee1ad2623a424ef12dfffdd3da3dd08ff400115c7d5b9864a9c33b4d4adaa5d` |
 | `xe3-browse-select.pcap`, 16 previews and one selected original | `821643e0e48531bbc2318a2de9faa72eb78602b6ef294e1927418a6fe5f3ce31` |
 | `xe3-browse-idle.pcap`, 16 previews and five minutes idle before a repeat preview | `f797d66869f0d7b82f92110092ba2b2b46360b10c19c8472c6af3c92b26a5171` |
+| `registration.pcap`, iPhone hotspot registration | `ff1baadc4768c98fb66e492940e89c7119d1c5dd42b722b7f665e74c00274ddd` |
+| `transfer.pcap`, iPhone hotspot playback and four verified imports | `1ff7690333fc40bb94a5083d2e7a65d0cdfab42b3d90ec0455c639c96a56c55f` |
 
 For packet review, display UDP/TCP ports `51540`–`51542` for discovery and
 invitations, then reassemble the successful `55740` stream in both directions.
