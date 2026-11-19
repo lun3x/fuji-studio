@@ -412,7 +412,9 @@ import XCTest
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         let allowPhotos = springboard.buttons["Allow Full Access"]
         if allowPhotos.waitForExistence(timeout: 3) { allowPhotos.tap() }
-        openAutoSave(in: app)
+        app.buttons["app.status"].tap()
+        app.buttons["wireless.model.xe3"].tap()
+        XCTAssertTrue(app.staticTexts["wireless.autoSave.network"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["wireless.autoSave.network"].label.contains("your Mac"))
         XCTAssertTrue(app.buttons["wireless.autoSave.register"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["wireless.autoSave.wait"].exists)
@@ -519,7 +521,7 @@ import XCTest
         XCTAssertTrue(forget.waitForExistence(timeout: 5))
         forget.tap()
         app.alerts.buttons["Forget camera"].tap()
-        XCTAssertTrue(app.buttons["wireless.pair"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["wireless.model.xt5"].waitForExistence(timeout: 5))
         app.buttons["cameraImport.open"].tap()
         let jobs = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH %@", "cameraImport.job."))
         wait { jobs.count == 3 }

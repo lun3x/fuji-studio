@@ -18,15 +18,11 @@ struct AutoSaveSetupView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                Text("PC Auto Save").font(.headline).accessibilityAddTraits(.isHeader)
-                Text(state.simulatorAutoSaveAvailable
-                    ? "Connect your Mac and X-E3 to the same WiFi network."
-                    : "Connect your iPhone and X-E3 to the same WiFi network. PC Auto Save uses that shared network.")
-                    .accessibilityIdentifier("wireless.autoSave.network")
                 switch availability {
                 case nil:
                     ProgressView("Checking PC Auto Save availability…")
                 case .failure(let failure):
+                    Text("PC Auto Save unavailable").font(.headline)
                     Text(failure.connectionGuidance).accessibilityIdentifier("wireless.autoSave.unavailable")
                     if failure.opensSettings {
                         Button("Open Settings", action: model.openSettings)
@@ -35,13 +31,17 @@ struct AutoSaveSetupView: View {
                             .accessibilityIdentifier("wireless.autoSave.check")
                     }
                 case .success:
+                    Text(state.simulatorAutoSaveAvailable
+                        ? "Connect your Mac and X-E3 to the same WiFi network."
+                        : "Connect your iPhone and X-E3 to the same WiFi network. PC Auto Save uses that shared network.")
+                        .accessibilityIdentifier("wireless.autoSave.network")
                     registration
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding()
         }
-        .navigationTitle("Set up RAW transfer")
+        .navigationTitle("X-E3 PC Auto Save")
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden()
         .toolbar {

@@ -20,39 +20,44 @@ import XCTest
     }
 
     func testPairAndForgetXT5() {
-        let app = pair(model: "X-T5", fixture: "--fixture-wireless-unpaired")
+        let app = launch(["--fixture-wireless-unpaired"])
+        app.buttons["app.status"].tap()
+        XCTAssertFalse(app.buttons["wireless.pair"].exists)
+        XCTAssertTrue(app.buttons["wireless.model.xe3"].exists)
+        shot(app, "Camera model picker")
+        app.buttons["wireless.model.xt5"].tap()
+        XCTAssertTrue(app.staticTexts["wireless.pairInstructions"].label.contains("Pairing Registration"))
+        app.buttons["wireless.pair"].tap()
+        let xt5 = cameraButton(prefix: "wireless.discovered.X-T5.", in: app)
+        XCTAssertTrue(xt5.waitForExistence(timeout: 5))
+        xt5.tap()
         wait { app.staticTexts["wireless.selected"].label == "Fixture X-T5" }
         XCTAssertFalse(app.buttons["wireless.forget"].exists)
         app.buttons["wireless.change"].tap()
         app.buttons["Pair another camera"].tap()
-        XCTAssertTrue(app.staticTexts["wireless.pairInstructions"].exists)
+        XCTAssertTrue(app.buttons["wireless.model.xe3"].exists)
         XCTAssertFalse(app.buttons["wireless.connect"].exists)
         app.buttons["Cancel"].tap()
         app.buttons["wireless.change"].tap()
         app.buttons["wireless.forget"].tap()
         app.alerts.buttons["Forget camera"].tap()
-        XCTAssertTrue(app.buttons["wireless.pair"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["wireless.model.xt5"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts["wireless.selected"].exists)
     }
 
-    func testPairXE3() {
-        let app = pair(model: "X-E3", fixture: "--fixture-wireless-xe3-unpaired")
-        wait { app.staticTexts["wireless.selected"].label == "Fixture X-E3" }
-        XCTAssertEqual(app.buttons["wireless.autoSave"].label, "Set up RAW transfer")
-        XCTAssertTrue(app.buttons["wireless.connect"].isEnabled)
-    }
-
-    private func pair(model: String, fixture: String) -> XCUIApplication {
-        let app = launch([fixture])
+    func testXE3ImmediatelyExplainsUnavailablePCModeWithoutBluetoothSetup() {
+        let app = launch(["--fixture-wireless-xe3-unpaired"])
         app.buttons["app.status"].tap()
-        XCTAssertTrue(app.buttons["wireless.pair"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["wireless.pairInstructions"].label.contains("Pairing Registration"))
-        XCTAssertFalse(app.staticTexts["wireless.bluetooth"].exists)
-        app.buttons["wireless.pair"].tap()
-        let camera = cameraButton(prefix: "wireless.discovered.\(model).", in: app)
-        XCTAssertTrue(camera.waitForExistence(timeout: 5))
-        camera.tap()
-        return app
+        app.buttons["wireless.model.xe3"].tap()
+        let reason = app.staticTexts["wireless.autoSave.unavailable"]
+        XCTAssertTrue(reason.waitForExistence(timeout: 5))
+        XCTAssertTrue(reason.label.contains("Multicast Networking"))
+        shot(app, "X-E3 PC Auto Save unavailable")
+        XCTAssertFalse(app.buttons["wireless.autoSave.register"].exists)
+        XCTAssertFalse(app.staticTexts["wireless.autoSave.network"].exists)
+        XCTAssertFalse(app.buttons["wireless.pair"].exists)
+        app.buttons["wireless.autoSave.done"].tap()
+        XCTAssertTrue(app.buttons["wireless.model.xt5"].exists)
     }
 
     func testChangeBetweenTwoSavedCamerasWithoutPairingAgain() {
@@ -109,6 +114,7 @@ import XCTest
             let status = app.buttons["app.status"]
             wait { status.value as? String == "Camera ready" }
             status.tap()
+            app.buttons["wireless.model.xt5"].tap()
             let pair = app.buttons["wireless.pair"]
             XCTAssertTrue(pair.waitForExistence(timeout: 5))
             pair.tap()
@@ -125,7 +131,7 @@ import XCTest
             release.tap()
             wait { status.value as? String == "Camera ready" }
             status.tap()
-            XCTAssertTrue(pair.waitForExistence(timeout: 5))
+            XCTAssertTrue(app.buttons["wireless.model.xt5"].waitForExistence(timeout: 5))
             XCTAssertFalse(app.buttons["wireless.cancel"].exists)
             app.terminate()
         }
