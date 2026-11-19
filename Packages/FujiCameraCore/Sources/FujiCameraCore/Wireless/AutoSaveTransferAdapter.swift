@@ -22,6 +22,10 @@ public enum AutoSaveTransferAdapter {
       mode: .autoSave, clientGUID: try FujiWirelessFrameDecoder.xAppClientGUID(localIPv4Bytes: localIPv4Bytes),
       clientName: cameraName, capturedAutoSaveName: cameraName)
   }
+
+  public static func isSimulatorSession(_ session: any WirelessTransferSession) -> Bool {
+    (session as? CameraHostedTransferSession)?.usesCapturedAutoSave == true
+  }
   #endif
 }
 

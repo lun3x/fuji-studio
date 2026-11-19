@@ -115,7 +115,7 @@ actor CameraImportCoordinator {
         _ = try await recovery.removeInterruptedFiles()
         guard !retiredLoanIDs.contains(loanID) else { throw CameraImportError.sessionRequired }
         let camera = try await session.open()
-        try Self.requireSupported(camera)
+        try Self.requireSupported(camera, from: session)
         let capabilities = try await session.capabilities()
         guard first.camera == camera else { throw WirelessFailure.peerMismatch }
         if let failure = capabilities.originalSizeFailure { throw failure }
@@ -727,7 +727,11 @@ actor CameraImportCoordinator {
         for continuation in listeners.values { continuation.yield(event) }
     }
 
-    fileprivate static func requireSupported(_ identity: WirelessIdentity) throws {
+    fileprivate static func requireSupported(_ identity: WirelessIdentity, from session: any WirelessTransferSession) throws {
+        #if targetEnvironment(simulator)
+        // The registered X-E3 profile validates the model in the initialization reply.
+        if AutoSaveTransferAdapter.isSimulatorSession(session) { return }
+        #endif
         guard WirelessSupportPolicy().assess(model: identity.model.rawValue, firmware: identity.firmware)
             == .supported(identity.model) else { throw WirelessFailure.unsupportedFirmware }
     }
@@ -807,7 +811,7 @@ private struct ImportInventory {
 
     static func read(_ session: any WirelessTransferSession, for snapshot: ImportCameraSnapshot) async throws -> Self {
         let camera = try await session.open()
-        try CameraImportCoordinator.requireSupported(camera)
+        try CameraImportCoordinator.requireSupported(camera, from: session)
         let capabilities = try await session.capabilities()
         guard snapshot.matches(camera, mode: capabilities.mode) else { throw WirelessFailure.peerMismatch }
         let stream = try await session.enumerate()

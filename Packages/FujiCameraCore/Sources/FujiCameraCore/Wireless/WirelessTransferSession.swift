@@ -54,7 +54,7 @@ actor CameraHostedTransferSession: WirelessOriginalSampling, WirelessSessionMoni
   private let replayCapturedGalleryTiming: Bool
   private let verifiedCameraNetwork: Bool
   let capturedAutoSaveName: String?
-  var usesCapturedAutoSave: Bool { capturedAutoSaveName != nil }
+  nonisolated var usesCapturedAutoSave: Bool { capturedAutoSaveName != nil }
   private let sessionID = UUID()
   #if DEBUG
   var galleryObjects: [UInt32: [UInt32: WirelessObjectDescriptor]]?
