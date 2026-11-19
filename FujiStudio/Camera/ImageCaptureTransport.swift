@@ -75,6 +75,15 @@ import FujiCameraCore
         // browser replacement is not guaranteed to receive didAdd for an already found device.
         if browser == nil {
             let browser = makeBrowser()
+            #if targetEnvironment(simulator)
+            // Some Simulator runtimes expose the browser without its USB authorization methods.
+            guard browser.responds(to: NSSelectorFromString("requestControlAuthorizationWithCompletion:")),
+                  browser.responds(to: NSSelectorFromString("requestContentsAuthorizationWithCompletion:")) else {
+                self.events = nil
+                events(.failed(.notConnected))
+                return
+            }
+            #endif
             self.browser = browser
             #if DEBUG
             browserSequence += 1
